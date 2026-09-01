@@ -1,0 +1,170 @@
+name: relo
+
+services:
+  postgres:
+    image: postgres:17.6-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: relo
+      POSTGRES_USER: relo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./deploy/init-secrets.sh}
+    volumes:
+      - relo-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relo -d relo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [private]
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    image: relo-server:${RELO_IMAGE_TAG:-local}
+    command: ["node", "dist/migrate.js"]
+    restart: "no"
+    user: "${RELO_UID:-1000}:${RELO_GID:-1000}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MIGRATION_DATABASE_URL: postgresql://relo:${POSTGRES_PASSWORD}@postgres:5432/relo
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  database-role-bootstrap:
+    image: postgres:17.6-bookworm
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: relo
+      POSTGRES_USER: relo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./deploy/init-secrets.sh}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?run ./deploy/init-secrets.sh}
+    volumes:
+      - ./bootstrap-runtime-role.sh:/usr/local/bin/bootstrap-runtime-role:ro
+    command: ["/bin/sh", "/usr/local/bin/bootstrap-runtime-role"]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    image: relo-server:${RELO_IMAGE_TAG:-local}
+    restart: unless-stopped
+    user: "${RELO_UID:-1000}:${RELO_GID:-1000}"
+    depends_on:
+      database-role-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://relo_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/relo
+      HOST: 0.0.0.0
+      PORT: 8180
+      APP_URL: ${RELO_APP_URL:-http://127.0.0.1:8180}
+      RELO_RELEASE_IDENTITY: ${RELO_RELEASE_IDENTITY:-development}
+      BOOTSTRAP_OWNER_HANDLE: ${BOOTSTRAP_OWNER_HANDLE:-owner}
+      BOOTSTRAP_OWNER_TOKEN_FILE: /run/secrets/owner_token
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+      APNS_MODE: ${APNS_MODE:-disabled}
+    volumes:
+      - ./secrets:/run/secrets:ro
+    ports:
+      - "${RELO_BIND_ADDRESS:-127.0.0.1}:${RELO_PORT:-8180}:8180"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8180/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    image: relo-server:${RELO_IMAGE_TAG:-local}
+    command: ["node", "dist/worker.js"]
+    restart: unless-stopped
+    user: "${RELO_UID:-1000}:${RELO_GID:-1000}"
+    depends_on:
+      database-role-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://relo_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/relo
+      RELO_RELEASE_IDENTITY: ${RELO_RELEASE_IDENTITY:-development}
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+      APNS_MODE: ${APNS_MODE:-disabled}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_KEY_FILE: /run/secrets/apns_key.p8
+      APNS_TOPIC: ${APNS_TOPIC:-}
+      APNS_KEY_SCOPE: ${APNS_KEY_SCOPE:-}
+      APNS_KEY_ENVIRONMENT: ${APNS_KEY_ENVIRONMENT:-}
+      APNS_DUAL_ENVIRONMENT_CONFIRMED: ${APNS_DUAL_ENVIRONMENT_CONFIRMED:-false}
+      APNS_ASSOCIATED_TOPICS: ${APNS_ASSOCIATED_TOPICS:-}
+      APNS_CONFIGURATION_GENERATION: ${APNS_CONFIGURATION_GENERATION:-}
+      APNS_CUTOVER_AT: ${APNS_CUTOVER_AT:-}
+      WORKER_POLL_MS: ${WORKER_POLL_MS:-2000}
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
+    volumes:
+      - ./secrets:/run/secrets:ro
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/relo-worker-ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  postgres-test:
+    image: postgres:17.6-bookworm
+    profiles: [test]
+    environment:
+      POSTGRES_DB: relo_test
+      POSTGRES_USER: relo_test
+      POSTGRES_PASSWORD: integration-only
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relo_test -d relo_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [test]
+
+  integration-test:
+    profiles: [test]
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+      target: build
+    command: ["pnpm", "test"]
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    environment:
+      TEST_DATABASE_URL: postgresql://relo_test:integration-only@postgres-test:5432/relo_test
+    networks: [test]
+
+volumes:
+  relo-postgres:
+
+networks:
+  private:
+  test:

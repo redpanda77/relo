@@ -1,0 +1,52 @@
+{
+  "name": "@relo/server",
+  "version": "0.7.35",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "fixtures",
+    "migrations",
+    "package.json"
+  ],
+  "scripts": {
+    "build:dashboard": "pnpm --filter @relo/dashboard build",
+    "prebuild": "pnpm --filter @relo/notification-contracts build && pnpm run build:dashboard",
+    "build": "tsc -p tsconfig.json",
+    "predev": "pnpm --filter @relo/notification-contracts build && pnpm run build:dashboard",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "worker": "node dist/worker.js",
+    "migrate": "tsx src/migrate.ts",
+    "provision-key": "node dist/provision-key.js",
+    "recover-owner-password": "node dist/recover-owner-password.js",
+    "apns-operations": "node dist/apns-operations-cli.js",
+    "notification-retention": "node dist/notification-retention-cli.js",
+    "verify-transport-tokens": "node dist/verify-transport-tokens.js",
+    "pretypecheck": "pnpm --filter @relo/notification-contracts build && pnpm run build:dashboard",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter @relo/notification-contracts build && pnpm run build:dashboard",
+    "test": "vitest run --no-file-parallelism"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.0",
+    "@relo/notification-contracts": "workspace:*",
+    "better-auth": "1.6.25",
+    "hono": "^4.9.6",
+    "pg": "^8.16.3",
+    "qrcode": "^1.5.4",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@relo/dashboard": "workspace:*",
+    "@types/node": "^22.18.1",
+    "@types/qrcode": "^1.5.5",
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

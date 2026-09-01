@@ -1,0 +1,8 @@
+// Authoritative product configuration. Local overlays contain signing identities only.
+DEVELOPMENT_TEAM =
+RELO_BUNDLE_ID = com.example.relo.notifications
+RELO_APP_GROUP = group.com.example.relo.notifications
+RELO_API_ORIGIN = https:/$()/relo.invalid
+RELO_GIT_COMMIT = uncommitted
+
+#include? "Signing.local.xcconfig"

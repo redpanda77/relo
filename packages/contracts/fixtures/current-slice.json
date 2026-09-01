@@ -1,0 +1,62 @@
+{
+  "notification": {
+    "title": "Codex Auto · Mac · Relo",
+    "body": "Finished — Build checks passed.",
+    "sourceName": "Codex",
+    "deviceIds": ["dev_123456789012"],
+    "context": {
+      "computer": "Mac",
+      "project": "Relo",
+      "taskTitle": "Automatic completion hook"
+    }
+  },
+  "activityStart": {
+    "key": "codex-build",
+    "replace": true,
+    "title": "Build",
+    "status": "Starting",
+    "progress": 0,
+    "symbol": "build",
+    "style": "terminal",
+    "accentColor": "#5ED8B7",
+    "expiresInSeconds": 28800,
+    "staleAfterSeconds": 14400,
+    "deviceIds": ["dev_123456789012"]
+  },
+  "activityUpdate": {
+    "title": "Build and test",
+    "status": "Running tests",
+    "progress": 0.5,
+    "symbol": "code",
+    "accentColor": "#64D2FF",
+    "staleAfterSeconds": 3600,
+    "ifSequence": 0
+  },
+  "activityEnd": {
+    "status": "Complete",
+    "detail": null,
+    "progress": 1,
+    "symbol": "success",
+    "accentColor": "#30D158",
+    "dismissAfterSeconds": 30
+  },
+  "delivery": {
+    "eligibleDevices": 1,
+    "durableCommands": 1,
+    "apnsJobs": 0
+  },
+  "publicImageUrls": {
+    "accepted": [
+      "https://cdn.example.com/avatar.png",
+      "https://ffmpeg.example.com/avatar.png"
+    ],
+    "rejected": [
+      "https://localhost./avatar.png",
+      "https://router/avatar.png",
+      "https://host.internal/avatar.png",
+      "https://127.1/avatar.png",
+      "https://2130706433/avatar.png",
+      "https://[0:0:0:0:0:ffff:7f00:1]/avatar.png"
+    ]
+  }
+}

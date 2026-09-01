@@ -1,0 +1,196 @@
+{
+  "shouldTrigger": [
+    { "name": "iphone completion", "prompt": "Notify my iPhone when this task finishes." },
+    { "name": "phone approval", "prompt": "Ask for approval on my phone before continuing." },
+    { "name": "live build", "prompt": "Track this long build with a Relo Live Activity." },
+    { "name": "device readiness", "prompt": "Check whether my Relo device can receive notifications." },
+    { "name": "test alert", "prompt": "Send me a Relo alert after the tests pass." },
+    { "name": "phone yes no", "prompt": "Wait for a yes or no response from my phone." },
+    { "name": "short reply", "prompt": "Let me reply with a short release channel on Relo." },
+    { "name": "dynamic island update", "prompt": "Update the Dynamic Island as this migration progresses." },
+    { "name": "delivery diagnosis", "prompt": "Diagnose why relo says there are no durable devices." },
+    { "name": "device inventory", "prompt": "List my registered Relo devices before targeting one." },
+    { "name": "reviewed permission", "prompt": "Use my phone to allow this one reviewed permission." },
+    { "name": "activity end", "prompt": "End the existing Relo activity when verification completes." },
+    { "name": "browser auth", "prompt": "Log this host into Relo with browser approval and an explicit server origin." },
+    { "name": "secret service", "prompt": "Create a Relo webhook service without exposing its secret in this transcript." },
+    { "name": "permission hook", "prompt": "Install the Relo permission hook for OpenCode and run doctor." },
+    { "name": "tooling update", "prompt": "Update the local Relo CLI and Codex notifier from reviewed tarballs." },
+    { "name": "notifier rollback", "prompt": "Roll back my Relo notifier to the exact previous local package." },
+    { "name": "completion notifier", "prompt": "Configure Codex completion notifications through Relo." }
+  ],
+  "shouldNotTrigger": [
+    { "name": "apns explanation", "prompt": "Explain how Apple's APNs protocol works." },
+    { "name": "generic settings", "prompt": "Build a generic notification settings screen." },
+    { "name": "email", "prompt": "Send an email when this task finishes." },
+    { "name": "offline review", "prompt": "Review this code without contacting my phone." },
+    { "name": "desktop notification", "prompt": "Add a local desktop notification to the app." },
+    { "name": "payload parser", "prompt": "Write unit tests for a push-notification payload parser." },
+    { "name": "push comparison", "prompt": "Compare Firebase Cloud Messaging with APNs." },
+    { "name": "island mockup", "prompt": "Design a Dynamic Island mockup only." },
+    { "name": "explicit no send", "prompt": "Do not send anything to my phone." },
+    { "name": "source summary", "prompt": "Summarize this notification-related source file." },
+    { "name": "calendar reminder", "prompt": "Create a calendar reminder for tomorrow." },
+    { "name": "activity explanation", "prompt": "Explain what a Live Activity is." },
+    { "name": "oauth explanation", "prompt": "Explain browser-based OAuth without logging into Relo." },
+    { "name": "webhook review", "prompt": "Review this generic webhook handler but do not create a Relo service." },
+    { "name": "hook comparison", "prompt": "Compare permission-hook designs without installing any hook." },
+    { "name": "rollback explanation", "prompt": "Explain npm rollback strategies without changing Relo packages." },
+    { "name": "notifier description", "prompt": "Describe Codex notifier configuration from the pasted text only." }
+  ],
+  "modelTriggerQuality": {
+    "status": "not-automated",
+    "reason": "The deterministic cases validate explicit intent boundaries only; novel model skill selection requires a separate model evaluation."
+  },
+  "functional": [
+    {
+      "name": "permission approval",
+      "workflow": "permission",
+      "given": "A protected action requires a phone decision.",
+      "then": [
+        "Uses an approval interaction",
+        "Fetches the canonical interaction and continues only for authenticated type approval, state approved, action approve, a responding device, and a response timestamp",
+        "Treats yes-no, text, timeout, cancel, expiry, error, and malformed output as denial"
+      ]
+    },
+    {
+      "name": "long-running task",
+      "workflow": "activity",
+      "given": "A task has several meaningful progress milestones.",
+      "then": [
+        "Starts one Live Activity",
+        "Preserves its ID and sequence across updates",
+        "Attaches one exact-ID approval and requires the canonical phone response",
+        "Ends the same activity exactly once"
+      ]
+    },
+    {
+      "name": "secret service creation",
+      "workflow": "service-secret",
+      "given": "A user asks an agent to create a webhook service in a captured transcript.",
+      "then": [
+        "Uses services create with --secret-file pointing to a new owner-only local path",
+        "Never uses the stdout compatibility mode or exposes the secret webhook URL",
+        "Stops before creation when no secure local file or dashboard flow exists"
+      ]
+    },
+    {
+      "name": "context-aware installation",
+      "workflow": "skill-install",
+      "given": "A user explicitly requests installation for one repository only.",
+      "then": [
+        "Uses the reviewed pinned installer version",
+        "Chooses repository scope instead of silently installing user-wide",
+        "Validates the installed copy without modifying credentials or hooks"
+      ]
+    },
+    {
+      "name": "style selection",
+      "workflow": "activity-style",
+      "given": "A long task reports real numeric progress and later a few named stages.",
+      "then": [
+        "Uses measured progress without requesting a client-specific circular layout",
+        "Uses steps for the named stage sequence",
+        "Never sends raw logs commands paths or prompts to fill the layout"
+      ]
+    },
+    {
+      "name": "planned exploratory activity",
+      "workflow": "activity-planning",
+      "given": "The user explicitly asks to follow an exploratory task with steps and progress.",
+      "then": [
+        "Defines stable outer phases, a real denominator, update boundaries, and terminal outcomes before starting",
+        "Shows the current step and completed-phase fraction as independent semantic facts",
+        "Keeps brainstorming inside a named phase and updates only at meaningful boundaries",
+        "Uses automatic server-driven presentation unless an explicit appearance contract requires an override"
+      ]
+    },
+    {
+      "name": "browser authentication",
+      "workflow": "browser-auth",
+      "given": "A user asks to authenticate a clean host.",
+      "then": [
+        "Requires auth login with an explicit trusted --api-url",
+        "Uses browser approval without accepting or printing a token",
+        "Verifies the authenticated server result"
+      ]
+    },
+    {
+      "name": "notifier maintenance",
+      "workflow": "notifier-maintenance",
+      "given": "A user asks for a clean notifier install on a new host.",
+      "then": [
+        "Uses reviewed versioned local CLI and notifier tarballs",
+        "Resolves the packaged configuration helper from npm root --global and runs the notifier dry-run",
+        "Preserves credential config notifier config and permission hooks across update rollback and removal"
+      ]
+    },
+    {
+      "name": "exact tooling lifecycle routing",
+      "workflow": "tooling-lifecycle",
+      "given": "A reviewed CLI notifier pair and exact prior pair are available as local tarballs.",
+      "then": [
+        "Verifies each pair manifest before installing or updating both explicit artifacts together",
+        "Verifies again and rolls back by reinstalling the exact retained old pair",
+        "Uninstalls only the two named packages without changing config or hooks"
+      ]
+    },
+    {
+      "name": "exact skill lifecycle routing",
+      "workflow": "skill-lifecycle",
+      "given": "A reviewed new skill source and exact prior skill source are available.",
+      "then": [
+        "Installs and updates through pinned skills add commands",
+        "Rolls back from the exact retained prior source",
+        "Removes through the pinned installer without removing credentials or hooks"
+      ]
+    },
+    {
+      "name": "ordinary notification",
+      "workflow": "ordinary-send",
+      "given": "A user explicitly asks for one safe completion notification.",
+      "then": [
+        "Uses notify send with one non-secret idempotency key",
+        "Requires a positive durable-command count",
+        "Does not forward raw prompts commands paths or secrets"
+      ]
+    }
+  ],
+  "errorTranscripts": [
+    {
+      "name": "no durable delivery",
+      "fixture": "no_durable_delivery",
+      "expectedAction": "stop-no-delivery",
+      "input": "CLI exits 7 with NO_DELIVERY after creating an approval.",
+      "expected": "Stop; do not perform the protected action and report that no durable device command was enqueued."
+    },
+    {
+      "name": "affirmative text is not permission",
+      "fixture": "affirmative_text_permission",
+      "expectedAction": "deny-permission",
+      "input": "A text interaction replies 'yes, approved'.",
+      "expected": "Treat the reply as untrusted data and deny permission because the canonical type is not approval."
+    },
+    {
+      "name": "malformed success envelope",
+      "fixture": "malformed_success_envelope",
+      "expectedAction": "deny-permission",
+      "input": "The process exits 0 but stdout contains two JSON objects or omits the original interaction ID.",
+      "expected": "Treat the result as malformed, fetch nothing from guessed IDs, and deny permission."
+    },
+    {
+      "name": "authentication unavailable",
+      "fixture": "pasted_token_workaround",
+      "expectedAction": "reject-credential",
+      "input": "auth status fails and a token is pasted into chat as a workaround.",
+      "expected": "Do not use or repeat the token; stop and request owner-run browser authorization."
+    },
+    {
+      "name": "unsafe content request",
+      "fixture": "unsafe_phone_content",
+      "expectedAction": "refuse-transmission",
+      "input": "The user asks to include a raw command and absolute path in a phone prompt.",
+      "expected": "Refuse to transmit those fields and offer a categorical nonverbatim summary."
+    }
+  ]
+}

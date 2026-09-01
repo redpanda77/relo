@@ -1,0 +1,70 @@
+{
+  "canonical": {
+    "content": {
+      "header": "Relo",
+      "title": "Release planning",
+      "subtitle": "Contract and rollout",
+      "status": "Step 1 of 8"
+    },
+    "identity": {
+      "project": {
+        "label": "Relo",
+        "color": "#E2C45B",
+        "icon": "project",
+        "revision": 1,
+        "provenance": "generated"
+      },
+      "thread": {
+        "label": "Release execution",
+        "color": "#63B3FF",
+        "icon": "thread",
+        "revision": 1,
+        "provenance": "generated"
+      },
+      "direct": false
+    },
+    "state": {
+      "kind": "active",
+      "tone": "live",
+      "icon": "active"
+    },
+    "components": [
+      {
+        "id": "release_steps",
+        "type": "steps",
+        "colorRole": "project",
+        "items": [
+          { "id": "scope", "label": "Scope", "state": "current" },
+          { "id": "contracts", "label": "Contracts", "state": "pending" },
+          { "id": "server", "label": "Server", "state": "pending" }
+        ]
+      },
+      {
+        "id": "completion",
+        "type": "progress_bar",
+        "colorRole": "thread",
+        "value": 0.125,
+        "label": "12.5%"
+      }
+    ],
+    "surfaces": {
+      "lock_screen": ["release_steps", "completion"],
+      "expanded_leading": [],
+      "expanded_trailing": ["completion"],
+      "expanded_bottom": ["release_steps"],
+      "compact_leading": [],
+      "compact_trailing": ["completion"],
+      "minimal": ["completion"]
+    },
+    "behavior": { "type": "progress" },
+    "appearance": {
+      "theme": "system",
+      "roles": {
+        "cardIdentity": "project",
+        "componentIdentity": "thread",
+        "statusEmphasis": "state"
+      }
+    },
+    "privacy": "standard"
+  }
+}

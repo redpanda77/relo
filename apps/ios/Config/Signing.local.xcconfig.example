@@ -1,0 +1,6 @@
+// Copy this file to Signing.local.xcconfig. The local file is ignored by Git.
+// Deployment-specific signing and origin values stay local and are ignored by Git.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+RELO_BUNDLE_ID = com.example.relo.notifications
+RELO_APP_GROUP = group.com.example.relo.notifications
+RELO_API_ORIGIN = https:/$()/relo.example.com

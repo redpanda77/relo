@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "order": "newest_first",
+  "items": [
+    {
+      "id": "evd_reconciled_77777777-7777-4777-8777-777777777777",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": "job_22222222-2222-4222-8222-222222222222",
+      "attemptId": null,
+      "deviceId": "dev_33333333-3333-4333-8333-333333333333",
+      "activityId": null,
+      "stage": "reconciled",
+      "stageOrder": 130,
+      "state": "reconciled",
+      "detailCode": "mark_accepted",
+      "serialization": null,
+      "occurredAt": "2026-08-14T12:00:08.000Z"
+    },
+    {
+      "id": "evd_opened_66666666-6666-4666-8666-666666666666",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": null,
+      "attemptId": null,
+      "deviceId": "dev_33333333-3333-4333-8333-333333333333",
+      "activityId": null,
+      "stage": "opened",
+      "stageOrder": 100,
+      "state": "opened",
+      "detailCode": null,
+      "serialization": null,
+      "occurredAt": "2026-08-14T12:00:07.000Z"
+    },
+    {
+      "id": "evd_device_received_55555555-5555-4555-8555-555555555555",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": null,
+      "attemptId": null,
+      "deviceId": "dev_33333333-3333-4333-8333-333333333333",
+      "activityId": null,
+      "stage": "device_received",
+      "stageOrder": 90,
+      "state": "received",
+      "detailCode": null,
+      "serialization": null,
+      "occurredAt": "2026-08-14T12:00:06.000Z"
+    },
+    {
+      "id": "evd_provider_accepted_44444444-4444-4444-8444-444444444444",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": "job_22222222-2222-4222-8222-222222222222",
+      "attemptId": "att_44444444-4444-4444-8444-444444444444",
+      "deviceId": "dev_33333333-3333-4333-8333-333333333333",
+      "activityId": null,
+      "stage": "provider_accepted",
+      "stageOrder": 50,
+      "state": "accepted",
+      "detailCode": "accepted",
+      "serialization": {
+        "canonicalIntent": "sha256:aaaaaaaaaaaa",
+        "deviceProjection": "sha256:bbbbbbbbbbbb",
+        "providerBytes": "sha256:cccccccccccc"
+      },
+      "occurredAt": "2026-08-14T12:00:05.000Z"
+    },
+    {
+      "id": "evd_attempted_44444444-4444-4444-8444-444444444444",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": "job_22222222-2222-4222-8222-222222222222",
+      "attemptId": "att_44444444-4444-4444-8444-444444444444",
+      "deviceId": "dev_33333333-3333-4333-8333-333333333333",
+      "activityId": null,
+      "stage": "attempted",
+      "stageOrder": 40,
+      "state": "recorded",
+      "detailCode": null,
+      "serialization": {
+        "canonicalIntent": "sha256:aaaaaaaaaaaa",
+        "deviceProjection": "sha256:bbbbbbbbbbbb",
+        "providerBytes": "sha256:cccccccccccc"
+      },
+      "occurredAt": "2026-08-14T12:00:04.000Z"
+    },
+    {
+      "id": "evd_queued_22222222-2222-4222-8222-222222222222",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": "job_22222222-2222-4222-8222-222222222222",
+      "attemptId": null,
+      "deviceId": "dev_33333333-3333-4333-8333-333333333333",
+      "activityId": null,
+      "stage": "queued",
+      "stageOrder": 30,
+      "state": "recorded",
+      "detailCode": null,
+      "serialization": {
+        "canonicalIntent": "sha256:aaaaaaaaaaaa",
+        "deviceProjection": "sha256:bbbbbbbbbbbb",
+        "providerBytes": "sha256:cccccccccccc"
+      },
+      "occurredAt": "2026-08-14T12:00:03.000Z"
+    },
+    {
+      "id": "evd_canonicalized_11111111-1111-4111-8111-111111111111",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": null,
+      "attemptId": null,
+      "deviceId": null,
+      "activityId": null,
+      "stage": "canonicalized",
+      "stageOrder": 20,
+      "state": "recorded",
+      "detailCode": null,
+      "serialization": null,
+      "occurredAt": "2026-08-14T12:00:02.000Z"
+    },
+    {
+      "id": "evd_accepted_11111111-1111-4111-8111-111111111111",
+      "notificationId": "ntf_11111111-1111-4111-8111-111111111111",
+      "deliveryId": null,
+      "attemptId": null,
+      "deviceId": null,
+      "activityId": null,
+      "stage": "accepted",
+      "stageOrder": 10,
+      "state": "recorded",
+      "detailCode": null,
+      "serialization": null,
+      "occurredAt": "2026-08-14T12:00:01.000Z"
+    }
+  ],
+  "cursor": null,
+  "hasMore": false
+}

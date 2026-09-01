@@ -1,0 +1,7 @@
+interface:
+  display_name: "Relo Notifications"
+  short_description: "Send self-hosted iPhone notifications and approvals"
+  default_prompt: "Use $relo-notifications to notify my iPhone when this task finishes."
+
+policy:
+  allow_implicit_invocation: true

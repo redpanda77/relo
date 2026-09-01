@@ -1,0 +1,27 @@
+{
+  "generation": 7,
+  "headline": "Approval required",
+  "detail": "Deploy release 42?",
+  "progress": 0.75,
+  "status": "Waiting",
+  "updatedAt": 1786060800,
+  "sequence": 7,
+  "style": "approval",
+  "symbol": "terminal",
+  "accentColor": "#5ED8B7",
+  "privacy": "standard",
+  "expiresAt": 1893456000,
+  "staleAt": 1893454200,
+  "primaryLabel": "Approve",
+  "secondaryLabel": "Deny",
+  "interaction": {
+    "id": "int_11111111-1111-4111-8111-111111111111",
+    "notificationID": "ntf_22222222-2222-4222-8222-222222222222",
+    "targetDeviceID": "dev_33333333-3333-4333-8333-333333333333",
+    "accountID": "acc_44444444-4444-4444-8444-444444444444",
+    "kind": "approval",
+    "state": "pending",
+    "credential": "0u2tSi3mKvkvpsrDftHtnt2uCAVECXw2A0vgumkw5ho",
+    "expiresAtUnixSeconds": 1893456000
+  }
+}

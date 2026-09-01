@@ -1,0 +1,65 @@
+import type { DashboardBootstrap } from "@/app/bootstrap"
+
+export const loadAccountPage = () =>
+  import("@/features/account/account-page").then((module) => ({
+    default: module.AccountPage,
+  }))
+
+export const loadConnectionsFeature = () =>
+  import("@/features/connections/connections-feature").then((module) => ({
+    default: module.ConnectionsFeature,
+  }))
+
+export const loadDocumentationPage = () =>
+  import("@/features/docs/documentation-page").then((module) => ({
+    default: module.DocumentationPage,
+  }))
+
+export const loadInboxFeature = () =>
+  import("@/features/inbox/inbox-feature").then((module) => ({
+    default: module.InboxFeature,
+  }))
+
+export const loadProjectsPage = () =>
+  import("@/features/projects/projects-page").then((module) => ({
+    default: module.ProjectsPage,
+  }))
+
+export const loadActivityHistoryPage = () =>
+  import("@/features/test-lab/activity-history-page").then((module) => ({
+    default: module.ActivityHistoryPage,
+  }))
+
+export const loadTestLabPage = () =>
+  import("@/features/test-lab/test-lab-page").then((module) => ({
+    default: module.TestLabPage,
+  }))
+
+export function preloadDashboardPage(bootstrap: DashboardBootstrap) {
+  switch (bootstrap.kind) {
+    case "auth":
+      return Promise.resolve()
+    case "test-lab":
+      return loadTestLabPage()
+    case "activity-history":
+      return loadActivityHistoryPage()
+    case "connections-services":
+    case "connections-pairing":
+    case "connections-phones":
+    case "connections-clients":
+      return loadConnectionsFeature()
+    case "account":
+      return loadAccountPage()
+    case "docs":
+      return loadDocumentationPage()
+    case "inbox-overview":
+    case "notification-history":
+    case "delivery-history":
+    case "notification-detail":
+      return loadInboxFeature()
+    case "projects":
+      return loadProjectsPage()
+    default:
+      return bootstrap satisfies never
+  }
+}

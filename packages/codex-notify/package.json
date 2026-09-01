@@ -1,0 +1,27 @@
+{
+  "name": "@relo/codex-notify",
+  "version": "0.7.17",
+  "private": true,
+  "description": "Codex lifecycle hooks and terminal reconciliation for Relo Live Activities",
+  "type": "module",
+  "files": [
+    "bin",
+    "src",
+    "scripts",
+    "LICENSE",
+    "README.md"
+  ],
+  "bin": {
+    "relo-codex-notify": "./bin/relo-codex-notify.mjs",
+    "relo-codex-hook": "./bin/relo-codex-hook.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/*.mjs && node --check bin/*.mjs && node --check scripts/*.mjs",
+    "prepack": "npm run check && node scripts/prepack-check.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0"
+}

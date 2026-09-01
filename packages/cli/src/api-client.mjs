@@ -1,0 +1,227 @@
+import { ApiError, NetworkError } from "./errors.mjs";
+
+function retryAfterSeconds(response) {
+  const value = response.headers.get("retry-after");
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  const date = Date.parse(value);
+  return Number.isNaN(date) ? undefined : Math.max(0, Math.ceil((date - Date.now()) / 1_000));
+}
+
+export class ReloApiClient {
+  constructor({ apiUrl, token, fetchImpl = globalThis.fetch, version = "0.7.17" }) {
+    this.apiUrl = String(apiUrl).replace(/\/$/, "");
+    this.token = token;
+    this.fetchImpl = fetchImpl;
+    this.version = version;
+  }
+
+  async request(
+    method,
+    path,
+    { body, idempotencyKey, query, authenticated = true, timeoutMs = 30_000 } = {},
+  ) {
+    const url = new URL(`${this.apiUrl}${path}`);
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value !== undefined) url.searchParams.set(key, String(value));
+    }
+    const headers = {
+      accept: "application/json",
+      "user-agent": `reloctl/${this.version}`,
+    };
+    if (authenticated) headers.authorization = `Bearer ${this.token}`;
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
+
+    let response;
+    try {
+      response = await this.fetchImpl(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      throw new NetworkError(error instanceof Error ? error.message : "Unable to reach Relo API");
+    }
+
+    const payload = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      const apiError = payload?.error;
+      const retryAfter = retryAfterSeconds(response);
+      throw new ApiError(
+        typeof apiError?.message === "string"
+          ? apiError.message
+          : typeof apiError === "string"
+            ? apiError
+            : `Relo API returned HTTP ${response.status}`,
+        {
+          status: response.status,
+          code:
+            typeof apiError?.code === "string"
+              ? apiError.code
+              : typeof apiError === "string"
+                ? apiError.toUpperCase()
+                : "API_ERROR",
+          details: {
+            ...(apiError?.details ?? {}),
+            ...(Number.isFinite(payload?.intervalSeconds)
+              ? { intervalSeconds: payload.intervalSeconds }
+              : {}),
+            ...(retryAfter === undefined ? {} : { retryAfterSeconds: retryAfter }),
+          },
+        },
+      );
+    }
+    return payload ?? {};
+  }
+
+  startDeviceAuthorization(body) {
+    return this.request("POST", "/api/device-authorizations/start", {
+      body,
+      authenticated: false,
+    });
+  }
+
+  pollDeviceAuthorization(deviceCode) {
+    return this.request("POST", "/api/device-authorizations/token", {
+      body: { deviceCode },
+      authenticated: false,
+    });
+  }
+
+  authStatus() {
+    return this.request("GET", "/api/clients/self");
+  }
+
+  revokeAuth() {
+    return this.request("DELETE", "/api/clients/self");
+  }
+
+  sendNotification(body, idempotencyKey) {
+    return this.request("POST", "/api/notifications", { body, idempotencyKey });
+  }
+
+  withdrawNotification(id, idempotencyKey) {
+    return this.request("POST", `/api/notifications/${encodeURIComponent(id)}/withdraw`, {
+      body: {},
+      idempotencyKey,
+    });
+  }
+
+  createInteraction(body, idempotencyKey) {
+    return this.request("POST", "/api/interactions", { body, idempotencyKey });
+  }
+
+  getInteraction(id) {
+    return this.request("GET", `/api/interactions/${encodeURIComponent(id)}`);
+  }
+
+  waitForInteraction(id, timeoutSeconds) {
+    return this.request("GET", `/api/interactions/${encodeURIComponent(id)}/wait`, {
+      query: { timeoutSeconds },
+      timeoutMs: (timeoutSeconds + 5) * 1_000,
+    });
+  }
+
+  cancelInteraction(id) {
+    return this.request("POST", `/api/interactions/${encodeURIComponent(id)}/cancel`, {
+      body: {},
+    });
+  }
+
+  startActivity(body, idempotencyKey) {
+    return this.request("POST", "/api/live-activities", { body, idempotencyKey });
+  }
+
+  resolveActivity(resolver) {
+    const body = resolver?.origin !== undefined || resolver?.lifecycle !== undefined || resolver?.current === true
+      ? resolver
+      : { origin: resolver };
+    return this.request("POST", "/api/live-activities/resolve", { body });
+  }
+
+  createActivityWait(id, body, idempotencyKey) {
+    return this.request("POST", `/api/live-activities/${encodeURIComponent(id)}/wait`, {
+      body,
+      idempotencyKey,
+    });
+  }
+
+  updateActivity(id, body, idempotencyKey) {
+    return this.request("PATCH", `/api/live-activities/${encodeURIComponent(id)}`, {
+      body,
+      idempotencyKey,
+    });
+  }
+
+  heartbeatActivity(id, body) {
+    return this.request("POST", `/api/live-activities/${encodeURIComponent(id)}/heartbeat`, {
+      body,
+    });
+  }
+
+  endActivity(id, body, idempotencyKey) {
+    return this.request("POST", `/api/live-activities/${encodeURIComponent(id)}/end`, {
+      body,
+      idempotencyKey,
+    });
+  }
+
+  getActivity(id) {
+    return this.request("GET", `/api/live-activities/${encodeURIComponent(id)}`);
+  }
+
+  diagnoseActivity(id) {
+    return this.request("GET", `/api/live-activities/${encodeURIComponent(id)}/diagnosis`);
+  }
+
+  listActivities(limit) {
+    return this.request("GET", "/api/live-activities", {
+      ...(limit === undefined ? {} : { query: { limit } }),
+    });
+  }
+
+  reconcileDelivery(id, action) {
+    return this.request("POST", `/api/deliveries/${encodeURIComponent(id)}/reconcile`, {
+      body: { action },
+    });
+  }
+
+  getEvidenceTimeline({ notificationId, limit, cursor } = {}) {
+    return this.request("GET", "/api/evidence/timeline", {
+      query: { notificationId, limit, cursor },
+    });
+  }
+
+  getEvidenceMetrics() {
+    return this.request("GET", "/api/evidence/metrics");
+  }
+
+  listDevices({ limit, cursor } = {}) {
+    return this.request("GET", "/api/devices", {
+      ...(limit === undefined && cursor === undefined ? {} : { query: { limit, cursor } }),
+    });
+  }
+
+  listServices() {
+    return this.request("GET", "/api/services");
+  }
+
+  createService(body) {
+    return this.request("POST", "/api/services", { body });
+  }
+
+  revokeService(id) {
+    return this.request("DELETE", `/api/services/${encodeURIComponent(id)}`);
+  }
+
+  ready() {
+    return this.request("GET", "/health/ready", { authenticated: false });
+  }
+
+  doctor() {
+    return this.request("GET", "/api/doctor");
+  }
+}

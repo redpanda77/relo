@@ -1,0 +1,1649 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		05C697B8CCFA1B04349E220B /* ReloCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		0BE2A7188EDC1E009D16FF84 /* ReloNativeReferenceLiveActivities.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F886943A7C76EA025DF32F7A /* ReloNativeReferenceLiveActivities.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0C0A648EF14ECF68E2D772F0 /* ReloNotificationServiceOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDDD330C980C8AFDFB7BA62 /* ReloNotificationServiceOrchestrator.swift */; };
+		0CA145B64F9BB2014EA1079A /* ReloApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 758295DFC0A0DF0B64B32A98 /* ReloApp.swift */; };
+		13AB6919D128733D24C042B1 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+		1416AB3B2DC3D39FB7A5AD01 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A713156206EF022EA6BC6FAF /* HomeView.swift */; };
+		14206BE154F1334AE790DD6B /* ReloVisualSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E6B8BFBE18FBA906F3BECD /* ReloVisualSystem.swift */; };
+		18C62B46267F77EFC952B4B6 /* ReloNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F9EB7606BCACF6A585841464 /* ReloNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1FE432BCF102C3D115E166F1 /* ImmutablePresentationAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */; };
+		21E4E9546B253ABAFE8F9559 /* ServerEndpointPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D6071F605DF07B46CD92304 /* ServerEndpointPolicy.swift */; };
+		25AA94F10F1DE45FA362F879 /* ReloActivityWire.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1843B209615BE57B0C9DC6D7 /* ReloActivityWire.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		272D71F6F346167DE6B50A6B /* ReloLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F5324346B9B76A8F0C0CCB /* ReloLiveActivityBundle.swift */; };
+		3242EE0C91BF720703A731AA /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
+		326D7608B68B6A089610AAEC /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
+		332C39B850CA788388D170C7 /* ReloLiveActivityResponseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */; };
+		343320EDB58662D8B4BE7A19 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+		38A17316DDDA30E4AFA69FD7 /* ReloCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		3AF18105A32D6929FC317B77 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+		3B67714B4136A21E84DAFE53 /* LiveActivityTokenRegistrationRetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0346481576ADA9A8605C0A57 /* LiveActivityTokenRegistrationRetry.swift */; };
+		405927FF8FE9C22AF97FE736 /* ReloConnectionScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = E31390E0D9D608EBE38CD246 /* ReloConnectionScanner.swift */; };
+		43D74AEA729C97A6BD7AB7B4 /* KeychainRegistrationAttemptStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E759366E8978B5F0DCF1189 /* KeychainRegistrationAttemptStoreTests.swift */; };
+		495ED957F99DAD202067B6AA /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+		49C83E4A54C5A3FB69672D26 /* ContractCodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 860CA29F2CB142AF0016C37A /* ContractCodingTests.swift */; };
+		4BC25D953D5DDC619801037C /* DurableActionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02DD05C426F9AFEC5F77537 /* DurableActionCoordinatorTests.swift */; };
+		4D9D00C1C4761F05188A7E04 /* ReloNotificationEnvelopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 818F433322905D571F2032E7 /* ReloNotificationEnvelopeTests.swift */; };
+		5002A189054943957CAC0285 /* MobileAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6CF2AA197732BEFD6105410 /* MobileAPIClient.swift */; };
+		55CF934D5E4F4D295A961B0F /* HTTPInboxDataSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C9D94939419E92E8202162 /* HTTPInboxDataSource.swift */; };
+		59EA0F9ECAF7AA8F383BA177 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E72AF886C05C3E29C11AE6 /* AppModel.swift */; };
+		5C5A8979F1D74E5560FDC063 /* ReloLiveActivityResponseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */; };
+		65C24CB68708CFA2F62D74DB /* ReloActivityResponse.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E196CB4D2154A4A41F62B0CC /* ReloActivityResponse.framework */; };
+		6741BD94712E2C358C1FFD86 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1753A4C675BE8FC519CA587E /* PrivacyInfo.xcprivacy */; };
+		6C15C7B0BAB8E0F757BFD395 /* PreviewData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A936B72CD8718CEFFC2D116 /* PreviewData.swift */; };
+		6DDAD3DB4512AC5FFB79DA0E /* InboxSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5DBE05D73690B38D39A4C10 /* InboxSyncEngineTests.swift */; };
+		7440EA6FF8FEDAEFA1E00AE0 /* ImmutablePresentationAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */; };
+		74FE5B3CFC4BB29CDC0FE955 /* InboxSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D520FD3195268ACEC0D84092 /* InboxSyncEngine.swift */; };
+		79C32596059D9F6C5FE91BD1 /* DeviceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DCDB0D8D4E0E37CF23DEBF3 /* DeviceIdentity.swift */; };
+		7CBCB34A3CB7ACA264C95CA2 /* ReloLiveActivityResponseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */; };
+		821F906757693C1CD9AC4522 /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
+		87220874AA73F6444585CEE0 /* InboxHierarchyProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB964E5DE01A25B46B4F1E83 /* InboxHierarchyProjection.swift */; };
+		89A0F22ACA054321CDBA309C /* ReloNativeReferenceHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E920670248C07802298BB49 /* ReloNativeReferenceHost.swift */; };
+		8AA42703D6DDBEB6188F6B47 /* ReloNotificationEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D2EC46F47F0AC943FDC8217 /* ReloNotificationEnvelope.swift */; };
+		8DF4944DB79C9473B0BA932D /* ReloLiveActivityResponseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */; };
+		8FCD1C5950C656940BE0EC31 /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
+		9594B0CC9E28AB9D2E2E6CFC /* ActivityContextCodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E4BD9BB9FFDAC7E5C603FE /* ActivityContextCodingTests.swift */; };
+		96319ABA6D7BDFE40DC1B3E8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 081621694A1F8E6B7FFEBC03 /* PrivacyInfo.xcprivacy */; };
+		9658F039D005A39C2F69DBD3 /* delivery-evidence-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = 1B0B8BF9990FA11070DCFE25 /* delivery-evidence-v1.json */; };
+		96A1BF1CD1C9399CC9832788 /* ImmutablePresentationAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */; };
+		985FD27913FDE381EBEE7EEE /* LiveActivityTokenRegistrationRetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95FF79AF77A9CE0FA5AA3FAB /* LiveActivityTokenRegistrationRetryTests.swift */; };
+		9C5098FBCF9AB49EE88AC128 /* ReloCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		9DC032D16C9CC1225704C984 /* NotificationDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71C521FE331576862529F613 /* NotificationDetailView.swift */; };
+		9EE5827375192BB0A04F1E3C /* ReloLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F48DC575595D5661ABEB471 /* ReloLiveActivityWidget.swift */; };
+		9FAFEB36E78E6F30A4D147E0 /* MobileAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A079E25B49D3EB69C8FF945 /* MobileAPIClientTests.swift */; };
+		A00FEFB10B7A43D7E53C67A3 /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
+		A460191D51CF2C5556E60C1A /* ActivityItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD037243D15238009457C7C3 /* ActivityItem.swift */; };
+		A711D9EC1D622AC54F19AA24 /* BackgroundLiveActivityTokenRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F40C0B813A93000EE86AD8F7 /* BackgroundLiveActivityTokenRegistrar.swift */; };
+		AA795FCB80AA70C84F7349AC /* KeychainDeviceCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2434DB2BD346AA9B302F4B9A /* KeychainDeviceCredentialStore.swift */; };
+		AAC1B5DB9C4E9B1B32123855 /* ReloLiveActivityResponseIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */; };
+		AAF2DE74225A8DDB397CED84 /* ReloLiveActivities.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EFCFC1B6074A0B38E3DD4DB0 /* ReloLiveActivities.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AC522E3B5E3129988D3D7009 /* ImmutablePresentationAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */; };
+		B290855F46969FB84420BC96 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A503B8449C8F8E37436F145D /* Assets.xcassets */; };
+		B2BF740EE1D19E6E8B52B2AB /* AccountScopedInboxCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BA0885893602F28202A35BE /* AccountScopedInboxCacheTests.swift */; };
+		B38FC937D908735875CDB729 /* DurableActionStores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4711A795F7E2696697D55E44 /* DurableActionStores.swift */; };
+		BCCF4B1A61FF19277D63587D /* ReloActivityResponse.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = E196CB4D2154A4A41F62B0CC /* ReloActivityResponse.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		BDB196E4E14B720C2A78E1EC /* ReloNotificationEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D2EC46F47F0AC943FDC8217 /* ReloNotificationEnvelope.swift */; };
+		BF3AA379CB289BEF29F9E815 /* ReloNotificationServiceOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADDDD330C980C8AFDFB7BA62 /* ReloNotificationServiceOrchestrator.swift */; };
+		BF7F0DA56ECFC12E2ADE4DAC /* ReloLiveActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F48DC575595D5661ABEB471 /* ReloLiveActivityWidget.swift */; };
+		C69D0B78C3CCBEEB66C9121E /* ReloSignalField.metal in Sources */ = {isa = PBXBuildFile; fileRef = 641BC96BA52346A15D4CB2A2 /* ReloSignalField.metal */; };
+		C6A5225EE2FF9C6102B4E4DF /* BundleModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7949738CA04B42B7332502 /* BundleModule.swift */; };
+		D470CDF200E68E03F7C71170 /* LiveActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CCFCC21D5E9518044EF054D /* LiveActivityPresentation.swift */; };
+		D4C0681B118728874928D0B6 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+		DD7123E88216A8E9D239F38C /* ReloActivityWire.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1843B209615BE57B0C9DC6D7 /* ReloActivityWire.framework */; };
+		E052DDA391DFE2176226517B /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 432F70966534529AA2A31700 /* NotificationService.swift */; };
+		E5EF9297883CFCF427C14952 /* InboxHierarchyProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F1444A1D039D9DF1DBA9430 /* InboxHierarchyProjectionTests.swift */; };
+		EDC8597B0CC7539DDF384E4E /* InboxPresentationProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE23F575A8D5540F425697CC /* InboxPresentationProjection.swift */; };
+		EFAC632CE0509656FC38D8B8 /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
+		F0C5134A8EC5D8988EE28747 /* ReloLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F5324346B9B76A8F0C0CCB /* ReloLiveActivityBundle.swift */; };
+		F0FA3D67E1A38954C85DC329 /* InboxHierarchyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E03179FF41465EF9B34717A /* InboxHierarchyView.swift */; };
+		F34837414FEDAB9BB49D75FC /* FileInboxCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D8026B504C8A3596DA7E271 /* FileInboxCache.swift */; };
+		F6C20E342AF6C4FC4A533EDA /* activitykit-content-state-interaction-generation.json in Resources */ = {isa = PBXBuildFile; fileRef = 8FF931C6AD0E5BE5EAC4C57F /* activitykit-content-state-interaction-generation.json */; };
+		F85DB4D074CC50CF0DE2380F /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+		FB95F289761AA466AD85C008 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0ECF2F18F40230C4055A1BA8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		2F1A34080DEAA106B330BD1D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 082A88F80D4ACE28712B68ED;
+			remoteInfo = ReloActivityResponse;
+		};
+		3D2471F7C9EA885C8F655893 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		488A3F3BD1146E2123E1788B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		51CACE94A918B0E0FC53098F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		6257E59843F819E508C2CC25 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		8B4EC781A09B82FC9580CA48 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		A10809F39FB6BC4BA24BFCFD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 543A4E1EDA6684D4E1342F16;
+			remoteInfo = ReloActivityWire;
+		};
+		A77DBB42D903C6CE67FDB62B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BD78FAFF1D4084D4FAEBAA7D;
+			remoteInfo = ReloNotificationService;
+		};
+		C195C92B4CDB431A64CA208A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D98FD56FB1C969CEB5731FBE;
+			remoteInfo = ReloLiveActivities;
+		};
+		C6D835C44191317C8DB02380 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D1DEB32BA0B8BBC2EE3B46F7;
+			remoteInfo = ReloCore;
+		};
+		F1DE1373F6AD38C54B5E435C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09CD5160E3EB020B46F87235 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 3E1A079ECD715A8F9B5388EE;
+			remoteInfo = ReloNativeReferenceLiveActivities;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		79D3188C522CDB5F04308E87 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				18C62B46267F77EFC952B4B6 /* ReloNotificationService.appex in Embed Foundation Extensions */,
+				AAF2DE74225A8DDB397CED84 /* ReloLiveActivities.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8F3B4A9F3C27C548D41E61D5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0BE2A7188EDC1E009D16FF84 /* ReloNativeReferenceLiveActivities.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BFAB890EEB07572E1C5FF3C1 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				38A17316DDDA30E4AFA69FD7 /* ReloCore.framework in Embed Frameworks */,
+				25AA94F10F1DE45FA362F879 /* ReloActivityWire.framework in Embed Frameworks */,
+				BCCF4B1A61FF19277D63587D /* ReloActivityResponse.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E68DDE79BC076942433ECE78 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				05C697B8CCFA1B04349E220B /* ReloCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F810790711DB2C66ACBE4838 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				9C5098FBCF9AB49EE88AC128 /* ReloCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0346481576ADA9A8605C0A57 /* LiveActivityTokenRegistrationRetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityTokenRegistrationRetry.swift; sourceTree = "<group>"; };
+		081621694A1F8E6B7FFEBC03 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		0E759366E8978B5F0DCF1189 /* KeychainRegistrationAttemptStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainRegistrationAttemptStoreTests.swift; sourceTree = "<group>"; };
+		10464FD022145DB118675226 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
+		1753A4C675BE8FC519CA587E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		1843B209615BE57B0C9DC6D7 /* ReloActivityWire.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ReloActivityWire.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		1B0B8BF9990FA11070DCFE25 /* delivery-evidence-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "delivery-evidence-v1.json"; sourceTree = "<group>"; };
+		1D8026B504C8A3596DA7E271 /* FileInboxCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileInboxCache.swift; sourceTree = "<group>"; };
+		1F1444A1D039D9DF1DBA9430 /* InboxHierarchyProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxHierarchyProjectionTests.swift; sourceTree = "<group>"; };
+		1F48DC575595D5661ABEB471 /* ReloLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloLiveActivityWidget.swift; sourceTree = "<group>"; };
+		2434DB2BD346AA9B302F4B9A /* KeychainDeviceCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainDeviceCredentialStore.swift; sourceTree = "<group>"; };
+		2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ReloCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		3A2C0A9FE1295DA0F64275D6 /* ReloCoreTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReloCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3D6071F605DF07B46CD92304 /* ServerEndpointPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEndpointPolicy.swift; sourceTree = "<group>"; };
+		42F5324346B9B76A8F0C0CCB /* ReloLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloLiveActivityBundle.swift; sourceTree = "<group>"; };
+		432F70966534529AA2A31700 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		4711A795F7E2696697D55E44 /* DurableActionStores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableActionStores.swift; sourceTree = "<group>"; };
+		4A936B72CD8718CEFFC2D116 /* PreviewData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewData.swift; sourceTree = "<group>"; };
+		4D2EC46F47F0AC943FDC8217 /* ReloNotificationEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloNotificationEnvelope.swift; sourceTree = "<group>"; };
+		4E03179FF41465EF9B34717A /* InboxHierarchyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxHierarchyView.swift; sourceTree = "<group>"; };
+		4E93D9166FDE77DE33E42E7D /* ReloNotificationSupportTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReloNotificationSupportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		641BC96BA52346A15D4CB2A2 /* ReloSignalField.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = ReloSignalField.metal; sourceTree = "<group>"; };
+		66E6B8BFBE18FBA906F3BECD /* ReloVisualSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloVisualSystem.swift; sourceTree = "<group>"; };
+		6DCDB0D8D4E0E37CF23DEBF3 /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
+		71C521FE331576862529F613 /* NotificationDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDetailView.swift; sourceTree = "<group>"; };
+		730111F33C84E3790E337FFB /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		758295DFC0A0DF0B64B32A98 /* ReloApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloApp.swift; sourceTree = "<group>"; };
+		79C9D94939419E92E8202162 /* HTTPInboxDataSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPInboxDataSource.swift; sourceTree = "<group>"; };
+		7E920670248C07802298BB49 /* ReloNativeReferenceHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloNativeReferenceHost.swift; sourceTree = "<group>"; };
+		818F433322905D571F2032E7 /* ReloNotificationEnvelopeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloNotificationEnvelopeTests.swift; sourceTree = "<group>"; };
+		860CA29F2CB142AF0016C37A /* ContractCodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractCodingTests.swift; sourceTree = "<group>"; };
+		8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloActivityAttributes.swift; sourceTree = "<group>"; };
+		8BA0885893602F28202A35BE /* AccountScopedInboxCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountScopedInboxCacheTests.swift; sourceTree = "<group>"; };
+		8CCFCC21D5E9518044EF054D /* LiveActivityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityPresentation.swift; sourceTree = "<group>"; };
+		8FF931C6AD0E5BE5EAC4C57F /* activitykit-content-state-interaction-generation.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "activitykit-content-state-interaction-generation.json"; sourceTree = "<group>"; };
+		95FF79AF77A9CE0FA5AA3FAB /* LiveActivityTokenRegistrationRetryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityTokenRegistrationRetryTests.swift; sourceTree = "<group>"; };
+		9A079E25B49D3EB69C8FF945 /* MobileAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAPIClientTests.swift; sourceTree = "<group>"; };
+		A503B8449C8F8E37436F145D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A713156206EF022EA6BC6FAF /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		ADDDD330C980C8AFDFB7BA62 /* ReloNotificationServiceOrchestrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloNotificationServiceOrchestrator.swift; sourceTree = "<group>"; };
+		AE23F575A8D5540F425697CC /* InboxPresentationProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxPresentationProjection.swift; sourceTree = "<group>"; };
+		AE7949738CA04B42B7332502 /* BundleModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleModule.swift; sourceTree = "<group>"; };
+		B1E72AF886C05C3E29C11AE6 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		C02DD05C426F9AFEC5F77537 /* DurableActionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableActionCoordinatorTests.swift; sourceTree = "<group>"; };
+		C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloLiveActivityResponseIntent.swift; sourceTree = "<group>"; };
+		CD037243D15238009457C7C3 /* ActivityItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityItem.swift; sourceTree = "<group>"; };
+		D126DF71146E7C0B4968EF49 /* ReloNativeReferenceHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ReloNativeReferenceHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D4E4BD9BB9FFDAC7E5C603FE /* ActivityContextCodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityContextCodingTests.swift; sourceTree = "<group>"; };
+		D520FD3195268ACEC0D84092 /* InboxSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSyncEngine.swift; sourceTree = "<group>"; };
+		D5DBE05D73690B38D39A4C10 /* InboxSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSyncEngineTests.swift; sourceTree = "<group>"; };
+		D6CF2AA197732BEFD6105410 /* MobileAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileAPIClient.swift; sourceTree = "<group>"; };
+		D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmutablePresentationAssetCache.swift; sourceTree = "<group>"; };
+		DB964E5DE01A25B46B4F1E83 /* InboxHierarchyProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxHierarchyProjection.swift; sourceTree = "<group>"; };
+		DF815C558AC8D84E87387D12 /* Relo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Relo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E196CB4D2154A4A41F62B0CC /* ReloActivityResponse.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ReloActivityResponse.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		E31390E0D9D608EBE38CD246 /* ReloConnectionScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloConnectionScanner.swift; sourceTree = "<group>"; };
+		EFCFC1B6074A0B38E3DD4DB0 /* ReloLiveActivities.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ReloLiveActivities.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F40C0B813A93000EE86AD8F7 /* BackgroundLiveActivityTokenRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundLiveActivityTokenRegistrar.swift; sourceTree = "<group>"; };
+		F886943A7C76EA025DF32F7A /* ReloNativeReferenceLiveActivities.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ReloNativeReferenceLiveActivities.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F9EB7606BCACF6A585841464 /* ReloNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ReloNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		0E88E0B1ACF771300D9A304B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F85DB4D074CC50CF0DE2380F /* ReloCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		28BA0D9BA789672FD78AA275 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				495ED957F99DAD202067B6AA /* ReloCore.framework in Frameworks */,
+				DD7123E88216A8E9D239F38C /* ReloActivityWire.framework in Frameworks */,
+				65C24CB68708CFA2F62D74DB /* ReloActivityResponse.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2FA5E12939BFE41FAABFE602 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				343320EDB58662D8B4BE7A19 /* ReloCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		542FBBB4AECC8ED904DEA4E9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FB95F289761AA466AD85C008 /* ReloCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		813843F71667AE41C3C1001F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D4C0681B118728874928D0B6 /* ReloCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8ADBC7F249C5A8C3C38841D9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3AF18105A32D6929FC317B77 /* ReloCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F3BF528F3C59CF774F75CCBF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				13AB6919D128733D24C042B1 /* ReloCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0C39460C8804010AE3FDCA67 /* SharedActivity */ = {
+			isa = PBXGroup;
+			children = (
+				D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */,
+				8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */,
+				C3E67FB49F34022418FC4E3F /* ReloLiveActivityResponseIntent.swift */,
+			);
+			name = SharedActivity;
+			path = Sources/SharedActivity;
+			sourceTree = "<group>";
+		};
+		19116E2453EB8904F3A91B9E /* NotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				432F70966534529AA2A31700 /* NotificationService.swift */,
+				081621694A1F8E6B7FFEBC03 /* PrivacyInfo.xcprivacy */,
+			);
+			name = NotificationService;
+			path = Sources/NotificationService;
+			sourceTree = "<group>";
+		};
+		245B273D2E2B9CA27BE2ABA0 /* ReloNotificationSupportTests */ = {
+			isa = PBXGroup;
+			children = (
+				818F433322905D571F2032E7 /* ReloNotificationEnvelopeTests.swift */,
+			);
+			name = ReloNotificationSupportTests;
+			path = Tests/ReloNotificationSupportTests;
+			sourceTree = "<group>";
+		};
+		2EA2D331B7D9D907E41A72B7 = {
+			isa = PBXGroup;
+			children = (
+				81C921A7CE9D68A3F185D70B /* Config */,
+				8808B2E6A424EBBA8BC5D095 /* LiveActivities */,
+				BCB6A656F87D11CEBF563A8B /* NativeReferenceHost */,
+				19116E2453EB8904F3A91B9E /* NotificationService */,
+				5AB88EAA1A7F7149D94EF262 /* NotificationSupport */,
+				80AEF6B455CA944059D1FAAB /* ReloApp */,
+				CB0879478E93857A8742ACAE /* ReloCore */,
+				56D1B9EA9445D75265099A6E /* ReloCoreTests */,
+				245B273D2E2B9CA27BE2ABA0 /* ReloNotificationSupportTests */,
+				0C39460C8804010AE3FDCA67 /* SharedActivity */,
+				89FA8E6D69C78B8FA77927F5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		56D1B9EA9445D75265099A6E /* ReloCoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				8BA0885893602F28202A35BE /* AccountScopedInboxCacheTests.swift */,
+				D4E4BD9BB9FFDAC7E5C603FE /* ActivityContextCodingTests.swift */,
+				AE7949738CA04B42B7332502 /* BundleModule.swift */,
+				860CA29F2CB142AF0016C37A /* ContractCodingTests.swift */,
+				C02DD05C426F9AFEC5F77537 /* DurableActionCoordinatorTests.swift */,
+				1F1444A1D039D9DF1DBA9430 /* InboxHierarchyProjectionTests.swift */,
+				D5DBE05D73690B38D39A4C10 /* InboxSyncEngineTests.swift */,
+				0E759366E8978B5F0DCF1189 /* KeychainRegistrationAttemptStoreTests.swift */,
+				95FF79AF77A9CE0FA5AA3FAB /* LiveActivityTokenRegistrationRetryTests.swift */,
+				9A079E25B49D3EB69C8FF945 /* MobileAPIClientTests.swift */,
+				ADF741BA53F1A842B19CA391 /* Fixtures */,
+			);
+			name = ReloCoreTests;
+			path = Tests/ReloCoreTests;
+			sourceTree = "<group>";
+		};
+		5AB88EAA1A7F7149D94EF262 /* NotificationSupport */ = {
+			isa = PBXGroup;
+			children = (
+				4D2EC46F47F0AC943FDC8217 /* ReloNotificationEnvelope.swift */,
+				ADDDD330C980C8AFDFB7BA62 /* ReloNotificationServiceOrchestrator.swift */,
+			);
+			name = NotificationSupport;
+			path = Sources/NotificationSupport;
+			sourceTree = "<group>";
+		};
+		80AEF6B455CA944059D1FAAB /* ReloApp */ = {
+			isa = PBXGroup;
+			children = (
+				B1E72AF886C05C3E29C11AE6 /* AppModel.swift */,
+				A503B8449C8F8E37436F145D /* Assets.xcassets */,
+				F40C0B813A93000EE86AD8F7 /* BackgroundLiveActivityTokenRegistrar.swift */,
+				A713156206EF022EA6BC6FAF /* HomeView.swift */,
+				4E03179FF41465EF9B34717A /* InboxHierarchyView.swift */,
+				AE23F575A8D5540F425697CC /* InboxPresentationProjection.swift */,
+				71C521FE331576862529F613 /* NotificationDetailView.swift */,
+				4A936B72CD8718CEFFC2D116 /* PreviewData.swift */,
+				1753A4C675BE8FC519CA587E /* PrivacyInfo.xcprivacy */,
+				758295DFC0A0DF0B64B32A98 /* ReloApp.swift */,
+				E31390E0D9D608EBE38CD246 /* ReloConnectionScanner.swift */,
+				641BC96BA52346A15D4CB2A2 /* ReloSignalField.metal */,
+				66E6B8BFBE18FBA906F3BECD /* ReloVisualSystem.swift */,
+			);
+			name = ReloApp;
+			path = Sources/ReloApp;
+			sourceTree = "<group>";
+		};
+		81C921A7CE9D68A3F185D70B /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				730111F33C84E3790E337FFB /* Debug.xcconfig */,
+				10464FD022145DB118675226 /* Release.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		8808B2E6A424EBBA8BC5D095 /* LiveActivities */ = {
+			isa = PBXGroup;
+			children = (
+				42F5324346B9B76A8F0C0CCB /* ReloLiveActivityBundle.swift */,
+				1F48DC575595D5661ABEB471 /* ReloLiveActivityWidget.swift */,
+			);
+			name = LiveActivities;
+			path = Sources/LiveActivities;
+			sourceTree = "<group>";
+		};
+		89FA8E6D69C78B8FA77927F5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				DF815C558AC8D84E87387D12 /* Relo.app */,
+				E196CB4D2154A4A41F62B0CC /* ReloActivityResponse.framework */,
+				1843B209615BE57B0C9DC6D7 /* ReloActivityWire.framework */,
+				2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */,
+				3A2C0A9FE1295DA0F64275D6 /* ReloCoreTests.xctest */,
+				EFCFC1B6074A0B38E3DD4DB0 /* ReloLiveActivities.appex */,
+				D126DF71146E7C0B4968EF49 /* ReloNativeReferenceHost.app */,
+				F886943A7C76EA025DF32F7A /* ReloNativeReferenceLiveActivities.appex */,
+				F9EB7606BCACF6A585841464 /* ReloNotificationService.appex */,
+				4E93D9166FDE77DE33E42E7D /* ReloNotificationSupportTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		ADF741BA53F1A842B19CA391 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				8FF931C6AD0E5BE5EAC4C57F /* activitykit-content-state-interaction-generation.json */,
+				1B0B8BF9990FA11070DCFE25 /* delivery-evidence-v1.json */,
+			);
+			path = Fixtures;
+			sourceTree = "<group>";
+		};
+		BCB6A656F87D11CEBF563A8B /* NativeReferenceHost */ = {
+			isa = PBXGroup;
+			children = (
+				7E920670248C07802298BB49 /* ReloNativeReferenceHost.swift */,
+			);
+			name = NativeReferenceHost;
+			path = Sources/NativeReferenceHost;
+			sourceTree = "<group>";
+		};
+		CB0879478E93857A8742ACAE /* ReloCore */ = {
+			isa = PBXGroup;
+			children = (
+				CD037243D15238009457C7C3 /* ActivityItem.swift */,
+				6DCDB0D8D4E0E37CF23DEBF3 /* DeviceIdentity.swift */,
+				4711A795F7E2696697D55E44 /* DurableActionStores.swift */,
+				1D8026B504C8A3596DA7E271 /* FileInboxCache.swift */,
+				79C9D94939419E92E8202162 /* HTTPInboxDataSource.swift */,
+				DB964E5DE01A25B46B4F1E83 /* InboxHierarchyProjection.swift */,
+				D520FD3195268ACEC0D84092 /* InboxSyncEngine.swift */,
+				2434DB2BD346AA9B302F4B9A /* KeychainDeviceCredentialStore.swift */,
+				8CCFCC21D5E9518044EF054D /* LiveActivityPresentation.swift */,
+				0346481576ADA9A8605C0A57 /* LiveActivityTokenRegistrationRetry.swift */,
+				D6CF2AA197732BEFD6105410 /* MobileAPIClient.swift */,
+				3D6071F605DF07B46CD92304 /* ServerEndpointPolicy.swift */,
+			);
+			name = ReloCore;
+			path = Sources/ReloCore;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		082A88F80D4ACE28712B68ED /* ReloActivityResponse */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 20150295E23CD0B9787DBA7D /* Build configuration list for PBXNativeTarget "ReloActivityResponse" */;
+			buildPhases = (
+				89D13F1E3A82BABA3A7E1E27 /* Sources */,
+				F3BF528F3C59CF774F75CCBF /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A46428D7D7F99F6B4D400786 /* PBXTargetDependency */,
+			);
+			name = ReloActivityResponse;
+			packageProductDependencies = (
+			);
+			productName = ReloActivityResponse;
+			productReference = E196CB4D2154A4A41F62B0CC /* ReloActivityResponse.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		3E1A079ECD715A8F9B5388EE /* ReloNativeReferenceLiveActivities */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D1A4A0817F2F895F33F5DBE /* Build configuration list for PBXNativeTarget "ReloNativeReferenceLiveActivities" */;
+			buildPhases = (
+				650A2F436084C6C02A65ECA4 /* Sources */,
+				0E88E0B1ACF771300D9A304B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EA12C850FF3D2B1D68688BBA /* PBXTargetDependency */,
+			);
+			name = ReloNativeReferenceLiveActivities;
+			packageProductDependencies = (
+			);
+			productName = ReloNativeReferenceLiveActivities;
+			productReference = F886943A7C76EA025DF32F7A /* ReloNativeReferenceLiveActivities.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		49C887558D6D138DF29A26BE /* ReloNativeReferenceHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CFD2BDACA636E40E92375B89 /* Build configuration list for PBXNativeTarget "ReloNativeReferenceHost" */;
+			buildPhases = (
+				25F27E1AC6854708D8FDF509 /* Sources */,
+				542FBBB4AECC8ED904DEA4E9 /* Frameworks */,
+				8F3B4A9F3C27C548D41E61D5 /* Embed Foundation Extensions */,
+				F810790711DB2C66ACBE4838 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				756EAEC866C4847ED11999B1 /* PBXTargetDependency */,
+				61FB69BA36FD1F8119102333 /* PBXTargetDependency */,
+			);
+			name = ReloNativeReferenceHost;
+			packageProductDependencies = (
+			);
+			productName = ReloNativeReferenceHost;
+			productReference = D126DF71146E7C0B4968EF49 /* ReloNativeReferenceHost.app */;
+			productType = "com.apple.product-type.application";
+		};
+		543A4E1EDA6684D4E1342F16 /* ReloActivityWire */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4588DC5F3149B77D68538660 /* Build configuration list for PBXNativeTarget "ReloActivityWire" */;
+			buildPhases = (
+				04D68BACCAEA64B9C4979850 /* Sources */,
+				813843F71667AE41C3C1001F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				746322D1DAD5C8E5863B769C /* PBXTargetDependency */,
+			);
+			name = ReloActivityWire;
+			packageProductDependencies = (
+			);
+			productName = ReloActivityWire;
+			productReference = 1843B209615BE57B0C9DC6D7 /* ReloActivityWire.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		69685B054238F2ACA52DBEDC /* Relo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 28419A23C9B6523FB7F268E8 /* Build configuration list for PBXNativeTarget "Relo" */;
+			buildPhases = (
+				9607F2AF51FF4B7F5359392A /* Sources */,
+				B63DA56F3ABE984DC650CDF2 /* Resources */,
+				8ADBC7F249C5A8C3C38841D9 /* Frameworks */,
+				79D3188C522CDB5F04308E87 /* Embed Foundation Extensions */,
+				E68DDE79BC076942433ECE78 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				64E1C20602245A481023C095 /* PBXTargetDependency */,
+				C1F68C0F831741835681DC88 /* PBXTargetDependency */,
+				358DE3BBC77AC066FF367E7E /* PBXTargetDependency */,
+			);
+			name = Relo;
+			packageProductDependencies = (
+			);
+			productName = Relo;
+			productReference = DF815C558AC8D84E87387D12 /* Relo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		7E9BF9C879EF2F24B3210E83 /* ReloNotificationSupportTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 901E8A4D50F374549CB92EEE /* Build configuration list for PBXNativeTarget "ReloNotificationSupportTests" */;
+			buildPhases = (
+				6D735680DE94BE664E83A5C9 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ReloNotificationSupportTests;
+			packageProductDependencies = (
+			);
+			productName = ReloNotificationSupportTests;
+			productReference = 4E93D9166FDE77DE33E42E7D /* ReloNotificationSupportTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		BD78FAFF1D4084D4FAEBAA7D /* ReloNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4C3537A1F570F84286121957 /* Build configuration list for PBXNativeTarget "ReloNotificationService" */;
+			buildPhases = (
+				6230C140A071EF1BD4049C19 /* Sources */,
+				2845F60D5B16A78FA3324DF3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ReloNotificationService;
+			packageProductDependencies = (
+			);
+			productName = ReloNotificationService;
+			productReference = F9EB7606BCACF6A585841464 /* ReloNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		C8E8A57A58B58B21C45544EB /* ReloCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C9D903D328558A94BAFE793B /* Build configuration list for PBXNativeTarget "ReloCoreTests" */;
+			buildPhases = (
+				786B5D7A63AA7331AD5130D7 /* Sources */,
+				3F9DBFA434A2830AB6A9FF1F /* Resources */,
+				28BA0D9BA789672FD78AA275 /* Frameworks */,
+				BFAB890EEB07572E1C5FF3C1 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				146A60D400779FA3B628F9F2 /* PBXTargetDependency */,
+				E3B6A443CF27C355CE2BB740 /* PBXTargetDependency */,
+				BF969295A300A077B4097A14 /* PBXTargetDependency */,
+			);
+			name = ReloCoreTests;
+			packageProductDependencies = (
+			);
+			productName = ReloCoreTests;
+			productReference = 3A2C0A9FE1295DA0F64275D6 /* ReloCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 873C06F6CB635CA3BA20226B /* Build configuration list for PBXNativeTarget "ReloCore" */;
+			buildPhases = (
+				A805A9815DFE3873ED105642 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ReloCore;
+			packageProductDependencies = (
+			);
+			productName = ReloCore;
+			productReference = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		D98FD56FB1C969CEB5731FBE /* ReloLiveActivities */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FF7E5E0A009AE0CE1705CD5 /* Build configuration list for PBXNativeTarget "ReloLiveActivities" */;
+			buildPhases = (
+				58370E67F7DF491ECE337D56 /* Sources */,
+				2FA5E12939BFE41FAABFE602 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AAA678BA2A9147ED776DA6A6 /* PBXTargetDependency */,
+			);
+			name = ReloLiveActivities;
+			packageProductDependencies = (
+			);
+			productName = ReloLiveActivities;
+			productReference = EFCFC1B6074A0B38E3DD4DB0 /* ReloLiveActivities.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		09CD5160E3EB020B46F87235 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					082A88F80D4ACE28712B68ED = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					3E1A079ECD715A8F9B5388EE = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					49C887558D6D138DF29A26BE = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					543A4E1EDA6684D4E1342F16 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					69685B054238F2ACA52DBEDC = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					7E9BF9C879EF2F24B3210E83 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					BD78FAFF1D4084D4FAEBAA7D = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					C8E8A57A58B58B21C45544EB = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					D1DEB32BA0B8BBC2EE3B46F7 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					D98FD56FB1C969CEB5731FBE = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 7663B29915BD3034BDAC563B /* Build configuration list for PBXProject "Relo" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 2EA2D331B7D9D907E41A72B7;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 89FA8E6D69C78B8FA77927F5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */,
+				543A4E1EDA6684D4E1342F16 /* ReloActivityWire */,
+				082A88F80D4ACE28712B68ED /* ReloActivityResponse */,
+				69685B054238F2ACA52DBEDC /* Relo */,
+				BD78FAFF1D4084D4FAEBAA7D /* ReloNotificationService */,
+				D98FD56FB1C969CEB5731FBE /* ReloLiveActivities */,
+				3E1A079ECD715A8F9B5388EE /* ReloNativeReferenceLiveActivities */,
+				49C887558D6D138DF29A26BE /* ReloNativeReferenceHost */,
+				C8E8A57A58B58B21C45544EB /* ReloCoreTests */,
+				7E9BF9C879EF2F24B3210E83 /* ReloNotificationSupportTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		2845F60D5B16A78FA3324DF3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				96319ABA6D7BDFE40DC1B3E8 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3F9DBFA434A2830AB6A9FF1F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F6C20E342AF6C4FC4A533EDA /* activitykit-content-state-interaction-generation.json in Resources */,
+				9658F039D005A39C2F69DBD3 /* delivery-evidence-v1.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B63DA56F3ABE984DC650CDF2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B290855F46969FB84420BC96 /* Assets.xcassets in Resources */,
+				6741BD94712E2C358C1FFD86 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		04D68BACCAEA64B9C4979850 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8FCD1C5950C656940BE0EC31 /* ReloActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		25F27E1AC6854708D8FDF509 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1FE432BCF102C3D115E166F1 /* ImmutablePresentationAssetCache.swift in Sources */,
+				3242EE0C91BF720703A731AA /* ReloActivityAttributes.swift in Sources */,
+				7CBCB34A3CB7ACA264C95CA2 /* ReloLiveActivityResponseIntent.swift in Sources */,
+				89A0F22ACA054321CDBA309C /* ReloNativeReferenceHost.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		58370E67F7DF491ECE337D56 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC522E3B5E3129988D3D7009 /* ImmutablePresentationAssetCache.swift in Sources */,
+				A00FEFB10B7A43D7E53C67A3 /* ReloActivityAttributes.swift in Sources */,
+				272D71F6F346167DE6B50A6B /* ReloLiveActivityBundle.swift in Sources */,
+				5C5A8979F1D74E5560FDC063 /* ReloLiveActivityResponseIntent.swift in Sources */,
+				9EE5827375192BB0A04F1E3C /* ReloLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6230C140A071EF1BD4049C19 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E052DDA391DFE2176226517B /* NotificationService.swift in Sources */,
+				8AA42703D6DDBEB6188F6B47 /* ReloNotificationEnvelope.swift in Sources */,
+				BF3AA379CB289BEF29F9E815 /* ReloNotificationServiceOrchestrator.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		650A2F436084C6C02A65ECA4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7440EA6FF8FEDAEFA1E00AE0 /* ImmutablePresentationAssetCache.swift in Sources */,
+				821F906757693C1CD9AC4522 /* ReloActivityAttributes.swift in Sources */,
+				F0C5134A8EC5D8988EE28747 /* ReloLiveActivityBundle.swift in Sources */,
+				8DF4944DB79C9473B0BA932D /* ReloLiveActivityResponseIntent.swift in Sources */,
+				BF7F0DA56ECFC12E2ADE4DAC /* ReloLiveActivityWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D735680DE94BE664E83A5C9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BDB196E4E14B720C2A78E1EC /* ReloNotificationEnvelope.swift in Sources */,
+				4D9D00C1C4761F05188A7E04 /* ReloNotificationEnvelopeTests.swift in Sources */,
+				0C0A648EF14ECF68E2D772F0 /* ReloNotificationServiceOrchestrator.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		786B5D7A63AA7331AD5130D7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B2BF740EE1D19E6E8B52B2AB /* AccountScopedInboxCacheTests.swift in Sources */,
+				9594B0CC9E28AB9D2E2E6CFC /* ActivityContextCodingTests.swift in Sources */,
+				C6A5225EE2FF9C6102B4E4DF /* BundleModule.swift in Sources */,
+				49C83E4A54C5A3FB69672D26 /* ContractCodingTests.swift in Sources */,
+				4BC25D953D5DDC619801037C /* DurableActionCoordinatorTests.swift in Sources */,
+				E5EF9297883CFCF427C14952 /* InboxHierarchyProjectionTests.swift in Sources */,
+				6DDAD3DB4512AC5FFB79DA0E /* InboxSyncEngineTests.swift in Sources */,
+				43D74AEA729C97A6BD7AB7B4 /* KeychainRegistrationAttemptStoreTests.swift in Sources */,
+				985FD27913FDE381EBEE7EEE /* LiveActivityTokenRegistrationRetryTests.swift in Sources */,
+				9FAFEB36E78E6F30A4D147E0 /* MobileAPIClientTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		89D13F1E3A82BABA3A7E1E27 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				326D7608B68B6A089610AAEC /* ReloActivityAttributes.swift in Sources */,
+				AAC1B5DB9C4E9B1B32123855 /* ReloLiveActivityResponseIntent.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9607F2AF51FF4B7F5359392A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				59EA0F9ECAF7AA8F383BA177 /* AppModel.swift in Sources */,
+				A711D9EC1D622AC54F19AA24 /* BackgroundLiveActivityTokenRegistrar.swift in Sources */,
+				1416AB3B2DC3D39FB7A5AD01 /* HomeView.swift in Sources */,
+				96A1BF1CD1C9399CC9832788 /* ImmutablePresentationAssetCache.swift in Sources */,
+				F0FA3D67E1A38954C85DC329 /* InboxHierarchyView.swift in Sources */,
+				EDC8597B0CC7539DDF384E4E /* InboxPresentationProjection.swift in Sources */,
+				9DC032D16C9CC1225704C984 /* NotificationDetailView.swift in Sources */,
+				6C15C7B0BAB8E0F757BFD395 /* PreviewData.swift in Sources */,
+				EFAC632CE0509656FC38D8B8 /* ReloActivityAttributes.swift in Sources */,
+				0CA145B64F9BB2014EA1079A /* ReloApp.swift in Sources */,
+				405927FF8FE9C22AF97FE736 /* ReloConnectionScanner.swift in Sources */,
+				332C39B850CA788388D170C7 /* ReloLiveActivityResponseIntent.swift in Sources */,
+				C69D0B78C3CCBEEB66C9121E /* ReloSignalField.metal in Sources */,
+				14206BE154F1334AE790DD6B /* ReloVisualSystem.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A805A9815DFE3873ED105642 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A460191D51CF2C5556E60C1A /* ActivityItem.swift in Sources */,
+				79C32596059D9F6C5FE91BD1 /* DeviceIdentity.swift in Sources */,
+				B38FC937D908735875CDB729 /* DurableActionStores.swift in Sources */,
+				F34837414FEDAB9BB49D75FC /* FileInboxCache.swift in Sources */,
+				55CF934D5E4F4D295A961B0F /* HTTPInboxDataSource.swift in Sources */,
+				87220874AA73F6444585CEE0 /* InboxHierarchyProjection.swift in Sources */,
+				74FE5B3CFC4BB29CDC0FE955 /* InboxSyncEngine.swift in Sources */,
+				AA795FCB80AA70C84F7349AC /* KeychainDeviceCredentialStore.swift in Sources */,
+				D470CDF200E68E03F7C71170 /* LiveActivityPresentation.swift in Sources */,
+				3B67714B4136A21E84DAFE53 /* LiveActivityTokenRegistrationRetry.swift in Sources */,
+				5002A189054943957CAC0285 /* MobileAPIClient.swift in Sources */,
+				21E4E9546B253ABAFE8F9559 /* ServerEndpointPolicy.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		146A60D400779FA3B628F9F2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = C6D835C44191317C8DB02380 /* PBXContainerItemProxy */;
+		};
+		358DE3BBC77AC066FF367E7E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D98FD56FB1C969CEB5731FBE /* ReloLiveActivities */;
+			targetProxy = C195C92B4CDB431A64CA208A /* PBXContainerItemProxy */;
+		};
+		61FB69BA36FD1F8119102333 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 3E1A079ECD715A8F9B5388EE /* ReloNativeReferenceLiveActivities */;
+			targetProxy = F1DE1373F6AD38C54B5E435C /* PBXContainerItemProxy */;
+		};
+		64E1C20602245A481023C095 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = 0ECF2F18F40230C4055A1BA8 /* PBXContainerItemProxy */;
+		};
+		746322D1DAD5C8E5863B769C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = 6257E59843F819E508C2CC25 /* PBXContainerItemProxy */;
+		};
+		756EAEC866C4847ED11999B1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = 488A3F3BD1146E2123E1788B /* PBXContainerItemProxy */;
+		};
+		A46428D7D7F99F6B4D400786 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = 3D2471F7C9EA885C8F655893 /* PBXContainerItemProxy */;
+		};
+		AAA678BA2A9147ED776DA6A6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = 51CACE94A918B0E0FC53098F /* PBXContainerItemProxy */;
+		};
+		BF969295A300A077B4097A14 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 082A88F80D4ACE28712B68ED /* ReloActivityResponse */;
+			targetProxy = 2F1A34080DEAA106B330BD1D /* PBXContainerItemProxy */;
+		};
+		C1F68C0F831741835681DC88 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BD78FAFF1D4084D4FAEBAA7D /* ReloNotificationService */;
+			targetProxy = A77DBB42D903C6CE67FDB62B /* PBXContainerItemProxy */;
+		};
+		E3B6A443CF27C355CE2BB740 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 543A4E1EDA6684D4E1342F16 /* ReloActivityWire */;
+			targetProxy = A10809F39FB6BC4BA24BFCFD /* PBXContainerItemProxy */;
+		};
+		EA12C850FF3D2B1D68688BBA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D1DEB32BA0B8BBC2EE3B46F7 /* ReloCore */;
+			targetProxy = 8B4EC781A09B82FC9580CA48 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0EAA58E957E4610F8722533A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/NativeReferenceHost.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Config/NativeReferenceHost-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).reference";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		19CCD4A09C1C0E7447119407 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.relo.ReloNotificationSupportTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		3136A9B612CA4D7AD0DDBF05 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/ReloNotificationService.entitlements;
+				INFOPLIST_FILE = "Config/NotificationService-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).service";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		31E2FE7C6CCAF7E35227D7BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/ReloLiveActivities.entitlements;
+				INFOPLIST_FILE = "Config/LiveActivities-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).activities";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3273D26DC0B2D8D26F730E4A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Relo.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Config/App-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		362B449A8F1AFCB2A43B208D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.relo.ReloNotificationSupportTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		4C7F00FB1B37743C09486C59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).core";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		52E33E82AEE8B5A7631A5AD4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/NativeReferenceHost.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Config/NativeReferenceHost-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).reference";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5791766D2DE827F529210AC2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).core";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		789C2D60AC09E8505BA77FD8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Relo.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = "Config/App-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		877BB9F1AA05315EC6959326 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.relo.ReloCoreTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AF184EB7C15A20C0F391F8A7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 10464FD022145DB118675226 /* Release.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 24;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				MARKETING_VERSION = 0.9.12;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		BAC7BFDB2E936163F8D8BBB3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/ReloLiveActivities.entitlements;
+				INFOPLIST_FILE = "Config/NativeReferenceLiveActivities-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).reference.activities";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C2E4A94594FF92AD34CFA0AD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/ReloLiveActivities.entitlements;
+				INFOPLIST_FILE = "Config/LiveActivities-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).activities";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C2F914EAF5905220C684C929 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).activity-wire";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		C3BFF6DFD4BF3A3D31E7FC91 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/ReloLiveActivities.entitlements;
+				INFOPLIST_FILE = "Config/NativeReferenceLiveActivities-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).reference.activities";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C66BF27AC6870E36D72DB052 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/ReloNotificationService.entitlements;
+				INFOPLIST_FILE = "Config/NotificationService-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).service";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		DE7E87F670278904FBF929D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 730111F33C84E3790E337FFB /* Debug.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 24;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
+				MARKETING_VERSION = 0.9.12;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E1A329128EA911AD9DA5BB9C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.relo.ReloCoreTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E37B0137281FE058E161D5B2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).activity-response";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		EA33343F98171C35314D7EAF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).activity-response";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		F3C57A76E4B6EFFADFD46BE5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(RELO_BUNDLE_ID).activity-wire";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		20150295E23CD0B9787DBA7D /* Build configuration list for PBXNativeTarget "ReloActivityResponse" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E37B0137281FE058E161D5B2 /* Debug */,
+				EA33343F98171C35314D7EAF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		28419A23C9B6523FB7F268E8 /* Build configuration list for PBXNativeTarget "Relo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3273D26DC0B2D8D26F730E4A /* Debug */,
+				789C2D60AC09E8505BA77FD8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4588DC5F3149B77D68538660 /* Build configuration list for PBXNativeTarget "ReloActivityWire" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F3C57A76E4B6EFFADFD46BE5 /* Debug */,
+				C2F914EAF5905220C684C929 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4C3537A1F570F84286121957 /* Build configuration list for PBXNativeTarget "ReloNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3136A9B612CA4D7AD0DDBF05 /* Debug */,
+				C66BF27AC6870E36D72DB052 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4D1A4A0817F2F895F33F5DBE /* Build configuration list for PBXNativeTarget "ReloNativeReferenceLiveActivities" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BAC7BFDB2E936163F8D8BBB3 /* Debug */,
+				C3BFF6DFD4BF3A3D31E7FC91 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6FF7E5E0A009AE0CE1705CD5 /* Build configuration list for PBXNativeTarget "ReloLiveActivities" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C2E4A94594FF92AD34CFA0AD /* Debug */,
+				31E2FE7C6CCAF7E35227D7BD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7663B29915BD3034BDAC563B /* Build configuration list for PBXProject "Relo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DE7E87F670278904FBF929D8 /* Debug */,
+				AF184EB7C15A20C0F391F8A7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		873C06F6CB635CA3BA20226B /* Build configuration list for PBXNativeTarget "ReloCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4C7F00FB1B37743C09486C59 /* Debug */,
+				5791766D2DE827F529210AC2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		901E8A4D50F374549CB92EEE /* Build configuration list for PBXNativeTarget "ReloNotificationSupportTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				19CCD4A09C1C0E7447119407 /* Debug */,
+				362B449A8F1AFCB2A43B208D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C9D903D328558A94BAFE793B /* Build configuration list for PBXNativeTarget "ReloCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				877BB9F1AA05315EC6959326 /* Debug */,
+				E1A329128EA911AD9DA5BB9C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CFD2BDACA636E40E92375B89 /* Build configuration list for PBXNativeTarget "ReloNativeReferenceHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				52E33E82AEE8B5A7631A5AD4 /* Debug */,
+				0EAA58E957E4610F8722533A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 09CD5160E3EB020B46F87235 /* Project object */;
+}

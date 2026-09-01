@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: Source gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --global pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - name: Validate the public boundary
+        run: |
+          if [ -f LICENSE ]; then
+            pnpm public:check
+          else
+            candidate="$(mktemp -d)/relo-candidate"
+            pnpm public:stage -- "$candidate"
+          fi
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  postgres:
+    name: PostgreSQL integration tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-bookworm
+        env:
+          POSTGRES_DB: relo_test
+          POSTGRES_USER: relo_test
+          POSTGRES_PASSWORD: integration-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U relo_test -d relo_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://relo_test:integration-only@127.0.0.1:5432/relo_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --global pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @relo/server test
+
+  swift:
+    name: Swift package tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift test --package-path apps/ios

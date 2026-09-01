@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "rootFiles": [
+    ".dockerignore",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "ROADMAP.md",
+    "SECURITY.md",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "public-export.json",
+    "tsconfig.base.json"
+  ],
+  "roots": [".github", "apps", "deploy", "docs", "packages", "scripts", "skills"],
+  "allowedDotPaths": [
+    ".dockerignore",
+    ".github/",
+    ".gitignore",
+    "apps/dashboard/.gitignore",
+    "apps/dashboard/.prettierignore",
+    "apps/dashboard/.prettierrc",
+    "apps/ios/.gitignore",
+    "apps/server/.dockerignore",
+    "apps/server/.gitignore",
+    "deploy/.env.example",
+    "deploy/.gitignore"
+  ],
+  "excludedPrefixes": ["docs/internal/", "apps/dashboard/.impeccable/"],
+  "requiredFiles": ["LICENSE", "README.md", "SECURITY.md", "deploy/README.md"],
+  "forbiddenText": []
+}

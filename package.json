@@ -1,0 +1,27 @@
+{
+  "name": "relo",
+  "private": true,
+  "version": "0.0.0",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "homepage": "https://github.com/redpanda77/relo#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/redpanda77/relo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/redpanda77/relo/issues"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "node --test scripts/public-export.test.mjs && pnpm -r --if-present test",
+    "public:report": "node scripts/public-export.mjs report",
+    "public:check": "node scripts/public-export.mjs check",
+    "public:stage": "node scripts/public-export.mjs stage",
+    "public:export": "node scripts/public-export.mjs write"
+  }
+}
