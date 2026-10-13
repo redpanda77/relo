@@ -92,9 +92,11 @@ public extension TodayActivity {
     }
 }
 
-/// Everything active right now, including cards that have gone quiet. The current-state feed
-/// drops a card once it stops updating, so it is merged with History rows whose card is still
-/// active; a card appears once, from History when available (it carries steps and progress).
+/// Everything active right now, including cards that have gone quiet. A card appears once, from
+/// History when available (it carries steps and progress), else from the current-state feed.
+/// When the feed is complete and verified (`runningAsOf`), it alone decides what is live: History
+/// is only refreshed on a full sync, so a card the server has ended can still read "active" there.
+/// Cards keep the order they started in, so an update never reshuffles the list.
 public enum LiveNowProjection {
     public struct Card: Equatable, Identifiable, Sendable {
         public let id: String
@@ -121,20 +123,41 @@ public enum LiveNowProjection {
             return "agent running, \(AgentSessionsProjection.quietPhrase(quietSession, fetchedAt: fetched, now: now))"
         }
 
-        /// No update for this long reads as quiet (the card may have stalled).
+        /// The card's own stale window when known (the sender's --stale-after), else 20 minutes.
+        public var staleWindow: TimeInterval = LiveNowProjection.defaultStaleWindow
+
+        /// No update for longer than the card's stale window reads as quiet (the card may have
+        /// stalled): the same point at which the server marks the card stale.
         public func quietFor(now: Date) -> TimeInterval? {
             let silence = now.timeIntervalSince(updatedAt)
-            return silence >= 20 * 60 ? silence : nil
+            return silence >= staleWindow ? silence : nil
         }
     }
 
-    public static func make(history: [InboxItem], subjects: [CurrentSubjectProjection], sessions: [AgentSession] = [], sessionsFetchedAt: Date? = nil, now: Date) -> [Card] {
+    /// The CLI's default --stale-after.
+    public static let defaultStaleWindow: TimeInterval = 20 * 60
+
+    /// - Parameter runningAsOf: when the current-state feed is complete and verified, its server
+    ///   time; History cards it does not list and that have not been updated since are left out.
+    public static func make(history: [InboxItem], subjects: [CurrentSubjectProjection], sessions: [AgentSession] = [],
+                            sessionsFetchedAt: Date? = nil, runningAsOf: Date? = nil, now: Date) -> [Card] {
         let collapsed = InboxHistoryProjection.collapsedActivities(history)
-        let rows = HistoryRowProjection.rows(collapsed, events: history, now: now).filter { $0.outcome == .running }
+        let running = Set(subjects.map { $0.activity?.id ?? $0.subjectId })
+        let rows = HistoryRowProjection.rows(collapsed, events: history, now: now).filter { row in
+            guard row.outcome == .running else { return false }
+            guard let runningAsOf else { return true }
+            let id = InboxHistoryProjection.cardID(row.item) ?? row.id
+            return running.contains(id) || row.at > runningAsOf
+        }
         var cards: [Card] = rows.map { row in
-            Card(id: InboxHistoryProjection.cardID(row.item) ?? row.id, row: row, subject: nil, title: row.title,
-                 status: row.summary, progress: row.progress, updatedAt: row.at, notificationID: row.id,
-                 startedAt: row.startedAt, origin: row.origin)
+            var card = Card(id: InboxHistoryProjection.cardID(row.item) ?? row.id, row: row, subject: nil, title: row.title,
+                            status: row.summary, progress: row.progress, updatedAt: row.at, notificationID: row.id,
+                            startedAt: row.startedAt, origin: row.origin)
+            if let summary = row.item.activitySummary, let stale = summary.staleAt, let updated = summary.updatedAt,
+               stale > updated {
+                card.staleWindow = stale.timeIntervalSince(updated)
+            }
+            return card
         }
         let known = Set(cards.map(\.id))
         for subject in subjects where !known.contains(subject.activity?.id ?? subject.subjectId) {
@@ -149,7 +172,11 @@ public enum LiveNowProjection {
         for index in cards.indices { cards[index].quietSession = quiet[cards[index].id]
             cards[index].quietSessionFetchedAt = sessionsFetchedAt
         }
-        return cards.sorted { $0.updatedAt == $1.updatedAt ? $0.id < $1.id : $0.updatedAt > $1.updatedAt }
+        // Newest first by when the card started, so updates never reorder the list under a finger.
+        return cards.sorted {
+            let (a, b) = ($0.startedAt ?? $0.updatedAt, $1.startedAt ?? $1.updatedAt)
+            return a == b ? $0.id < $1.id : a > b
+        }
     }
 }
 

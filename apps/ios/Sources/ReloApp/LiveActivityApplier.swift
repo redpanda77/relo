@@ -393,7 +393,8 @@ final class LiveActivityApplier {
 
     /// Ends cards nothing will keep current (past expiry, or stale well beyond the server's idle
     /// end), for every account, online or not. Returns how many ended, by reason.
-    static func endAbandonedActivities(now: Date) async -> [LiveActivityAbandonmentPolicy.Reason: Int] {
+    /// - Parameter running: card IDs of agent sessions in the middle of a turn, kept past stale.
+    static func endAbandonedActivities(now: Date, running: Set<String> = []) async -> [LiveActivityAbandonmentPolicy.Reason: Int] {
         var ended: [LiveActivityAbandonmentPolicy.Reason: Int] = [:]
         for activity in Activity<ReloActivityAttributes>.activities
         where activity.activityState == .active || activity.activityState == .stale {
@@ -401,6 +402,7 @@ final class LiveActivityApplier {
             guard let reason = LiveActivityAbandonmentPolicy.reason(
                 expiresAt: content.state.expiresAt,
                 staleAt: content.state.staleAt ?? content.staleDate,
+                sessionRunning: running.contains(activity.attributes.eventID),
                 now: now
             ) else { continue }
             var state = content.state

@@ -960,6 +960,20 @@ final class ReloDeckDirectorTests: XCTestCase {
         XCTAssertEqual(deck.waves, 0)
     }
 
+    func testScrollingTheDeckAwayIsNotTimeAway() async {
+        let deck = director()
+        deck.ingest(input(snapshot()))
+        await settle()
+        var scrolled = input(snapshot(), visible: false)
+        scrolled.onScreen = true                                           // Now still showing, deck scrolled off
+        deck.ingest(scrolled)
+        XCTAssertFalse(deck.armed, "effects pause while the deck is out of view")
+        await settle(200)                                                  // longer than the away threshold
+        deck.ingest(input(snapshot()))
+        XCTAssertNil(deck.badge, "scrolling back never replays the power-on")
+        XCTAssertEqual(deck.revealed, 6)
+    }
+
     func testABriefLookAwayDoesNotPowerOnAgain() async {
         let deck = director()
         deck.ingest(input(snapshot()))

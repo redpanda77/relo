@@ -1,4 +1,4 @@
-import { ArrowRight, Check, X } from "lucide-react"
+import { ArrowRight, Check, Send, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { fetchDashboardRoute } from "@/app/dashboard-route-loader"
@@ -190,8 +190,9 @@ export function InboxView({
       <select
         aria-label="Project"
         value={selectedProject}
+        data-active={selectedProject ? "true" : undefined}
         onChange={(event) => chooseProject(event.target.value)}
-        className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
+        className="pill"
       >
         <option value="">All projects</option>
         {projectOptions.map((option) => (
@@ -200,43 +201,66 @@ export function InboxView({
       </select>
     ) : null
 
+  const kinds = [
+    ["", "All"],
+    ["live_activity", "Live Activities"],
+    ["approval", "Approvals"],
+    ["question", "Questions"],
+    ["notification", "Messages"],
+  ] as const
+  const filtered = Boolean(filters?.kind || filters?.state || filters?.project)
+
   const historyFilters = history ? (
-    <div className="flex flex-wrap items-center gap-2">
-      {projectSelect}
-      <select
-        aria-label="Kind"
-        value={filters?.kind ?? ""}
-        onChange={(event) => chooseFilter("kind", event.target.value)}
-        className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
-      >
-        <option value="">All kinds</option>
-        <option value="live_activity">Live Activities</option>
-        <option value="approval">Approvals</option>
-        <option value="question">Questions</option>
-        <option value="notification">Messages</option>
-      </select>
-      <select
-        aria-label="State"
-        value={filters?.state ?? ""}
-        onChange={(event) => chooseFilter("state", event.target.value)}
-        className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
-      >
-        <option value="">Any state</option>
-        <option value="active">Running</option>
-        <option value="ended">Ended</option>
-        <option value="responded">Answered</option>
-        <option value="expired">Expired</option>
-        <option value="recorded">Recorded</option>
-        <option value="canceled">Canceled</option>
-        <option value="replaced">Replaced</option>
-      </select>
+    <div className="flex w-full flex-col gap-2.5">
+      <div role="group" aria-label="Kind" className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+        {kinds.map(([value, label]) => (
+          <button
+            key={value || "all"}
+            type="button"
+            className="pill"
+            aria-pressed={(filters?.kind ?? "") === value}
+            onClick={() => chooseFilter("kind", value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {projectSelect}
+        <select
+          aria-label="State"
+          value={filters?.state ?? ""}
+          data-active={filters?.state ? "true" : undefined}
+          onChange={(event) => chooseFilter("state", event.target.value)}
+          className="pill"
+        >
+          <option value="">Any state</option>
+          <option value="active">Running</option>
+          <option value="ended">Ended</option>
+          <option value="responded">Answered</option>
+          <option value="expired">Expired</option>
+          <option value="recorded">Recorded</option>
+          <option value="canceled">Canceled</option>
+          <option value="replaced">Replaced</option>
+        </select>
+        {filtered ? (
+          <a href="/dashboard/inbox/notifications" className="pill" aria-label="Clear filters">
+            <X className="size-3.5" aria-hidden="true" />
+            Clear
+          </a>
+        ) : null}
+      </div>
     </div>
   ) : (
     projectSelect
   )
 
   return (
-    <Page title={history ? "History" : "Now"} eyebrow={history ? "Every card, newest first" : "Live"}>
+    <Page
+      title={history ? "History" : "Now"}
+      eyebrow={history ? "Every notification and Live Activity, newest first." : undefined}
+      actions={history ? <a href="/dashboard/inbox/delivery" className="pill"><Send className="size-3.5" aria-hidden="true" />Delivery log</a> : undefined}
+    >
       {overview ? (
         <NowHud
           today={metrics.today}

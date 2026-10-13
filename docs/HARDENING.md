@@ -7,12 +7,16 @@ server and the gaps that are still open, in priority order. Each gap names the c
 
 ## In place
 
-- **The API stays on loopback.** Compose publishes `127.0.0.1:8180`; a proxy or tunnel reaches it,
-  and public plaintext binding is rejected ([ADR 0006](adr/0006-operator-chosen-origin.md)).
+- **The API stays on loopback.** Compose publishes `127.0.0.1:8180` (`RELO_BIND_ADDRESS`); a proxy
+  or tunnel reaches it. A public origin must be HTTPS: the server refuses to start with an
+  `APP_URL` that is plain HTTP on a public address (`config.ts`), and the CLI refuses such an API URL
+  ([ADR 0006](adr/0006-operator-chosen-origin.md)).
 - **Per-client limits behind a proxy.** `RELO_CLIENT_IP_HEADER` attributes requests to the real
-  client, believed only from a loopback or private peer (`apps/server/src/client-address.ts`).
-  Sign-in allows 10 attempts per client and 120 overall per minute, sign-up 5 and 30, CLI sign-in start
-  10 and 40 (`auth-throttle.ts`, `device-authorization.ts`).
+  client, believed only from a loopback or private peer (`apps/server/src/client-address.ts`); on the
+  compose network that includes the other containers. Sign-in allows 10 attempts per client and 120
+  overall per minute, sign-up 5 and 30, CLI sign-in start 10 and 40 (`auth-throttle.ts`,
+  `device-authorization.ts`). A refused attempt is not counted, so a full limit empties a minute after
+  the last accepted attempt.
 - **Request bodies are capped** at 1 MiB on every route, and HTTPS origins send HSTS (`app.ts`).
 - **Registration is Closed** by default; the admin creates accounts.
 - **Dashboard pages** send a strict CSP with `frame-ancestors 'none'`, `nosniff` and `no-store`
@@ -21,6 +25,9 @@ server and the gaps that are still open, in priority order. Each gap names the c
   (`presentation-assets.ts`).
 - **Containers** run read-only, non-root, with all capabilities dropped; the API and worker use a
   restricted database role.
+- **New phones wait for a trusted phone.** A phone added after the first is *pending* until a
+  trusted phone signs an approval; computers seal nothing to it until then
+  ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md#new-devices-are-approved-on-a-trusted-phone)).
 - **End-to-end encryption** keeps notice, question and card text unreadable to the server and to a
   TLS-terminating proxy ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md)).
 
@@ -29,13 +36,17 @@ server and the gaps that are still open, in priority order. Each gap names the c
 ### 1. No second factor on accounts
 
 An account is one email and password (minimum 8 characters, `account-auth.ts`). Anyone who learns
-the password can sign in from anywhere. Plan: passkeys or TOTP for Dashboard sign-in, required for
+the password can sign in from anywhere. From the Dashboard they can also sign the owner's phone out
+and sign in their own: computers trust it again with a "phone set up again" notice (gap 4), unless
+strict mode is on. Sign-in limits are per address and overall, not per account. Plan: passkeys or TOTP for Dashboard sign-in, required for
 the admin on a public origin, and a check against known-breached passwords.
 
 ### 2. Sign-in limits can be used to lock people out
 
 The overall sign-in limit (120 per minute) slows distributed guessing, but an attacker who fills it
-blocks everyone, the owner included. The limits are in memory, so a restart clears them. Plan:
+blocks everyone, the owner included, for as long as they keep sending about two attempts a second.
+Refused attempts are not counted, so the block ends a minute after they stop. The limits are in
+memory, so a restart clears them. Plan:
 per-account backoff that grows with failures, a separate budget for clients that have signed in
 successfully before, and an optional challenge (for example Cloudflare Turnstile) after repeated
 failures.
@@ -48,12 +59,14 @@ account password can create a CLI key and send readable-looking notices and ques
 accepts. Plan: hold a new computer as pending until a trusted phone or computer approves it, the
 way the CLI already holds new phones (`packages/cli/src/trust.mjs`).
 
-### 4. The CLI re-trusts a changed phone key
+### 4. The CLI re-trusts a changed or replaced phone
 
-When the key directory changes the identity key behind a pinned phone, the CLI pins the new key with
-a "security code changed" notice unless `relo keys strict on` is set (`trust.mjs`). A compromised
-server can therefore read new content and accept approvals signed by its own key. Plan: make strict
-the default, so a changed key stays pending until approved from a trusted device.
+By default the CLI follows WhatsApp: a changed identity key behind a pinned phone, and the account's
+new phone once every phone it trusted has left the account, are trusted again with a visible notice
+("security code changed", "phone set up again"; `packages/cli/src/trust.mjs`). A compromised server,
+or anyone with the account password (gap 1), can therefore swap in its own phone key, read new
+content and accept approvals signed by it. `relo keys strict on` holds both as pending until a
+person runs `relo keys verify`. Plan: make strict the default on a public origin.
 
 ### 5. Any CLI key can turn off the encryption requirement
 
@@ -76,7 +89,8 @@ and CDN logs. Plan: accept the secret in a header and keep the path form for com
 1. Use a long, unique password for every account until gap 1 is closed.
 2. Keep registration Closed or Approval.
 3. Set `RELO_CLIENT_IP_HEADER` to the header your proxy overwrites, never `x-forwarded-for`.
-4. Run `relo keys strict on` on every computer.
+4. Run `relo keys strict on` on every computer. After that, a changed key or a phone set up again
+   needs `relo keys verify` before computers seal to it.
 5. Keep the API bound to `127.0.0.1` and reach it only through the proxy or tunnel.
 6. Put a proxy-level login in front of the browser pages if your proxy offers one; see
    [Remote access](SELF-HOSTING.md#remote-access).

@@ -967,7 +967,11 @@ final class AppModel {
                 outcome: RecoveryStatusPolicy.current(state), priority: .current))
         }
         let wasOffline = currentState?.connection == .offline
+        let previousServerTime = currentState?.snapshot.metadata?.serverTime
         currentState = state
+        // The stream woke (a card changed, a session started, stopped or ended): agent sessions and
+        // History come with the inbox, so read it again soon.
+        if state?.connection == .current, state?.snapshot.metadata?.serverTime != previousServerTime { followInbox() }
         trackOutage(offline: state?.connection == .offline)
         // The first good current-state read after an outage also clears a stale legacy sync failure.
         if wasOffline, state?.connection == .current, case .offline = syncState { Task { _ = await self.refresh() } }
@@ -980,6 +984,30 @@ final class AppModel {
         if state?.connection == .current, previous != nativeVersions(state),
            let scope = currentSyncScopeIdentity, configuredSyncScopeIdentity == scope {
             scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope)
+        }
+    }
+
+    /// Agent sessions and History arrive with the inbox, which the current-state stream does not
+    /// carry. A wake on that stream, or the Now screen's minute tick, syncs the inbox again, at most
+    /// once per `maxAge`; calls in between share the one pending sync.
+    static let inboxFollowInterval: TimeInterval = 20
+    @ObservationIgnored private var inboxFollowTask: Task<Void, Never>?
+    @ObservationIgnored private var inboxFollowedAt = Date.distantPast
+
+    func followInbox(maxAge: TimeInterval = AppModel.inboxFollowInterval) {
+        guard isForeground, inboxFollowTask == nil, let scope = currentSyncScopeIdentity,
+              configuredSyncScopeIdentity == scope else { return }
+        let wait = max(1, maxAge - Date().timeIntervalSince(inboxFollowedAt))
+        inboxFollowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self else { return }
+            defer { self.inboxFollowTask = nil }
+            guard !Task.isCancelled, self.isForeground, self.currentSyncScopeIdentity == scope else { return }
+            self.inboxFollowedAt = .now
+            _ = await self.historyRepair.repair(scope: scope) { [weak self] in
+                guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return false }
+                return await self.performRefresh(quiet: true)
+            }
         }
     }
 
@@ -1053,13 +1081,14 @@ final class AppModel {
         await maintenance.wait(for: .history)
     }
 
-    private func performRefresh() async -> Bool {
+    /// `quiet`: a background follow-up sync; the connection status does not flash "Updating".
+    private func performRefresh(quiet: Bool = false) async -> Bool {
         guard
             !Task.isCancelled, let syncEngine,
             let expectedScope = configuredSyncScopeIdentity,
             expectedScope == currentSyncScopeIdentity
         else { return false }
-        syncState = .syncing
+        if !quiet { syncState = .syncing }
         do {
             let snapshot = try await syncEngine.synchronize()
             guard
@@ -1077,6 +1106,7 @@ final class AppModel {
             historyLoadState = .current
             readCoordinator.reconcileHistory(snapshot.items)
             lastSyncedAt = snapshot.lastSuccessfulSyncAt
+            inboxFollowedAt = .now
             syncState = .current
             resolvePendingNotification()
             resolvePendingActivity()
@@ -1827,7 +1857,10 @@ final class AppModel {
     func foregrounded() async {
         isForeground = true
         // Leftover cards are ended before anything else, and without needing the network.
-        _ = await LiveActivityApplier.endAbandonedActivities(now: .now)
+        // A card whose agent is still mid-turn (by the saved session list, settled to now) stays.
+        let running = AgentSessionsProjection.settled(agentSessions, now: .now)
+            .filter(AgentSessionsProjection.isRunning).compactMap(\.card?.id)
+        _ = await LiveActivityApplier.endAbandonedActivities(now: .now, running: Set(running))
         sessionController.setForeground(true)
         startPathMonitor()
         synchronizeCurrentSession()

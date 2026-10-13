@@ -12,7 +12,7 @@ export function Page({
   children,
 }: {
   title: string
-  /** Monospaced micro-label above the title. */
+  /** One line under the title saying what the page holds. */
   eyebrow?: string
   actions?: React.ReactNode
   children: React.ReactNode
@@ -21,15 +21,15 @@ export function Page({
     <main
       id="main-content"
       tabIndex={-1}
-      className="canvas min-h-[100dvh] px-4 py-8 outline-none sm:px-8 lg:px-12 lg:py-12"
+      className="canvas min-h-[100dvh] px-4 py-6 outline-none sm:px-8 sm:py-8 lg:px-12 lg:py-12"
     >
       <div className="mx-auto w-full max-w-5xl">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="min-w-0">
-            {eyebrow ? <p className="micro mb-2">{eyebrow}</p> : null}
-            <h1 className="text-3xl font-light tracking-tight sm:text-4xl">
+            <h1 className="text-[2rem] leading-tight font-bold tracking-tight text-balance sm:text-[2.375rem]">
               {title}
             </h1>
+            {eyebrow ? <p className="mt-1 text-sm text-muted-foreground">{eyebrow}</p> : null}
           </div>
           {actions ? (
             <div className="flex flex-wrap items-center gap-2">{actions}</div>
@@ -75,7 +75,7 @@ export function List({
   return (
     <ul
       aria-label={label}
-      className="glass divide-y divide-white/[0.06] overflow-hidden rounded-2xl"
+      className="glass divide-y divide-white/[0.06] overflow-hidden rounded-[20px]"
     >
       {children}
     </ul>
@@ -188,10 +188,11 @@ export function Empty({
   description?: string
 }) {
   return (
-    <div className="glass rounded-2xl px-6 py-10 text-center">
-      <p className="text-sm font-medium">{title}</p>
+    <div className="glass flex flex-col items-center rounded-[20px] px-6 py-12 text-center">
+      <span aria-hidden="true" className="brand-orb mb-4 size-10 opacity-80" />
+      <p className="text-base font-semibold">{title}</p>
       {description ? (
-        <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+        <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
           {description}
         </p>
       ) : null}

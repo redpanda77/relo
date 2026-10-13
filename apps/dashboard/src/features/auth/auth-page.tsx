@@ -1,8 +1,8 @@
-import { BellRing } from "lucide-react"
+import { Activity, LockKeyhole, MessageSquareReply } from "lucide-react"
 import * as React from "react"
 
+import { BrandLockup } from "@/components/brand"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { authenticateOwner } from "@/features/auth/auth-service"
@@ -19,6 +19,21 @@ function friendlyAuthError(cause: unknown): string {
   if (raw.includes("already exists") || raw.includes("user exists")) return "An account with that email already exists."
   if (raw.includes("rate") || raw.includes("too many")) return "Too many attempts. Wait a minute and try again."
   return "Couldn't sign in. Check your connection and try again."
+}
+
+// The living deck is decoration here; the form never waits for its code.
+const NowHud = React.lazy(() =>
+  import("@/components/organisms/now-hud").then((module) => ({ default: module.NowHud }))
+)
+
+const promises = [
+  { icon: Activity, text: "Live progress on your iPhone's Lock Screen and Dynamic Island." },
+  { icon: MessageSquareReply, text: "Approve, decline or answer your agents from the phone." },
+  { icon: LockKeyhole, text: "End-to-end encrypted, on a server you run." },
+] as const
+
+function serverHost(): string {
+  return typeof window === "undefined" ? "" : window.location.host
 }
 
 export function AuthPage({
@@ -74,35 +89,76 @@ export function AuthPage({
     setMode(signingIn ? "sign-up" : "sign-in")
     setError("")
   }
+  const stageLabel = awaitingApproval ? "Waiting" : pending ? (signingIn ? "Signing in" : "Creating") : signingIn ? "Sign in" : "Welcome"
+  const inputClass = "min-h-12 rounded-xl border-white/10 bg-white/[0.04] px-4 text-[15px]"
   return (
     <main
       id="main-content"
-      className="canvas grid min-h-[100dvh] place-items-center px-4 py-10 sm:px-6"
+      className="canvas relative min-h-[100dvh] overflow-hidden"
     >
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex items-center gap-2.5">
-          <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <BellRing className="size-4" aria-hidden="true" />
-          </span>
-          <span className="font-semibold tracking-tight">Relo</span>
-        </div>
-        <Card className="glass-strong">
-          <CardHeader className="space-y-1.5 p-6 sm:p-8">
-            <CardTitle className="text-2xl font-semibold tracking-tight">
-              {awaitingApproval ? "Waiting for approval" : title}
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              {awaitingApproval
-                ? "Your account is created. You can sign in once the server admin approves it."
-                : description}
-            </p>
-          </CardHeader>
-          <CardContent className="px-6 pb-6 sm:px-8 sm:pb-8">
+      <header className="absolute inset-x-0 top-0 z-10 flex h-16 items-center px-5 sm:px-8">
+        <BrandLockup orbClassName="size-7" />
+      </header>
+      <div className="mx-auto grid min-h-[100dvh] w-full max-w-6xl items-center gap-x-12 gap-y-6 px-4 pt-16 pb-10 sm:px-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,25rem)] lg:pt-10">
+        <section aria-label="Relo" className="min-w-0">
+          <div className="mx-auto max-w-[34rem]">
+            <React.Suspense fallback={<div className="h-[330px]" aria-hidden="true" />}>
+              <NowHud
+                welcome={{ label: stageLabel }}
+                today={0}
+                done={0}
+                running={0}
+                needsYou={0}
+                arcs={[]}
+                sentence=""
+              />
+            </React.Suspense>
+          </div>
+          <h1 className="rise-in mt-2 text-center font-[family-name:var(--font-rounded)] text-[2.25rem] leading-[1.08] font-bold tracking-tight text-balance sm:text-[2.75rem] lg:text-left">
+            Your agents.
+            <br />
+            <span className="text-[var(--muted-foreground)]">One calm Inbox.</span>
+          </h1>
+          <ul className="rise-in rise-in-2 mx-auto mt-6 hidden max-w-md space-y-3 sm:block lg:mx-0">
+            {promises.map(({ icon: Icon, text }) => (
+              <li key={text} className="flex items-start gap-3 text-[15px] text-[#d6d6e2]">
+                <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.05] text-[var(--neon-cyan)]">
+                  <Icon className="size-3.5" aria-hidden="true" />
+                </span>
+                {text}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section
+          aria-labelledby="auth-title"
+          className="glass rise-in rise-in-1 w-full justify-self-center rounded-[28px] p-6 sm:max-w-[25rem] sm:p-8"
+        >
+          <h2 id="auth-title" className="text-2xl font-bold tracking-tight">
+            {awaitingApproval ? "Waiting for approval" : title}
+          </h2>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            {awaitingApproval
+              ? "Your account is created. You can sign in once the server admin approves it."
+              : description}
+          </p>
+          <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-black/25 px-4 py-3">
+            <div className="min-w-0">
+              <p className="micro">Your server</p>
+              <p className="mt-1 truncate font-mono text-[13px] text-foreground">{serverHost()}</p>
+            </div>
+            <span className="micro inline-flex shrink-0 items-center gap-1.5 text-[var(--neon-mint)]">
+              <span className="ink-dot tone-mint" aria-hidden="true" />
+              Online
+            </span>
+          </div>
+          <div className="mt-6">
             {awaitingApproval ? (
               <Button
                 type="button"
                 variant="outline"
-                className="min-h-11 w-full"
+                className="min-h-12 w-full rounded-full"
                 onClick={() => {
                   setAwaitingApproval(false)
                   setMode("sign-in")
@@ -115,7 +171,7 @@ export function AuthPage({
               id="auth-form"
               data-mode={mode}
               data-next={bootstrap.route.nextPath}
-              className="space-y-5"
+              className="space-y-4"
               onSubmit={(event) => void submit(event)}
             >
               {!signingIn ? (
@@ -128,7 +184,7 @@ export function AuthPage({
                     maxLength={120}
                     required
                     disabled={pending}
-                    className="min-h-11"
+                    className={inputClass}
                   />
                 </div>
               ) : null}
@@ -139,9 +195,10 @@ export function AuthPage({
                   name="email"
                   type="email"
                   autoComplete="email"
+                  placeholder="you@example.com"
                   required
                   disabled={pending}
-                  className="min-h-11"
+                  className={inputClass}
                 />
               </div>
               <div className="space-y-2">
@@ -155,7 +212,7 @@ export function AuthPage({
                   maxLength={128}
                   required
                   disabled={pending}
-                  className="min-h-11"
+                  className={inputClass}
                 />
               </div>
               <p
@@ -165,7 +222,7 @@ export function AuthPage({
               >
                 {error}
               </p>
-              <Button type="submit" disabled={pending} className="min-h-11 w-full">
+              <button type="submit" disabled={pending} className="capsule-cta w-full disabled:opacity-60">
                 {pending
                   ? signingIn
                     ? "Signing in…"
@@ -173,7 +230,7 @@ export function AuthPage({
                   : signingIn
                     ? "Sign in"
                     : "Create account"}
-              </Button>
+              </button>
               {canRegister ? (
                 <Button
                   type="button"
@@ -187,8 +244,8 @@ export function AuthPage({
               ) : null}
             </form>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       </div>
     </main>
   )

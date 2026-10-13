@@ -95,6 +95,19 @@ final class E2EEKeyRingTests: XCTestCase {
         XCTAssertNotNil(ReloKeyRing.date(keys.prekey.createdAt))
     }
 
+    func testASecureEnclavePrekeyIsReplacedAtOnceSoExtensionsCanOpenContent() throws {
+        let store = MemoryStore()
+        let ring = ReloKeyRing(store: store, factory: ReloSoftwareKeyFactory())
+        var legacy = try ring.maintain(now: start)
+        legacy.prekeys[0].key = ReloStoredKey(kind: .secureEnclave, data: Data([1, 2, 3]),
+                                             publicKey: legacy.prekeys[0].key.publicKey, usableWhileLocked: true)
+        try store.save(legacy)
+        let fixed = try ring.maintain(now: start.addingTimeInterval(hour))
+        XCTAssertEqual(fixed.prekeys[0].key.kind, .software, "a fresh, shareable prekey is current")
+        XCTAssertEqual(fixed.prekeys[1].retiredAt, start.addingTimeInterval(hour), "the old one is retired, not dropped")
+        XCTAssertEqual(try ring.maintain(now: start.addingTimeInterval(2 * hour)), fixed)
+    }
+
     func testAPrekeyThatOnlyWorksWhileUnlockedIsReplacedAtOnce() throws {
         let store = MemoryStore()
         let ring = ReloKeyRing(store: store, factory: ReloSoftwareKeyFactory())

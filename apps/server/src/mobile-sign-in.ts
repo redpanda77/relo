@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AccountAuth } from "./account-auth.js";
 import type { Database } from "./db.js";
 import { escapeHtml } from "./web/http.js";
+import { publicPageStyle, publicPageTopBar } from "./web/public-page.js";
 import { getOwnerAccount } from "./web/owner-account.js";
 
 // Browser sign-in for the iPhone (authorization code + PKCE, RFC 7636).
@@ -46,31 +47,11 @@ function callback(params: Record<string, string>): string {
   return `${mobileSignInRedirectUri}?${new URLSearchParams(params).toString()}`;
 }
 
-// The app's Welcome deck in CSS: ink canvas, a blue glow, the rounded wordmark, mono HUD labels,
-// a glass card and the blue Sign in that shimmers now and then.
-const pageStyle = `:root{color-scheme:dark;--bg:#08080d;--surface:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--text:#f3f5f8;--muted:#a4a4b6;--cyan:#5ce1ff}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;color:var(--text);font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-background:radial-gradient(circle at 50% 120px,rgba(92,225,255,.16),rgba(77,141,255,.06) 160px,transparent 330px),linear-gradient(160deg,#17142e,var(--bg) 45%,#160d12)}
-.mono{font:600 .7rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.25em;text-transform:uppercase;color:var(--muted)}
-header{display:grid;justify-items:center;gap:6px;padding:clamp(28px,8vh,72px) 16px 24px}
-.mark{font:700 3.6rem/1 ui-rounded,"SF Pro Rounded",system-ui,sans-serif;letter-spacing:-.02em;color:#fff;text-shadow:0 0 24px rgba(92,225,255,.55)}
-.status{display:flex;align-items:center;gap:8px;color:var(--cyan)}.status.warn{color:#ff8a3d}.status::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
-main{width:min(520px,calc(100% - 32px));margin:0 auto 48px;padding:clamp(22px,5vw,32px);border:1px solid var(--border);border-radius:20px;background:var(--surface);
-box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 12px 24px rgba(0,0,0,.45);backdrop-filter:blur(20px)}
-h1{margin:0 0 10px;font:700 clamp(1.6rem,6vw,2.1rem)/1.15 ui-rounded,"SF Pro Rounded",system-ui,sans-serif;letter-spacing:-.02em}p{margin:0 0 14px;color:var(--muted)}
-dl{display:grid;gap:12px;margin:18px 0 24px;padding:14px 16px;border:1px solid var(--border);border-radius:14px;background:rgba(0,0,0,.25)}dl div{display:grid;gap:6px}
-dt{margin:0}dd{margin:0;overflow-wrap:anywhere;font:.9rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
-.actions{display:flex;gap:10px}button{flex:1 1 0;min-height:52px;padding:10px 17px;border:1px solid transparent;border-radius:999px;font:600 1.05rem/1 system-ui;cursor:pointer}
-.approve{position:relative;overflow:hidden;background:linear-gradient(90deg,#2a5fe8,#6650e6);color:#fff;box-shadow:0 6px 18px rgba(77,141,255,.4),inset 0 1px 0 rgba(255,255,255,.3)}
-.approve::after{content:"";position:absolute;inset:-20% auto -20% -40%;width:35%;transform:skewX(-18deg);background:linear-gradient(90deg,transparent,rgba(255,255,255,.32),transparent);animation:shimmer 5.6s ease-in-out 1.2s infinite}
-@keyframes shimmer{0%{left:-40%}20%,100%{left:120%}}@media (prefers-reduced-motion:reduce){.approve::after{display:none}}.deny{border-color:var(--border);background:rgba(255,255,255,.06);color:var(--text)}
-button:focus-visible{outline:3px solid rgba(92,225,255,.45);outline-offset:2px}`;
-
 function page(title: string, body: string, status = "Sign in", warn = false): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="same-origin"><title>${escapeHtml(title)} · Relo</title><style>${pageStyle}</style></head>
-<body><header><span class="mono">Relo · iPhone</span><span class="mark" aria-hidden="true">relo</span><span class="mono status${warn ? " warn" : ""}">${escapeHtml(status)}</span></header>
-<main>${body}</main></body></html>`;
+<meta name="referrer" content="same-origin"><meta name="theme-color" content="#08080d"><title>${escapeHtml(title)} · Relo</title><style>${publicPageStyle}</style></head>
+<body>${publicPageTopBar}<header class="hero"><span class="orb" aria-hidden="true"></span><span class="mono">Relo · iPhone</span><span class="mono status${warn ? " warn" : ""}">${escapeHtml(status)}</span></header>
+<main class="card">${body}</main></body></html>`;
 }
 
 function approvalPage(request: SignInRequest, account: { name: string; email: string }, origin: string): string {

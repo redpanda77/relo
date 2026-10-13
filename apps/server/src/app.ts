@@ -39,6 +39,7 @@ import { registerAgentSessionRoutes } from "./api/agent-session-routes.js";
 import { registerInboxRoutes } from "./api/inbox-routes.js";
 import { registerNotificationRoutes } from "./api/interaction-routes.js";
 import type { ApiRouteContext } from "./api/route-context.js";
+import { publicErrorPage, publicErrorPageSecurityPolicy, wantsHtmlPage } from "./web/public-page.js";
 export { inboxItemResource } from "./api/resources.js";
 
 export const MAX_REQUEST_BODY_BYTES = 1_048_576;
@@ -140,7 +141,18 @@ export function createApp(
       return context.json({ error: error.code, maximumBytes: 4_096, actualBytes: error.size },400);
     }
     console.error("request failed", { message: error instanceof Error ? error.message : "unknown" });
+    if (wantsHtmlPage(context.req.path, context.req.header("accept"))) {
+      context.header("content-security-policy", publicErrorPageSecurityPolicy);
+      context.header("cache-control", "no-store");
+      return context.html(publicErrorPage(500), 500);
+    }
     return context.json({ error: "internal_error" }, 500);
+  });
+
+  app.notFound((context) => {
+    if (!wantsHtmlPage(context.req.path, context.req.header("accept"))) return context.text("404 Not Found", 404);
+    context.header("content-security-policy", publicErrorPageSecurityPolicy);
+    return context.html(publicErrorPage(404), 404);
   });
 
   app.post("/api/live-activity-responses/:interactionId", async (context) => {

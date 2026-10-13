@@ -72,6 +72,17 @@ function OperationMessage({ state }: { state: OperationState }) {
   )
 }
 
+/** A titled settings group, as on the iPhone's Settings screen. */
+function AccountGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  const id = `account-${title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`
+  return (
+    <section aria-labelledby={id} className="grid gap-4">
+      <h2 id={id} className="micro px-1">{title}</h2>
+      {children}
+    </section>
+  )
+}
+
 export function AccountPage({
   initial,
   service = createHttpAccountService(),
@@ -186,41 +197,29 @@ export function AccountPage({
     }
   }
 
+  const host = typeof window === "undefined" ? "" : window.location.host
   return (
     <Page title={initial.shell.title}>
-      <div>
+      <div className="grid gap-10">
+        <section aria-label="Signed in" className="glass flex flex-col items-center gap-1 rounded-[20px] px-6 py-8 text-center">
+          <span aria-hidden="true" className="brand-orb mb-3 size-[72px] shadow-[0_0_60px_rgb(124_107_255/0.35)]" />
+          <p className="text-xl font-bold tracking-tight">{initial.account.name}</p>
+          <p className="text-sm text-muted-foreground">{initial.account.email}</p>
+          <p className="micro mt-3 inline-flex items-center gap-2">
+            <span className="ink-dot tone-mint" aria-hidden="true" />
+            <span className="normal-case tracking-normal font-mono text-[12px]">{host}</span>
+          </p>
+        </section>
 
-        <div className="mt-8 grid gap-5">
-          <Card className="rounded-2xl">
-            <CardHeader>
-              <CardTitle>Account</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid gap-3 sm:grid-cols-2">
-                {[
-                  ["Name", initial.account.name],
-                  ["Email", initial.account.email],
-                ].map(([label, value]) => (
-                  <div key={label} className="rounded-xl bg-muted/45 p-4">
-                    <dt className="text-xs text-muted-foreground">{label}</dt>
-                    <dd
-                      className={`mt-1 break-words ${
-                        label === "Account ID" ? "font-mono text-xs" : ""
-                      }`}
-                    >
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </CardContent>
-          </Card>
-
+        <AccountGroup title="Security">
           <PendingDevicesNotice variant="card" />
 
           <LinkBrowserSection accountId={initial.shell.account.id} />
+        </AccountGroup>
 
-          <Card id="connect-cli" className="rounded-2xl">
+        <AccountGroup title="Command line">
+
+          <Card id="connect-cli">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Terminal className="size-5 text-primary" aria-hidden="true" />
@@ -264,10 +263,17 @@ export function AccountPage({
             </CardContent>
           </Card>
 
-          {initial.server ? <ServerAdminCard initial={initial.server} service={service} /> : null}
+        </AccountGroup>
+
+        {initial.server ? (
+          <AccountGroup title="Server">
+            <ServerAdminCard initial={initial.server} service={service} />
+          </AccountGroup>
+        ) : null}
 
           {users.some(user => user.role === "member") ? (
-          <Card className="rounded-2xl">
+          <AccountGroup title="Shared access">
+          <Card>
             <CardHeader><CardTitle>Shared access</CardTitle><CardDescription>
               These people were added to your account before accounts became separate, so they see your data.
               Disable them, revoke their sessions and phones, or set a replacement password. New people get their own account.
@@ -288,9 +294,12 @@ export function AccountPage({
               <OperationMessage state={userState} />
             </CardContent>
           </Card>
+          </AccountGroup>
           ) : null}
 
-          <Card className="rounded-2xl">
+        <AccountGroup title="Preferences">
+
+          <Card>
             <CardHeader>
               <CardTitle>Live Activity defaults</CardTitle>
               <CardDescription>
@@ -310,7 +319,10 @@ export function AccountPage({
             </CardContent>
           </Card>
 
-          <Card className="rounded-2xl">
+        </AccountGroup>
+
+        <AccountGroup title="Sign-in">
+          <Card>
             <CardHeader>
               <CardTitle>Change password</CardTitle>
               <CardDescription>
@@ -372,7 +384,10 @@ export function AccountPage({
             </CardContent>
           </Card>
 
-          <Card className="rounded-2xl border-destructive/40">
+        </AccountGroup>
+
+        <AccountGroup title="Danger zone">
+          <Card className="border-destructive/40">
             <CardHeader>
               <CardTitle>Delete account</CardTitle>
               <CardDescription>
@@ -417,7 +432,7 @@ export function AccountPage({
               </form>
             </CardContent>
           </Card>
-        </div>
+        </AccountGroup>
       </div>
 
       <AlertDialog

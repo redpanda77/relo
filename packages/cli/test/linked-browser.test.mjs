@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { b64u, generateKeyPair, keyId, linkSigningInput, openEnvelope, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { loadKeyStore, trustKey } from "../src/keystore.mjs";
+import { loadKeyStore, saveKeyStore, trustKey } from "../src/keystore.mjs";
 import { sealNoticeRequest } from "../src/seal-notice.mjs";
-import { ensureTrust } from "../src/trust.mjs";
+import { ensureTrust, trustNotices } from "../src/trust.mjs";
 
 // A browser reads sealed content only when a phone this computer trusts signed its identity key.
 const apiUrl = "https://relo.example";
@@ -137,6 +137,24 @@ test("a phone set up again (the old one signed out) is trusted automatically wit
     assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].notice.kind, "phone_replaced");
     const sealed = await h.send([fresh.device]);
     assert.deepEqual(sealed.alerts.map((alert) => alert.recipients[0].device), [fresh.device.deviceId]);
+  } finally { h.cleanup(); }
+});
+
+test("strict mode holds a phone set up again until a person verifies it", async () => {
+  const h = harness();
+  try {
+    await ensureTrust({ client: h.client([phone.device]), config: { apiUrl }, dependencies: h.dependencies });
+    const stored = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    await saveKeyStore(h.env.RELO_KEY_STORE_PATH, { ...stored, strict: true });
+    const fresh = endpoint("dev_00000000-0000-4000-8000-0000000000f3", "phone");
+    // Someone signed the trusted phone out and signed their own in: nothing is sealed to it.
+    await ensureTrust({ client: h.client([fresh.device]), config: { apiUrl }, dependencies: h.dependencies });
+    let store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].level, "pending");
+    assert.match(trustNotices(store, apiUrl).join("\n"), /strict mode holds it until you run relo keys verify/);
+    await ensureTrust({ client: h.client([fresh.device]), config: { apiUrl }, dependencies: h.dependencies });
+    store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].level, "pending");
   } finally { h.cleanup(); }
 });
 

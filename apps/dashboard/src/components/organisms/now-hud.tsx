@@ -33,6 +33,8 @@ export type NowHudProps = {
   syncing?: boolean
   /** Today's agent time, already formatted ("4h 12m"); hidden when absent. */
   agentTime?: string | null
+  /** The signed-out Welcome stage: the living deck with the wordmark and no numbers, as on the iPhone. */
+  welcome?: { label: string }
 }
 
 function usePrefersReducedMotion() {
@@ -218,6 +220,7 @@ export function NowHud({
   now,
   syncing = false,
   agentTime = null,
+  welcome,
 }: NowHudProps) {
   const dustRef = React.useRef<HTMLCanvasElement>(null)
   const farRef = React.useRef<HTMLCanvasElement>(null)
@@ -237,7 +240,9 @@ export function NowHud({
   const online = useOnline()
   const alternates = needsYou > 0 && running > 0 && !reduced
   const [phase, setPhase] = React.useState<0 | 1>(0)
-  const centre = centreFor(needsYou, running, today, alternates ? phase : 0)
+  const centre: Centre = welcome
+    ? { value: 0, label: welcome.label, state: "running" }
+    : centreFor(needsYou, running, today, alternates ? phase : 0)
   const accent = ACCENT[centre.state]
   const live = centre.state !== "clear"
   const mixKey = JSON.stringify(mix)
@@ -472,7 +477,7 @@ export function NowHud({
   return (
     <section
       ref={deckRef}
-      aria-label="Now overview"
+      aria-label={welcome ? "Relo" : "Now overview"}
       className="relative w-full touch-pan-y select-none"
       data-now-hud
       onPointerDown={onPointerDown}
@@ -481,9 +486,11 @@ export function NowHud({
       onPointerCancel={release}
       onPointerLeave={release}
     >
-      <p className="sr-only" role="status">
-        {`${today} today, ${done} done, ${running} running, ${needsYou} need you. ${sentence}`}
-      </p>
+      {welcome ? null : (
+        <p className="sr-only" role="status">
+          {`${today} today, ${done} done, ${running} running, ${needsYou} need you. ${sentence}`}
+        </p>
+      )}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
@@ -527,6 +534,9 @@ export function NowHud({
           className="pointer-events-none absolute top-1/2 left-1/2 flex w-40 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center"
           data-hud-centre={centre.label}
         >
+          {welcome ? (
+            <span className="wordmark wordmark-glow text-[3.75rem]">relo</span>
+          ) : (
           <span
             key={centre.label}
             className={cn("hud-number numeral text-6xl leading-none sm:text-7xl", live && !reduced && (fast ? "hud-breathe-fast" : "hud-breathe"))}
@@ -540,6 +550,7 @@ export function NowHud({
           >
             {centre.value}
           </span>
+          )}
           <span className="mt-2 flex items-center gap-2">
             <span
               className={cn("ink-dot", live && !reduced && "breathe")}
@@ -548,10 +559,12 @@ export function NowHud({
             <span className="micro hud-center" style={{ color: accentCss }}>{centre.label}</span>
           </span>
         </div>
+        {welcome ? null : (<>
         <Readout label="Today" value={today} color="#ffffff" lit className="top-1 left-3 sm:left-4" />
         <Readout label="Done" value={done} color={SIGNAL_CSS.done} lit={done > 0} className="top-1 right-3 items-end text-right sm:right-4" />
         <Readout label="Running" value={running} color={SIGNAL_CSS.running} lit={running > 0} className="bottom-1 left-3 sm:left-4" />
         <Readout label="Needs you" value={needsYou} color={SIGNAL_CSS.needsYou} lit={needsYou > 0} className="right-3 bottom-1 items-end text-right sm:right-4" />
+        </>)}
       </div>
       {syncedAt != null ? (
         <div className="relative mt-4">

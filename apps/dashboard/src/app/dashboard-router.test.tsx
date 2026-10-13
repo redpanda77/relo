@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { DashboardBootstrap } from "@/app/bootstrap"
@@ -111,7 +111,7 @@ describe("dashboard client navigation", () => {
       name: "Dashboard navigation",
     })
 
-    fireEvent.click(screen.getByRole("link", { name: "Now" }))
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", { name: "Now" }))
     expect(screen.getByRole("heading", { name: "Documentation" })).toBeInTheDocument()
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument()
 

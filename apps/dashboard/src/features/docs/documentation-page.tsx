@@ -1,14 +1,6 @@
-import { Page } from "@/components/page"
+import { Page, Section } from "@/components/page"
 import { ArrowUpRight, FileCode2 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import type { DocumentationDashboardBootstrap } from "@/features/docs/types"
 
 export function DocumentationPage({
@@ -17,72 +9,53 @@ export function DocumentationPage({
   initial: DocumentationDashboardBootstrap
 }) {
   return (
-    <Page title={initial.shell.title}>
-      <div>
-
-        <Card className="mt-8 rounded-2xl">
-          <CardHeader>
-            <CardTitle>Documentation</CardTitle>
-            <CardDescription className="max-w-3xl leading-6">
-              {initial.introduction}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
-            {initial.sections.map((section) => (
-              <section
-                key={section.title}
-                className="flex min-w-0 flex-col rounded-xl border border-border bg-muted/25 p-5"
-              >
-                <h2 className="text-base font-medium">{section.title}</h2>
-                <p className="mt-2 flex-1 text-sm leading-6 text-muted-foreground">
+    <Page title={initial.shell.title} eyebrow={initial.introduction}>
+      <Section title="Guides">
+        <ul className="glass divide-y divide-white/[0.06] overflow-hidden rounded-[20px]">
+          {initial.sections.map((section) => (
+            <li key={section.title} className="grid gap-3 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-8">
+              <div className="min-w-0">
+                <h3 className="text-[15px] font-semibold">{section.title}</h3>
+                <p className="mt-1 max-w-[65ch] text-sm leading-6 text-muted-foreground">
                   {section.body}
                 </p>
-                <div className="mt-5 flex flex-wrap gap-2">
+              </div>
+              {section.links.length ? (
+                <div className="flex flex-wrap gap-2 sm:justify-end">
                   {section.links.map((link) => (
-                    <Button
-                      key={link.href}
-                      asChild
-                      variant="outline"
-                      className="min-h-11"
-                    >
-                      <a href={link.href}>
-                        {link.label}
-                        <ArrowUpRight aria-hidden="true" />
-                      </a>
-                    </Button>
+                    <a key={link.href} href={link.href} className="pill">
+                      {link.label}
+                      <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                    </a>
                   ))}
                 </div>
-              </section>
-            ))}
-          </CardContent>
-        </Card>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </Section>
 
-        <aside className="mt-5 rounded-2xl border border-border bg-card p-5">
-          <div className="flex items-start gap-3">
-            <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-muted">
-              <FileCode2 className="size-5" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <h2 className="font-medium">Machine-readable guidance</h2>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Machine-readable guidance is available at the following stable
-                endpoints.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-                {initial.machineLinks.map((link) => (
-                  <a
-                    key={link.href}
-                    href={link.href}
-                    className="min-h-11 content-center font-mono text-sm text-primary underline-offset-4 hover:underline"
-                  >
-                    {link.label}
-                  </a>
-                ))}
-              </div>
+      <Section title="For agents and tools">
+        <div className="glass flex items-start gap-4 rounded-[20px] p-5">
+          <span className="icon-tile tone-violet" aria-hidden="true">
+            <FileCode2 />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold">Machine-readable guidance</h3>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Machine-readable guidance is available at the following stable
+              endpoints.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {initial.machineLinks.map((link) => (
+                <a key={link.href} href={link.href} className="pill font-mono text-[12px]">
+                  {link.label}
+                </a>
+              ))}
             </div>
           </div>
-        </aside>
-      </div>
+        </div>
+      </Section>
     </Page>
   )
 }

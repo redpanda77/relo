@@ -37,6 +37,7 @@ import type {
   DashboardProject,
   ProjectsDashboardBootstrap,
 } from "@/features/projects/types"
+import { displayName, displayNameOrNull, isOpaqueHandle } from "@/lib/encrypted"
 import { relativeTime } from "@/lib/format"
 import { projectsService } from "@/services/projects-service"
 
@@ -114,7 +115,7 @@ function ProjectIndex({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }) 
           key={project.id}
           href={`/dashboard/projects/${encodeURIComponent(project.id)}`}
           leading={<ProjectMark project={project} />}
-          title={<>{project.name}{project.archivedAt ? <span className="ml-2 text-xs font-normal text-muted-foreground">Archived</span> : null}</>}
+          title={<>{displayName(project.name)}{project.archivedAt ? <span className="ml-2 text-xs font-normal text-muted-foreground">Archived</span> : null}</>}
           meta={`${project.counts.conversations} ${project.counts.conversations === 1 ? "topic" : "topics"} · ${project.counts.notifications} notifications`}
           trailing={<time dateTime={project.lastSeenAt} title={date(project.lastSeenAt)}>{relativeTime(project.lastSeenAt)}</time>}
         />
@@ -188,7 +189,7 @@ function ManagementRail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }
             }}>
               <div className="space-y-2">
                 <Label htmlFor="project-display-name">Display name</Label>
-                <Input id="project-display-name" name="displayName" defaultValue={project.name} maxLength={80} required disabled={pending} className="min-h-11" />
+                <Input id="project-display-name" name="displayName" defaultValue={isOpaqueHandle(project.name) ? "" : project.name} maxLength={80} required disabled={pending} className="min-h-11" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
@@ -223,7 +224,7 @@ function ManagementRail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }
           <CardContent className="space-y-4">
             {selected.aliases.length ? <ul className="space-y-2">{selected.aliases.map((alias) => (
               <li key={alias.id} className="flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2">
-                <span className="min-w-0 truncate">{alias.name}</span>
+                <span className="min-w-0 truncate">{displayName(alias.name)}</span>
                 <Button type="button" size="sm" className="min-h-11" variant="ghost" disabled={pending} onClick={() => void run("aliases",() => projectsService.removeAlias(project.id,alias.id,project.revision))}>Remove</Button>
               </li>
             ))}</ul> : <p className="text-sm text-muted-foreground">No accepted aliases yet.</p>}
@@ -254,7 +255,7 @@ function ManagementRail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }
                 {selected.conversations.map((conversation) => (
                   <label key={conversation.id} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-2 hover:bg-accent/50">
                     <input type="checkbox" value={conversation.id} className="size-4" checked={selectedConversationIds.includes(conversation.id)} onChange={(event) => setSelectedConversationIds((current) => event.target.checked ? [...current,conversation.id] : current.filter((id) => id !== conversation.id))} />
-                    <span className="min-w-0 truncate text-sm">{conversation.name}</span>
+                    <span className="min-w-0 truncate text-sm">{displayName(conversation.name)}</span>
                   </label>
                 ))}
                 </div>
@@ -264,14 +265,14 @@ function ManagementRail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }
                 <NativeSelect id="split-destination" className="min-h-11 w-full" value={splitDestination} onChange={(event) => setSplitDestination(event.target.value)} disabled={pending}>
                   <NativeSelectOption value="">Choose a destination…</NativeSelectOption>
                   <NativeSelectOption value="new">Create a new project</NativeSelectOption>
-                  {mutableProjects.map((item) => <NativeSelectOption key={item.id} value={item.id}>{item.name}</NativeSelectOption>)}
+                  {mutableProjects.map((item) => <NativeSelectOption key={item.id} value={item.id}>{displayName(item.name)}</NativeSelectOption>)}
                 </NativeSelect>
                 {splitDestination === "new" ? <Input className="min-h-11" value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} aria-label="New destination project name" placeholder="New project name" maxLength={80} required /> : null}
               </div>
               {selectedConversationIds.length && splitDestination && (splitDestination !== "new" || newProjectName.trim()) ? <ConfirmationAction
                 label={`Move ${selectedConversationIds.length} ${selectedConversationIds.length === 1 ? "conversation" : "conversations"}`}
-                title={`Move from ${project.name}?`}
-                description={`Move ${selectedConversationIds.length} ${selectedConversationIds.length === 1 ? "conversation" : "conversations"} from ${project.name} to ${splitDestination === "new" ? newProjectName.trim() : mutableProjects.find((item) => item.id === splitDestination)?.name}. Membership changes atomically.`}
+                title={`Move from ${displayName(project.name)}?`}
+                description={`Move ${selectedConversationIds.length} ${selectedConversationIds.length === 1 ? "conversation" : "conversations"} from ${displayName(project.name)} to ${splitDestination === "new" ? newProjectName.trim() : displayNameOrNull(mutableProjects.find((item) => item.id === splitDestination)?.name)}. Membership changes atomically.`}
                 pending={pending}
                 variant="outline"
                 onConfirm={() => {
@@ -298,9 +299,9 @@ function ManagementRail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }
             <div className="space-y-3">
               <NativeSelect aria-label="Merge destination project" className="min-h-11 w-full" value={mergeTargetId} onChange={(event) => setMergeTargetId(event.target.value)} disabled={pending}>
                 <NativeSelectOption value="">Choose a destination…</NativeSelectOption>
-                {mutableProjects.map((item) => <NativeSelectOption key={item.id} value={item.id}>{item.name}</NativeSelectOption>)}
+                {mutableProjects.map((item) => <NativeSelectOption key={item.id} value={item.id}>{displayName(item.name)}</NativeSelectOption>)}
               </NativeSelect>
-              {mergeTargetId ? <ConfirmationAction label={`Merge into ${mutableProjects.find((item) => item.id === mergeTargetId)?.name}`} title={`Merge ${project.name}?`} description={`Move all ${project.counts.conversations} conversations from ${project.name} into ${mutableProjects.find((item) => item.id === mergeTargetId)?.name}. ${project.name} becomes a permanent redirect.`} pending={pending} onConfirm={() => {
+              {mergeTargetId ? <ConfirmationAction label={`Merge into ${displayNameOrNull(mutableProjects.find((item) => item.id === mergeTargetId)?.name)}`} title={`Merge ${displayName(project.name)}?`} description={`Move all ${project.counts.conversations} conversations from ${displayName(project.name)} into ${displayNameOrNull(mutableProjects.find((item) => item.id === mergeTargetId)?.name)}. ${displayName(project.name)} becomes a permanent redirect.`} pending={pending} onConfirm={() => {
                 const target = mutableProjects.find((item) => item.id === mergeTargetId)!
                 void run("merge",() => projectsService.merge(project.id,{ expectedRevision:project.revision,targetProjectId:target.id,targetExpectedRevision:target.revision }))
               }} /> : <Button type="button" className="min-h-11" variant="destructive" disabled>Choose a merge destination</Button>}
@@ -341,7 +342,7 @@ function ProjectDetail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap })
         {selected.conversations.length ? (
           <List label="Topics">
             {selected.conversations.map((conversation) => (
-              <Row key={conversation.id} title={conversation.name}
+              <Row key={conversation.id} title={displayName(conversation.name)}
                 trailing={<time dateTime={conversation.lastSeenAt} title={date(conversation.lastSeenAt)}>{relativeTime(conversation.lastSeenAt)}</time>} />
             ))}
           </List>
@@ -369,7 +370,7 @@ export function ProjectsPage({ bootstrap }: { bootstrap: ProjectsDashboardBootst
   const selected = bootstrap.selected
   return (
     <Page
-      title={selected ? selected.project.name : "Projects"}
+      title={selected ? displayName(selected.project.name) : "Projects"}
       actions={selected ? <a href="/dashboard/projects" className="inline-flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" aria-hidden="true" /> All projects</a> : null}
     >
       {selected ? <ProjectDetail bootstrap={bootstrap} /> : <ProjectIndex bootstrap={bootstrap} />}

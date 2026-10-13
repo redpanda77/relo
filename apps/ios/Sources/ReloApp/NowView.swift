@@ -15,23 +15,48 @@ struct NowView: View {
         model.historyItems.filter { clearedAt <= 0 || $0.createdAt.timeIntervalSince1970 >= clearedAt }
     }
 
-    private var liveNow: [LiveNowProjection.Card] {
-        LiveNowProjection.make(history: visibleHistory, subjects: model.currentPresentation.running, now: model.attentionDate)
+    /// Everything the screen derives from the model, worked out once per update and shared by the
+    /// deck and the list, so both count the same cards and agents (and a scroll-driven redraw
+    /// does not re-project History several times over).
+    struct Derived {
+        var rows: [HistoryRow]
+        /// Live now: the deck's RUNNING and the Live now section.
+        var cards: [LiveNowProjection.Card]
+        /// Agent sessions as they stand now (silent ones read as lost); empty offline.
+        var sessions: [AgentSession]
+    }
+
+    private var isOffline: Bool { model.currentState?.connection == .offline }
+
+    /// The current-state feed's server time when it can decide alone what is live: connected,
+    /// clock verified and the whole inventory on hand.
+    private var runningAsOf: Date? {
+        guard let state = model.currentState, state.connection == .current, state.timeVerified,
+              let metadata = state.snapshot.metadata, metadata.hasMore != true else { return nil }
+        return metadata.serverTime
+    }
+
+    private func derive() -> Derived {
+        let now = model.attentionDate
+        let history = visibleHistory
+        let sessions = isOffline ? [] : AgentSessionsProjection.settled(model.agentSessions, now: now)
+        return Derived(
+            rows: HistoryRowProjection.rows(InboxHistoryProjection.collapsedActivities(history), events: history, now: now),
+            cards: LiveNowProjection.make(history: history, subjects: model.currentPresentation.running,
+                                          sessions: sessions, sessionsFetchedAt: model.agentSessionsFetchedAt,
+                                          runningAsOf: runningAsOf, now: now),
+            sessions: sessions)
     }
 
     /// Today's finished work by meaning plus what is live, for the sphere's colors and the legend.
-    private func todayMix(running: Int, needsYou: Int) -> NowMix {
-        let rows = HistoryRowProjection.rows(InboxHistoryProjection.collapsedActivities(visibleHistory),
-                                             events: visibleHistory, now: model.attentionDate)
+    private func todayMix(_ derived: Derived, needsYou: Int) -> NowMix {
         let start = Calendar.current.startOfDay(for: model.attentionDate)
-        return NowMix.make(today: rows.filter { $0.at >= start }, needsYou: needsYou, running: running)
+        return NowMix.make(today: derived.rows.filter { $0.at >= start }, needsYou: needsYou, running: derived.cards.count)
     }
 
     /// "4h 12m" of agent work today, nil when there is none worth naming.
-    private var agentTimeToday: String? {
-        let rows = HistoryRowProjection.rows(InboxHistoryProjection.collapsedActivities(visibleHistory),
-                                             events: visibleHistory, now: model.attentionDate)
-        return HistoryRowProjection.agentTimeLabel(HistoryRowProjection.agentTimeToday(rows, now: model.attentionDate))
+    private func agentTimeToday(_ derived: Derived) -> String? {
+        HistoryRowProjection.agentTimeLabel(HistoryRowProjection.agentTimeToday(derived.rows, now: model.attentionDate))
     }
 
     private var deckSync: ReloDeckFooter.Sync {
@@ -43,16 +68,17 @@ struct NowView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     /// The deck as data from the director: it shows only what the director presents.
-    private func hero(topInset: CGFloat, bleed: CGFloat = 0) -> ReloNowHero {
-        let shown = model.deckDirector.shown ?? rawSnapshot
+    private func hero(_ derived: Derived, topInset: CGFloat, bleed: CGFloat = 0) -> ReloNowHero {
+        let shown = model.deckDirector.shown ?? rawSnapshot(derived)
         return ReloNowHero(
             summary: shown.summary,
             needsYou: shown.needsYou,
             tasks: shown.tasks,
             agents: shown.agents,
+            idleAgents: shown.idleAgents,
             mix: shown.mix,
             satellites: shown.satellites,
-            agentTime: agentTimeToday,
+            agentTime: agentTimeToday(derived),
             sync: deckSync, pendingResponses: model.pendingResponseCount,
             connectionTrouble: connectionTrouble, topInset: topInset, bleed: bleed,
             showConnection: { sheet = .connection },
@@ -61,10 +87,22 @@ struct NowView: View {
     }
 
     var body: some View {
+        let derived = derive()
         Group {
-            if verticalSizeClass == .compact { landscape } else { portrait }
+            if verticalSizeClass == .compact { landscape(derived) } else { portrait(derived) }
         }
-        .onChange(of: deckInput, initial: true) { _, input in model.deckDirector.ingest(input) }
+        .onChange(of: deckInput(derived), initial: true) { _, input in model.deckDirector.ingest(input) }
+        // While Now is on screen, time-based states (quiet cards, lost agents, the last hour of
+        // ended ones) move on by themselves, and the inbox (agent sessions, History) is re-read.
+        .task(id: tab == .now && scenePhase == .active) {
+            guard tab == .now, scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled else { return }
+                model.updateAttentionClock()
+                model.followInbox(maxAge: 55)
+            }
+        }
         .onChange(of: model.deckDirector.ceremonyFinishes) { _, _ in model.finishLinkCeremony() }
         .reloScreenBackground()
         .navigationTitle("Now")
@@ -91,11 +129,11 @@ struct NowView: View {
 
     /// Phone on its side: the deck holds the left half, still, and the live work scrolls on the
     /// right, so the sphere and the list are both in view instead of one scrolling past the other.
-    private var landscape: some View {
+    private func landscape(_ derived: Derived) -> some View {
         HStack(spacing: 0) {
             // Scrolls only when the deck is taller than the screen, so nothing is ever cut off.
             ScrollView {
-                hero(topInset: 8, bleed: sideInset + 40)
+                hero(derived, topInset: 8, bleed: sideInset + 40)
                     .environment(\.reloMotionPaused, tab != .now || scenePhase != .active)
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -104,7 +142,8 @@ struct NowView: View {
             .scrollClipDisabled()
             .containerRelativeFrame(.horizontal) { width, _ in width * 0.5 }
             ScrollView {
-                CurrentAttentionView(model: model, viewHistory: { tab = .history })
+                CurrentAttentionView(model: model, cards: derived.cards, sessions: derived.sessions,
+                                     viewHistory: { tab = .history })
                     .padding(.horizontal, ReloLayout.screenInset)
                     .padding(.top, 20).padding(.bottom, 24)
             }
@@ -119,10 +158,10 @@ struct NowView: View {
     /// The Dynamic Island side's inset in landscape, which the deck's orbit runs under.
     @State private var sideInset: CGFloat = 0
 
-    private var portrait: some View {
+    private func portrait(_ derived: Derived) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
-                hero(topInset: topInset)
+                hero(derived, topInset: topInset)
                     .padding(.horizontal, -ReloLayout.screenInset)
                     // Scrolled out of view, the deck stops drawing (battery); it resumes on return.
                     .background { GeometryReader { proxy in
@@ -139,7 +178,8 @@ struct NowView: View {
                         if pull.track(overscroll: top), !refreshing { syncFromPull() }
                     }
                     .environment(\.reloMotionPaused, !deckVisible)
-                CurrentAttentionView(model: model, viewHistory: { tab = .history })
+                CurrentAttentionView(model: model, cards: derived.cards, sessions: derived.sessions,
+                                     viewHistory: { tab = .history })
             }
             .padding(.horizontal, ReloLayout.screenInset)
             .padding(.bottom, 24)
@@ -156,9 +196,9 @@ struct NowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Everything the deck shows, as one value, straight from the model.
-    private var rawSnapshot: ReloDeckDirector.Snapshot {
+    private func rawSnapshot(_ derived: Derived) -> ReloDeckDirector.Snapshot {
         let screen = model.currentPresentation
-        let live = liveNow
+        let live = derived.cards
         return .init(
             // A clear resets today's count too: the hero only counts what is still shown.
             summary: InboxTodaySummary.make(items: visibleHistory + model.items, attention: model.attention,
@@ -167,8 +207,10 @@ struct NowView: View {
             // RUNNING is the live cards only (the Live now section); the agents running now are
             // their own count (AGENTS, the Agents section), never added to it.
             tasks: live.map { ReloHoloTask(id: $0.id, progress: $0.progress) },
-            agents: runningAgents,
-            mix: todayMix(running: live.count, needsYou: screen.actionableCount ?? screen.needsMe.count),
+            agents: derived.sessions.filter(AgentSessionsProjection.isRunning)
+                .map { ReloHoloTask(id: "agent-\($0.id)", progress: nil) },
+            idleAgents: AgentSessionsProjection.idleCount(derived.sessions),
+            mix: todayMix(derived, needsYou: screen.actionableCount ?? screen.needsMe.count),
             satellites: screen.needsMe.map { request in
                 let window = request.interaction.expiresAt.timeIntervalSince(request.createdAt)
                 let left = request.interaction.expiresAt.timeIntervalSince(model.attentionDate)
@@ -176,23 +218,14 @@ struct NowView: View {
             })
     }
 
-    /// Agent sessions in the middle of a turn (idle ones wait for the owner and do not count).
-    /// They report no progress, so the ring draws them as travelling arcs when no card is live.
-    /// Offline, the Agents list hides them, so does the HUD.
-    private var runningAgents: [ReloHoloTask] {
-        guard model.currentState?.connection != .offline else { return [] }
-        return model.agentSessions
-            .filter(AgentSessionsProjection.isRunning)
-            .map { ReloHoloTask(id: "agent-\($0.id)", progress: nil) }
-    }
-
-    private var deckInput: ReloDeckDirector.Input {
+    private func deckInput(_ derived: Derived) -> ReloDeckDirector.Input {
         let trusted = model.credential != nil && model.currentState?.connection == .current
             && model.currentPresentation.actionableCount != nil && model.registrationState != .registering
-        return .init(snapshot: rawSnapshot, trusted: trusted, reachable: !model.serverUnreachable,
+        return .init(snapshot: rawSnapshot(derived), trusted: trusted, reachable: !model.serverUnreachable,
                      linkPending: model.linkCeremonyPending,
                      linked: model.isRegistered,
                      visible: tab == .now && deckVisible && scenePhase == .active,
+                     onScreen: tab == .now && scenePhase == .active,
                      working: refreshing || !trusted, reduceMotion: reduceMotion)
     }
 
@@ -329,6 +362,8 @@ private struct ReloDeckBottomKey: PreferenceKey {
         var tasks: [ReloHoloTask]
         /// The coding agents running now, a count of their own.
         var agents: [ReloHoloTask] = []
+        /// Agents between turns, waiting for the owner.
+        var idleAgents = 0
         var mix: NowMix
         var satellites: [ReloOrbitSatellite]
     }
@@ -346,6 +381,10 @@ private struct ReloDeckBottomKey: PreferenceKey {
         var linked: Bool = false
         /// Now is the selected tab, the deck is on screen and the app is active.
         var visible: Bool
+        /// Now is the selected tab and the app is active, wherever the page is scrolled; nil means
+        /// the same as `visible`. Scrolling the deck out of view pauses its effects but is not
+        /// time away: coming back to it never replays the power-on.
+        var onScreen: Bool? = nil
         /// Something is loading: the sphere pulses gently.
         var working: Bool
         var reduceMotion: Bool
@@ -417,16 +456,17 @@ private struct ReloDeckBottomKey: PreferenceKey {
         let previous = input
         input = next
         let becameVisible = next.visible && previous?.visible != true
+        let onScreen = next.onScreen ?? next.visible
 
         if !next.visible {
             disarm()
             if phase == .booting { finishCeremony() }
             if powerTask != nil { finishPowerOn() }
-            if previous?.visible == true { hiddenAt = .now }
         }
+        if !onScreen, hiddenAt == nil, previous.map({ $0.onScreen ?? $0.visible }) == true { hiddenAt = .now }
         // Seen for the first time in this run, or again after a while away: the HUD powers on.
         if becameVisible && !next.linkPending && phase == .live {
-            let away = hiddenAt.map { Date.now.timeIntervalSince($0) } ?? .infinity
+            let away = hiddenAt.map { Date.now.timeIntervalSince($0) } ?? 0
             if (!hasBeenSeen && timing.powerOnAtLaunch) || (hasBeenSeen && away >= timing.powerOnAfterAway) {
                 powerOn(badge: ("ACTIVE", "RELO · NOW", "FEED . LIVE"))
             }

@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { authorizationRateLimitBuckets } from "./device-authorization.js";
+import { authorizationRateLimitBuckets, limitedAcrossBuckets } from "./device-authorization.js";
 
 /**
  * Sign-up and sign-in answer anyone who can reach the server, so they are bounded per client
@@ -14,15 +14,8 @@ const attempts = new Map<string, number[]>();
 
 export function authAttemptLimited(context: Context, kind: keyof typeof LIMITS, now = Date.now()): Response | null {
   const limits = LIMITS[kind];
-  let rejected = false;
-  for (const bucket of authorizationRateLimitBuckets(context)) {
-    const key = `${kind}:${bucket}`;
-    const recent = (attempts.get(key) ?? []).filter((at) => at > now - WINDOW_MS);
-    recent.push(now);
-    attempts.set(key, recent);
-    if (recent.length > (bucket === "global" ? limits.global : limits.client)) rejected = true;
-  }
-  if (!rejected) return null;
+  const buckets = authorizationRateLimitBuckets(context).map((bucket) => `${kind}:${bucket}`);
+  if (!limitedAcrossBuckets(attempts, buckets, limits.client, limits.global, WINDOW_MS, now)) return null;
   return context.json({ error: "rate_limited", message: "Too many attempts. Wait a minute and try again.",
     retryAfterSeconds: WINDOW_MS / 1000 }, 429, { "retry-after": String(WINDOW_MS / 1000) });
 }

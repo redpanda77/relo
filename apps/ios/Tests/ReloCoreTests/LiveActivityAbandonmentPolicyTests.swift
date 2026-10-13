@@ -24,4 +24,10 @@ struct LiveActivityAbandonmentPolicyTests {
     @Test func anExpiredCardEndsWhateverItsFreshness() {
         #expect(LiveActivityAbandonmentPolicy.reason(expiresAt: now, staleAt: now.addingTimeInterval(600), now: now) == .expired)
     }
+
+    @Test func aRunningAgentsCardIsKeptPastStaleButNotPastExpiry() {
+        let longStale = now.addingTimeInterval(-90 * 60)
+        #expect(LiveActivityAbandonmentPolicy.reason(expiresAt: nil, staleAt: longStale, sessionRunning: true, now: now) == nil)
+        #expect(LiveActivityAbandonmentPolicy.reason(expiresAt: now, staleAt: longStale, sessionRunning: true, now: now) == .expired)
+    }
 }

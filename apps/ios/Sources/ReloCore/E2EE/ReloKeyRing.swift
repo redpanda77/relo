@@ -99,6 +99,8 @@ public struct ReloKeyRing: Sendable {
         let due = current.map {
             (Self.date($0.createdAt) ?? .distantPast).addingTimeInterval(policy.rotationInterval) <= now
                 || $0.key.usableWhileLocked != true
+                // A Secure Enclave prekey opens only in the app, never on the Lock Screen: replace it.
+                || $0.key.kind == .secureEnclave
         } ?? true
         if due {
             state.prekeys = state.prekeys.map { prekey in

@@ -23,14 +23,14 @@ export function StatusDot({
         <span
           className={cn(
             "animate-status-pulse absolute inset-0 rounded-full",
-            tone[state] ?? "bg-[#8f8293]"
+            tone[state] ?? "bg-[#a4a4b6]"
           )}
         />
       ) : null}
       <span
         className={cn(
           "relative m-0.5 size-2 rounded-full",
-          tone[state] ?? "bg-[#8f8293]"
+          tone[state] ?? "bg-[#a4a4b6]"
         )}
       />
     </span>

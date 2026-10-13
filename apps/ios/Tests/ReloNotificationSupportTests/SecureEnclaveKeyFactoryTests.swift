@@ -21,6 +21,9 @@ final class SecureEnclaveKeyFactoryTests: XCTestCase {
         let state = try ring.maintain(now: start)
         XCTAssertEqual(state.identity.kind, .secureEnclave)
         XCTAssertEqual(state.prekeys[0].key.usableWhileLocked, true)
+        // The prekey lives in the shared Keychain so the widget and the notification extension can open
+        // Live Activities and notifications; only the identity stays in the Secure Enclave.
+        XCTAssertEqual(state.prekeys[0].key.kind, .software)
         let sender = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
         let envelope = try ReloE2EE.seal(
             kind: "notice", context: "acct:a/idem:se", sender: sender,

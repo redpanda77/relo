@@ -15,6 +15,8 @@ struct ReloNowHero: View {
     /// The coding agents running now (mid-turn). A count of their own, never added to RUNNING;
     /// with no live card they take the centre and the ring.
     var agents: [ReloHoloTask] = []
+    /// Agents between turns, waiting for the owner (not running, so never in AGENTS).
+    var idleAgents = 0
     /// Today's work by meaning (colors the sphere, the dust and the legend).
     var mix = NowMix(counts: [:])
     /// Requests waiting for the owner, orbiting as satellites toward their deadlines.
@@ -178,7 +180,7 @@ struct ReloNowHero: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Today")
-        .accessibilityValue("\(headline). \(summary.total) today, \(running) running, \(agentsPhrase(agentCount)), "
+        .accessibilityValue("\(headline). \(summary.total) today, \(running) running, \(agentsPhrase(agentCount)), \(idleAgents) idle, "
             + "\(needsYou.map { "\($0) need you" } ?? "requests still being checked"). \(detail)")
     }
 
@@ -230,13 +232,15 @@ struct ReloNowHero: View {
         let asks = needsYou.map { $0.formatted() } ?? "–"
         return VStack {
             HStack(alignment: .top) {
-                ReloHUDModule(corner: .topLeading, index: "01", label: "TODAY", value: summary.total.formatted(),
-                              color: .white, lit: false, focused: state == .clear, gauge: .mix(mix), buildStart: director?.moduleBuilds[2])
+                // How many agents are running leads the deck; the ones waiting for you sit beside it.
+                ReloHUDModule(corner: .topLeading, index: "01", label: "AGENTS", value: agentCount.formatted(),
+                              color: ReloHoloTheme.agents, lit: agentCount > 0, focused: state == .running && agentsLead,
+                              gauge: .items(agentCount), buildStart: director?.moduleBuilds[2])
                     .modifier(ReloBootIn(on: level >= 2, corner: CGPoint(x: 1, y: 1)))
                 Spacer(minLength: 0)
-                ReloHUDModule(corner: .topTrailing, index: "02", label: "AGENTS", value: agentCount.formatted(),
-                              color: ReloHoloTheme.agents, lit: agentCount > 0, focused: state == .running && agentsLead,
-                              gauge: .items(agentCount), buildStart: director?.moduleBuilds[3])
+                ReloHUDModule(corner: .topTrailing, index: "02", label: "IDLE", value: idleAgents.formatted(),
+                              color: .white, lit: idleAgents > 0, focused: false,
+                              gauge: .items(idleAgents), buildStart: director?.moduleBuilds[3])
                     .modifier(ReloBootIn(on: level >= 3, corner: CGPoint(x: -1, y: 1)))
             }
             Spacer(minLength: 0)
@@ -261,8 +265,8 @@ struct ReloNowHero: View {
         let near: CGFloat = inset + 82, far = width - inset - 82
         let topY: CGFloat = 66, bottomY = stageHeight - 12
         return ReloHUDLeaders(center: stageCenter, ringRadius: 141, anchors: [
-            (.topLeading, CGPoint(x: near, y: topY), Color.white, false, summary.total),
-            (.topTrailing, CGPoint(x: far, y: topY), ReloHoloTheme.agents, agentCount > 0, agentCount),
+            (.topLeading, CGPoint(x: near, y: topY), ReloHoloTheme.agents, agentCount > 0, agentCount),
+            (.topTrailing, CGPoint(x: far, y: topY), Color.white, idleAgents > 0, idleAgents),
             (.bottomLeading, CGPoint(x: near, y: bottomY), ReloHoloTheme.color(.running), running > 0, running),
             (.bottomTrailing, CGPoint(x: far, y: bottomY), ReloHoloTheme.color(.needsYou), (needsYou ?? 0) > 0, needsYou ?? 0),
         ])

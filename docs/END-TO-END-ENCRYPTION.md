@@ -87,7 +87,7 @@ These are standard primitives only, with no Relo-specific crypto:
 | Key | Where it lives | Lifetime | Purpose |
 | --- | --- | --- | --- |
 | Device identity key (ECDSA P-256) | iPhone Secure Enclave, in a Keychain access group shared by the app and both extensions | The life of the install | Signs prekeys and answers. Cross-signs new devices. |
-| Device prekey (P-256 key agreement) | Secure Enclave, same access group | Replaced every `rotation` (10 h by default). The private half is deleted after `retention + grace` | Receives sealed content |
+| Device prekey (P-256 key agreement) | The shared Keychain group of the app and its extensions, readable after the first unlock and never leaving the device (`AfterFirstUnlockThisDeviceOnly`). A CryptoKit Secure Enclave key works only in the process that created it, so the Lock Screen widget and the notification extension could not open content with one. | Replaced every `rotation` (10 h by default). The private half is deleted after `retention + grace` | Receives sealed content |
 | CLI identity key (ECDSA P-256) | CLI config directory, file mode 0600. The macOS Keychain later. | The life of the login. `relo keys rotate` replaces it. | Signs every envelope the CLI sends |
 | Per-question reply key (P-256 key agreement) | CLI state directory, deleted when the question resolves | One question | The phone seals a typed reply to it, so each reply has its own forward secrecy |
 | Account grouping key (256-bit) | Created by the first paired iPhone and sealed to each CLI when it is verified | Long-lived; rotating it regroups projects | Turns project and topic names into opaque handles the server can group by |
@@ -112,11 +112,14 @@ Sealing and signed approvals start at once.
   When every phone a computer trusted has left the account, the account's new phone is trusted
   automatically and every command shows "your phone was set up again" for a week. The trade-off is
   WhatsApp's: a server that removes your phone and adds its own gets that visible notice, not a block.
+  So does anyone with the account password, who can sign the phone out from the Dashboard. In strict
+  mode the new phone stays pending until `relo keys verify`.
 - **Verifying is optional.** `relo keys verify` and Settings → Security → Verify security code show
   the same 60-digit number, derived from the two identity keys like Signal's safety numbers.
   Confirming that they match upgrades the pairing to "verified".
 - **Strict mode is optional.** `relo keys strict on` (a person at a terminal) stops sealing to a phone
-  whose security code changed until it is verified again.
+  whose security code changed, and to a phone set up again after every trusted phone left, until it
+  is verified. [HARDENING.md](HARDENING.md) recommends it for a server on a public address.
 
 The trade-off is the usual one for trust on first use. A server that is malicious *at the moment a
 device is first seen* could present its own key. Against that, every later substitution shows up as

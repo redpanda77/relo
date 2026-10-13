@@ -16,8 +16,13 @@ import { terminalPresentationColumnsFromRow } from "./presentation-runtime.js";
  * session rules to cards (docs/internal/product/CLI-AGENT-INTEGRATION-PLAN.md, Phase 4).
  */
 
-/** No event for this long and an active or idle session is lost. */
+/** No event for this long in the middle of a turn and the session is lost (tool events arrive about once a minute). */
 export const SESSION_LOST_AFTER_SECONDS = 15 * 60;
+/**
+ * An idle session (turn over, waiting for the owner) sends nothing until the owner replies, so
+ * silence is normal: it is lost only after this long, the longest a card can live.
+ */
+export const SESSION_IDLE_LOST_AFTER_SECONDS = 8 * 60 * 60;
 /** A lost session's card ends this long after the session became lost. */
 export const SESSION_LOST_CARD_GRACE_SECONDS = 10 * 60;
 /** The lists show sessions with an event in this window. */
@@ -32,6 +37,12 @@ const RECONCILE_BATCH = 50;
 
 export const SESSION_CARD_STATUS_ENDED = "Session ended";
 export const SESSION_CARD_STATUS_LOST = "Session lost";
+
+/** SQL condition: the session in `alias` has been silent past its state's lost threshold. */
+export function sessionSilentSql(alias: string): string {
+  return `((${alias}.state='active' AND ${alias}.last_event_at<=now()-interval '${SESSION_LOST_AFTER_SECONDS} seconds')
+    OR (${alias}.state='idle' AND ${alias}.last_event_at<=now()-interval '${SESSION_IDLE_LOST_AFTER_SECONDS} seconds'))`;
+}
 
 const STATE_AFTER_EVENT: Record<AgentSessionEventName, AgentSessionState> = {
   start: "active", prompt: "active", tool: "active", stop: "idle", end: "ended",
@@ -101,13 +112,12 @@ export async function recordAgentSessionEvent(
 export function agentSessionRowsSql(principal: string): string {
   return `(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.ord),'[]'::jsonb) FROM (
     SELECT s.id,s.harness,s.computer,s.account,s.project,s.started_at,s.last_event_at,s.sealed_names,
-      CASE WHEN s.state IN ('active','idle') AND s.last_event_at<=now()-interval '${SESSION_LOST_AFTER_SECONDS} seconds'
-        THEN 'lost' ELSE s.state END AS state,
+      CASE WHEN ${sessionSilentSql("s")} THEN 'lost' ELSE s.state END AS state,
       card.id AS card_id,card.state AS card_state,
       floor(extract(epoch FROM GREATEST(now()-card.updated_at,interval '0')))::int AS card_quiet_seconds,
       (card.stale_at IS NOT NULL AND card.stale_at<=now()) AS card_past_stale,
       row_number() OVER (ORDER BY
-        (s.state IN ('active','idle') AND s.last_event_at>now()-interval '${SESSION_LOST_AFTER_SECONDS} seconds') DESC,
+        (s.state IN ('active','idle') AND NOT ${sessionSilentSql("s")}) DESC,
         s.last_event_at DESC,s.id) AS ord
     FROM agent_sessions s
     LEFT JOIN LATERAL (
@@ -162,23 +172,26 @@ export type AgentSessionReconcileResult = { lost: number; cardsEnded: number; pr
 
 /**
  * One idempotent pass over the session rules, safe to run from any number of workers:
- *  1. Active or idle with no event for SESSION_LOST_AFTER_SECONDS becomes lost.
+ *  1. Active with no event for SESSION_LOST_AFTER_SECONDS, or idle for SESSION_IDLE_LOST_AFTER_SECONDS,
+ *     becomes lost.
  *  2. The active card of an ended session, or of a session lost for SESSION_LOST_CARD_GRACE_SECONDS,
  *     ends ("Session ended" / "Session lost") through the same terminal path as card expiry, unless
  *     a question on it is still open; the pass after the question settles ends it.
  *  3. Settled sessions older than SESSION_RETENTION_DAYS are removed.
- * A live session never ends its card: a card past its stale window only reads as quiet, and the
- * ordinary card expiry rules stay in charge of it.
+ * A live session never ends its card: a card past its stale window only reads as quiet. While the
+ * session is mid-turn the card is kept (see expireDueActivities); once the turn is over the
+ * ordinary card expiry rules are in charge of it.
  */
 export async function reconcileAgentSessions(
   db: Database,
   apnsMode: ApnsMode,
 ): Promise<AgentSessionReconcileResult> {
   const lost = await db.query(
-    `UPDATE agent_sessions SET state='lost',
-       ended_at=last_event_at+make_interval(secs=>$1::double precision),ended_reason='lost',updated_at=now()
-     WHERE state IN ('active','idle') AND last_event_at<=now()-make_interval(secs=>$1::double precision)`,
-    [SESSION_LOST_AFTER_SECONDS],
+    `UPDATE agent_sessions s SET state='lost',
+       ended_at=s.last_event_at+make_interval(secs=>CASE WHEN s.state='idle' THEN $2::double precision ELSE $1::double precision END),
+       ended_reason='lost',updated_at=now()
+     WHERE ${sessionSilentSql("s")}`,
+    [SESSION_LOST_AFTER_SECONDS,SESSION_IDLE_LOST_AFTER_SECONDS],
   );
   const cardsEnded = await endCardsOfFinishedSessions(db,apnsMode);
   const pruned = await db.query(

@@ -9,7 +9,7 @@ import { migrate } from "./migrate.js";
 import { expireDueActivities } from "./activities.js";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import {
-  SESSION_LIST_MAX,SESSION_LOST_AFTER_SECONDS,SESSION_LOST_CARD_GRACE_SECONDS,
+  SESSION_IDLE_LOST_AFTER_SECONDS,SESSION_LIST_MAX,SESSION_LOST_AFTER_SECONDS,SESSION_LOST_CARD_GRACE_SECONDS,
   listAgentSessions,reconcileAgentSessions,
 } from "./agent-sessions.js";
 
@@ -258,6 +258,49 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       await db.query("UPDATE agent_sessions SET ended_at=last_event_at+make_interval(secs=>$1::double precision)",[SESSION_LOST_AFTER_SECONDS]);
       expect(await reconcile()).toMatchObject({ cardsEnded: 1 });
       expect(await cardRow(key)).toMatchObject({ state: "ended",status: "Session lost",terminal_reason: "session_lost" });
+    });
+
+    test("an idle session waiting for the owner is not lost after the turn threshold, only after the idle one",async () => {
+      await sessionWithCard();
+      await event({ event: "stop" });
+      await ago(S1,SESSION_LOST_AFTER_SECONDS+600);
+      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
+      expect((await row()).state).toBe("idle");
+      expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ state: "idle" });
+      await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
+      expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ state: "lost",presence: "lost" });
+      expect(await reconcile()).toMatchObject({ lost: 1 });
+      const stored = await row();
+      expect(stored.state).toBe("lost");
+      // Lost when the idle threshold passed, so the card's grace period counts from then.
+      expect(new Date(stored.ended_at).getTime()-new Date(stored.last_event_at).getTime()).toBe(SESSION_IDLE_LOST_AFTER_SECONDS*1000);
+    });
+
+    test("an idle session does not hold its stale card: the ordinary expiry ends it",async () => {
+      const { key } = await sessionWithCard();
+      await event({ event: "stop" });
+      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '11 minutes' WHERE activity_key=$1",[key]);
+      expect(await expireDueActivities(db,"sandbox")).toBe(1);
+      expect((await cardRow(key)).state).toBe("expired");
+    });
+
+    test("a state change wakes the current-state stream; a tool event does not",async () => {
+      const client = await db.connect();
+      const hints: string[] = [];
+      client.on("notification",message => { if (message.channel === "relo_current_changes") hints.push(message.payload ?? ""); });
+      try {
+        await client.query("LISTEN relo_current_changes");
+        await event({ event: "start",at: new Date(Date.now()-3_000).toISOString() });
+        await event({ event: "tool",at: new Date(Date.now()-2_000).toISOString() });
+        await event({ event: "stop",at: new Date(Date.now()-1_000).toISOString() });
+        await new Promise(resolve => setTimeout(resolve,200));
+        expect(hints.map(hint => JSON.parse(hint))).toEqual([
+          { principalId,subjectId: null },{ principalId,subjectId: null },
+        ]);
+      } finally {
+        await client.query("UNLISTEN relo_current_changes");
+        client.release();
+      }
     });
 
     test("a lost session with an open question keeps its card",async () => {

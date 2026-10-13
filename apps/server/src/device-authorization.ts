@@ -8,6 +8,7 @@ import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
 import { getOwnerAccount } from "./web.js";
 import { lockAccountLifecycle } from "./account-lifecycle.js";
+import { publicPageStyle, publicPageTopBar } from "./web/public-page.js";
 
 export const allowedCliScopes = [
   "notifications:send",
@@ -42,20 +43,23 @@ const cliAuthorizationPage = `<!doctype html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>Authorize CLI · Relo</title>
-  <style>
-    :root{color-scheme:dark;--bg:#090b10;--surface:#141821;--surface-2:#0d1016;--border:#303949;--text:#f3f5f8;--muted:#a9b3c3;--accent:#ff725e;--success:#5ed8b7;--danger:#ff8a80}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    main{width:min(660px,calc(100% - 32px));margin:clamp(24px,8vh,84px) auto;padding:clamp(24px,5vw,40px);border:1px solid var(--border);border-radius:20px;background:var(--surface)}
-    h1{margin:0 0 10px;font-size:clamp(2rem,6vw,3rem);line-height:1.08;letter-spacing:-.035em}h2{margin:28px 0 6px;font-size:1.35rem;line-height:1.2}.lede{max-width:62ch;margin:0 0 28px;color:var(--muted)}
-    label{display:grid;gap:8px;font-weight:650}.code-input{width:100%;padding:13px 14px;border:1px solid #445069;border-radius:11px;background:var(--surface-2);color:var(--text);font:600 1rem/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em}.code-input:focus{outline:3px solid rgba(255,114,94,.24);border-color:var(--accent)}
-    .request-code,.expiry{color:var(--muted)}.request-code strong{color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.scope-list{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.scope{padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);font:600 .875rem/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
-    .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}button,.button-link{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 17px;border:1px solid transparent;border-radius:10px;font:700 .95rem/1 system-ui;cursor:pointer;text-decoration:none}.approve{background:var(--accent);color:#21100d}.deny{border-color:var(--border);background:#30394a;color:var(--text)}button:focus-visible,.button-link:focus-visible{outline:3px solid rgba(255,114,94,.3);outline-offset:2px}button:disabled{cursor:not-allowed;opacity:.55}
-    .state{margin-top:24px;padding:16px 18px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}.state[data-state="approved"]{border-color:rgba(255,114,94,.45)}.state[data-state="consumed"]{border-color:rgba(94,216,183,.5)}.state[data-state="denied"],.state[data-state="expired"],.state[data-state="error"]{border-color:rgba(255,138,128,.48)}.state-row{display:flex;align-items:flex-start;gap:12px}.state-mark{flex:0 0 auto;width:12px;height:12px;margin-top:6px;border:2px solid currentColor;border-radius:50%;color:var(--muted)}.state[data-state="approved"] .state-mark{color:var(--accent);border-right-color:transparent;animation:spin .8s linear infinite}.state[data-state="consumed"] .state-mark{color:var(--success);background:var(--success);box-shadow:inset 0 0 0 2px var(--surface-2)}.state[data-state="denied"] .state-mark,.state[data-state="expired"] .state-mark,.state[data-state="error"] .state-mark{color:var(--danger);background:var(--danger);box-shadow:inset 0 0 0 2px var(--surface-2)}.state strong{display:block;font-size:1rem}.state p{margin:3px 0 0;color:var(--muted)}.terminal-actions{margin-top:16px}
-    [hidden]{display:none!important}@keyframes spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.state-mark{animation:none!important}}@media(max-width:520px){main{margin:16px auto;border-radius:16px}.actions>*{flex:1 1 0}}
+  <meta name="theme-color" content="#08080d">
+  <style>${publicPageStyle}
+    .lede{max-width:62ch;margin:0 0 24px}
+    label{display:grid;gap:8px;font-weight:600}.code-input{width:100%;min-height:52px;padding:12px 16px;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(0,0,0,.3);color:var(--text);font:600 1.15rem/1.3 var(--mono);letter-spacing:.18em;text-transform:uppercase}.code-input:focus{border-color:var(--coral)}
+    #request{margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}.request-code,.expiry{color:var(--muted);font-size:.9rem}.request-code strong{color:var(--text);font-family:var(--mono);letter-spacing:.08em}
+    .scope-list{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.scope{padding:5px 11px;border:1px solid rgba(255,255,255,.1);border-radius:999px;background:rgba(255,255,255,.03);font:500 .8rem/1.3 var(--mono);color:#cfd3e2}
+    .actions{margin-top:20px}
+    .state{margin-top:24px;padding:16px 18px;border:1px solid var(--border);border-radius:16px;background:rgba(0,0,0,.25)}.state[data-state="approved"]{border-color:rgba(255,107,87,.45)}.state[data-state="consumed"]{border-color:rgba(52,211,153,.5)}.state[data-state="denied"],.state[data-state="expired"],.state[data-state="error"]{border-color:rgba(248,113,113,.48)}
+    .state-row{display:flex;align-items:flex-start;gap:12px}.state-mark{flex:0 0 auto;width:12px;height:12px;margin-top:6px;border:2px solid currentColor;border-radius:50%;color:var(--muted)}.state[data-state="approved"] .state-mark{color:var(--coral);border-right-color:transparent;animation:spin .8s linear infinite}.state[data-state="consumed"] .state-mark{color:var(--mint);background:var(--mint);box-shadow:0 0 10px var(--mint)}.state[data-state="denied"] .state-mark,.state[data-state="expired"] .state-mark,.state[data-state="error"] .state-mark{color:var(--red);background:var(--red)}
+    .state strong{display:block;font-size:1rem}.state p{margin:3px 0 0}.terminal-actions{margin-top:16px}.terminal-actions .button-link{flex:0 1 auto}
+    @keyframes spin{to{transform:rotate(360deg)}}
   </style>
 </head>
 <body>
-  <main>
+  ${publicPageTopBar}
+  <header class="hero"><span class="orb" aria-hidden="true"></span><span class="mono">Relo · Command line</span></header>
+  <main class="card">
     <h1>Authorize a client</h1>
     <p class="lede">Signing in does not authorize this request. Verify the code, client, requested access, and expiry before choosing.</p>
     <label id="code-field">Authorization code
@@ -175,26 +179,27 @@ export function authorizationRateLimitBuckets(context?: Context): string[] {
   return address ? ["global", `client:${address}`] : ["global"];
 }
 
-function limited(store: Map<string, number[]>, key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const recent = (store.get(key) ?? []).filter((timestamp) => timestamp > now - windowMs);
-  recent.push(now);
-  store.set(key, recent);
-  return recent.length > limit;
-}
-
-function limitedAcrossBuckets(
+/**
+ * Records an attempt in every bucket unless one of them is already full. A rejected attempt is not
+ * recorded, so a full bucket empties a window after the last accepted attempt instead of staying
+ * full for as long as someone keeps sending.
+ */
+export function limitedAcrossBuckets(
   store: Map<string, number[]>,
   buckets: string[],
   clientLimit: number,
   globalLimit: number,
   windowMs: number,
+  now = Date.now(),
 ): boolean {
-  let rejected = false;
-  for (const bucket of buckets) {
-    if (limited(store, bucket, bucket === "global" ? globalLimit : clientLimit, windowMs)) rejected = true;
-  }
-  return rejected;
+  const recent = buckets.map((bucket) => {
+    const kept = (store.get(bucket) ?? []).filter((timestamp) => timestamp > now - windowMs);
+    store.set(bucket, kept);
+    return kept;
+  });
+  if (buckets.some((bucket, index) => recent[index]!.length >= (bucket.endsWith("global") ? globalLimit : clientLimit))) return true;
+  for (const kept of recent) kept.push(now);
+  return false;
 }
 
 export async function cleanupTerminalDeviceAuthorizations(db: Database): Promise<number> {

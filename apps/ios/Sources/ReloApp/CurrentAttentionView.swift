@@ -5,6 +5,10 @@ import SwiftUI
 /// meaning color, 28pt between sections. Empty sections disappear.
 struct CurrentAttentionView: View {
     @Bindable var model: AppModel
+    /// Live now, worked out once by the screen (the deck counts the same cards).
+    var cards: [LiveNowProjection.Card]
+    /// Agent sessions as they stand now; empty offline.
+    var sessions: [AgentSession]
     var viewHistory: () -> Void = {}
     @AppStorage(ReloHistoryPreferences.clearedAtKey) private var clearedAt: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -12,12 +16,11 @@ struct CurrentAttentionView: View {
     var body: some View {
         let screen = model.currentPresentation
         let recent = screen.recentChanges.filter { clearedAt <= 0 || $0.updatedAt.timeIntervalSince1970 >= clearedAt }
-        let cards = LiveNowProjection.make(history: model.historyItems, subjects: screen.running,
-                                         sessions: isOffline ? [] : model.agentSessions,
-                                         sessionsFetchedAt: model.agentSessionsFetchedAt, now: model.attentionDate)
         let allClear = screen.needsMe.isEmpty && cards.isEmpty
         let activity = todayActivity
-        LazyVStack(alignment: .leading, spacing: 28) {
+        // A plain stack: a handful of sections of very different heights. Lazily laid out, the
+        // sections below the fold were measured only on arrival and the page jumped as they did.
+        VStack(alignment: .leading, spacing: 28) {
             persistenceWarning
             if !screen.needsMe.isEmpty {
                 section("Needs you", count: screen.actionableCount ?? screen.needsMe.count, color: ReloHoloTheme.color(.needsYou)) {
@@ -204,7 +207,7 @@ struct CurrentAttentionView: View {
     @ViewBuilder
     private func agentsSection(cards: [LiveNowProjection.Card]) -> some View {
         let now = model.attentionDate
-        let groups = isOffline ? [] : AgentSessionsProjection.groups(model.agentSessions, now: now)
+        let groups = AgentSessionsProjection.groups(sessions, now: now)
         if !groups.isEmpty {
             // Counts the agents running now; idle ones (waiting for you), ended and lost still list.
             let count = AgentSessionsProjection.runningCount(groups.flatMap(\.sessions))
@@ -213,10 +216,17 @@ struct CurrentAttentionView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.title).font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.0)
                             .foregroundStyle(Color.reloSecondaryText).textCase(.uppercase)
+                        let live = group.sessions.filter(AgentSessionsProjection.isLive)
+                        let finished = group.sessions.filter { !AgentSessionsProjection.isLive($0) }
+                        let shown = live + (showsFinished.contains(group.id) ? finished : [])
                         VStack(spacing: 0) {
-                            ForEach(Array(group.sessions.enumerated()), id: \.element.id) { index, session in
+                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, session in
                                 if index > 0 { Divider().padding(.leading, 16) }
                                 agentRow(session, now: now, cards: cards)
+                            }
+                            if !finished.isEmpty {
+                                if !shown.isEmpty { Divider().padding(.leading, 16) }
+                                finishedToggle(group: group.id, count: finished.count)
                             }
                         }
                         .reloCard()
@@ -226,20 +236,50 @@ struct CurrentAttentionView: View {
         }
     }
 
+    /// Groups whose ended and lost sessions are expanded.
+    @State private var showsFinished: Set<String> = []
+
+    /// "3 ended in the last hour": the finished sessions fold into one row until asked for.
+    private func finishedToggle(group: String, count: Int) -> some View {
+        let open = showsFinished.contains(group)
+        return Button {
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
+                if open { showsFinished.remove(group) } else { showsFinished.insert(group) }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(open ? "Hide ended" : "\(count) ended in the last hour")
+                    .font(.footnote.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
+                Spacer(minLength: 8)
+                Image(systemName: open ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.reloSecondaryText)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12).frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     @ViewBuilder
     private func agentRow(_ session: AgentSession, now: Date, cards: [LiveNowProjection.Card]) -> some View {
-        let live = AgentSessionsProjection.isRunning(session)
-        let notificationID = (session.presence == .working || session.presence == .quiet)
-            ? cards.first(where: { $0.id == session.card?.id })?.notificationID : nil
+        let live = AgentSessionsProjection.isLive(session)
+        let card = cards.first(where: { $0.id == session.card?.id })
+        let notificationID = (session.presence == .working || session.presence == .quiet) ? card?.notificationID : nil
         let row = HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text([AgentSessionsProjection.harnessName(session.harness), session.project]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                // What it is working on, so sessions in the same project tell apart.
+                if live, let title = card?.title {
+                    Text(title).font(.footnote).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                }
                 agentChip(session, now: now)
                 if live {
+                    // The session's age, not a turn: an idle session is open but not working.
                     HStack(spacing: 4) {
-                        Text("running")
+                        Text("session")
                         Text(timerInterval: session.startedAt...Date.distantFuture, countsDown: false)
                             .monospacedDigit().multilineTextAlignment(.leading)
                             .frame(maxWidth: 64, alignment: .leading)

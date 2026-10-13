@@ -9,7 +9,8 @@ Accepted. Supersedes [ADR 0003](0003-private-network-first.md).
 Each installation chooses its own HTTPS origin (`RELO_APP_URL`); nothing in the server, Dashboard,
 iPhone app or CLI assumes a particular host. A private tailnet origin and a public origin behind a
 reverse proxy (for example Cloudflare Tunnel with Access) are both supported. The API stays bound to
-loopback in either case, and public plaintext binding is still rejected.
+loopback in either case, and a plain-HTTP origin on a public address is still rejected (the server's
+`APP_URL` check and the CLI's API URL check).
 
 ## Consequences
 

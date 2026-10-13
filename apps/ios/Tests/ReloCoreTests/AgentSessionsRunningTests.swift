@@ -55,4 +55,26 @@ final class AgentSessionsRunningTests: XCTestCase {
         XCTAssertEqual(phrase(session("e", .ended, state: "ended")), "ended")
         XCTAssertEqual(phrase(session("l", .lost)), "lost contact")
     }
+
+    func testASilentLiveSessionSettlesToLostByItsStatesThreshold() {
+        let working = session("w", .working, card: "act_1", eventAgo: AgentSessionsProjection.activeLostAfter + 60)
+        let idle = session("i", .noCard, state: "idle", eventAgo: AgentSessionsProjection.activeLostAfter + 60)
+        let longIdle = session("z", .noCard, state: "idle", eventAgo: AgentSessionsProjection.idleLostAfter + 60)
+        let fresh = session("f", .working, eventAgo: 30)
+        let settled = AgentSessionsProjection.settled([working, idle, longIdle, fresh], now: now)
+        XCTAssertEqual(settled.map(\.presence), [.lost, .noCard, .lost, .working])
+        XCTAssertEqual(settled[0].state, "lost")
+        XCTAssertEqual(settled[0].card?.id, "act_1", "the card link survives")
+        XCTAssertEqual(settled[0].project, "relo", "the names survive")
+        XCTAssertEqual(AgentSessionsProjection.runningCount(settled), 1)
+        XCTAssertEqual(AgentSessionsProjection.idleCount(settled), 1)
+    }
+
+    func testAToolEventNeverMovesARow() {
+        let older = AgentSession(id: "a", harness: "claude-code", project: "relo", startedAt: now.addingTimeInterval(-7_200),
+                                 lastEventAt: now, presence: .working)
+        let newer = AgentSession(id: "b", harness: "claude-code", project: "relo", startedAt: now.addingTimeInterval(-600),
+                                 lastEventAt: now.addingTimeInterval(-300), presence: .working)
+        XCTAssertEqual(AgentSessionsProjection.visible([older, newer], now: now).map(\.id), ["b", "a"])
+    }
 }

@@ -15,17 +15,15 @@ public struct ReloSecureEnclaveKeyFactory: ReloKeyFactory {
         return ReloStoredKey(kind: .secureEnclave, data: key.dataRepresentation, publicKey: key.publicKey.x963Representation)
     }
 
-    /// CryptoKit's default makes a key usable only while the iPhone is unlocked, which left the Lock
-    /// Screen and notifications on placeholders. Prekeys only receive content, so like WhatsApp's and
-    /// Signal's message keys they work after the first unlock since boot; they never leave this device.
+    /// Prekeys only receive content, and the Lock Screen widget and the Notification Service
+    /// Extension must open it: a CryptoKit Secure Enclave key is bound to the process that created it
+    /// (the app), so those extensions could never use it and Live Activities stayed on placeholders.
+    /// Like Signal's and WhatsApp's message keys, prekeys are kept in the shared Keychain item instead:
+    /// readable only by Relo and its extensions, after the first unlock, never leaving this device
+    /// (AfterFirstUnlockThisDeviceOnly), rotated every 10 hours and deleted after retention. The
+    /// identity key, which signs answers and approvals in the app, stays in the Secure Enclave.
     public func makePrekey() throws -> ReloStoredKey {
-        var error: Unmanaged<CFError>?
-        guard let access = SecAccessControlCreateWithFlags(
-            nil, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, .privateKeyUsage, &error
-        ) else { throw error!.takeRetainedValue() as Error }
-        let key = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: access)
-        return ReloStoredKey(kind: .secureEnclave, data: key.dataRepresentation, publicKey: key.publicKey.x963Representation,
-                             usableWhileLocked: true)
+        try ReloSoftwareKeyFactory().makePrekey()
     }
 
     public func signer(for identity: ReloStoredKey) throws -> any ReloIdentitySigning {

@@ -53,10 +53,40 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public extension AgentSession {
+    /// The same session read as lost, keeping its names and card.
+    func markedLost() -> AgentSession {
+        var copy = AgentSession(id: id, harness: harness, computer: storedComputer, account: storedAccount,
+                                project: storedProject, state: "lost", startedAt: startedAt, lastEventAt: lastEventAt,
+                                card: card, presence: .lost)
+        copy.sealedNames = sealedNames
+        return copy
+    }
+}
+
 /// Pure view model for the AGENTS section: which sessions show, in what order, grouped how.
 public enum AgentSessionsProjection {
     /// Ended and lost sessions stay visible this long after their last event.
     public static let recentWindow: TimeInterval = 3_600
+    /// The server's lost thresholds: mid-turn sessions report a tool event about once a minute;
+    /// an idle session (waiting for the owner) sends nothing, so it is lost only much later.
+    public static let activeLostAfter: TimeInterval = 15 * 60
+    public static let idleLostAfter: TimeInterval = 8 * 3_600
+
+    /// The sessions as they stand now: a live session silent past its state's threshold reads as
+    /// lost, as the server would report it, even when the list was fetched before it went silent.
+    public static func settled(_ sessions: [AgentSession], now: Date) -> [AgentSession] {
+        sessions.map { session in
+            guard isLive(session) else { return session }
+            let limit = session.state == "idle" ? idleLostAfter : activeLostAfter
+            return now.timeIntervalSince(session.lastEventAt) > limit ? session.markedLost() : session
+        }
+    }
+
+    /// How many agents are idle now, waiting for the owner.
+    public static func idleCount(_ sessions: [AgentSession]) -> Int {
+        sessions.filter(isIdle).count
+    }
 
     public struct Group: Equatable, Identifiable, Sendable {
         /// "MacBook Pro · Work".
@@ -117,7 +147,8 @@ public enum AgentSessionsProjection {
         return base >= 3 ? base + 1 : base
     }
 
-    /// Live sessions first (running, then idle), then ended or lost within the last hour.
+    /// Live sessions first (running, then idle), then ended or lost within the last hour. Within a
+    /// group, newest started first: a tool event never moves a row.
     public static func visible(_ sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.filter { session in
             isLive(session) || now.timeIntervalSince(session.lastEventAt) <= recentWindow
@@ -125,7 +156,7 @@ public enum AgentSessionsProjection {
         .sorted {
             let (a, b) = (order($0), order($1))
             if a != b { return a < b }
-            if $0.lastEventAt != $1.lastEventAt { return $0.lastEventAt > $1.lastEventAt }
+            if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
             return $0.id < $1.id
         }
     }

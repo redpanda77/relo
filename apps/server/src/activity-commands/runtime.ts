@@ -506,10 +506,11 @@ export async function expireDueActivities(
            -- unless a question on it is still waiting for the owner.
            OR (stale_at<=now()-interval '10 minutes' AND resume_presentation IS NULL
              AND (requester_credential_id IS NOT NULL OR requester_service_id IS NOT NULL)))
-           -- A card of a live agent session stays (shown quiet); the session rules end it later.
+           -- A card of an agent session in the middle of a turn stays (shown quiet); the session
+           -- rules end it later. Once the turn is over (idle) the agent is not working on it.
            AND NOT EXISTS (SELECT 1 FROM agent_sessions s
              WHERE s.principal_id=live_activities.principal_id AND s.card_key=live_activities.activity_key
-               AND s.state IN ('active','idle')
+               AND s.state='active'
                AND s.last_event_at>now()-make_interval(secs=>${SESSION_LOST_AFTER_SECONDS})))
          AND presentation IS NOT NULL
        ORDER BY LEAST(expires_at,stale_at) FOR UPDATE SKIP LOCKED LIMIT $1`,

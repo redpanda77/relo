@@ -5,7 +5,9 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(1).max(65535).default(8180),
-  APP_URL: z.url().default("http://127.0.0.1:8180"),
+  /** The public origin. Plain HTTP only on a private or local address, the CLI's rule (ADR 0006). */
+  APP_URL: z.url().default("http://127.0.0.1:8180").refine(secureOrPrivateOrigin,
+    "APP_URL must use https:// unless it is a private or local address"),
   /** Header a reverse proxy sets to the real client address, e.g. cf-connecting-ip or x-real-ip. */
   RELO_CLIENT_IP_HEADER: optionalTrimmed(z.string().regex(/^[A-Za-z0-9-]{1,64}$/)),
   RELO_RELEASE_IDENTITY: z.string().trim()
@@ -52,6 +54,20 @@ const schema = z.object({
 });
 
 export type Config = z.infer<typeof schema>;
+
+/** HTTPS, or HTTP to a loopback, link-local, RFC 1918, unique-local or .local host. */
+export function secureOrPrivateOrigin(value: string): boolean {
+  const url = new URL(value);
+  if (url.protocol === "https:") return true;
+  if (url.protocol !== "http:") return false;
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (host === "::1" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) return true;
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = octets as [number, number];
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+}
 
 function emptyStringAsUndefined(value: unknown): unknown {
   return value === "" ? undefined : value;

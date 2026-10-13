@@ -24,12 +24,15 @@ afterEach(() => {
 })
 
 describe("Dashboard shell mobile contracts", () => {
-  it("opens the generated Sheet sidebar, traps focus, and restores the trigger after Escape", async () => {
+  it("opens the generated Sheet sidebar from the tab bar's More, traps focus, and restores the trigger after Escape", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 })
     render(<DashboardShell shell={shell}><main id="main-content">Monitor</main></DashboardShell>)
 
     await waitFor(() => expect(document.getElementById("dashboard-sidebar")).not.toBeInTheDocument())
-    const trigger = screen.getByRole("button", { name: "Open menu" })
+    const tabs = screen.getByRole("navigation", { name: "Tabs" })
+    expect(within(tabs).getByRole("link", { name: "Now" })).toHaveAttribute("href", "/dashboard")
+    const trigger = within(tabs).getByRole("button", { name: "More" })
+    expect(trigger).toHaveAttribute("aria-current", "page")
     fireEvent.click(trigger)
 
     const dialog = await screen.findByRole("dialog", { name: "Sidebar" })
@@ -46,24 +49,27 @@ describe("Dashboard shell mobile contracts", () => {
   it("preserves navigation, release, account, and skip-link contracts", () => {
     const { container, rerender } = render(<DashboardShell shell={shell}><main id="main-content">Monitor</main></DashboardShell>)
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main-content")
-    expect(screen.getByRole("link", { name: "Now" })).toHaveAttribute("href", "/dashboard")
-    expect(screen.getByRole("link", { name: "History" })).toHaveAttribute("href", "/dashboard/inbox/notifications")
-    expect(screen.getByRole("link", { name: "Connections" })).toHaveAttribute("href", "/dashboard/connections")
-    expect(screen.getByRole("link", { name: "Test Lab" })).toHaveAttribute("href", "/dashboard/testing")
-    expect(screen.getByRole("link", { name: "Test Lab" })).toHaveAttribute("aria-current", "page")
-    expect(screen.queryByRole("link", { name: "Account" })).toBeNull()
+    const primary = screen.getByRole("navigation", { name: "Primary" })
+    expect(within(primary).getByRole("link", { name: "Now" })).toHaveAttribute("href", "/dashboard")
+    expect(within(primary).getByRole("link", { name: "History" })).toHaveAttribute("href", "/dashboard/inbox/notifications")
+    expect(within(primary).getByRole("link", { name: "Connections" })).toHaveAttribute("href", "/dashboard/connections")
+    expect(within(primary).getByRole("link", { name: "Test Lab" })).toHaveAttribute("href", "/dashboard/testing")
+    expect(within(primary).getByRole("link", { name: "Test Lab" })).toHaveAttribute("aria-current", "page")
+    const settings = screen.getByRole("navigation", { name: "Settings" })
+    expect(within(settings).getByRole("link", { name: "Account" })).toHaveAttribute("href", "/dashboard/account")
+    expect(within(settings).getByRole("link", { name: "Documentation" })).toHaveAttribute("href", "/dashboard/docs")
     const profile = container.querySelector<HTMLElement>("#profile-menu")!
     profile.focus()
     fireEvent.keyDown(profile, { key: "Enter" })
     expect(screen.getByRole("menuitem", { name: "Account" })).toHaveAttribute("href", "/dashboard/account")
-    expect(screen.getByRole("menuitem", { name: "Documentation" })).toHaveAttribute("href", "/dashboard/docs")
     expect(document.querySelector("[data-release-identity='test-release']")).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toHaveAttribute("id", "sign-out")
     fireEvent.keyDown(document.activeElement!, { key: "Escape" })
 
     rerender(<DashboardShell shell={{ ...shell, title: "Inbox", active: "inbox", counts: { pending: 0, notifications: 0, deliveries: 0 } }}><main id="main-content">Inbox</main></DashboardShell>)
-    expect(screen.getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page")
-    expect(screen.getByText("Relo", { selector: "header span" })).toBeInTheDocument()
+    expect(within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page")
+    expect(within(screen.getByRole("navigation", { name: "Tabs" })).getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page")
+    expect(screen.getAllByText("relo", { selector: "header span" }).length).toBeGreaterThan(0)
   })
 
   it("keeps the 320px content path shrink-safe without viewport-width utility overflow", () => {

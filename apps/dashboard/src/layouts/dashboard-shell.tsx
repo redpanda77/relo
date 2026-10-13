@@ -7,13 +7,14 @@ import {
   FlaskConical,
   FolderKanban,
   History,
+  Menu,
   Radio,
   LogOut,
   UserRound,
 } from "lucide-react"
 import * as React from "react"
 
-import { cn } from "@/lib/utils"
+import { BrandLockup } from "@/components/brand"
 
 import type { AuthenticatedDashboardBootstrap } from "@/app/bootstrap"
 import {
@@ -74,43 +75,97 @@ const navigation = [
   },
 ]
 
+const secondaryNavigation = [
+  {
+    label: "Account",
+    href: "/dashboard/account",
+    icon: UserRound,
+    sections: ["account"],
+  },
+  {
+    label: "Documentation",
+    href: "/dashboard/docs",
+    icon: BookOpen,
+    sections: ["docs"],
+  },
+]
+
 type Shell = AuthenticatedDashboardBootstrap["shell"]
 
-/** A hairline ring with a luminous core: the same instrument as the Now header, small. */
-function BrandMark({ small = false }: { small?: boolean }) {
+type NavItem = (typeof navigation)[number]
+
+const navLinkClass =
+  "relative min-h-10 gap-3 rounded-xl px-3 text-muted-foreground hover:text-foreground data-active:bg-white/[0.06] data-active:text-foreground data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-0.5 data-active:before:rounded-full data-active:before:bg-[var(--primary)] [&[data-active=true]>svg]:text-[var(--primary)]"
+
+function NavList({ items, active, needsYou, label }: { items: NavItem[]; active: string; needsYou: number; label: string }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "relative grid shrink-0 place-items-center rounded-full border border-white/20",
-        small ? "size-7" : "size-8"
-      )}
-      style={{ background: "radial-gradient(circle at 50% 50%, rgb(139 124 255 / 0.55), rgb(9 11 16 / 0) 70%)" }}
-    >
-      <span className="size-2 rounded-full bg-white shadow-[0_0_12px_3px_var(--neon-violet)]" />
-    </span>
+    <nav aria-label={label}>
+      <SidebarMenu className="gap-1">
+        {items.map((item) => {
+          const Icon = item.icon
+          const current = item.sections.includes(active)
+          return (
+            <SidebarMenuItem key={item.href}>
+              <SidebarMenuButton asChild isActive={current} className={navLinkClass}>
+                <a href={item.href} aria-current={current ? "page" : undefined}>
+                  <Icon aria-hidden="true" />
+                  <span className="flex-1">{item.label}</span>
+                  {item.href === "/dashboard" && needsYou > 0 ? (
+                    <span className="min-w-5 rounded-full bg-[var(--neon-orange)] px-1.5 text-center text-[11px] leading-5 font-bold text-[#1b0905]" aria-label={`${needsYou} need you`}>
+                      {needsYou}
+                    </span>
+                  ) : null}
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )
+        })}
+      </SidebarMenu>
+    </nav>
   )
 }
 
-function MobileSidebarTrigger() {
-  const { openMobile } = useSidebar()
-  const triggerRef = React.useRef<HTMLButtonElement>(null)
+/** The iPhone's tab bar on narrow screens; "More" opens the full menu. */
+function MobileTabBar({ active, needsYou }: { active: string; needsYou: number }) {
+  const { openMobile, setOpenMobile } = useSidebar()
+  const moreRef = React.useRef<HTMLButtonElement>(null)
   const wasOpen = React.useRef(false)
 
   React.useEffect(() => {
-    if (wasOpen.current && !openMobile) triggerRef.current?.focus()
+    if (wasOpen.current && !openMobile) moreRef.current?.focus()
     wasOpen.current = openMobile
   }, [openMobile])
 
+  const tabs = navigation.slice(0, 4)
+  const moreActive = !tabs.some((item) => item.sections.includes(active))
   return (
-    <SidebarTrigger
-      ref={triggerRef}
-      id="mobile-nav-toggle"
-      aria-controls="dashboard-sidebar"
-      aria-expanded={openMobile}
-      aria-label={openMobile ? "Close menu" : "Open menu"}
-      className="size-11 md:hidden"
-    />
+    <nav aria-label="Tabs" className="tab-bar">
+      {tabs.map((item) => {
+        const Icon = item.icon
+        const current = item.sections.includes(active)
+        return (
+          <a key={item.href} href={item.href} aria-current={current ? "page" : undefined}>
+            <Icon aria-hidden="true" />
+            {item.label}
+            {item.href === "/dashboard" && needsYou > 0 ? (
+              <span className="tab-badge" aria-label={`${needsYou} need you`}>{needsYou}</span>
+            ) : null}
+          </a>
+        )
+      })}
+      <button
+        ref={moreRef}
+        type="button"
+        id="mobile-nav-toggle"
+        aria-controls="dashboard-sidebar"
+        aria-expanded={openMobile}
+        aria-current={moreActive ? "page" : undefined}
+        onClick={() => setOpenMobile(!openMobile)}
+      >
+        <Menu aria-hidden="true" />
+        More
+      </button>
+    </nav>
   )
 }
 
@@ -141,7 +196,7 @@ function ProfileMenu({ shell }: { shell: Shell }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         id="profile-menu"
-        className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-accent data-[state=open]:bg-accent"
+        className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.03] px-2.5 py-2 text-left transition-colors hover:bg-accent data-[state=open]:bg-accent"
       >
         <span className="brand-gradient grid size-8 shrink-0 place-items-center rounded-full text-sm font-semibold text-primary-foreground">
           {account.initial}
@@ -164,12 +219,6 @@ function ProfileMenu({ shell }: { shell: Shell }) {
           <a href="/dashboard/account">
             <UserRound aria-hidden="true" />
             Account
-          </a>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <a href="/dashboard/docs">
-            <BookOpen aria-hidden="true" />
-            Documentation
           </a>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -215,51 +264,21 @@ export function DashboardShell({
           aria-label="Dashboard navigation"
         >
           <SidebarHeader className="h-16 flex-row items-center gap-2.5 px-5 py-0">
-            <BrandMark />
-            <span className="font-light tracking-[0.22em] text-foreground uppercase">
-              Relo
-            </span>
+            <a href="/dashboard" aria-label="Relo, Now" className="rounded-lg">
+              <BrandLockup orbClassName="size-7" />
+            </a>
             <SidebarTrigger
               className="ml-auto size-11 md:hidden"
               aria-label="Close menu"
             />
           </SidebarHeader>
 
-          <SidebarContent className="px-3 pt-2">
-            <nav aria-label="Primary">
-              <SidebarMenu className="gap-1">
-                {navigation.map((item) => {
-                  const Icon = item.icon
-                  const active = item.sections.includes(shell.active)
-                  return (
-                    <SidebarMenuItem key={item.href}>
-                      <SidebarMenuButton
-                        asChild
-                        isActive={active}
-                        className="relative min-h-10 gap-3 rounded-xl px-3 text-muted-foreground hover:text-foreground data-active:bg-white/[0.05] data-active:text-foreground data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-px data-active:before:bg-[linear-gradient(180deg,var(--neon-cyan),var(--neon-magenta))] data-active:before:shadow-[0_0_8px_var(--neon-violet)] [&[data-active=true]>svg]:text-[var(--neon-cyan)]"
-                      >
-                        <a
-                          href={item.href}
-                          aria-current={active ? "page" : undefined}
-                        >
-                          <Icon aria-hidden="true" />
-                          <span className="flex-1">{item.label}</span>
-                          {item.href === "/dashboard" && needsYou > 0 ? (
-                            <span
-                              className="micro rounded-full px-1.5 py-0.5 text-[10px]"
-                              style={{ color: "var(--neon-coral)", background: "color-mix(in srgb, var(--neon-coral) 14%, transparent)" }}
-                              aria-label={`${needsYou} need you`}
-                            >
-                              {needsYou}
-                            </span>
-                          ) : null}
-                        </a>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  )
-                })}
-              </SidebarMenu>
-            </nav>
+          <SidebarContent className="gap-6 px-3 pt-2">
+            <NavList items={navigation} active={shell.active} needsYou={needsYou} label="Primary" />
+            <div>
+              <p className="micro mb-2 px-3">Settings</p>
+              <NavList items={secondaryNavigation} active={shell.active} needsYou={0} label="Settings" />
+            </div>
           </SidebarContent>
 
           <SidebarFooter className="p-3">
@@ -271,14 +290,15 @@ export function DashboardShell({
       <div data-dashboard-main className="max-w-full min-w-0 flex-1">
         <header
           data-mobile-shell-header
-          className="glass-strong sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 md:hidden"
+          className="sticky top-0 z-30 flex h-14 items-center justify-center border-b border-white/[0.06] bg-[rgb(8_8_13/0.78)] px-4 backdrop-blur-xl md:hidden"
         >
-          <MobileSidebarTrigger />
-          <BrandMark small />
-          <span className="font-light tracking-[0.22em] uppercase">Relo</span>
+          <a href="/dashboard" aria-label="Relo, Now">
+            <BrandLockup orbClassName="size-6" />
+          </a>
         </header>
         {children}
       </div>
+      <MobileTabBar active={shell.active} needsYou={needsYou} />
     </SidebarProvider>
   )
 }
