@@ -113,8 +113,8 @@ export const inboxLiveActivitySchema = z.object({
   dismissAfterSeconds: z.number().int().min(0).max(14400).nullable().default(null),
   priority: z.union([z.literal(5),z.literal(10)]).default(5),
   interaction: z.object({
-    id: z.string(), notificationId: z.string(), kind: z.enum(["approval","yes_no"]),
-    state: z.enum(["pending","approved","denied","yes","no","expired","canceled"]),
+    id: z.string(), notificationId: z.string(), kind: z.enum(["approval","yes_no","choice"]),
+    state: z.enum(["pending","approved","denied","yes","no","replied","expired","canceled"]),
     credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.iso.datetime(),
   }).strict().nullable().default(null),
   ...presentationActivityKitContentStateSchema.shape,
@@ -356,8 +356,19 @@ export function inboxItemResource(
       id: publicId("int",row.interaction_id), kind: row.interaction_kind,
       prompt: row.interaction_prompt, state: row.interaction_state,
       expiresAt: row.interaction_expires_at, respondedAt: row.interaction_responded_at,
+      ...(row.interaction_kind === "choice" ? {
+        options: row.interaction_options ?? [],
+        response: chosenOption(row.interaction_response),
+      } : {}),
     } : null,
   };
+}
+
+/** The option a choice was answered with: {optionId,label}, or null while unanswered. */
+export function chosenOption(response: unknown): { optionId: string; label: string } | null {
+  if (!response || typeof response !== "object") return null;
+  const { optionId,label } = response as Record<string,unknown>;
+  return typeof optionId === "string" && typeof label === "string" ? { optionId,label } : null;
 }
 
 export function interactionResource(row: any) {
@@ -368,6 +379,7 @@ export function interactionResource(row: any) {
     eventId: publicId("ntf",row.notification_event_id),
     type: row.kind,
     prompt: row.prompt,
+    ...(row.kind === "choice" ? { options: row.options ?? [] } : {}),
     state: row.state,
     action,
     response: row.response ?? null,
@@ -393,7 +405,7 @@ export function deviceInventoryResource(row: any) {
   };
 }
 
-export const interactionResultSelection = `SELECT r.id,r.notification_event_id,r.kind,r.prompt,r.state,r.response,
+export const interactionResultSelection = `SELECT r.id,r.notification_event_id,r.kind,r.prompt,r.options,r.state,r.response,
   r.expires_at,r.responded_at,r.created_at,
   winner.kind AS response_action,winner.device_id AS response_device_id,d.name AS response_device_name,
   cb.state AS callback_state,cb.attempts AS callback_attempts,cb.last_status AS callback_last_status,

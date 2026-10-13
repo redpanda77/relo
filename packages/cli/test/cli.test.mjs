@@ -539,7 +539,7 @@ test("auth login maps denial, expiry, and timeout to frozen exit codes", async (
   );
   await runCase(
     new ApiError("expired_token", { status: 400, code: "EXPIRED_TOKEN" }),
-    EXIT.TERMINAL,
+    EXIT.CLOSED,
   );
   await runCase(
     new ApiError("authorization_pending", {
@@ -560,7 +560,7 @@ test("public CLI help and command routing omit rejected phone pairing", async ()
     "--topic NAME",
     "--name NAME",
     "--limit 1..100",
-    "relo ask QUESTION (--approval|--yes-no)",
+    "relo ask QUESTION (--approval|--yes-no|--option LABEL ×2-4)",
     "relo activity start --title TITLE --status TEXT",
     "--api-url URL",
     "relo interaction cancel ID",
@@ -1596,8 +1596,8 @@ test("maps every approval, yes/no, and text terminal state to stable exit codes"
   await stateCase("replied", EXIT.OK);
   await stateCase("denied", EXIT.NEGATIVE);
   await stateCase("no", EXIT.NEGATIVE);
-  await stateCase("expired", EXIT.TERMINAL);
-  await stateCase("canceled", EXIT.TERMINAL);
+  await stateCase("expired", EXIT.CLOSED);
+  await stateCase("canceled", EXIT.CLOSED);
   await stateCase("pending", EXIT.TERMINAL);
 });
 
@@ -1735,15 +1735,19 @@ test("enriches the current activity with safe thread and work context", async ()
   assert.equal(update.body.progress, undefined);
 });
 
-test("a question waits at most five minutes, by default and at most", async () => {
+test("a question waits 5 minutes by default and longer when asked, while the CLI blocks at most 5 minutes", async () => {
   const { fakeCards, cardDependencies } = await import("./fake-cards.mjs");
   const fake = fakeCards({ answer: "approved" });
   await execute(["ask", "Continue?", "--approval", "--topic", "Release"], cardDependencies(fake.client));
   assert.equal(fake.calls.find((call) => call.op === "ask").body.expiresInSeconds, 300);
-  for (const flags of [["--expires-in", "6m"], ["--timeout", "10m"]]) {
+  const long = fakeCards({ answer: "approved" });
+  await execute(["ask", "Continue?", "--approval", "--expires-in", "2d", "--topic", "Release"], cardDependencies(long.client));
+  assert.equal(long.calls.find((call) => call.op === "ask").body.expiresInSeconds, 172_800);
+  for (const flags of [["--expires-in", "31d"], ["--timeout", "10m"], ["--expires-in", "1h", "--timeout", "2h"]]) {
     await assert.rejects(
       execute(["ask", "Continue?", "--approval", ...flags, "--topic", "Release"], cardDependencies(fakeCards().client)),
-      (error) => error.exitCode === 2 && /at most 5 minutes/.test(error.message),
+      (error) => error.exitCode === 2 && /--(expires-in|timeout) must be between/.test(error.message),
+      flags.join(" "),
     );
   }
 });

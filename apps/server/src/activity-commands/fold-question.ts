@@ -1,13 +1,17 @@
 import type { SealedNotice } from "../sealed-content.js";
 import { canonicalPresentation,persistedPresentationColumns } from "../presentation-runtime.js";
+import type { ChoiceOption } from "@relo/notification-contracts";
+import { assertChoiceTargets,ChoiceUnsupportedError,isQuestionBehavior,questionBehavior } from "../choice-questions.js";
 import { publicId } from "../ids.js";
+import { prepareNotificationContent,type NotificationContentCipher } from "../notification-content.js";
 import { createActivityCommands } from "./runtime.js";
 import type { ActivityDeliverySummary,ApnsMode } from "./schemas.js";
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<any> };
 
 export type FoldQuestionInput = {
-  type: "approval" | "yes_no"; prompt: string; expiresInSeconds: number;
+  type: "approval" | "yes_no" | "choice"; prompt: string; detail?: string | undefined; expiresInSeconds: number;
+  options?: ChoiceOption[] | undefined;
   primaryLabel?: string | undefined; secondaryLabel?: string | undefined;
   /** End-to-end sealed title and prompt for the question's events (E4.1). */
   sealed?: SealedNotice | null | undefined;
@@ -15,7 +19,8 @@ export type FoldQuestionInput = {
 
 export type FoldQuestionResult =
   | { kind: "folded"; activity: any; delivery: ActivityDeliverySummary; interactionRequestId: string }
-  | { kind: "question_pending" | "private_activity_question" | "activity_target_unavailable" };
+  | { kind: "question_pending" | "private_activity_question" | "activity_target_unavailable" | "content_encryption_unavailable" }
+  | { kind: "choice_unsupported"; error: ChoiceUnsupportedError };
 
 /**
  * A question asked on a card folds into that card: the card switches to "Needs you" with the
@@ -24,25 +29,25 @@ export type FoldQuestionResult =
  */
 export async function foldQuestionIntoCard(client: Queryable, input: {
   principalId: string; row: any; question: FoldQuestionInput; apnsMode: ApnsMode; fallbackSourceName: string;
+  contentCipher?: NotificationContentCipher | null | undefined;
 }): Promise<FoldQuestionResult> {
   const { row,question: asked } = input;
   if (!(row.target_device_ids as string[] | null)?.length) return { kind: "activity_target_unavailable" };
   const working = canonicalPresentation(row.presentation);
-  if (row.resume_presentation || working.behavior.type === "approval" || working.behavior.type === "yes_no") {
+  if (row.resume_presentation || isQuestionBehavior(working.behavior.type)) {
     return { kind: "question_pending" };
   }
   if (working.privacy === "private") return { kind: "private_activity_question" };
-  const primaryLabel = asked.primaryLabel ?? (asked.type === "approval" ? "Approve" : "Yes");
-  const secondaryLabel = asked.secondaryLabel ?? (asked.type === "approval" ? "Deny" : "No");
+  if (asked.detail && !input.contentCipher) return { kind: "content_encryption_unavailable" };
+  if (asked.type === "choice") {
+    try { await assertChoiceTargets(client,input.principalId,row.target_device_ids); }
+    catch (error) { if (error instanceof ChoiceUnsupportedError) return { kind: "choice_unsupported",error }; throw error; }
+  }
   const question = persistedPresentationColumns({
     ...working,
     content: { ...working.content,subtitle: asked.prompt,status: "Needs you" },
     state: { kind: "needs_action",tone: "attention",icon: "needs_action" },
-    behavior: asked.type === "approval"
-      ? { type: "approval",primary: { action: "approve",label: primaryLabel },
-          secondary: { action: "deny",label: secondaryLabel } }
-      : { type: "yes_no",primary: { action: "yes",label: primaryLabel },
-          secondary: { action: "no",label: secondaryLabel } },
+    behavior: questionBehavior(asked.type,{ primary: asked.primaryLabel,secondary: asked.secondaryLabel,options: asked.options }),
   });
   const updated = (await client.query(
     `UPDATE live_activities SET title=$3,status=$4,detail=$5,progress=$6,symbol=$7,style=$8,
@@ -64,6 +69,10 @@ export async function foldQuestionIntoCard(client: Queryable, input: {
     principalId: input.principalId,sourceName: source.rows[0]?.source ?? input.fallbackSourceName,
     activity: updated,operation: "update",apnsMode: input.apnsMode,
     priority: 10,decisionSeconds: asked.expiresInSeconds,alert: true,sealed: asked.sealed ?? undefined,
+    decisionDetail: asked.detail && input.contentCipher ? {
+      content: prepareNotificationContent({ body: asked.detail,summary: asked.prompt,bodyFormat: "markdown" }),
+      cipher: input.contentCipher,
+    } : undefined,
   });
   const request = await client.query(
     `SELECT r.id FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id

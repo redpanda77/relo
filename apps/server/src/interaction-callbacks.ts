@@ -1,7 +1,7 @@
 import { lookup } from "node:dns/promises";
+import { allowsPrivateCallbacks,callbackSignature,resolveCallbackTarget,sendPinnedCallback,type CallbackSend } from "./callback-destinations.js";
 import { publicId } from "./ids.js";
 import type { TransportTokenEncryption } from "./token-encryption.js";
-import { isPublicHttpsUrl } from "./url-policy.js";
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: any[] }> };
 
@@ -40,8 +40,11 @@ export function callbackPayload(row: {
   interaction_request_id: string; notification_event_id: string; correlation_id: string | null;
   kind: string; request_state: string; response: unknown; responded_at: Date | string | null;
 }) {
-  const action = ({ approved: "approve",denied: "deny",yes: "yes",no: "no",replied: "reply" } as Record<string,string>)[row.request_state] ?? null;
-  const response = row.response && typeof row.response === "object" ? (row.response as Record<string,unknown>).response : undefined;
+  const answer = row.response && typeof row.response === "object" ? row.response as Record<string,unknown> : {};
+  const chosen = row.kind === "choice" && typeof answer.optionId === "string";
+  const action = chosen ? "choose"
+    : ({ approved: "approve",denied: "deny",yes: "yes",no: "no",replied: "reply" } as Record<string,string>)[row.request_state] ?? null;
+  const response = answer.response;
   return {
     type: "notification.response",
     eventId: publicId("ntf",row.notification_event_id),
@@ -51,27 +54,17 @@ export function callbackPayload(row: {
     status: row.request_state,
     action,
     text: typeof response === "string" ? response : null,
+    ...(chosen ? { optionId: answer.optionId,label: answer.label ?? null } : {}),
     respondedAt: row.responded_at ? new Date(row.responded_at).toISOString() : null,
   };
 }
 
-/** Refuses hosts that resolve to private, loopback, or link-local addresses. */
-async function resolvesPublicly(url: string, resolve: typeof lookup): Promise<boolean> {
-  if (!isPublicHttpsUrl(url)) return false;
-  try {
-    const addresses = await resolve(new URL(url).hostname,{ all: true,verbatim: true });
-    return addresses.length > 0 && addresses.every(({ address,family }) =>
-      isPublicHttpsUrl(family === 6 ? `https://[${address}]/` : `https://${address}/`));
-  } catch {
-    return false;
-  }
-}
-
 export type CallbackDispatchDependencies = {
   encryption: Pick<TransportTokenEncryption,"decrypt">;
-  fetchImpl?: typeof fetch;
+  send?: CallbackSend;
   resolve?: typeof lookup;
   userAgent?: string;
+  now?: () => number;
 };
 
 /** Settles waiting callbacks against their requests, then delivers what is due. Returns attempts made. */
@@ -90,33 +83,36 @@ export async function dispatchDueInteractionCallbacks(db: Queryable, dependencie
        SELECT id FROM interaction_callbacks
        WHERE (state='pending' AND next_attempt_at<=now()) OR (state='delivering' AND lease_expires_at<now())
        ORDER BY next_attempt_at NULLS FIRST LIMIT $1 FOR UPDATE SKIP LOCKED)
-     RETURNING c.id,c.url,c.token_ciphertext,c.correlation_id,c.attempts,c.interaction_request_id,
+     RETURNING c.id,c.principal_id,c.url,c.token_ciphertext,c.correlation_id,c.attempts,c.interaction_request_id,
        r.notification_event_id,r.kind::text AS kind,r.state::text AS request_state,r.response,r.responded_at`,
     [CALLBACK_BATCH],
   );
-  const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
-  const resolve = dependencies.resolve ?? lookup;
+  const send = dependencies.send ?? sendPinnedCallback;
+  const privateAllowed = new Map<string,boolean>();
   for (const row of claimed.rows) {
     let status: number | null = null;
     let error: string | null = null;
     try {
-      if (!await resolvesPublicly(row.url,resolve)) {
-        error = "callback_host_not_public";
+      if (!privateAllowed.has(row.principal_id)) {
+        privateAllowed.set(row.principal_id,await allowsPrivateCallbacks(db as any,row.principal_id));
+      }
+      const target = await resolveCallbackTarget(row.url,{
+        allowPrivate: privateAllowed.get(row.principal_id)!,resolve: dependencies.resolve,
+      });
+      if (!target.ok) {
+        error = target.error;
       } else {
         const token = dependencies.encryption.decrypt(row.token_ciphertext,CALLBACK_TOKEN_PURPOSE);
-        const response = await fetchImpl(row.url,{
-          method: "POST",
-          redirect: "manual",
-          signal: AbortSignal.timeout(CALLBACK_TIMEOUT_MS),
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-            "user-agent": dependencies.userAgent ?? "Relo-Callbacks/1",
-          },
-          body: JSON.stringify(callbackPayload(row)),
-        });
-        status = response.status;
-        await response.body?.cancel().catch(() => {});
+        if (!token) throw new Error("callback_token_missing");
+        const body = JSON.stringify(callbackPayload(row));
+        status = await send({ url: row.url,target,body,timeoutMs: CALLBACK_TIMEOUT_MS,headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "user-agent": dependencies.userAgent ?? "Relo-Callbacks/1",
+          // The same id on every retry of one answer: a receiver handles each id once.
+          "relo-delivery-id": publicId("cbk",row.id),
+          "relo-signature": callbackSignature(token,body,Math.floor((dependencies.now?.() ?? Date.now()) / 1_000)),
+        } });
         if (status < 200 || status >= 300) error = `http_${status}`;
       }
     } catch (cause) {

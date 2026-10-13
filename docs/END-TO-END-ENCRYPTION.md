@@ -288,7 +288,7 @@ Built and tested in source, **not yet in a release**:
 | E2.3 CLI trust | Done: trust on first use, automatically; `relo keys status` shows "security code changed" notices; `verify` (optional, a person), `strict on|off`, `forget`, `rotate`. |
 | E2.4 Phone trust | Done in source: the phone trusts the account's computers automatically on launch and foreground; Settings → Security leads with "End-to-end encrypted with …", shows "Security code changed" lines, and keeps "Verify security code" optional. |
 | E3.1–E3.2 Sealed notices | Done in source: `relo notify` seals for verified phones; the server stores envelopes and placeholders only; the Notification Service Extension and the app open them. Project and topic names are still metadata (E2.5). |
-| E4.2 Signed answers | Done in source: the iPhone signs every answer when it is queued (in the app, from a notification, or from a Live Activity button); once a computer trusts a phone, `relo ask` acts on approved, yes or replied only with a valid signature from a trusted phone, and otherwise exits 4 (do not act). Negative answers need no signature. |
+| E4.2 Signed answers | Done in source: the iPhone signs every answer when it is queued (in the app, from a notification, or from a Live Activity button); once a computer trusts a phone, `relo ask` acts on approved, yes or replied only with a valid signature from a trusted phone, and otherwise exits 8 (do not act). Negative answers need no signature. |
 | E4.1 Sealed questions | Done in source: `relo ask` seals the question's title and prompt for verified phones on both the card path and the in-app path; the server stores the placeholder "Encrypted question" and the envelopes; the iPhone opens them in the app and the notification. A card shows the placeholder until E5. Answer button labels stay readable. |
 | E4.3 Sealed replies | Not needed for now: new questions take tappable answers only (typed replies were removed). If typed replies return, they must be sealed to a per-question key carried inside the sealed question. |
 | E1.2 Card retention | Done in source: the retention window also deletes ended cards (title, status, steps, snapshots) once their events are gone; active cards are never touched (migration `0069`). |
@@ -369,7 +369,8 @@ live. Work happens in this order.
 - **E4.1 — Sealed questions.** The prompt and labels for `relo ask` and the questions folded into
   cards are sealed.
 - **E4.2 — Signed answers.** Signatures come from the app, the notification actions and the Live
-  Activity buttons. The CLI verifies them before it reports `approved`.
+  Activity buttons. The CLI verifies them before it reports `approved`. The signed value is the
+  action (`approve`, `yes`), `choose:<optionId>` for a picked option, or `answer:<sha256>` for a reply.
 - **E4.3 — Sealed replies.** Typed replies are sealed to the per-question key, and callbacks carry
   the sealed reply.
 

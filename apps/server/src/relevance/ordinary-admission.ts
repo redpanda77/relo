@@ -1,4 +1,5 @@
 import type { ApnsMode } from "../activities.js";
+import type { QuestionInteraction } from "../interactions/types.js";
 import { settleInteractiveLiveActivity } from "../interactive-activity-lifecycle.js";
 import { generateToken,hashToken } from "../auth.js";
 import { publicId } from "../ids.js";
@@ -12,7 +13,7 @@ type OrdinaryInput = {
 } & ({ kind: "notice" } | {
   kind: "decision";
   actionDeadlineCap?: Date | string | undefined;
-  interaction: { kind: "approval" | "yes_no" | "text"; prompt: string; actionSeconds: number };
+  interaction: QuestionInteraction;
 });
 export type AdmittedRequest = { id: string; state: "pending" | "expired"; expires_at: Date };
 
@@ -50,17 +51,19 @@ export async function admitOrdinaryEvent(tx: SubjectTransaction,actor: ServerSub
     const deadline = admission.relevance.deadlines.actionExpiresAt!;
     request = (await tx.query<AdmittedRequest>(
       `WITH admission_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
-       INSERT INTO interaction_requests(principal_id,notification_event_id,kind,prompt,response_token_hash,expires_at,state,responded_at)
+       INSERT INTO interaction_requests(principal_id,notification_event_id,kind,prompt,response_token_hash,expires_at,state,responded_at,options)
        SELECT $1,$2,$3,$4,$5,$6,
          CASE WHEN $6::timestamptz<=admission_clock.at THEN 'expired'::interaction_request_state ELSE 'pending'::interaction_request_state END,
-         CASE WHEN $6::timestamptz<=admission_clock.at THEN admission_clock.at ELSE NULL END
+         CASE WHEN $6::timestamptz<=admission_clock.at THEN admission_clock.at ELSE NULL END,$7::jsonb
        FROM admission_clock RETURNING id,state,expires_at`,
-      [actor.principalId,input.eventId,input.interaction.kind,input.interaction.prompt,hashToken(generateToken()),deadline],
+      [actor.principalId,input.eventId,input.interaction.kind,input.interaction.prompt,hashToken(generateToken()),deadline,
+        input.interaction.options ? JSON.stringify(input.interaction.options) : null],
     )).rows[0]!;
     await tx.query(`UPDATE notification_events SET expires_at=$2,
       state=CASE WHEN $3='expired' THEN 'expired'::notification_state ELSE state END,
       payload=payload||$4::jsonb WHERE id=$1`,[input.eventId,deadline,request.state,
-      { interactionId: publicId("int",request.id),interactionType: input.interaction.kind }]);
+      { interactionId: publicId("int",request.id),interactionType: input.interaction.kind,
+        ...(input.interaction.options ? { interactionOptions: input.interaction.options } : {}) }]);
   } else {
     await tx.query("UPDATE notification_events SET expires_at=$2 WHERE id=$1",
       [input.eventId,admission.relevance.deadlines.relevantUntil]);

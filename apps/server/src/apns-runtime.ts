@@ -1,4 +1,5 @@
 import type { Database } from "./db.js";
+import type { QuestionKind } from "./interactions/types.js";
 import {
   assertApnsPayloadWithinBudget,
 } from "@relo/notification-contracts";
@@ -41,7 +42,7 @@ export type ApnsRuntimeJob = {
   deviceId?: string;
   serverOriginHash?: string;
   interactionExpiresAt?: Date | null;
-  interactionKind: "approval" | "yes_no" | "text" | null;
+  interactionKind: QuestionKind | null;
   interactionId: string | null;
   badge: number;
   payload: Record<string, unknown>;

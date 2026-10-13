@@ -132,8 +132,8 @@ export function registerMobileAccountRoutes(
            principal_id,stable_device_id,installation_id,name,bundle_identifier,
            app_version,app_build,os_version,model,apns_environment,apns_token,
            notification_authorization,live_activity_authorization,
-           live_activity_push_to_start_token,credential_version,registered_by_subject
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1,$15)
+           live_activity_push_to_start_token,credential_version,registered_by_subject,capabilities
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,1,$15,$16::text[])
          ON CONFLICT (principal_id,stable_device_id,installation_id) DO UPDATE SET
            name=EXCLUDED.name,bundle_identifier=EXCLUDED.bundle_identifier,
            app_version=EXCLUDED.app_version,app_build=EXCLUDED.app_build,
@@ -143,13 +143,14 @@ export function registerMobileAccountRoutes(
            live_activity_authorization=EXCLUDED.live_activity_authorization,
            live_activity_push_to_start_token=EXCLUDED.live_activity_push_to_start_token,
            last_seen_at=now(),revoked_at=NULL,
-           registered_by_subject=EXCLUDED.registered_by_subject,
+           registered_by_subject=EXCLUDED.registered_by_subject,capabilities=EXCLUDED.capabilities,
            credential_version=devices.credential_version+1
          RETURNING id,installation_id,credential_version,now() AS issued_at`,
         [account.principalId,input.stableDeviceId,input.installationId,input.name,input.bundleIdentifier,
           input.appVersion,input.appBuild,input.osVersion,input.model ?? null,input.apnsEnvironment,
           tokenEncryption.encrypt(input.apnsToken ?? null,"device.apns_token"),persistedMobileAuthorization(input.notificationAuthorization),persistedMobileAuthorization(input.liveActivityAuthorization),
-          tokenEncryption.encrypt(input.liveActivityPushToStartToken ?? null,"device.live_activity_push_to_start_token"),session.user.id],
+          tokenEncryption.encrypt(input.liveActivityPushToStartToken ?? null,"device.live_activity_push_to_start_token"),session.user.id,
+          input.capabilities],
       );
       const row = device.rows[0]!;
       const accessToken = registrationToken(credentialDerivationSecret, account.principalId, row.id, row.credential_version, idempotencyKey);

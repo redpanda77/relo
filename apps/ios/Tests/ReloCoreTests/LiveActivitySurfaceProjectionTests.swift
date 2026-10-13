@@ -214,6 +214,66 @@ struct LiveActivitySurfaceProjectionTests {
         #expect(visual.symbol == "clock.badge.xmark")
     }
 
+    private let choices = [
+        InteractionOption(id: "ship", label: "Ship"), InteractionOption(id: "wait", label: "Wait"),
+        InteractionOption(id: "rollback", label: "Roll back"),
+    ]
+
+    private func choiceInteraction(
+        state: String = "pending", phase: LiveActivityResponsePhase? = nil, optionID: String? = nil
+    ) -> LiveActivityContentInteraction {
+        .init(
+            id: "int_reference123456", notificationID: "ntf_reference123456",
+            targetDeviceID: "dev_reference123456", accountID: "acc_reference123456",
+            kind: "choice", state: state, credential: String(repeating: "x", count: 43),
+            expiresAtUnixSeconds: 1_800_000_600, responsePhase: phase,
+            selectedAction: phase == nil ? nil : .choose, selectedOptionID: optionID)
+    }
+
+    @Test("A pending choice is a decision the card can answer with its options")
+    func choiceIsAnswerable() {
+        let input = LiveActivityPresentation(
+            title: "Release", subtitle: "Which release?", status: "Response needed",
+            state: .init(kind: "needs_action", tone: "attention", icon: .needsAction),
+            behavior: .choice(choices))
+        let p = LiveActivitySurfaceProjection.make(
+            presentation: input, surface: .lockScreen, interaction: choiceInteraction(), now: now)
+        #expect(p.isDecision)
+        #expect(p.permitsInlineResponse)
+        #expect(p.status == "Response needed")
+        let visual = LiveActivityResponseWidgetPresentation.make(
+            interaction: choiceInteraction(), primary: "", secondary: "", options: choices, now: now)
+        #expect(visual.mode == .actions)
+    }
+
+    @Test("A choice's progress and ending name the picked option")
+    func choiceNamesThePickedOption() {
+        let queued = LiveActivityResponseWidgetPresentation.make(
+            interaction: choiceInteraction(phase: .queued, optionID: "rollback"),
+            primary: "", secondary: "", options: choices, now: now)
+        #expect(queued.label == "Roll back · Waiting to send")
+
+        let accepted = LiveActivityResponseWidgetPresentation.make(
+            interaction: choiceInteraction(state: "replied", phase: .accepted, optionID: "ship"),
+            primary: "", secondary: "", options: choices, fallbackStatus: "Ship", now: now)
+        #expect(accepted.mode == .accepted)
+        #expect(accepted.label == "Ship")
+        #expect(accepted.symbol == "checkmark.circle.fill")
+
+        // Answered from another surface: the server's ending status names the option.
+        let elsewhere = LiveActivityPresentation(
+            title: "Release", subtitle: "Which release?", status: "Wait",
+            state: .init(kind: "needs_action", tone: "attention", icon: .needsAction),
+            behavior: .choice(choices))
+        let p = LiveActivitySurfaceProjection.make(
+            presentation: elsewhere, surface: .lockScreen, interaction: choiceInteraction(state: "replied"), now: now)
+        #expect(p.status == "Wait")
+        #expect(!p.permitsInlineResponse)
+        #expect(LiveActivitySurfaceProjection.chosenLabel(
+            presentation: elsewhere, interaction: choiceInteraction(state: "replied", phase: .accepted, optionID: "rollback"))
+            == "Roll back")
+    }
+
     @Test("Private payloads never expose task text, metrics, or inline actions")
     func privacy() {
         let input = LiveActivityPresentation(

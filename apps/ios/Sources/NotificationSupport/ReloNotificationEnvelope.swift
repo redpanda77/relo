@@ -17,6 +17,9 @@ struct ReloNotificationEnvelope: Equatable {
     let conversationIdentifier: String?
     let avatarURL: URL?
     let imageURL: URL?
+    /// The per-question category a standard choice question registers. A private question's
+    /// option labels never become lock-screen buttons; it opens Relo instead.
+    let choiceCategory: ChoiceNotificationCategoryPolicy.Category?
 
     var supportsCommunicationStyle: Bool {
         privacy == .standard && sourceName != nil && conversationIdentifier != nil
@@ -38,7 +41,15 @@ struct ReloNotificationEnvelope: Equatable {
             conversationIdentifier = nil
             avatarURL = nil
             imageURL = nil
+            choiceCategory = nil
             return
+        }
+        if payload["interactionType"] as? String == "choice",
+           let interactionID = payload["interactionId"] as? String,
+           let options = NotificationDecisionMetadata.options(payload["interactionOptions"]) {
+            choiceCategory = ChoiceNotificationCategoryPolicy.category(interactionID: interactionID, options: options)
+        } else {
+            choiceCategory = nil
         }
 
         sourceName = Self.displayName(payload["sourceName"] as? String)

@@ -99,6 +99,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
            to_char(visible.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso,
            to_char(visible.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS history_cursor_at,
            r.id AS interaction_id,r.kind AS interaction_kind,r.prompt AS interaction_prompt,
+           r.options AS interaction_options,r.response AS interaction_response,
            r.state AS interaction_state,r.expires_at AS interaction_expires_at,
            r.responded_at AS interaction_responded_at,
            (SELECT CASE WHEN j.provider_outcome_category='invalid-recipient' THEN 'token_invalid' ELSE j.state END
@@ -159,7 +160,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
       `SELECT activity.id AS active_id,activity.generation,
          event.id,event.principal_id,event.payload,
          to_char(event.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso,
-         interaction.id AS interaction_id,interaction.kind AS interaction_kind,
+         interaction.id AS interaction_id,interaction.kind AS interaction_kind,interaction.options AS interaction_options,
          interaction.state AS interaction_state,interaction.expires_at AS interaction_expires_at,
          ${auth.deviceId ? `(SELECT job.state FROM delivery_jobs job
            WHERE job.notification_event_id=event.id AND job.device_id=$2
@@ -204,6 +205,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
       `SELECT e.*,${inboxActivityProjectionSql},
         to_char(e.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso,
         r.id AS interaction_id,r.kind AS interaction_kind,r.prompt AS interaction_prompt,
+           r.options AS interaction_options,r.response AS interaction_response,
         r.state AS interaction_state,r.expires_at AS interaction_expires_at,
         r.responded_at AS interaction_responded_at,
         (SELECT CASE WHEN j.provider_outcome_category='invalid-recipient' THEN 'token_invalid' ELSE j.state END

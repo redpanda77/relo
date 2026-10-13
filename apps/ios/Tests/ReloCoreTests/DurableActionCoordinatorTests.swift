@@ -69,6 +69,35 @@ final class DurableActionCoordinatorTests: XCTestCase {
         XCTAssertThrowsError(try LiveActivityResponseRequestFactory.make(response: textActivity, apiOrigin: origin))
     }
 
+    func testLiveActivityChoiceSendsChooseWithTheOptionAndRefusesAMissingOne() throws {
+        let origin = try XCTUnwrap(URL(string: "https://server.example.test"))
+        func card(_ optionID: String?) -> PendingNotificationResponse {
+            .liveActivity(
+                accountID: "acc_test123456", deviceID: "dev_test123456", notificationID: "ntf_test123456",
+                activityID: "act_test123456", activityGeneration: 1, interactionID: "int_test123456",
+                action: .choose, optionID: optionID, credential: String(repeating: "a", count: 43),
+                expiresAt: .now.addingTimeInterval(60))
+        }
+        let request = try LiveActivityResponseRequestFactory.make(response: card("rollback"), apiOrigin: origin)
+        let body = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: String])
+        XCTAssertEqual(body["action"], "choose")
+        XCTAssertEqual(body["optionId"], "rollback")
+        XCTAssertEqual(body["idempotencyKey"], "live-activity:act_test123456:1:int_test123456:choose:rollback")
+
+        XCTAssertThrowsError(try LiveActivityResponseRequestFactory.make(response: card(nil), apiOrigin: origin))
+        XCTAssertThrowsError(try LiveActivityResponseRequestFactory.make(response: card("Not Valid"), apiOrigin: origin))
+        let approval = try LiveActivityResponseRequestFactory.make(response: .liveActivity(
+            accountID: "acc_test123456", deviceID: "dev_test123456", notificationID: "ntf_test123456",
+            activityID: "act_test123456", activityGeneration: 1, interactionID: "int_test123456",
+            action: .approve, credential: String(repeating: "a", count: 43), expiresAt: .now.addingTimeInterval(60)),
+            apiOrigin: origin)
+        let approvalBody = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: XCTUnwrap(approval.httpBody)) as? [String: String])
+        XCTAssertNil(approvalBody["optionId"])
+        XCTAssertEqual(try LiveActivityResponseServerResult.decode(Data(#"{"state":"replied"}"#.utf8), expectedAction: .choose).state, "replied")
+    }
+
     func testCommandsArePlannedInAscendingSequenceRegardlessOfInboxOrder() async throws {
         let store = InMemoryProtectedActionStore()
         let coordinator = LiveActivityCommandCoordinator(store: store)

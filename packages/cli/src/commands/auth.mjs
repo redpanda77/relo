@@ -227,7 +227,7 @@ async function pollAuthorization({ client, apiUrl, deviceCode, intervalSeconds, 
       }
       if (code === "expired_token") {
         await settle();
-        throw authFlowError("Authorization expired.", "AUTHORIZATION_EXPIRED", EXIT.TERMINAL, {
+        throw authFlowError("Authorization expired.", "AUTHORIZATION_EXPIRED", EXIT.CLOSED, {
           hint: "Start over: relo auth login --no-wait",
         });
       }
@@ -380,7 +380,7 @@ async function resumeLogin(options, dependencies) {
   }
   if (dependencies.now() >= pending.expiresAtMs) {
     await dependencies.pendingLogin.clear();
-    throw authFlowError("The sign-in link expired before it was approved.", "AUTHORIZATION_EXPIRED", EXIT.TERMINAL, {
+    throw authFlowError("The sign-in link expired before it was approved.", "AUTHORIZATION_EXPIRED", EXIT.CLOSED, {
       state: "expired", hint: "Start over: relo auth login --no-wait",
     });
   }
@@ -395,7 +395,7 @@ async function resumeLogin(options, dependencies) {
   if (outcome !== undefined) return outcome;
   if (dependencies.now() >= pending.expiresAtMs) {
     await dependencies.pendingLogin.clear();
-    throw authFlowError("The sign-in link expired before it was approved.", "AUTHORIZATION_EXPIRED", EXIT.TERMINAL, {
+    throw authFlowError("The sign-in link expired before it was approved.", "AUTHORIZATION_EXPIRED", EXIT.CLOSED, {
       state: "expired", hint: "Start over: relo auth login --no-wait",
     });
   }

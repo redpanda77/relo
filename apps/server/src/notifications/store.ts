@@ -97,9 +97,10 @@ export async function notificationReceiptById(tx: SubjectTransaction,eventId: st
 }
 
 export async function insertNotificationDelivery(tx: SubjectTransaction,actor: NotificationActor,eventId: string,
-  deviceIds: string[] | null,apnsMode: ApnsMode) {
+  deviceIds: string[] | null,apnsMode: ApnsMode,quiet = false) {
   if(deviceIds) await tx.query(`INSERT INTO notification_event_targets(notification_event_id,device_id)
     SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING`,[eventId,deviceIds]);
+  if(quiet) return 0;
   // Dashboard's native text companion is constrained to the configured APNs
   // environment. Credential/service enqueue behavior retains its existing contract.
   if(actor.kind==="owner"&&apnsMode==="disabled") return 0;

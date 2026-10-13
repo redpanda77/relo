@@ -18,7 +18,8 @@ public enum LiveActivityResponseRequestFactory {
             ReloIdentifier.isValid(response.notificationID),
             ReloIdentifier.isValid(response.deviceID),
             (32...4_096).contains(credential.utf16.count),
-            [.approve, .deny, .yes, .no].contains(response.action)
+            [.approve, .deny, .yes, .no, .choose].contains(response.action),
+            response.hasValidOption
         else { throw LiveActivityResponseRequestError.invalidConfiguration }
 
         let url = apiOrigin
@@ -36,6 +37,7 @@ public enum LiveActivityResponseRequestFactory {
             "credential": credential,
             "idempotencyKey": response.idempotencyKey,
         ]
+        if let optionID = response.optionID { body["optionId"] = optionID }
         // The phone's signature over this answer, made when it was queued (E4.2).
         let signature = [ReloAnswerSigning.keyIDField, ReloAnswerSigning.signedAtField, ReloAnswerSigning.signatureField,
                          ReloAnswerSigning.questionField, ReloAnswerSigning.questionSignatureField]

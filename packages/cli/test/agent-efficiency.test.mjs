@@ -61,7 +61,7 @@ test("a closed question stays distinct from one that is still open", async () =>
   for (const state of ["expired", "canceled"]) {
     const { client } = fakeCards({ answer: state });
     const out = await cli(["ask", "Ship?", "--approval", ...topic], cardDependencies(client, { env: session }));
-    assert.equal(out.exitCode, EXIT.TERMINAL);
+    assert.equal(out.exitCode, EXIT.CLOSED);
     assert.equal(out.line.error.details.state, state);
     assert.match(out.line.error.message, /closed .*Do not act/u);
     assert.doesNotMatch(out.line.error.message, /still open/u);
@@ -150,9 +150,10 @@ test("notify shortens its title and summary, but never a question, topic or labe
   assert.equal(out.exitCode, EXIT.OK);
   assert.equal(out.line.note, "summary shortened to 240 characters; title shortened to 80 characters");
   assert.ok(Array.from(sent[0].title).length <= 80 && Array.from(sent[0].summary).length <= 240);
-  const question = await cli(["ask", "q".repeat(241), "--approval", ...topic], deps);
+  const question = await cli(["ask", "q".repeat(121), "--approval", ...topic], deps);
   assert.equal(question.exitCode, EXIT.USAGE);
-  assert.match(question.line.error.message, /at most 240/u);
+  assert.match(question.line.error.message, /one line of at most 120 characters/u);
+  assert.match(question.line.error.hint, /--detail/u);
   const longTopic = await cli(["activity", "start", "--title", "T", "--status", "S", "--topic", "t".repeat(161)], deps);
   assert.equal(longTopic.exitCode, EXIT.USAGE);
   const label = await cli(["ask", "Ship?", "--approval", "--primary-label", "L".repeat(25), ...topic], deps);
@@ -312,4 +313,59 @@ test("devices list keeps only id, name, liveActivities and lastSeenAt", async ()
     { id: "dev_abcdefghijkl", name: "Phone", liveActivities: true, lastSeenAt: "2026-02-02T00:00:00Z" },
     { id: "dev_mnopqrstuvwx", name: "Spare", liveActivities: false },
   ] });
+});
+
+test("ask sends the question as one line and the explanation as --detail", async () => {
+  const { client, calls } = fakeCards({ answer: "approved", answerAfterPolls: 1 });
+  const deps = cardDependencies(client);
+  const detail = "**Why:** rewrites 2 tables.\n- Undo: relo rollback";
+  const out = await cli(["ask", "Run the migration now?", "--approval", "--detail", detail, ...topic], deps);
+  assert.equal(out.exitCode, EXIT.OK);
+  const asked = calls.find((call) => call.op === "ask");
+  assert.equal(asked.body.prompt, "Run the migration now?");
+  assert.equal(asked.body.detail, detail);
+
+  const twoLines = await cli(["ask", "Ship?\nNow", "--approval", ...topic], deps);
+  assert.equal(twoLines.exitCode, EXIT.USAGE);
+  const tooMuch = await cli(["ask", "Ship?", "--approval", "--detail", "d".repeat(4_001), ...topic], deps);
+  assert.equal(tooMuch.exitCode, EXIT.USAGE);
+
+  const piped = cardDependencies(client);
+  piped.readStdinJson = async () => ({ prompt: "Ship 1.2?", detail: "Changelog:\n- one\n- two" });
+  const fromStdin = await cli(["ask", "--approval", "--stdin", ...topic], piped);
+  assert.equal(fromStdin.exitCode, EXIT.OK);
+  assert.equal(calls.filter((call) => call.op === "ask").at(-1).body.detail, "Changelog:\n- one\n- two");
+});
+
+test("ask --option offers 2-4 choices and reports the one picked", async () => {
+  const { client, calls } = fakeCards({ answer: "replied", response: { optionId: "roll-back", label: "Roll back" } });
+  const deps = cardDependencies(client);
+  const out = await cli(["ask", "Which release?", "--option", "Ship", "--option", "v2=Version 2", "--option", "Roll back",
+    "--detail", "Ship is 1.4; Version 2 needs the migration.", ...topic], deps);
+  assert.equal(out.exitCode, EXIT.OK);
+  const asked = calls.find((call) => call.op === "ask").body;
+  assert.equal(asked.type, "choice");
+  assert.deepEqual(asked.options, [{ id: "ship", label: "Ship" }, { id: "v2", label: "Version 2" }, { id: "roll-back", label: "Roll back" }]);
+  assert.equal(asked.primaryLabel, undefined);
+  assert.equal(out.line.state, "chosen");
+  assert.equal(out.line.option, "roll-back");
+  assert.equal(out.line.label, "Roll back");
+
+  for (const args of [
+    ["--option", "Only"],
+    ["--option", "A", "--option", "B", "--option", "C", "--option", "D", "--option", "E"],
+    ["--option", "Same", "--option", "same"],
+    ["--option", "A", "--option", "B", "--approval"],
+    ["--option", "A", "--option", "B", "--primary-label", "Go"],
+    ["--option", "A", "--option", "This label is far longer than a button"],
+    ["--option", "!!!", "--option", "B"],
+  ]) {
+    const refused = await cli(["ask", "Which?", ...args, ...topic], deps);
+    assert.equal(refused.exitCode, EXIT.USAGE, args.join(" "));
+  }
+
+  const piped = cardDependencies(client);
+  piped.readStdinJson = async () => ({ prompt: "Which?", options: ["Ship", { id: "wait", label: "Hold" }] });
+  assert.equal((await cli(["ask", "--stdin", ...topic], piped)).exitCode, EXIT.OK);
+  assert.deepEqual(calls.filter((call) => call.op === "ask").at(-1).body.options, [{ id: "ship", label: "Ship" }, { id: "wait", label: "Hold" }]);
 });

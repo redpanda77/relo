@@ -1,4 +1,5 @@
 import { RUN_CARD_EVIDENCE_SQL,cardEvidence } from "./run-evidence.js";
+import { QUESTION_MAX_CHARACTERS } from "../question-policy.js";
 import {
 LIVE_ACTIVITY_PRESET_IDS,
 
@@ -136,7 +137,7 @@ const dashboardActivityUpdateSchema = z.object({
 
 const dashboardActivityWaitSchema = z.object({
   kind: z.enum(["approval","yes_no"]).default("approval"),
-  prompt: z.string().min(1).max(240),
+  prompt: z.string().min(1).max(QUESTION_MAX_CHARACTERS),
 }).strict();
 
 const dashboardActivityEndSchema = z.object({

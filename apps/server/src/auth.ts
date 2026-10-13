@@ -91,7 +91,7 @@ export function authenticate(db: Database) {
          AND d.revoked_at IS NULL AND p.disabled_at IS NULL`,
       [digests[0]],
     );
-    if (!device.rowCount) return context.json({ error: "unauthorized" }, 401);
+    if (!device.rowCount) return context.json(await refusal(db,digests),401);
     context.set("auth", {
       principalId: device.rows[0]!.principal_id,
       deviceCredentialId: device.rows[0]!.credential_id,
@@ -103,6 +103,30 @@ export function authenticate(db: Database) {
     });
     await next();
   };
+}
+
+/**
+ * Why a credential that was once valid no longer works, so an app knows whether signing in again
+ * can help. Only the token's holder learns this; an unknown token stays plain "unauthorized".
+ */
+async function refusal(db: Database, digests: string[]): Promise<{ error: string; message?: string }> {
+  const found = await db.query<{ disabled: boolean; revoked: boolean; expired: boolean }>(
+    `SELECT p.disabled_at IS NOT NULL AS disabled,k.revoked_at IS NOT NULL AS revoked,
+       (k.expires_at IS NOT NULL AND k.expires_at<=now()) AS expired
+     FROM principal_api_keys k JOIN owner_principals p ON p.id=k.principal_id WHERE k.token_hash=ANY($1::text[])
+     UNION ALL
+     SELECT p.disabled_at IS NOT NULL,(c.revoked_at IS NOT NULL OR d.revoked_at IS NOT NULL),
+       (c.expires_at IS NOT NULL AND c.expires_at<=now())
+     FROM device_credentials c JOIN devices d ON d.id=c.device_id JOIN owner_principals p ON p.id=d.principal_id
+     WHERE c.token_hash=$2 LIMIT 1`,
+    [digests,digests[0]],
+  );
+  const row = found.rows[0];
+  if (!row) return { error: "unauthorized" };
+  if (row.disabled) return { error: "account_disabled",message: "The server admin turned off this account's access." };
+  if (row.revoked) return { error: "credential_revoked",message: "This login was revoked." };
+  if (row.expired) return { error: "login_expired",message: "This login expired." };
+  return { error: "unauthorized" };
 }
 
 export function requireScope(scope: string) {

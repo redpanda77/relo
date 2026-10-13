@@ -61,6 +61,8 @@ export class InteractionChangeHub {
         const { principalId,interactionId } = payload as Record<string,unknown>;
         if (typeof principalId !== "string" || typeof interactionId !== "string") return;
         for (const subscription of this.watchers.get(`${principalId}:${interactionId}`) ?? []) subscription.notify();
+        // `relo listen` follows every question of an account.
+        for (const subscription of this.watchers.get(`${principalId}:*`) ?? []) subscription.notify();
       } catch { /* NOTIFY is an untrusted hint; periodic reads recover malformed hints. */ }
   }
 

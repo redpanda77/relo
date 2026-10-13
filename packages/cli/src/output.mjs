@@ -32,9 +32,13 @@ function cardFields(activity) {
 
 function interactionFields(data) {
   const interaction = data?.interaction ?? data;
+  // A choice answered with one of its options reads as "chosen" with that option's id and label.
+  const chosen = interaction?.type === "choice" && typeof interaction?.response?.optionId === "string"
+    ? interaction.response : undefined;
   return {
     id: interaction?.id,
-    state: interaction?.state ?? interaction?.status,
+    state: chosen ? "chosen" : interaction?.state ?? interaction?.status,
+    ...(chosen ? { option: chosen.optionId, label: chosen.label } : {}),
     response: typeof interaction?.response === "string" ? interaction.response : undefined,
     // A phone's signature on the approval was checked (end-to-end encryption, E4.2).
     verified: data?.verified === true ? true : undefined,
@@ -278,6 +282,12 @@ function friendly(error, group) {
       return { message: "Too many writes in a minute.", hint: `Wait ${wait ?? 60}s, then retry. Update the card at phase changes, not every command.` };
     case "INVALID_DEVICE_SELECTION":
       return { message: "That phone ID is not valid.", hint: "List phones: relo devices list" };
+    case "ACCOUNT_DISABLED":
+      return { message: "The server admin turned off this account's access.", hint: "Retrying will not help; ask the server admin." };
+    case "CREDENTIAL_REVOKED":
+      return { message: "This login was revoked.", hint: "Retrying will not help. Sign in again only if the owner wants it back: relo auth login" };
+    case "LOGIN_EXPIRED":
+      return { message: "This login expired.", hint: "Sign in again: relo auth login" };
     case "UNAUTHORIZED":
     case "REAUTHENTICATION_REQUIRED":
     case "PRINCIPAL_CREDENTIAL_REQUIRED":

@@ -10,7 +10,7 @@ export async function selectOwnedInteraction(tx: SubjectTransaction,actor: Inter
       AND (e.target_mode='broadcast' OR EXISTS(SELECT 1 FROM notification_event_targets t WHERE t.notification_event_id=e.id AND t.device_id=$4))`;authority=actor.deviceId;break;
     case "owner": case "internal_expiry": scope="$4::uuid IS NULL";break;
   }
-  return (await tx.query<InteractionRow>(`SELECT r.id,r.principal_id,r.notification_event_id,r.kind,r.state,r.expires_at,r.responded_at
+  return (await tx.query<InteractionRow>(`SELECT r.id,r.principal_id,r.notification_event_id,r.kind,r.options,r.state,r.expires_at,r.responded_at
     FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id AND e.principal_id=r.principal_id
     WHERE r.id=$1 AND r.notification_event_id=$2 AND r.principal_id=$3 AND ${scope}${lock?" FOR UPDATE OF r":""}`,
     [command.interactionId,command.eventId,actor.principalId,authority])).rows[0]??null;
@@ -46,7 +46,7 @@ export async function selectVisibleDecisionEvent(tx: SubjectTransaction,principa
 export async function selectResponseRequest(tx: SubjectTransaction,actor: Extract<InteractionActor,{kind:"device"}> | import("./types.js").ActivityCapabilityActor,
   command: import("./types.js").RespondCommand,locked: boolean) {
   const capability=actor.kind==="live_activity";
-  return (await tx.query<ResponseRequestRow>(`SELECT r.id,r.principal_id,r.notification_event_id,r.kind,r.state,r.expires_at,r.responded_at,
+  return (await tx.query<ResponseRequestRow>(`SELECT r.id,r.principal_id,r.notification_event_id,r.kind,r.options,r.state,r.expires_at,r.responded_at,
     e.state AS event_state,d.credential_version FROM interaction_requests r
     JOIN notification_events e ON e.id=r.notification_event_id AND e.principal_id=r.principal_id
     JOIN devices d ON d.id=$2 AND d.principal_id=r.principal_id AND d.revoked_at IS NULL

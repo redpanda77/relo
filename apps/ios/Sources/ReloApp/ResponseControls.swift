@@ -17,7 +17,9 @@ struct ResponseControls: View {
         VStack(alignment: .leading, spacing: 8) {
             feedback
             if state.allowsSubmission {
-                if let actions = BinaryNotificationActionPresentation(
+                if let options = choiceOptions {
+                    ChoiceOptionButtons(options: options) { send(.choose, optionID: $0.id) }
+                } else if let actions = BinaryNotificationActionPresentation(
                     behavior: InboxPresentationProjection.presentation(for: item).behavior) {
                     if typeSize.isAccessibilitySize {
                         VStack(spacing: 8) { secondary(actions); primary(actions) }
@@ -35,6 +37,10 @@ struct ResponseControls: View {
         }
         .disabled(model.respondingNotificationID != nil || model.requiresReauthentication || model.accountState == .disabled || !model.isRegistered)
         .task(id: item.id) { await verifyIfUnconfirmed() }
+    }
+    private var choiceOptions: [InteractionOption]? {
+        guard let interaction = item.interaction, interaction.kind == .choice else { return nil }
+        return interaction.options
     }
     private var availability: CurrentActionAvailability? {
         model.currentDecision(notificationID: item.id).map { model.decisionAvailability($0.identity) }
@@ -73,7 +79,8 @@ struct ResponseControls: View {
             Text(model.responseFeedback(for: item.id)?.message ?? "Response not recorded. Try again.")
                 .foregroundStyle(Color.reloErrorText).font(.subheadline)
         case .expired: unavailableReason
-        case .resolved: Text(item.interaction?.state.rawValue.capitalized ?? "")
+        case .resolved:
+            Text(item.interaction?.chosenLabel.map { "Chose \($0)" } ?? item.interaction?.state.rawValue.capitalized ?? "")
         }
     }
     private func secondary(_ actions: BinaryNotificationActionPresentation) -> some View {
@@ -88,12 +95,43 @@ struct ResponseControls: View {
         }
             .buttonStyle(.borderedProminent).tint(.reloActionFill)
     }
-    private func send(_ action: NotificationInteractionAction) {
+    private func send(_ action: NotificationInteractionAction, optionID: String? = nil) {
         guard state.allowsSubmission, model.respondingNotificationID == nil else { return }
         Task {
             NotificationResponseHaptics.decisionStarted()
-            await model.respond(to: item, action: action)
+            await model.respond(to: item, action: action, optionID: optionID)
             if let feedback = model.responseFeedback(for: item.id) { NotificationResponseHaptics.responseFinished(feedback.phase) }
+        }
+    }
+}
+
+/// A choice question's 2–4 answers: one row when they fit, stacked at accessibility sizes or
+/// when the labels are too long for a row. Every option has equal weight.
+struct ChoiceOptionButtons: View {
+    let options: [InteractionOption]
+    var minHeight: CGFloat = 32
+    let choose: (InteractionOption) -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        if typeSize.isAccessibilitySize {
+            VStack(spacing: 8) { buttons }
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { buttons }
+                VStack(spacing: 8) { buttons }
+            }
+        }
+    }
+
+    private var buttons: some View {
+        ForEach(options) { option in
+            Button { choose(option) } label: {
+                Text(option.label).lineLimit(2).multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: minHeight)
+            }
+            .buttonStyle(.bordered).tint(.reloInteractive)
+            .accessibilityHint("Sends this answer to Relo")
         }
     }
 }

@@ -19,7 +19,7 @@ function dependencies(client) {
   };
 }
 
-test("publishes the stable 0.5 golden exit-code matrix", async () => {
+test("publishes the golden exit-code matrix (0.11: 4 still open, 8 closed)", async () => {
   assert.deepEqual(EXIT, {
     OK: 0,
     USAGE: 2,
@@ -29,10 +29,11 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
     NEGATIVE: 5,
     NETWORK: 6,
     NO_DELIVERY: 7,
+    CLOSED: 8,
   });
   assert.match(HELP, /1 API\/other failure[\s\S]*2 usage/);
-  assert.match(HELP, /3 authentication\/scope[\s\S]*4 timeout\/canceled\/expired/);
-  assert.match(HELP, /5 denied\/no[\s\S]*6 network[\s\S]*7 no accepted device/);
+  assert.match(HELP, /3 authentication\/scope[\s\S]*4 still open \(resume\)[\s\S]*5 denied\/no/);
+  assert.match(HELP, /6 network[\s\S]*7 no accepted device[\s\S]*8 closed without an answer/);
   const cliReadme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const skillReference = readFileSync(
     new URL("../../../skills/relo-notifications/references/cli.md", import.meta.url),
@@ -41,7 +42,8 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
   for (const document of [cliReadme, skillReference]) {
     assert.match(document, /\| `1` \| Server or other failure/u);
     assert.match(document, /\| `3` \| Missing, invalid, or insufficient credential/u);
-    assert.match(document, /\| `4` \| No answer\. State `timeout`: still open[^|]*do not act/u);
+    assert.match(document, /\| `4` \| Still open: this command stopped waiting\. Run `relo interaction wait ID`/u);
+    assert.match(document, /\| `8` \| Closed without an answer \(expired, canceled\): do not act/u);
     assert.match(document, /\| `5` \| The owner denied or said no/u);
     assert.match(document, /\| `6` \| Network unreachable/u);
     assert.match(document, /\| `7` \| No phone could receive it/u);
@@ -74,11 +76,22 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
       expectedError: "UNAUTHORIZED",
     },
     {
-      name: "timeout canceled or expired",
+      name: "closed without an answer (expired)",
       argv: ["interaction", "wait", "int_golden_123456", "--timeout", "1s"],
       client: {
         waitForInteraction: async () => ({
           interaction: { id: "int_golden_123456", state: "expired" },
+        }),
+      },
+      expectedExit: 8,
+      expectedError: "INTERACTION_CLOSED",
+    },
+    {
+      name: "still open when the wait runs out",
+      argv: ["interaction", "wait", "int_golden_123456", "--timeout", "1s"],
+      client: {
+        waitForInteraction: async () => ({
+          interaction: { id: "int_golden_123456", state: "pending" },
         }),
       },
       expectedExit: 4,

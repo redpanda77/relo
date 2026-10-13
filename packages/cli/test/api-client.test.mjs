@@ -280,3 +280,17 @@ test("preserves rate-limit timing for the authorization poller", async () => {
       error.details.retryAfterSeconds === 60,
   );
 });
+
+test("an API error carries the server's sentence, not only its code", async () => {
+  const client = new ReloApiClient({
+    apiUrl: "https://example.test",
+    token: "x".repeat(40),
+    fetchImpl: async () => Response.json({ error: "choice_unsupported", message: "Update Relo on Old iPhone to answer questions with options." },
+      { status: 409 }),
+  });
+  await assert.rejects(client.createActivityWait("act_1", { type: "choice" }, "key"), (error) => {
+    assert.equal(error.code, "CHOICE_UNSUPPORTED");
+    assert.equal(error.message, "Update Relo on Old iPhone to answer questions with options.");
+    return true;
+  });
+});

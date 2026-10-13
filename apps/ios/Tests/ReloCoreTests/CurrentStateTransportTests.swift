@@ -44,6 +44,41 @@ struct CurrentStateTransportTests {
         #expect(fixture.requests[0].url?.path.hasSuffix("api/inbox/pending") == true)
         #expect(fixture.requests[0].url?.query == "limit=100&after=original_cursor")
     }
+    @Test func choiceDecisionsCarryOptionsAndUnknownKindsAreLeftOutNotFatal() async throws {
+        func pending(_ id: String, _ interaction: String) -> String {
+            #"{"subjectId":"\#(id)","notificationId":"\#(id)","version":null,"kind":"decision","title":"Question","summary":"Which?","source":"Fixture","createdAt":"\#(stamp)","readAt":null,"urgencyRank":0,"interaction":\#(interaction)}"#
+        }
+        let choiceID = "ntf_30000000-0000-4000-8000-000000000003"
+        let futureID = "ntf_40000000-0000-4000-8000-000000000004"
+        let choice = #"{"id":"\#(requestID)","type":"choice","state":"pending","expiresAt":"2026-09-30T12:15:00.123456Z","options":[{"id":"ship","label":"Ship"},{"id":"wait","label":"Wait"},{"id":"rollback","label":"Roll back"}]}"#
+        let future = #"{"id":"int_50000000-0000-4000-8000-000000000005","type":"ranking","state":"pending","expiresAt":"2026-09-30T12:15:00.123456Z"}"#
+        let body = #"{"items":[\#(pending(choiceID, choice)),\#(pending(futureID, future))],"total":2,"hasMore":false,"cursor":null,"nextExpiryAt":"2026-09-30T12:15:00.123456Z","serverTime":"\#(stamp)"}"#
+        let fixture = CurrentHTTPFixture([.json(body)]); defer { fixture.close() }
+        let result = try await fixture.source.fetchPending(after: nil, limit: 100)
+        #expect(result.items.map(\.subjectId) == [choiceID])
+        #expect(result.items[0].interaction.type == .choice)
+        #expect(result.items[0].interaction.options?.map(\.id) == ["ship", "wait", "rollback"])
+
+        let current = #"{"subjectId":"\#(futureID)","notificationId":"\#(futureID)","kind":"decision","version":{"generation":1,"revision":1},"title":"Future","summary":"","source":"Fixture","createdAt":"\#(stamp)","updatedAt":"\#(stamp)","occurredAt":null,"acceptedAt":"\#(stamp)","readAt":null,"currentUntil":"2026-09-30T12:15:00.123456Z","freshUntil":null,"deliverUntil":"2026-09-30T12:01:00.123456Z","freshness":"unknown","interaction":\#(future),"activity":null,"resources":null}"#
+        let page = CurrentHTTPFixture([.json(currentPage(items: currentItem + "," + current, total: 2))])
+        defer { page.close() }
+        let all = try await page.source.fetchCurrent(ids: nil)
+        #expect(all.items.map(\.subjectId) == [currentID])
+        #expect(all.unsupportedSubjectIDs == [futureID])
+        // A requested subject this build cannot answer still counts as answered by the server.
+        let targeted = CurrentHTTPFixture([.json(currentPage(items: currentItem + "," + current, total: 2))])
+        defer { targeted.close() }
+        let both = try await targeted.source.fetchCurrent(ids: [currentID, futureID])
+        #expect(both.items.count == 1)
+    }
+
+    @Test func malformedChoiceOptionsStayAContractViolation() throws {
+        let decoder = ReloWireJSON.decoder()
+        for options in [#"[{"id":"ship","label":"Ship"}]"#, #"[{"id":"ship","label":"Ship"},{"id":"wait","label":"SHIP"}]"#, "null"] {
+            let json = #"{"id":"\#(requestID)","type":"choice","state":"pending","expiresAt":"2026-09-30T12:15:00.123456Z","options":\#(options)}"#
+            #expect(throws: DecodingError.self) { try decoder.decode(CurrentDecision.self, from: Data(json.utf8)) }
+        }
+    }
     @Test(arguments: [401, 403, 410, 503]) func statusErrorsAreTyped(status: Int) async throws {
         let fixture = CurrentHTTPFixture([.init(status: status, body: "{}")]); defer { fixture.close() }
         let expected: InboxRemoteError = status == 410 ? .cursorExpired : status == 503 ? .unavailable : .unauthorized

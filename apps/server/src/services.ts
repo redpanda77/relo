@@ -1,4 +1,8 @@
+import { assertQuestionWait } from "./question-wait.js";
+import { QuestionWaitTooLongError,questionWaitTooLongBody } from "./question-policy.js";
+import { ChoiceUnsupportedError,choiceUnsupportedBody } from "./choice-questions.js";
 import type { Hono } from "hono";
+import { checkQuestionAnswers,choiceOptionsSchema } from "./question-policy.js";
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -85,11 +89,12 @@ const webhookSchema = z.object({
   deviceIds: z.array(z.string()).min(1).max(50)
     .transform((values) => [...new Set(values)].sort()).optional(),
   response: z.object({
-    type: z.enum(["approval","yes_no"],{ message: "Questions take tappable answers only: approval or yes_no" }),
+    type: z.enum(["approval","yes_no","choice"],{ message: "Questions take tappable answers only: approval, yes_no or choice" }),
+    options: choiceOptionsSchema.optional(),
     expiresInSeconds: questionExpirySchema,
     correlationId: z.string().trim().min(1).max(100).optional(),
     callback: interactionCallbackSchema.optional(),
-  }).strict().optional(),
+  }).strict().superRefine(checkQuestionAnswers).optional(),
   context: safeContextSchema.optional(),
   origin: originDescriptorSchema.optional(),
   relevance: z.union([notificationSubjectCommandSchema,decisionSubjectCommandSchema]).optional(),
@@ -507,6 +512,13 @@ export function registerWebhookRoutes(
     const limited = await serviceMutationRateLimit(context,db,service.rows[0]);
     if (limited) return limited;
     const input = webhookSchema.parse(await context.req.json());
+    if (input.response) {
+      try { await assertQuestionWait(db,input.response.expiresInSeconds); }
+      catch (error) {
+        if (error instanceof QuestionWaitTooLongError) return context.json({ ok: false,...questionWaitTooLongBody(error) },400);
+        throw error;
+      }
+    }
     const row = service.rows[0]!;
     const identity = requireWorkIdentity(`service:${row.id}`,input.context && { producerKind: "webhook",...input.context },input.origin);
     if (!identity.ok) return context.json({ ok: false,...workIdentityError(identity.missing) },422);
@@ -522,13 +534,20 @@ export function registerWebhookRoutes(
       context.req.header("idempotency-key") ?? `webhook-${randomBytes(16).toString("hex")}`,
     );
     const requestHash = webhookRequestHash(input);
-    const result = await createNotification(db,{ kind: "service",principalId: row.principal_id,serviceId: row.id },{
+    let result: Awaited<ReturnType<typeof createNotification>>;
+    try {
+    result = await createNotification(db,{ kind: "service",principalId: row.principal_id,serviceId: row.id },{
       idempotencyKey,requestHash,sourceName: row.title,title: input.title ?? row.title,content,
       imageUrl: input.imageUrl ?? row.image_url,deepLink: input.url ?? input.deepLink ?? row.default_url,avatarUrl: row.image_url,
       payload: { privacy: "standard",context: identity.context,...(input.response?.correlationId ? { correlationId: input.response.correlationId } : {}) },
       deviceIds: requestedDeviceIds,originHash,relevance: input.relevance,
-      interaction: input.response ? { kind: input.response.type,prompt: content.preview,actionSeconds: input.response.expiresInSeconds } : undefined,
+      interaction: input.response ? { kind: input.response.type,prompt: content.preview,actionSeconds: input.response.expiresInSeconds,
+        options: input.response.options } : undefined,
     },{ apnsMode,contentCipher });
+    } catch (error) {
+      if (error instanceof ChoiceUnsupportedError) return context.json({ ok: false,...choiceUnsupportedBody(error) },409);
+      throw error;
+    }
     if (result.kind === "invalid_device_selection") return context.json({ ok: false,error: result.kind },400);
     if (result.kind === "idempotency_conflict") return context.json({ ok: false,error: result.kind },409);
     if (input.response?.callback && result.kind === "created" && result.interaction) {
@@ -582,7 +601,8 @@ export function registerWebhookRoutes(
     const binaryActions: Record<string,string> = {
       approved: "approve", denied: "deny", yes: "yes", no: "no",
     };
-    const action = item.kind === "text"
+    const chosen = item.kind === "choice" && item.state === "replied" && typeof item.response?.optionId === "string";
+    const action = chosen ? "choose" : item.kind === "text"
       ? (item.state === "replied" ? "reply" : null)
       : (binaryActions[item.state] ?? null);
     const text = item.kind === "text" && item.response
@@ -601,6 +621,7 @@ export function registerWebhookRoutes(
         status: item.state,
         action,
         text,
+        ...(chosen ? { optionId: item.response.optionId,label: item.response.label ?? null } : {}),
         correlationId: item.payload?.correlationId ?? null,
         respondedAt: item.responded_at ? new Date(item.responded_at).toISOString() : null,
         expiresAt: new Date(item.expires_at).toISOString(),

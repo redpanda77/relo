@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  typeLabel,
   agentSecondsToday,
   agentTimeLabel,
   cardFor,
@@ -73,6 +74,14 @@ describe("activity card model", () => {
     expect(onCard.outcome.label).toBe("Done")
     expect(onCard.decision).toMatchObject({ prompt: "Fix 3 broken links?", answer: "You approved", pending: false })
     expect(cardFor(summary({ kind: "approval", question: { ...pending, expiresAt: "2026-08-07T12:00:00Z" } }), now).outcome.label).toBe("No answer")
+  })
+
+  it("labels a choice question and names the option picked", () => {
+    expect(typeLabel("notification", "choice")).toBe("Choice")
+    const chosen = { kind: "choice", prompt: "Which release?", state: "replied", respondedAt: "2026-08-07T12:08:00Z",
+      expiresAt: "2026-08-07T13:00:00Z", chosenLabel: "Roll back" }
+    const card = cardFor(summary({ activity: activity({ state: "ended", outcome: "completed" }), question: chosen }), now)
+    expect(card.decision).toMatchObject({ prompt: "Which release?", answer: "You chose Roll back", pending: false })
   })
 
   it("summarises the day and the HUD", () => {

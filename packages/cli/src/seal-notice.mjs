@@ -184,7 +184,7 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
  * none has, so the question goes out as today. The answer buttons' labels stay readable.
  * Returns { sealed, context } where context is the opaque work identity to send (E2.5).
  */
-export async function sealQuestion({ title, prompt, key, client, config, dependencies, notes, deviceIds, context }) {
+export async function sealQuestion({ title, prompt, detail, key, client, config, dependencies, notes, deviceIds, context }) {
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return null;
   const { store, devices } = trust;
@@ -196,6 +196,8 @@ export async function sealQuestion({ title, prompt, key, client, config, depende
   if (skipped.length) notes.push(`question end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys see a placeholder`);
   const identity = await opaqueIdentity(store, context, dependencies);
   const sealed = sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible, readers,
-    content: { title: title ?? "Question", summary: prompt, body: prompt }, names: identity.names });
+    // The detail travels inside the seal, never as plaintext beside it.
+    content: { title: title ?? "Question", summary: prompt, body: detail ?? prompt, ...(detail ? { bodyFormat: "markdown" } : {}) },
+    names: identity.names });
   return { sealed, context: identity.context };
 }

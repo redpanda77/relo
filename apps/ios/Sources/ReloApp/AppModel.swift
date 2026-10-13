@@ -1435,7 +1435,8 @@ final class AppModel {
     func respond(
         to item: InboxItem,
         action: NotificationInteractionAction,
-        text: String? = nil
+        text: String? = nil,
+        optionID: String? = nil
     ) async {
         guard
             respondingNotificationID == nil,
@@ -1443,7 +1444,8 @@ final class AppModel {
             !responseIsAccepted(for: item.id),
             let credential,
             let interaction = item.interaction,
-            NotificationResponsePolicy.supports(action, kind: interaction.kind)
+            NotificationResponsePolicy.supports(action, kind: interaction.kind),
+            action != .choose || interaction.option(id: optionID) != nil
         else { return }
         guard interaction.state == .pending, interaction.expiresAt > .now else {
             responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
@@ -1452,25 +1454,32 @@ final class AppModel {
             return
         }
         await protectAndSendResponse(notificationID: item.id, interactionID: interaction.id,
-            expiresAt: interaction.expiresAt, credential: credential, action: action, text: text)
+            expiresAt: interaction.expiresAt, credential: credential, action: action, text: text,
+            optionID: action == .choose ? optionID : nil)
     }
 
     /// Current UI submits the immutable request without fetching history or full details first.
-    func respond(to identity: CurrentDecisionIdentity, action: NotificationInteractionAction, text: String? = nil) async {
+    func respond(
+        to identity: CurrentDecisionIdentity, action: NotificationInteractionAction, text: String? = nil,
+        optionID: String? = nil
+    ) async {
         let availability = decisionAvailability(identity)
         guard availability.permitsSubmission, let credential,
               let kind = InboxInteraction.Kind(rawValue: identity.kind.rawValue),
-              NotificationResponsePolicy.supports(action, kind: kind) else {
+              NotificationResponsePolicy.supports(action, kind: kind),
+              action != .choose || identity.options.contains(where: { $0.id == optionID }) else {
             responseFeedbackByNotificationID[identity.notificationID] = NotificationResponseFeedback(
                 phase: .rejected, action: action, message: availability.explanation ?? "This action is unavailable.")
             return
         }
         await protectAndSendResponse(notificationID: identity.notificationID, interactionID: identity.interactionID,
-            expiresAt: identity.expiresAt, credential: credential, action: action, text: text)
+            expiresAt: identity.expiresAt, credential: credential, action: action, text: text,
+            optionID: action == .choose ? optionID : nil)
     }
 
     private func protectAndSendResponse(notificationID: String, interactionID: String, expiresAt: Date,
-                                        credential: DeviceCredential, action: NotificationInteractionAction, text: String?) async {
+                                        credential: DeviceCredential, action: NotificationInteractionAction, text: String?,
+                                        optionID: String? = nil) async {
         let diagnosticID = UUID()
         let diagnosticStart = ContinuousClock.now
         let accountID = credential.accountId
@@ -1493,14 +1502,16 @@ final class AppModel {
             )
             return
         }
-        let value = trimmedText.map { ["response": $0] } ?? [:]
+        // A choice sends the option it picks, and a different option is a different request.
+        let value = optionID.map { ["optionId": $0] } ?? trimmedText.map { ["response": $0] } ?? [:]
         let unsigned = PendingNotificationResponse(
             accountID: accountID,
             deviceID: credential.deviceId,
             notificationID: notificationID,
             action: action,
             value: value,
-            idempotencyKey: "ios:\(credential.installationId):\(notificationID):\(action.rawValue)",
+            idempotencyKey: "ios:\(credential.installationId):\(notificationID):\(action.rawValue)"
+                + (optionID.map { ":\($0)" } ?? ""),
             expiresAt: expiresAt,
             interactionID: interactionID,
             serverOrigin: serverURL
@@ -1563,9 +1574,11 @@ final class AppModel {
         }
     }
 
-    func respond(notificationID: String, action: NotificationInteractionAction, text: String? = nil) async {
+    func respond(
+        notificationID: String, action: NotificationInteractionAction, text: String? = nil, optionID: String? = nil
+    ) async {
         if let item = (items + historySnapshot.items).first(where: { $0.id == notificationID }) {
-            await respond(to: item, action: action, text: text)
+            await respond(to: item, action: action, text: text, optionID: optionID)
             return
         }
         // An identifier alone carries no deadline. Resolve only this exact event;
@@ -1573,7 +1586,7 @@ final class AppModel {
         let revision = selectionScopeRevision
         if let detail = try? await inboxRemote?.fetchDetail(notificationID: notificationID),
            revision == selectionScopeRevision, detail.item.id == notificationID {
-            await respond(to: detail.item, action: action, text: text)
+            await respond(to: detail.item, action: action, text: text, optionID: optionID)
             return
         }
         guard revision == selectionScopeRevision else { return }
@@ -1603,7 +1616,7 @@ final class AppModel {
             if let detail = try? await remote.fetchDetail(notificationID: request.notificationID),
                isCurrentSelection(revision), self.credential == credential,
                detail.item.id == request.notificationID {
-                await respond(to: detail.item, action: request.action, text: request.text)
+                await respond(to: detail.item, action: request.action, text: request.text, optionID: request.optionID)
             } else if isCurrentSelection(revision) {
                 responseFeedbackByNotificationID[request.notificationID] = NotificationResponseFeedback(
                     phase: .rejected, action: request.action,
@@ -1615,8 +1628,8 @@ final class AppModel {
         let item = InboxItem(id: request.notificationID, kind: .notification, sourceName: "Relo",
             title: "Notification response", createdAt: .now,
             interaction: InboxInteraction(id: metadata.interactionID, kind: metadata.kind, prompt: "",
-                state: .pending, expiresAt: metadata.expiresAt))
-        await respond(to: item, action: request.action, text: request.text)
+                state: .pending, expiresAt: metadata.expiresAt, options: metadata.options))
+        await respond(to: item, action: request.action, text: request.text, optionID: request.optionID)
     }
 
     private func resolvePendingNotification() {
@@ -2609,8 +2622,11 @@ final class AppModel {
         case MobileAPIError.rateLimited(let seconds):
             seconds.map { "Too many sign-in attempts. Try again in \($0) seconds." }
                 ?? "Too many sign-in attempts. Try again shortly."
+        case MobileAPIError.tailnetUnavailable, MobileAPIError.unavailable, is URLError:
+            "Relo server could not be reached. Check this iPhone's connection and the server address, then retry."
         default:
-            "Relo server could not be reached. Confirm this iPhone is on the private home network and retry."
+            // Not the network: storing the session on this iPhone (keychain) or reading the reply failed.
+            "Sign-in could not finish on this iPhone. Tap Sign in to try again."
         }
     }
 

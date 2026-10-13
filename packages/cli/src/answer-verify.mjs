@@ -4,7 +4,7 @@
 // valid signature by a trusted phone's identity key. The signature must cover the interaction this
 // CLI is waiting for and, for a sealed question, the context of the envelope this CLI sealed (a value
 // the server cannot choose), and be made after the question was asked. Anything else (unsigned, an
-// unknown or pending phone, another question's approval, a replay) is refused with exit 4: do not
+// unknown or pending phone, another question's approval, a replay) is refused with exit 8: do not
 // act. Verification never trusts a new key on the way.
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
@@ -21,6 +21,8 @@ const CLOCK_SKEW_MS = 5 * 60_000;
 const QUESTION_ID = /^int_[0-9a-f-]{36}$/u;
 
 function signedValue(state, response) {
+  // A picked option is stored as replied; the phone signed which option it was.
+  if (state === "replied" && typeof response?.optionId === "string") return `choose:${response.optionId}`;
   const action = SIGNED_ACTION[state];
   if (action !== "answer") return action;
   const text = typeof response?.response === "string" ? response.response : "";

@@ -67,7 +67,7 @@ public struct BinaryNotificationActionPresentation: Equatable, Sendable {
         primaryLabel: String? = nil,
         secondaryLabel: String? = nil
     ) {
-        guard kind != .text else { return nil }
+        guard kind != .text, kind != .choice else { return nil }
         let labels = LiveActivityActionLabels(
             style: style,
             primaryLabel: primaryLabel,
@@ -82,7 +82,7 @@ public struct BinaryNotificationActionPresentation: Equatable, Sendable {
         case .yesNo:
             primaryAction = .yes
             secondaryAction = .no
-        case .text:
+        case .text, .choice:
             return nil
         }
     }
@@ -99,7 +99,7 @@ public struct BinaryNotificationActionPresentation: Equatable, Sendable {
             primaryAction = .yes
             secondaryLabel = secondary
             secondaryAction = .no
-        case .informational, .progress, .unsupportedTextReply:
+        case .informational, .progress, .choice, .unsupportedTextReply:
             return nil
         }
     }
@@ -338,7 +338,8 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         let behavior: LiveActivityDisplayPresentation.Behavior = switch validatedInteraction?.kind {
         case .approval?: .approval(primary: primaryLabel ?? "Approve", secondary: secondaryLabel ?? "Deny")
         case .yesNo?: .yesNo(primary: primaryLabel ?? "Yes", secondary: secondaryLabel ?? "No")
-        case .text?: .informational
+        // Choice options travel only in a full presentation; this fallback has none to draw.
+        case .text?, .choice?: .informational
         case nil: component == nil ? .informational : .progress
         }
         let componentIDs = component.map { [$0.id] } ?? []
@@ -370,8 +371,8 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let decodedPresentation = try LiveActivityPresentation(from: decoder)
         sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
-        let rawInteraction = try values.decodeIfPresent(
-            LiveActivityInteractionCommand.self, forKey: .interaction
+        let rawInteraction = try values.decodeSupportedInteraction(
+            LiveActivityInteractionCommand.self, forKey: .interaction, isSupported: InboxInteraction.isSupported
         )
         let decodedInteraction = rawInteraction?.isValidForPresentation == true ? rawInteraction : nil
         operation = try values.decode(Operation.self, forKey: .operation)
@@ -409,7 +410,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
             }
         }.first
         style = switch decodedPresentation.behavior {
-            case .approval: "approval"
+            case .approval, .choice: "approval"
             case .yesNo: "verdict"
             case .informational, .progress, .unsupportedTextReply:
                 presentation.components.contains { if case .steps = $0 { true } else { false } }
@@ -424,7 +425,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         switch presentation.behavior {
             case let .approval(primary, secondary), let .yesNo(primary, secondary):
                 primaryLabel = primary; secondaryLabel = secondary
-            case .informational, .progress, .unsupportedTextReply:
+            case .informational, .progress, .choice, .unsupportedTextReply:
                 primaryLabel = nil; secondaryLabel = nil
         }
         alertOwner = try values.decodeIfPresent(NotificationAlertOwner.self, forKey: .alertOwner) ?? .none

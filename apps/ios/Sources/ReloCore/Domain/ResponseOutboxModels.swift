@@ -52,6 +52,13 @@ public struct PendingNotificationResponse: Codable, Equatable, Sendable, Identif
         self.serverOrigin = serverOrigin
     }
 
+    /// The option a `choose` response picks, carried in `value` as the server reads it.
+    public var optionID: String? { action == .choose ? value["optionId"] : nil }
+
+    /// A `choose` must name one well-formed option; every other action names none.
+    public var hasValidOption: Bool {
+        action == .choose ? optionID.map(InteractionOption.isValidID) == true : value["optionId"] == nil
+    }
 
     public var decisionKey: String {
         switch endpoint {
@@ -69,16 +76,19 @@ public struct PendingNotificationResponse: Codable, Equatable, Sendable, Identif
         activityGeneration: Int,
         interactionID: String,
         action: NotificationInteractionAction,
+        optionID: String? = nil,
         credential: String,
         expiresAt: Date
     ) -> PendingNotificationResponse {
-        PendingNotificationResponse(
+        let choice = action == .choose ? optionID : nil
+        return PendingNotificationResponse(
             accountID: accountID,
             deviceID: deviceID,
             notificationID: notificationID,
             action: action,
-            value: [:],
-            idempotencyKey: "live-activity:\(activityID):\(activityGeneration):\(interactionID):\(action.rawValue)",
+            value: choice.map { ["optionId": $0] } ?? [:],
+            idempotencyKey: "live-activity:\(activityID):\(activityGeneration):\(interactionID):\(action.rawValue)"
+                + (choice.map { ":\($0)" } ?? ""),
             expiresAt: expiresAt,
             endpoint: .liveActivity,
             activityID: activityID,

@@ -193,6 +193,7 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       }
       if (value !== undefined) { values.push(value); fields.push(`${column}=$${values.length}`); }
     }
+    if (input.capabilities !== undefined) { values.push(input.capabilities); fields.push(`capabilities=$${values.length}::text[]`); }
     values.push(auth.deviceId, auth.principalId);
     await db.query(`UPDATE devices SET ${fields.join(",")} WHERE id=$${values.length - 1} AND principal_id=$${values.length}`, values);
     return context.json({ status: "ok" });

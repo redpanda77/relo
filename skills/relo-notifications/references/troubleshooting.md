@@ -8,6 +8,16 @@ Run `relo auth status`. If the credential is absent, invalid, or lacks a require
 ask the user to complete browser-approved onboarding. Never accept, reveal, generate, transfer, or
 SSH-copy a token as a workaround.
 
+The error code says why a working login stopped: `account_disabled` (the server admin turned the
+account off; retrying will not help), `credential_revoked` (the owner revoked this login; sign in again
+only if they want it back), `login_expired` (run `relo auth login`).
+
+## `card_limit_reached`
+
+This login already keeps as many cards running as the owner allows. End a card you no longer need
+(`relo activity list`, `relo activity end ID`) or ask the owner to raise the limit in Dashboard ›
+Connections. `relo ask` still works: the question waits in Relo's Needs you instead of on a card.
+
 ## Network failure
 
 Exit `6` means the request was not durably accepted because the server was unreachable. Retry later
@@ -29,7 +39,7 @@ the prerequisite. Do not claim delivery and do not allow a protected action.
 
 Exit `4` with state `timeout` ("No answer yet; the question is still open"): the wait ended before the
 question did (about 100s in an agent session). Run the hint, `relo interaction wait ID --timeout 100s`,
-as often as needed until the question closes. Exit `4` with state `expired` or `canceled` ("closed
+as often as needed until the question closes. Exit `8` with state `expired` or `canceled` ("closed
 … Do not act"): treat it as no. The card ended; `relo activity start` opens a new one if the work
 continues. Never ask again just to extend the wait. `question_pending` means the
 card already shows a question: wait, or `relo interaction cancel ID` first. `private_activity_question`

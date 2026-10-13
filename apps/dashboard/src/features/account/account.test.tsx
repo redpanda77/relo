@@ -60,6 +60,8 @@ const adminView: AccountDashboardBootstrap = {
   ...initial,
   server: {
     registrationMode: "approval",
+    maxQuestionSeconds: 604_800,
+    privateCallbacks: "admin",
     accounts: [
       { id: "owner-user", name: "Relo Owner", email: "owner@example.test", status: "active",
         admin: true, createdAt: "2026-10-01T00:00:00.000Z", devices: 1, sessions: 1 },
@@ -84,10 +86,14 @@ function service(): AccountService {
   }))
   const serverState = () => ({
     registrationMode: "approval" as const,
+    maxQuestionSeconds: 604_800,
+    privateCallbacks: "admin" as const,
     accounts: accounts.map(({ approved, ...account }) => { void approved; return account }),
   })
   return {
     setRegistrationMode: vi.fn().mockResolvedValue(undefined),
+    setMaxQuestionSeconds: vi.fn().mockResolvedValue(undefined),
+    setPrivateCallbacks: vi.fn().mockResolvedValue(undefined),
     createServerAccount: vi.fn().mockResolvedValue({ id: "created-user" }),
     changeServerAccountAccess: vi.fn().mockImplementation(async (id: string, action: string) => {
       const account = accounts.find((item) => item.id === id)!
@@ -328,6 +334,12 @@ describe("Account feature contracts", () => {
     fireEvent.click(within(guest).getByRole("button", { name: "Restore access" }))
     await screen.findByText("Guest's access is back on.")
     expect(within(guest).queryByText("Access off")).toBeNull()
+
+    fireEvent.change(screen.getByLabelText("Longest a question can wait"), { target: { value: "86400" } })
+    await waitFor(() => expect(api.setMaxQuestionSeconds).toHaveBeenCalledWith(86_400))
+    await screen.findByText("Questions can now wait up to 1 day.")
+    fireEvent.change(screen.getByLabelText("Answer callbacks to your private network"), { target: { value: "everyone" } })
+    await waitFor(() => expect(api.setPrivateCallbacks).toHaveBeenCalledWith("everyone"))
 
     fireEvent.click(screen.getByRole("radio", { name: /Open/ }))
     await waitFor(() => expect(api.setRegistrationMode).toHaveBeenCalledWith("open"))

@@ -334,11 +334,12 @@ struct CurrentAttentionView: View {
         case .approval: "checkmark.seal.fill"
         case .yesNo: "arrow.triangle.branch"
         case .text: "text.bubble.fill"
+        case .choice: "list.bullet.circle.fill"
         }
     }
 }
 
-/// Approve/Deny or Yes/No for a request in Needs you, with the sender's own button labels.
+/// Approve/Deny, Yes/No or a choice's options for a request in Needs you, with the sender's own labels.
 private struct CurrentDecisionButtons: View {
     @Bindable var model: AppModel
     let decision: PendingCurrentDecision
@@ -353,12 +354,18 @@ private struct CurrentDecisionButtons: View {
         case .approval: .approval
         case .yesNo: .yesNo
         case .text: .text
+        case .choice: .choice
         }
         return BinaryNotificationActionPresentation(kind: kind, style: "standard")
     }
 
     var body: some View {
-        if let actions, let draft = model.currentDecision(notificationID: decision.notificationId),
+        if decision.interaction.type == .choice, let options = decision.interaction.options,
+           let draft = model.currentDecision(notificationID: decision.notificationId),
+           model.decisionAvailability(draft.identity).permitsSubmission {
+            ChoiceOptionButtons(options: options) { send(.choose, draft.identity, optionID: $0.id) }
+                .disabled(model.respondingNotificationID != nil)
+        } else if let actions, let draft = model.currentDecision(notificationID: decision.notificationId),
            model.decisionAvailability(draft.identity).permitsSubmission {
             HStack(spacing: 12) {
                 Button { send(actions.secondaryAction, draft.identity) } label: {
@@ -374,10 +381,10 @@ private struct CurrentDecisionButtons: View {
         }
     }
 
-    private func send(_ action: NotificationInteractionAction, _ identity: CurrentDecisionIdentity) {
+    private func send(_ action: NotificationInteractionAction, _ identity: CurrentDecisionIdentity, optionID: String? = nil) {
         Task {
             NotificationResponseHaptics.decisionStarted()
-            await model.respond(to: identity, action: action)
+            await model.respond(to: identity, action: action, optionID: optionID)
             if let feedback = model.responseFeedback(for: decision.notificationId) {
                 NotificationResponseHaptics.responseFinished(feedback.phase)
             }

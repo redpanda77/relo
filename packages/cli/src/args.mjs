@@ -3,6 +3,9 @@ import { optionHint } from "./suggest.mjs";
 
 const BOOLEAN_OPTIONS = new Set([
   "help",
+  "once",
+  "notification-only",
+  "new",
   "json",
   "wait",
   "stdin",
@@ -45,6 +48,7 @@ const VALUE_OPTIONS = new Set([
   "idempotency-key",
   "type",
   "timeout",
+  "since",
   "key",
   "name",
   "status",
@@ -71,6 +75,7 @@ const VALUE_OPTIONS = new Set([
   "task-title",
   "primary-label",
   "secondary-label",
+  "option",
   "correlation-id",
   "callback-url",
   "callback-token-file",
@@ -86,7 +91,7 @@ const VALUE_OPTIONS = new Set([
   "profile",
   "version",
 ]);
-const REPEATABLE_OPTIONS = new Set(["device", "scope", "step", "file"]);
+const REPEATABLE_OPTIONS = new Set(["device", "scope", "step", "file", "option"]);
 const FORBIDDEN_SECRET_OPTIONS = new Set(["token", "api-token", "secret", "authorization"]);
 
 export function parseArgs(argv) {
@@ -257,6 +262,26 @@ export function validateDestinationUrl(value, name) {
   }
   if (text.length > 2_048) throw new UsageError(`--${name} must be at most 2048 characters`);
   return scheme === "https" ? parsed.toString() : text;
+}
+
+/**
+ * Where an answer callback may go: https anywhere, or http on a private network; never the
+ * server's own localhost. Whether a private address is allowed is the server admin's setting.
+ */
+export function validateCallbackUrl(value, name) {
+  let url;
+  try { url = new URL(String(value)); } catch { throw new UsageError(`--${name} must be a URL`); }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new UsageError(`--${name} must use https:// (or http:// on a private network)`);
+  if (url.username || url.password || url.hash) throw new UsageError(`--${name} cannot carry credentials or a #fragment`);
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || /^127\./u.test(host) || host === "::1" || host === "0.0.0.0"
+    || /^169\.254\./u.test(host)) {
+    throw new UsageError(`--${name} cannot be the server's own localhost or a link-local address`, {
+      hint: "Use an address the Relo server can reach, for example your machine's Tailscale name",
+    });
+  }
+  if (String(value).length > 2048) throw new UsageError(`--${name} is longer than 2,048 characters`);
+  return url.toString();
 }
 
 export function validatePublicHttpsUrl(value, name) {

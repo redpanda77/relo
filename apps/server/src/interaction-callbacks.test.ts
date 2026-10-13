@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import { createApp } from "./app.js";
@@ -63,19 +64,22 @@ suite("Interaction answer callbacks",() => {
     const stored = (await db.query("SELECT token_ciphertext,state FROM interaction_callbacks")).rows[0];
     expect(stored.state).toBe("waiting");
     expect(stored.token_ciphertext).not.toContain("private-callback-token");
-    const calls: Array<{ url: string; init: RequestInit }> = [];
-    const fetchImpl = (async (url: string,init: RequestInit) => { calls.push({ url,init }); return new Response(null,{ status: 204 }); }) as any;
-    expect(await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: publicResolve })).toBe(0);
+    const calls: Array<{ url: string; headers: Record<string,string>; body: string; target: { address: string } }> = [];
+    const send = (async (input: any) => { calls.push(input); return 204; }) as any;
+    expect(await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve })).toBe(0);
     expect((await answer(request,"yes")).kind).toBe("accepted");
-    expect(await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: publicResolve })).toBe(1);
+    expect(await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve })).toBe(1);
     expect(calls).toHaveLength(1);
-    expect((calls[0]!.init.headers as Record<string,string>).authorization).toBe("Bearer private-callback-token-0123");
-    expect(calls[0]!.init.redirect).toBe("manual");
-    expect(JSON.parse(String(calls[0]!.init.body))).toMatchObject({
+    expect(calls[0]!.headers.authorization).toBe("Bearer private-callback-token-0123");
+    expect(calls[0]!.target.address).toBe("93.184.216.34");
+    expect(calls[0]!.headers["relo-delivery-id"]).toMatch(/^cbk_[0-9a-f-]{36}$/);
+    const [,timestamp,signature] = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(calls[0]!.headers["relo-signature"]!)!;
+    expect(signature).toBe(createHmac("sha256","private-callback-token-0123").update(`${timestamp}.${calls[0]!.body}`).digest("hex"));
+    expect(JSON.parse(calls[0]!.body)).toMatchObject({
       type: "notification.response",eventId: `ntf_${request.notification_event_id}`,interactionId: `int_${request.id}`,
       correlationId: "deploy-184",kind: "yes_no",status: "yes",action: "yes",text: null,
     });
-    expect(await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: publicResolve })).toBe(0);
+    expect(await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve })).toBe(0);
     const read = await app().request(`/api/interactions/int_${request.id}`,{ headers: { authorization: `Bearer ${owner}` } });
     expect((await read.json() as any).interaction.callback).toMatchObject({ state: "delivered",attempts: 1,lastStatus: 204 });
   });
@@ -84,10 +88,10 @@ suite("Interaction answer callbacks",() => {
     const request = await ask({ title: "Deploy",prompt: "Ship it?",type: "yes_no",context: identity,
       callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } });
     await answer(request,"yes");
-    const fetchImpl = (async () => new Response("no",{ status: 500 })) as any;
+    const send = (async () => 500) as any;
     for (let attempt = 1; attempt <= CALLBACK_MAX_ATTEMPTS; attempt += 1) {
       await db.query("UPDATE interaction_callbacks SET next_attempt_at=now()-interval '1 second' WHERE state='pending'");
-      expect(await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: publicResolve })).toBe(1);
+      expect(await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve })).toBe(1);
       const row = (await db.query("SELECT state,attempts,last_status,next_attempt_at-now() AS wait FROM interaction_callbacks")).rows[0];
       expect(row.attempts).toBe(attempt);
       expect(row.last_status).toBe(500);
@@ -99,18 +103,21 @@ suite("Interaction answer callbacks",() => {
     const expired = await ask({ title: "Deploy",prompt: "Ship it?",type: "yes_no",context: identity,
       callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } });
     await db.query("UPDATE interaction_requests SET state='expired' WHERE id=$1",[expired.id]);
-    const fetchImpl = (async () => { throw new Error("must not call"); }) as any;
-    await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: publicResolve });
+    const send = (async () => { throw new Error("must not call"); }) as any;
+    await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve });
     expect((await db.query("SELECT state FROM interaction_callbacks WHERE interaction_request_id=$1",[expired.id])).rows[0].state)
       .toBe("not_answered");
 
-    const rebound = await ask({ title: "Deploy",prompt: "Ship it?",type: "yes_no",context: identity,
-      callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } });
-    await answer(rebound,"yes");
-    const privateResolve = (async () => [{ address: "10.0.0.5",family: 4 }]) as any;
-    await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: privateResolve });
-    expect((await db.query("SELECT last_error FROM interaction_callbacks WHERE interaction_request_id=$1",[rebound.id])).rows[0].last_error)
-      .toBe("callback_host_not_public");
+    await db.query("UPDATE server_settings SET private_callbacks='none'");
+    try {
+      const rebound = await ask({ title: "Deploy",prompt: "Ship it?",type: "yes_no",context: identity,
+        callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } });
+      await answer(rebound,"yes");
+      const privateResolve = (async () => [{ address: "10.0.0.5",family: 4 }]) as any;
+      await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: privateResolve });
+      expect((await db.query("SELECT last_error FROM interaction_callbacks WHERE interaction_request_id=$1",[rebound.id])).rows[0].last_error)
+        .toBe("callback_host_private");
+    } finally { await db.query("UPDATE server_settings SET private_callbacks='admin'"); }
   });
 
   test("webhook prompts accept a callback and report its state on the event route",async () => {
@@ -119,8 +126,8 @@ suite("Interaction answer callbacks",() => {
       response: { type: "approval",correlationId: "deploy-184",
         callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } } },path);
     await answer(request,"approve");
-    const fetchImpl = (async () => new Response(null,{ status: 200 })) as any;
-    await dispatchDueInteractionCallbacks(db,{ encryption,fetchImpl,resolve: publicResolve });
+    const send = (async () => 200) as any;
+    await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve });
     const event = await app().request(`${path}/events/ntf_${request.notification_event_id}`);
     const body = await event.json() as any;
     expect(body.event.response).toMatchObject({ status: "approved",correlationId: "deploy-184",

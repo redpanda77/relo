@@ -10,6 +10,8 @@ public struct CurrentDecisionIdentity: Equatable, Hashable, Sendable, Identifiab
     public let kind: CurrentDecision.Kind
     public let version: CurrentVersion?
     public let expiresAt: Date
+    /// A choice question's answers; empty for every other kind.
+    public let options: [InteractionOption]
     public var id: String { scope.fileKey + ":" + interactionID }
 
     public init?(subject: CurrentSubjectProjection, scope: StorageScope) {
@@ -18,18 +20,21 @@ public struct CurrentDecisionIdentity: Equatable, Hashable, Sendable, Identifiab
         interactionID = decision.id; kind = decision.type
         version = subject.activity == nil ? subject.version : nil
         expiresAt = decision.expiresAt
+        options = decision.options ?? []
     }
 
     public init(pending: PendingCurrentDecision, scope: StorageScope) {
         self.scope = scope; subjectID = pending.subjectId; notificationID = pending.notificationId
         interactionID = pending.interaction.id; kind = pending.interaction.type
         version = pending.version; expiresAt = pending.interaction.expiresAt
+        options = pending.interaction.options ?? []
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(scope); hasher.combine(subjectID); hasher.combine(notificationID)
         hasher.combine(interactionID); hasher.combine(kind.rawValue)
         hasher.combine(version?.generation); hasher.combine(version?.revision); hasher.combine(expiresAt)
+        hasher.combine(options)
     }
 }
 

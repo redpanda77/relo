@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { Database } from "./db.js";
 
-const CURRENT_SCHEMA = "0088_card_retention_with_relationship_evidence.sql";
+const CURRENT_SCHEMA = "0092_card_limit.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";

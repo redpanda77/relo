@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { choiceOptionSchema } from "./presentation.js";
 
 const scalarText = (maximum: number) => z.string().refine(value => Array.from(value).length <= maximum);
 const date = z.iso.datetime({ offset: true });
@@ -14,7 +15,8 @@ export const currentSubjectProjectionSchema = z.object({
   // from its original policy. Freshness alone never makes a subject disappear.
   currentUntil: date.nullable(),freshUntil: date.nullable(),deliverUntil: date,
   freshness: z.enum(["fresh","stale","unknown"]),
-  interaction: z.object({ id: z.string(),type: z.enum(["approval","yes_no","text"]),state: z.literal("pending"),expiresAt: date }).nullable(),
+  interaction: z.object({ id: z.string(),type: z.enum(["approval","yes_no","text","choice"]),state: z.literal("pending"),expiresAt: date,
+    options: z.array(choiceOptionSchema).optional() }).nullable(),
   activity: z.object({ id: z.string(),generation: z.number().int().positive(),sequence: z.number().int().nonnegative(),
     status: scalarText(240).nullable(),progress: z.number().min(0).max(1).nullable() }).nullable(),
   resources: z.object({

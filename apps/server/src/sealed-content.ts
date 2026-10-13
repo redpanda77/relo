@@ -117,7 +117,7 @@ export function unsignedSealed(sealed: SealedNotice): unknown {
 export function sealedQuestionRequest(raw: unknown,{ title = true }: { title?: boolean } = {}): { body: Record<string,unknown>; sealed: SealedNotice } | { error: string } | null {
   if (raw === null || typeof raw !== "object" || !("sealed" in raw)) return null;
   const body = raw as Record<string,unknown>;
-  if ("prompt" in body || "title" in body || "imageUrl" in body || "destinationUrl" in body) return { error: "sealed_with_plaintext" };
+  if ("prompt" in body || "title" in body || "detail" in body || "imageUrl" in body || "destinationUrl" in body) return { error: "sealed_with_plaintext" };
   const parsed = sealedNoticeSchema.safeParse(body.sealed);
   if (!parsed.success) return { error: "invalid_sealed_content" };
   const check = checkSealedNotice(parsed.data,"question");

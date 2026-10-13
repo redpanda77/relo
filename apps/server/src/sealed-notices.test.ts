@@ -146,6 +146,8 @@ suite("sealed notices through the API (E3.1)",() => {
     expect(row).toMatchObject({ title: SEALED_QUESTION_TITLE,prompt: SEALED_PROMPT });
     expect(row.payload).toMatchObject({ privacy: "private",sealed });
     expect((await post({ sealed,prompt: "Deploy to production?" })).body).toEqual({ error: "sealed_with_plaintext" });
+    // The explanation travels inside the seal too, never beside it.
+    expect((await post({ sealed,detail: "Rewrites the orders table" })).body).toEqual({ error: "sealed_with_plaintext" });
     expect((await post({ sealed: { alerts: [envelope([asked.publicId])],content: envelope([asked.publicId]) } })).body)
       .toEqual({ error: "invalid_sealed_content" });
   });
@@ -170,6 +172,8 @@ suite("sealed notices through the API (E3.1)",() => {
     }
     expect((await request("POST",`/api/live-activities/${started.body.activity.id}/wait`,
       { type: "approval",expiresInSeconds: 120,sealed,prompt: "Leak" },owner)).body).toEqual({ error: "sealed_with_plaintext" });
+    expect((await request("POST",`/api/live-activities/${started.body.activity.id}/wait`,
+      { type: "approval",expiresInSeconds: 120,sealed,detail: "Leak" },owner)).body).toEqual({ error: "sealed_with_plaintext" });
   });
 
   test("a sealed card carries each phone's envelope in its push and keeps it for later updates (E5)",async () => {

@@ -295,7 +295,9 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
 function interactionCategory(kind: ApnsRuntimeJob["interactionKind"]): string | undefined {
   return kind === "approval" ? "RELO_APPROVAL"
     : kind === "yes_no" ? "RELO_YES_NO"
-      : kind === "text" ? "RELO_TEXT" : undefined;
+      // The phone's notification extension swaps in a category whose buttons carry the labels.
+      : kind === "choice" ? "RELO_CHOICE"
+        : kind === "text" ? "RELO_TEXT" : undefined;
 }
 
 function ordinaryDeliveryProjection(input: OrdinaryDeliveryIntent): AlertProjection {
@@ -342,6 +344,9 @@ function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unkno
     data.interactionId = interactionId;
   }
   if (input.interactionKind) data.interactionType = input.interactionKind;
+  if (input.interactionKind === "choice" && Array.isArray(input.payload.interactionOptions)) {
+    data.interactionOptions = input.payload.interactionOptions;
+  }
   if (input.interactionKind && interactionId) {
     if (input.accountId) data.accountId = input.accountId;
     if (input.deviceId) data.deviceId = input.deviceId;

@@ -7,7 +7,7 @@ public enum NotificationResponsePolicy {
         case .deny: "denied"
         case .yes: "yes"
         case .no: "no"
-        case .answer: "replied"
+        case .answer, .choose: "replied"
         case .opened, .received: nil
         }
     }
@@ -17,6 +17,7 @@ public enum NotificationResponsePolicy {
         case .approval: [.approve, .deny].contains(action)
         case .yesNo: [.yes, .no].contains(action)
         case .text: action == .answer
+        case .choice: action == .choose
         }
     }
 
@@ -27,6 +28,7 @@ public enum NotificationResponsePolicy {
         case .yes: "yes"
         case .no: "no"
         case .answer: "reply"
+        case .choose: "choice"
         case .opened: "opened"
         case .received: "received"
         }

@@ -6,6 +6,9 @@ import {
   registrationModes,ServerAccountError,setRegistrationMode,settleAccountRequest,
 } from "../server-accounts.js";
 import { deleteAccountRecords } from "./account-routes.js";
+import { QUESTION_CEILING_SECONDS,QUESTION_SECONDS } from "../question-policy.js";
+import { maxQuestionSeconds,setMaxQuestionSeconds } from "../question-wait.js";
+import { PRIVATE_CALLBACK_POLICIES,privateCallbackPolicy } from "../callback-destinations.js";
 import type { WebRouteContext } from "./route-context.js";
 
 /** ADR 0004: the server admin decides who may register and who keeps access. No account data here. */
@@ -21,7 +24,8 @@ export function registerServerAdminRoutes(app: Hono, shared: WebRouteContext): v
     const account = await serverAdminAccount(context);
     if (account instanceof Response) return account;
     context.header("cache-control","private, no-store");
-    return context.json({ registrationMode: await registrationMode(db),accounts: await listServerAccounts(db) });
+    return context.json({ registrationMode: await registrationMode(db),maxQuestionSeconds: await maxQuestionSeconds(db),
+      privateCallbacks: await privateCallbackPolicy(db),accounts: await listServerAccounts(db) });
   });
 
   app.put("/api/dashboard/server/registration", async (context) => {
@@ -30,6 +34,23 @@ export function registerServerAdminRoutes(app: Hono, shared: WebRouteContext): v
     const input = z.object({ mode: z.enum(registrationModes) }).strict().parse(await context.req.json());
     await setRegistrationMode(db,input.mode);
     return context.json({ registrationMode: input.mode });
+  });
+
+  app.put("/api/dashboard/server/private-callbacks", async (context) => {
+    const account = await serverAdminAccount(context);
+    if (account instanceof Response) return account;
+    const input = z.object({ policy: z.enum(PRIVATE_CALLBACK_POLICIES) }).strict().parse(await context.req.json());
+    await db.query("UPDATE server_settings SET private_callbacks=$1,updated_at=now() WHERE singleton",[input.policy]);
+    return context.json({ privateCallbacks: input.policy });
+  });
+
+  app.put("/api/dashboard/server/question-wait", async (context) => {
+    const account = await serverAdminAccount(context);
+    if (account instanceof Response) return account;
+    const input = z.object({ seconds: z.number().int().min(QUESTION_SECONDS).max(QUESTION_CEILING_SECONDS) })
+      .strict().parse(await context.req.json());
+    await setMaxQuestionSeconds(db,input.seconds);
+    return context.json({ maxQuestionSeconds: input.seconds });
   });
 
   app.post("/api/dashboard/server/accounts", async (context) => {

@@ -286,7 +286,7 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
         credential: DeviceCredential, response: PendingNotificationResponse
     ) async throws -> NotificationDecisionAcknowledgement {
         guard response.endpoint == .notification, let interactionID = response.interactionID,
-              response.serverOrigin == baseURL,
+              response.serverOrigin == baseURL, response.hasValidOption,
               response.accountID == credential.accountId, response.deviceID == credential.deviceId
         else { throw MobileAPIError.invalidRequest }
         guard response.expiresAt > .now else { throw MobileAPIError.decisionRejected(.expired) }

@@ -23,6 +23,10 @@ struct ReloNowHero: View {
     var connectionTrouble: String? = nil
     /// Space for the status bar: the deck runs to the top of the screen.
     var topInset: CGFloat = 0
+    /// How far the ambient layers (orbit plane, dust) run past the deck on each side. Zero when
+    /// the deck spans the screen; in landscape it reaches under the Dynamic Island and beyond the
+    /// deck's column, so the orbit never stops at a column edge.
+    var bleed: CGFloat = 0
     var showConnection: () -> Void = {}
     /// Owns the deck's phase, the boot's reveal and the effect bus (see `ReloDeckDirector`).
     var director: ReloDeckDirector? = nil
@@ -86,8 +90,10 @@ struct ReloNowHero: View {
                 // Far half of the orbital plane, then the plasma core and its particle shell,
                 // then the near half crossing in front: the orb sits inside the plane.
                 ReloOrbitPlane(half: .far, state: state, mix: mix, satellites: satellites, framesPerSecond: fps,
-                               waves: waves, center: stageCenter,
-                               deckOffset: CGPoint(x: 0, y: stageTop))
+                               waves: waves, center: CGPoint(x: stageCenter.x + bleed, y: stageCenter.y),
+                               deckOffset: CGPoint(x: -bleed, y: stageTop))
+                    // Drawn wider than the deck, laid out at the deck's width: only the drawing bleeds.
+                    .frame(width: width + bleed * 2).frame(width: max(width, 1))
                 ReloPullStretch(pull: pull) {
                     ReloPlasmaOrb(state: state, mix: mix, wave: waves.last,
                                   waveOffset: CGPoint(x: width / 2 - 150, y: stageTop + stageHeight / 2 - 150),
@@ -100,8 +106,10 @@ struct ReloNowHero: View {
                         .opacity(0.75)
                 }
                 ReloOrbitPlane(half: .near, state: state, mix: mix, satellites: satellites, framesPerSecond: fps,
-                               waves: waves, center: stageCenter,
-                               deckOffset: CGPoint(x: 0, y: stageTop))
+                               waves: waves, center: CGPoint(x: stageCenter.x + bleed, y: stageCenter.y),
+                               deckOffset: CGPoint(x: -bleed, y: stageTop))
+                    // Drawn wider than the deck, laid out at the deck's width: only the drawing bleeds.
+                    .frame(width: width + bleed * 2).frame(width: max(width, 1))
                 ReloHoloRing(state: state, tasks: tasks, pulse: summary.total, finished: summary.finished, framesPerSecond: fps)
                     .frame(width: 286, height: 286)
                     // Booting, the ring draws itself around the sphere over a faint outline of itself.
@@ -196,11 +204,13 @@ struct ReloNowHero: View {
             RadialGradient(colors: [ReloHoloTheme.accent(for: state).opacity(0.16),
                                     ReloHoloTheme.accent(for: state).opacity(0.05), .clear],
                            center: .center, startRadius: 40, endRadius: 360)
-                .frame(width: max(width, 1), height: 760)
+                // The whole circle, never cut to the deck's width: in landscape the deck is half
+                // the screen, and a width-clipped glow showed as a lit box around it.
+                .frame(width: max(width, 760), height: 760)
                 .offset(y: orbCenter.y - 380)
                 .animation(reduceMotion ? nil : .smooth(duration: 0.9), value: state)
-            ReloDeckField(state: state, mix: mix, waves: waves)
-                .frame(width: max(width, 1), height: deckHeight + 220)
+            ReloDeckField(state: state, mix: mix, waves: waves, deckOffsetX: -bleed)
+                .frame(width: max(width + bleed * 2, 1), height: deckHeight + 220)
         }
         .allowsHitTesting(false)
     }

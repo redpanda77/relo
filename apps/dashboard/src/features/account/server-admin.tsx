@@ -22,10 +22,12 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
 import { relativeTime } from "@/lib/format"
 import type {
   AccountService,
+  PrivateCallbackPolicy,
   RegistrationMode,
   ServerAccountAction,
 } from "@/services/account-service"
@@ -37,6 +39,21 @@ const modes: Array<{ value: RegistrationMode; label: string; detail: string }> =
   { value: "closed", label: "Closed", detail: "Only you can add accounts." },
   { value: "approval", label: "Approval", detail: "Anyone can register; you approve before they sign in." },
   { value: "open", label: "Open", detail: "Anyone who can reach this server can register." },
+]
+
+const PRIVATE_CALLBACKS: Array<{ value: PrivateCallbackPolicy; label: string }> = [
+  { value: "admin", label: "Your account only" },
+  { value: "everyone", label: "Every account" },
+  { value: "none", label: "Nobody" },
+]
+
+const QUESTION_WAITS = [
+  { seconds: 300, label: "5 minutes" },
+  { seconds: 3_600, label: "1 hour" },
+  { seconds: 28_800, label: "8 hours" },
+  { seconds: 86_400, label: "1 day" },
+  { seconds: 604_800, label: "7 days" },
+  { seconds: 2_592_000, label: "30 days" },
 ]
 
 const friendlyErrors: Record<string, string> = {
@@ -59,6 +76,8 @@ export function ServerAdminCard({
   service: AccountService
 }) {
   const [mode, setMode] = useState(initial.registrationMode)
+  const [questionWait, setQuestionWait] = useState(initial.maxQuestionSeconds)
+  const [privateCallbacks, setPrivateCallbacks] = useState(initial.privateCallbacks)
   const [accounts, setAccounts] = useState(initial.accounts)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null)
@@ -76,6 +95,24 @@ export function ServerAdminCard({
     } finally {
       setBusy(false)
     }
+  }
+
+  function changePrivateCallbacks(policy: PrivateCallbackPolicy) {
+    if (policy === privateCallbacks) return
+    const label = PRIVATE_CALLBACKS.find((option) => option.value === policy)?.label ?? policy
+    void run(async () => {
+      await service.setPrivateCallbacks(policy)
+      setPrivateCallbacks(policy)
+    }, `Private-network callbacks: ${label.toLowerCase()}.`, "Couldn't change callback access.")
+  }
+
+  function changeQuestionWait(seconds: number) {
+    if (seconds === questionWait) return
+    const label = QUESTION_WAITS.find((option) => option.seconds === seconds)?.label ?? `${seconds}s`
+    void run(async () => {
+      await service.setMaxQuestionSeconds(seconds)
+      setQuestionWait(seconds)
+    }, `Questions can now wait up to ${label}.`, "Couldn't change how long questions wait.")
   }
 
   function changeMode(next: RegistrationMode) {
@@ -174,6 +211,46 @@ export function ServerAdminCard({
             ))}
           </div>
         </fieldset>
+
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div>
+            <Label htmlFor="question-wait">Longest a question can wait</Label>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Agents and apps may ask for longer than the usual 5 minutes, up to this. After 8 hours the
+              card ends and the question keeps waiting in Relo.
+            </p>
+          </div>
+          <NativeSelect
+            id="question-wait"
+            value={String(questionWait)}
+            disabled={busy}
+            onChange={(event) => changeQuestionWait(Number(event.target.value))}
+          >
+            {QUESTION_WAITS.map((option) => (
+              <NativeSelectOption key={option.seconds} value={String(option.seconds)}>{option.label}</NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div>
+            <Label htmlFor="private-callbacks">Answer callbacks to your private network</Label>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Apps can have answers posted to an address on this network (for example a CI server on
+              Tailscale). The server's own localhost is never reachable.
+            </p>
+          </div>
+          <NativeSelect
+            id="private-callbacks"
+            value={privateCallbacks}
+            disabled={busy}
+            onChange={(event) => changePrivateCallbacks(event.target.value as PrivateCallbackPolicy)}
+          >
+            {PRIVATE_CALLBACKS.map((option) => (
+              <NativeSelectOption key={option.value} value={option.value}>{option.label}</NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
 
         <ul className="grid gap-3" aria-label="Accounts on this server">
           {accounts.map((account) => (

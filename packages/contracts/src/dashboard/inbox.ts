@@ -92,6 +92,8 @@ const questionSchema = z.object({
   state: z.string(),
   respondedAt: nullableDate,
   expiresAt: nullableDate,
+  /** A choice question's picked option, once answered. */
+  chosenLabel: z.string().nullable().optional(),
 })
 
 const notificationSummarySchema = z.object({

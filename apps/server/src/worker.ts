@@ -84,7 +84,7 @@ function projectLiveActivityInteraction(
     alertOwner: job.transport === "live_activity_start" ? "apns" : command.alertOwner,
   };
   if (!job.interaction_id || !job.interaction_expires_at
-    || (job.interaction_kind !== "approval" && job.interaction_kind !== "yes_no")) return projected;
+    || (job.interaction_kind !== "approval" && job.interaction_kind !== "yes_no" && job.interaction_kind !== "choice")) return projected;
   return projectLiveActivityCommand(secret,{
     interactionId: job.interaction_id, notificationEventId: job.event_id,
     deviceId: job.device_id,principalId: job.principal_id,

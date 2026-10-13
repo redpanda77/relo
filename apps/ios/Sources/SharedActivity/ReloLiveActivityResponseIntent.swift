@@ -105,10 +105,12 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
     let symbol: String?
     let showsProgress: Bool
 
+    /// `options` are a choice's answers, so its states can name the picked one.
     static func make(
         interaction: LiveActivityContentInteraction?,
         primary: String,
         secondary: String,
+        options: [InteractionOption] = [],
         fallbackStatus: String? = nil,
         now: Date
     ) -> Self {
@@ -122,8 +124,14 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
                 showsProgress: false
             )
         }
+        let picked = interaction.selectedOptionID.flatMap { id in options.first { $0.id == id }?.label }
+        let chosenLabel = picked ?? fallbackStatus.flatMap { status in
+            let trimmed = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
         if interaction.responsePhase == .accepted {
-            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(interaction: interaction, now: now)
+            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(
+                interaction: interaction, now: now, chosenLabel: chosenLabel)
             return Self(
                 mode: .accepted,
                 label: visual.label,
@@ -132,7 +140,8 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
             )
         }
         guard interaction.state == "pending", interaction.expiresAt > now else {
-            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(interaction: interaction, now: now)
+            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(
+                interaction: interaction, now: now, chosenLabel: chosenLabel)
             return Self(
                 mode: .terminal,
                 label: visual.label,
@@ -161,7 +170,7 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
         case .queued:
             return Self(
                 mode: .queued,
-                label: "\(selectedLabel(interaction.selectedAction, primary: primary, secondary: secondary)) · Waiting to send",
+                label: "\(picked ?? selectedLabel(interaction.selectedAction, primary: primary, secondary: secondary)) · Waiting to send",
                 symbol: "clock.arrow.circlepath",
                 showsProgress: false
             )
@@ -173,7 +182,8 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
                 showsProgress: false
             )
         case .accepted:
-            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(interaction: interaction, now: now)
+            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(
+                interaction: interaction, now: now, chosenLabel: chosenLabel)
             return Self(
                 mode: .accepted,
                 label: visual.label,
@@ -192,6 +202,7 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
         case .approve, .yes: primary
         case .deny, .no: secondary
         case .answer: "Reply"
+        case .choose: "Choice"
         case .opened, .received, nil: "Response"
         }
     }
@@ -476,6 +487,7 @@ enum LiveActivityResponseActivityPresenter {
         guard var interaction = state.interaction else { return false }
         interaction.responsePhase = command.phase
         interaction.selectedAction = command.response.action
+        interaction.selectedOptionID = command.response.optionID
         if command.phase == .accepted {
             guard
                 let canonicalState = command.canonicalState,
@@ -495,7 +507,9 @@ enum LiveActivityResponseActivityPresenter {
             status: LiveActivityResponsePolicy.status(
                 phase: command.phase,
                 action: command.response.action,
-                confirmedState: command.canonicalState
+                confirmedState: command.canonicalState,
+                optionLabel: presentation.behavior.choiceOptions?
+                    .first { $0.id == command.response.optionID }?.label
             ),
             components: presentation.components,
             surfaces: presentation.surfaces,
@@ -558,7 +572,10 @@ enum LiveActivityResponseActivityPresenter {
             interaction.targetDeviceID == response.deviceID,
             interaction.accountID == response.accountID,
             interaction.credential == responseCredential,
-            LiveActivityResponsePolicy.supports(response.action, kind: interaction.kind)
+            LiveActivityResponsePolicy.supports(response.action, kind: interaction.kind),
+            response.optionID.map({ id in
+                activity.content.state.presentation.behavior.choiceOptions?.contains { $0.id == id } == true
+            }) ?? true
         else { return nil }
         return activity
     }
@@ -576,6 +593,8 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
     @Parameter(title: "Account ID") var accountID: String
     @Parameter(title: "Device ID") var deviceID: String
     @Parameter(title: "Action") var action: String
+    /// The picked option when `action` is `choose`; empty otherwise.
+    @Parameter(title: "Option ID") var optionID: String
     @Parameter(title: "Credential") var credential: String
     @Parameter(title: "Expires At") var expiresAt: Date
 
@@ -587,6 +606,7 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
         accountID = ""
         deviceID = ""
         action = ""
+        optionID = ""
         credential = ""
         expiresAt = .distantPast
     }
@@ -599,6 +619,7 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
         accountID: String,
         deviceID: String,
         action: String,
+        optionID: String = "",
         credential: String,
         expiresAt: Date
     ) {
@@ -609,12 +630,15 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
         self.accountID = accountID
         self.deviceID = deviceID
         self.action = action
+        self.optionID = optionID
         self.credential = credential
         self.expiresAt = expiresAt
     }
 
     func perform() async throws -> some IntentResult {
-        guard let responseAction = NotificationInteractionAction(rawValue: action) else {
+        guard let responseAction = NotificationInteractionAction(rawValue: action),
+              responseAction == .choose ? InteractionOption.isValidID(optionID) : optionID.isEmpty
+        else {
             return .result()
         }
         // Signed with this phone's identity key so the CLI can trust the button (E4.2), bound to the
@@ -627,6 +651,7 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
             activityGeneration: activityGeneration,
             interactionID: interactionID,
             action: responseAction,
+            optionID: responseAction == .choose ? optionID : nil,
             credential: credential,
             expiresAt: expiresAt
         )

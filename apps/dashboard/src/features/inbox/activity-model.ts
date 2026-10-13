@@ -136,6 +136,7 @@ export function activityOutcome(state: string, outcome: string | null | undefine
 export function typeLabel(kind: string, questionKind: string | null): string {
   if (questionKind) {
     if (questionKind === "approval") return "Approval"
+    if (questionKind === "choice") return "Choice"
     if (/yes|no/.test(questionKind)) return "Question"
     return "Reply request"
   }
@@ -157,9 +158,11 @@ function decisionFor(
     encrypted,
     answer: pending
       ? "Waiting for you"
-      : known
-        ? known.decision
-        : "No answer in time",
+      : question.chosenLabel
+        ? `You chose ${question.chosenLabel}`
+        : known
+          ? known.decision
+          : "No answer in time",
     pending,
     declined: pending ? false : (known?.declined ?? true),
     at: question.respondedAt,

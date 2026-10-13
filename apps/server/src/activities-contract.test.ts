@@ -5,7 +5,7 @@ import {
 } from "./activities.js";
 
 describe("credential activity contract", () => {
-  test("canonicalizes yes-no waits and applies the five-minute expiry default", () => {
+  test("canonicalizes yes-no waits, applies the five-minute expiry default and the 30-day ceiling", () => {
     expect(activityWaitSchema.parse({ type: "yes-no",prompt: "Continue?" })).toEqual({
       type: "yes_no",prompt: "Continue?",expiresInSeconds: 300,
     });
@@ -14,7 +14,8 @@ describe("credential activity contract", () => {
       primaryLabel: "Approve",secondaryLabel: "Deny",
     })).toMatchObject({ type: "approval",expiresInSeconds: 30 });
     expect(activityWaitSchema.safeParse({ type: "text",prompt: "Describe the blocker" }).success).toBe(false);
-    expect(activityWaitSchema.safeParse({ type: "yes_no",prompt: "Continue?",expiresInSeconds: 301 }).success).toBe(false);
+    expect(activityWaitSchema.safeParse({ type: "yes_no",prompt: "Continue?",expiresInSeconds: 301 }).success).toBe(true);
+    expect(activityWaitSchema.safeParse({ type: "yes_no",prompt: "Continue?",expiresInSeconds: 30 * 86_400 + 1 }).success).toBe(false);
   });
 
   test("rejects overlong Live Activity prompts, text labels, multiline labels, and expiry overflow", () => {

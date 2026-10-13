@@ -78,8 +78,12 @@ final class NotificationService: UNNotificationServiceExtension {
         let imageURL = envelope?.imageURL
         let donation = envelope.flatMap(DonationInput.init)
         let imageMedia = RequestMedia()
+        let choiceCategory = envelope?.choiceCategory
         enrichmentTask = orchestrator.start(
             context: context,
+            prepareCategory: choiceCategory.map { category in
+                { await ChoiceCategoryRegistrar.register(category) }
+            },
             enrichMedia: { ownedContent in
                 await Self.enrich(
                     content: ownedContent, hasEnvelope: hasEnvelope, imageURL: imageURL, imageMedia: imageMedia
@@ -93,6 +97,44 @@ final class NotificationService: UNNotificationServiceExtension {
         let notificationID = envelope?.notificationID ?? request.identifier
         DispatchQueue.global(qos: .utility).async {
             Self.recordBestEffortReceipt(notificationID: notificationID, scope: envelope?.receiptScope)
+        }
+    }
+
+    /// Registers one choice question's buttons, keeping the static categories and the newest
+    /// per-question ones. Returns the category only once the system lists it, so the content
+    /// never names a category that does not exist yet.
+    private enum ChoiceCategoryRegistrar {
+        private static let orderKey = "relo.choiceCategoryOrder"
+
+        static func register(_ category: ChoiceNotificationCategoryPolicy.Category) async -> String? {
+            let center = UNUserNotificationCenter.current()
+            let defaults = (Bundle.main.object(forInfoDictionaryKey: "RELOAppGroup") as? String)
+                .flatMap(UserDefaults.init(suiteName:))
+            // Two extensions can register at once; a second pass restores one lost to the race.
+            for _ in 0..<2 {
+                let registered = await center.notificationCategories()
+                let retained = ChoiceNotificationCategoryPolicy.retainedIdentifiers(
+                    registered: registered.map(\.identifier),
+                    recentOrder: defaults?.stringArray(forKey: orderKey) ?? [],
+                    adding: category.identifier)
+                let kept = registered.filter {
+                    !ChoiceNotificationCategoryPolicy.isPerQuestionCategory($0.identifier)
+                        || (retained.contains($0.identifier) && $0.identifier != category.identifier)
+                }
+                let actions = category.actions.map {
+                    UNNotificationAction(identifier: $0.identifier, title: $0.title, options: [.authenticationRequired])
+                }
+                center.setNotificationCategories(kept.union([
+                    UNNotificationCategory(identifier: category.identifier, actions: actions, intentIdentifiers: [])
+                ]))
+                defaults?.set(retained, forKey: orderKey)
+                // Reading back waits for the registration above to land.
+                if await center.notificationCategories().contains(where: { $0.identifier == category.identifier }) {
+                    return category.identifier
+                }
+                guard !Task.isCancelled else { return nil }
+            }
+            return nil
         }
     }
 

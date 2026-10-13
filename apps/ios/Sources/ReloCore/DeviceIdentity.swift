@@ -144,6 +144,13 @@ public enum AuthorizationState: String, Codable, Equatable, Sendable {
     case pending
 }
 
+/// What this build can answer, declared on registration and every heartbeat. The server sends
+/// a phone only the questions its declared capabilities cover.
+public enum DeviceCapability {
+    public static let choiceQuestions = "choice_questions"
+    public static let supported = [choiceQuestions]
+}
+
 public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
     public let stableDeviceId: UUID
     public let installationId: UUID
@@ -158,6 +165,7 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
     public let notificationAuthorization: AuthorizationState
     public let liveActivityAuthorization: AuthorizationState
     public let liveActivityPushToStartToken: String?
+    public let capabilities: [String]
 
     public init(
         stableDeviceId: UUID,
@@ -172,7 +180,8 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
         apnsToken: String? = nil,
         notificationAuthorization: AuthorizationState,
         liveActivityAuthorization: AuthorizationState,
-        liveActivityPushToStartToken: String? = nil
+        liveActivityPushToStartToken: String? = nil,
+        capabilities: [String] = DeviceCapability.supported
     ) {
         self.stableDeviceId = stableDeviceId
         self.installationId = installationId
@@ -187,6 +196,32 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
         self.notificationAuthorization = notificationAuthorization
         self.liveActivityAuthorization = liveActivityAuthorization
         self.liveActivityPushToStartToken = liveActivityPushToStartToken
+        self.capabilities = capabilities
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case stableDeviceId, installationId, name, bundleIdentifier, appVersion, appBuild, osVersion, model
+        case apnsEnvironment, apnsToken, notificationAuthorization, liveActivityAuthorization
+        case liveActivityPushToStartToken, capabilities
+    }
+
+    /// A request saved by an older build has no capabilities; it declared none.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        stableDeviceId = try values.decode(UUID.self, forKey: .stableDeviceId)
+        installationId = try values.decode(UUID.self, forKey: .installationId)
+        name = try values.decode(String.self, forKey: .name)
+        bundleIdentifier = try values.decode(String.self, forKey: .bundleIdentifier)
+        appVersion = try values.decode(String.self, forKey: .appVersion)
+        appBuild = try values.decode(String.self, forKey: .appBuild)
+        osVersion = try values.decode(String.self, forKey: .osVersion)
+        model = try values.decode(String.self, forKey: .model)
+        apnsEnvironment = try values.decode(String.self, forKey: .apnsEnvironment)
+        apnsToken = try values.decodeIfPresent(String.self, forKey: .apnsToken)
+        notificationAuthorization = try values.decode(AuthorizationState.self, forKey: .notificationAuthorization)
+        liveActivityAuthorization = try values.decode(AuthorizationState.self, forKey: .liveActivityAuthorization)
+        liveActivityPushToStartToken = try values.decodeIfPresent(String.self, forKey: .liveActivityPushToStartToken)
+        capabilities = try values.decodeIfPresent([String].self, forKey: .capabilities) ?? []
     }
 }
 
@@ -261,6 +296,7 @@ public struct DeviceHeartbeat: Codable, Equatable, Sendable {
     public let notificationAuthorization: AuthorizationState
     public let liveActivityAuthorization: AuthorizationState
     public let liveActivityPushToStartToken: String?
+    public let capabilities: [String]
 
     public init(
         deviceId: String,
@@ -275,7 +311,8 @@ public struct DeviceHeartbeat: Codable, Equatable, Sendable {
         apnsEnvironment: String,
         notificationAuthorization: AuthorizationState,
         liveActivityAuthorization: AuthorizationState,
-        liveActivityPushToStartToken: String? = nil
+        liveActivityPushToStartToken: String? = nil,
+        capabilities: [String] = DeviceCapability.supported
     ) {
         self.deviceId = deviceId
         self.installationId = installationId
@@ -290,6 +327,7 @@ public struct DeviceHeartbeat: Codable, Equatable, Sendable {
         self.notificationAuthorization = notificationAuthorization
         self.liveActivityAuthorization = liveActivityAuthorization
         self.liveActivityPushToStartToken = liveActivityPushToStartToken
+        self.capabilities = capabilities
     }
 
 }

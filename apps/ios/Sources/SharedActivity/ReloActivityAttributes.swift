@@ -152,7 +152,7 @@ struct ReloActivityAttributes: Codable {
         }
         var style: Style {
             switch presentation.behavior {
-            case .approval: .approval
+            case .approval, .choice: .approval
             case .yesNo: .verdict
             case .informational, .progress, .unsupportedTextReply:
                 presentation.components.contains { if case .steps = $0 { true } else { false } }
@@ -167,13 +167,13 @@ struct ReloActivityAttributes: Codable {
         var primaryLabel: String? {
             switch presentation.behavior {
             case let .approval(primary, _), let .yesNo(primary, _): primary
-            case .informational, .progress, .unsupportedTextReply: nil
+            case .informational, .progress, .choice, .unsupportedTextReply: nil
             }
         }
         var secondaryLabel: String? {
             switch presentation.behavior {
             case let .approval(_, secondary), let .yesNo(_, secondary): secondary
-            case .informational, .progress, .unsupportedTextReply: nil
+            case .informational, .progress, .choice, .unsupportedTextReply: nil
             }
         }
         var displayStatus: String { status }

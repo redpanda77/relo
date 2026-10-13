@@ -463,6 +463,8 @@ final class LiveActivityApplier {
             case .approval: "RELO_APPROVAL"
             case .yesNo: "RELO_YES_NO"
             case .text: "RELO_TEXT"
+            // The companion alert carries no per-question buttons; it opens Relo.
+            case .choice: ChoiceNotificationCategoryPolicy.staticCategoryIdentifier
             }
         }
         notification.userInfo = [
@@ -496,6 +498,8 @@ private struct LiveActivityContentDigestPayload: Encodable {
     let staleAt: Date?
     let primaryLabel: String?
     let secondaryLabel: String?
+    /// Absent for every non-choice card, so their digests are unchanged.
+    let choiceOptions: [InteractionOption]?
     let interaction: ReloActivityAttributes.Interaction?
 
     init(_ state: ReloActivityAttributes.ContentState) {
@@ -512,6 +516,7 @@ private struct LiveActivityContentDigestPayload: Encodable {
         staleAt = state.staleAt
         primaryLabel = state.primaryLabel
         secondaryLabel = state.secondaryLabel
+        choiceOptions = state.presentation.behavior.choiceOptions
         interaction = state.interaction
     }
 }

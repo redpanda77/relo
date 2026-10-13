@@ -137,6 +137,7 @@ export type DashboardQuestion = {
   state: string;
   respondedAt: string | null;
   expiresAt: string | null;
+  chosenLabel: string | null;
 };
 
 export type DashboardDeliverySummary = {
@@ -349,6 +350,7 @@ function questionDigest(value: unknown): DashboardQuestion | null {
     state: String(question.state),
     respondedAt: isoDate(question.respondedAt),
     expiresAt: isoDate(question.expiresAt),
+    chosenLabel: typeof question.chosenLabel === "string" ? question.chosenLabel : null,
   };
 }
 
@@ -616,6 +618,7 @@ const notificationListSql = `SELECT e.id,e.source,e.kind,e.title,e.body,e.deep_l
     COALESCE(a.work_item_id,e.work_item_id) AS resource_work_item_id,
     targets.device_names,response.action AS response_action,response.responded_at,
     (SELECT jsonb_build_object('kind',q.kind,'state',q.state,'encrypted',${eventEncryptedSql("qe")},'respondedAt',q.responded_at,'expiresAt',q.expires_at,
+        'chosenLabel',CASE WHEN q.kind='choice' THEN q.response->>'label' END,
         'prompt',CASE WHEN (qe.payload->>'privacy'='private' OR qe.payload#>>'{liveActivity,privacy}'='private')
           THEN 'Private notification' ELSE left(q.prompt,240) END)
       FROM interaction_requests q JOIN notification_events qe ON qe.id=q.notification_event_id

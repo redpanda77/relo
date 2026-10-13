@@ -1,11 +1,16 @@
+import { callbackUrlSchema } from "./callback-destinations.js";
 import { destinationUrlSchema, publicHttpsUrlSchema } from "./url-policy.js";
 import { z } from "zod";
 import { originDescriptorSchema } from "./origin-slots.js";
 import { MAX_NOTIFICATION_BODY_BYTES } from "./notification-content.js";
 import { decisionSubjectCommandSchema, notificationSubjectCommandSchema } from "./relevance/admission.js";
 import { subjectVersionSchema } from "@relo/notification-contracts";
-import { questionExpirySchema } from "./question-policy.js";
-import { sealedNoticeSchema } from "./sealed-content.js";
+import { answerSignatureSchema,sealedNoticeSchema } from "./sealed-content.js";
+import { choiceOptionIdSchema } from "@relo/notification-contracts";
+import {
+  checkQuestionAnswers,choiceOptionsSchema,QUESTION_MAX_CHARACTERS,questionDetailSchema,questionExpirySchema,
+  questionPromptMessage,questionTypeSchema,
+} from "./question-policy.js";
 
 const notificationLongBodySchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value,"utf8") <= MAX_NOTIFICATION_BODY_BYTES,
@@ -47,6 +52,10 @@ export const sealedNotificationRequestSchema = notificationRequestSchema
   .omit({ title: true,body: true,summary: true,bodyFormat: true,imageUrl: true,destinationUrl: true })
   .extend({ sealed: sealedNoticeSchema })
   .strict();
+/** What a phone's Relo build can show; builds that send none receive only what every build decodes. */
+export const DEVICE_CAPABILITIES = ["choice_questions"] as const;
+export const deviceCapabilitiesSchema = z.array(z.enum(DEVICE_CAPABILITIES)).max(16)
+  .transform((values) => [...new Set(values)].sort());
 
 export const registerDeviceSchema = z.object({
   stableDeviceId: z.string().min(1).max(200),
@@ -61,6 +70,7 @@ export const registerDeviceSchema = z.object({
   apnsToken: z.string().min(16).max(512).optional(),
   notificationAuthorization: z.enum(["unknown", "denied", "provisional", "authorized"]).default("unknown"),
   liveActivityAuthorization: z.enum(["unknown", "denied", "provisional", "authorized"]).default("unknown"),
+  capabilities: deviceCapabilitiesSchema.default([]),
 });
 
 export const heartbeatSchema = z.object({
@@ -73,6 +83,7 @@ export const heartbeatSchema = z.object({
   notificationAuthorization: z.enum(["unknown", "denied", "provisional", "authorized"]).optional(),
   liveActivityAuthorization: z.enum(["unknown", "denied", "provisional", "authorized"]).optional(),
   liveActivityPushToStartToken: z.string().min(16).max(512).optional(),
+  capabilities: deviceCapabilitiesSchema.optional(),
 });
 
 export const liveActivityUpdateTokenSchema = z.object({
@@ -96,10 +107,20 @@ export const createNotificationSchema = z.object({
 export const interactionSchema = z.object({
   expectedSubject: subjectVersionSchema.optional(),
   expectedInteractionId: z.string().regex(/^int_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
-  kind: z.enum(["approve", "deny", "yes", "no", "answer", "opened", "received"]),
+  kind: z.enum(["approve", "deny", "yes", "no", "answer", "choose", "opened", "received"]),
   value: z.record(z.string(), z.unknown()).default({}),
   idempotencyKey: z.string().trim().min(1).max(200),
 }).strict().superRefine((input,context) => {
+  // A choice answer names exactly one of the question's options.
+  if (input.kind === "choose") {
+    // Exactly one option, plus the phone's signature over it when it signs answers (E4.2).
+    const { optionId,...signature } = input.value;
+    if (!choiceOptionIdSchema.safeParse(optionId).success
+      || (Object.keys(signature).length > 0 && !answerSignatureSchema.safeParse(signature).success)) {
+      context.addIssue({ code: "custom",path: ["value","optionId"],message: "A choice answer is {\"optionId\": \"…\"}" });
+    }
+    return;
+  }
   const response = input.value.response;
   if (input.kind === "answer") {
     if (typeof response !== "string" || response.trim().length < 1 || response.trim().length > 4_000) {
@@ -124,7 +145,7 @@ export const interactionSchema = z.object({
 
 /** Where Relo POSTs the answer. The token is returned as a bearer token so the receiver can verify Relo. */
 export const interactionCallbackSchema = z.object({
-  url: publicHttpsUrlSchema,
+  url: callbackUrlSchema,
   token: z.string().min(16).max(512).refine((value) => !/[\s]/.test(value), "Callback tokens cannot contain whitespace"),
 }).strict();
 
@@ -136,10 +157,10 @@ export const createInteractionSchema = z.object({
   context: notificationRequestSchema.shape.context,
   origin: originDescriptorSchema.optional(),
   prompt: z.string().min(1).max(2000),
+  detail: questionDetailSchema.optional(),
   // Questions take tappable answers only; typed replies were removed for new questions.
-  type: z
-    .enum(["approval", "yes-no", "yes_no"],{ message: "Questions take tappable answers only: approval or yes_no" })
-    .transform((value) => (value === "yes-no" ? "yes_no" : value)),
+  type: questionTypeSchema,
+  options: choiceOptionsSchema.optional(),
   title: z.string().min(1).max(80).default("Response requested"),
   expiresInSeconds: questionExpirySchema,
   deviceIds: z.array(z.string()).min(1).max(50).optional(),
@@ -157,6 +178,7 @@ export const createInteractionSchema = z.object({
   /** End-to-end sealed title and prompt (E4.1); the server fills placeholders before parsing. */
   sealed: sealedNoticeSchema.optional(),
 }).strict().superRefine((input,context) => {
+  checkQuestionAnswers(input,context);
   if (input.relevance?.policy.kind === "decision" && input.relevance.policy.actionSeconds !== undefined
     && input.relevance.policy.actionSeconds !== input.expiresInSeconds) {
     context.addIssue({ code: "custom",path: ["relevance","policy","actionSeconds"],
@@ -171,8 +193,8 @@ export const createInteractionSchema = z.object({
     }
     return;
   }
-  if (input.prompt.length > 240) {
-    context.addIssue({ code: "custom", path: ["prompt"], message: "Live Activity prompts are limited to 240 characters" });
+  if (input.prompt.length > QUESTION_MAX_CHARACTERS || /[\r\n]/.test(input.prompt)) {
+    context.addIssue({ code: "custom", path: ["prompt"], message: questionPromptMessage });
   }
   if (input.expiresInSeconds > 28_800) {
     context.addIssue({ code: "custom", path: ["expiresInSeconds"], message: "Live Activities expire within 8 hours" });

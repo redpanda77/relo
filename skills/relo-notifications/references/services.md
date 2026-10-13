@@ -58,3 +58,9 @@ stable idempotency key for retries, validate selected device IDs, and retrieve i
 through authenticated/secret-bound documented endpoints. Never infer an answer from webhook HTTP
 acceptance or APNs delivery. Rotation invalidates the prior URL; update the caller's secret manager
 atomically and revoke the old value through the dashboard.
+
+## Wiring an app to the answers
+
+An app that asks through the CLI gets answers by blocking (`relo ask`), by id later
+(`relo interaction wait ID`), by a signed callback, or by `relo listen`; see
+[cli.md](cli.md#questions). Each app uses its own login (`relo auth login --profile NAME`).

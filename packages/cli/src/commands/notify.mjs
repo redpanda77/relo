@@ -1,7 +1,7 @@
 import { sealNoticeRequest, sealQuestion } from "../seal-notice.mjs";
 import { rememberQuestion, verifyAnswer } from "../answer-verify.mjs";
 import { saveCardText, sealCardRequest, sealedCardDirectory } from "../seal-card.mjs";
-import { parseDuration, requireText, validateDestinationUrl, validatePublicHttpsUrl } from "../args.mjs";
+import { parseDuration, requireText, validateCallbackUrl, validateDestinationUrl, validatePublicHttpsUrl } from "../args.mjs";
 import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
 import { notificationRelevance } from "../relevance.mjs";
 import { DEFAULT_ACTIVITY_EXPIRES_SECONDS, DEFAULT_ACTIVITY_STALE_SECONDS, activeCard, activityName, validateActivityWaitResponse } from "./activity.mjs";
@@ -48,7 +48,7 @@ export async function callbackOption(options, stdin, dependencies) {
   const tokenFile = options["callback-token-file"];
   if (url === undefined && tokenFile === undefined && supplied === undefined) return undefined;
   if (url === undefined) throw new UsageError("--callback-token-file requires --callback-url");
-  const validatedUrl = validatePublicHttpsUrl(url, "callback-url");
+  const validatedUrl = validateCallbackUrl(url, "callback-url");
   let token = supplied?.token;
   if (tokenFile !== undefined) {
     if (token !== undefined) throw new UsageError("Use --callback-token-file or stdin callback.token, not both");
@@ -63,20 +63,65 @@ export async function callbackOption(options, stdin, dependencies) {
 }
 
 export function askType(options, stdin) {
+  const choice = (options.option?.length ?? 0) > 0 || Array.isArray(stdin.options);
   const aliases = [
     options.approval ? "approval" : undefined,
     options["yes-no"] ? "yes-no" : undefined,
+    choice ? "choice" : undefined,
   ].filter(Boolean);
-  if (aliases.length > 1 || (aliases.length === 1 && options.type !== undefined)) {
-    throw new UsageError("Use exactly one answer type: --approval or --yes-no");
+  if (aliases.length > 1 || (aliases.length === 1 && options.type !== undefined && options.type !== aliases[0])) {
+    throw new UsageError("Use exactly one answer type: --approval, --yes-no or --option (2-4 times)");
   }
   const value = aliases[0] ?? options.type ?? stdin.type;
-  if (!["approval", "yes-no", "yes_no"].includes(value)) {
-    throw new UsageError("Choose the answer type: --approval (Approve/Deny) or --yes-no (Yes/No)", {
+  if (!["approval", "yes-no", "yes_no", "choice"].includes(value)) {
+    throw new UsageError("Choose the answer type: --approval (Approve/Deny), --yes-no (Yes/No) or 2-4 --option LABEL", {
       hint: 'relo ask "Deploy 0.7.57 to production?" --approval',
     });
   }
   return value === "yes-no" ? "yes_no" : value;
+}
+
+const OPTION_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/u;
+
+/** "Roll back" → roll-back; the owner never sees ids, only labels. */
+export function optionId(label) {
+  return label.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/gu, "")
+    .replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 32).replace(/-+$/u, "");
+}
+
+/**
+ * The options of a choice question, from repeated --option LABEL (or id=LABEL) or stdin
+ * "options": ["Ship", …] / [{"id","label"}, …]. 2-4 options, unique ids and labels.
+ */
+export function choiceOptions(options, stdin) {
+  const raw = options.option?.length ? options.option : stdin.options;
+  const parsed = (raw ?? []).map((entry) => {
+    if (entry && typeof entry === "object") return { id: String(entry.id ?? ""), label: String(entry.label ?? "").trim() };
+    const text = String(entry);
+    const split = /^([a-z0-9][a-z0-9_-]{0,31})=(.+)$/u.exec(text);
+    const label = (split ? split[2] : text).trim();
+    return { id: split ? split[1] : optionId(label), label };
+  });
+  if (parsed.length < 2 || parsed.length > 4) {
+    throw new UsageError(`A choice offers 2-4 options (got ${parsed.length})`, {
+      hint: 'relo ask "Which release?" --option Ship --option Wait --option "Roll back"',
+    });
+  }
+  for (const option of parsed) {
+    if (!option.label || Array.from(option.label).length > 24 || /[\r\n]/u.test(option.label)) {
+      throw new UsageError(`Option "${option.label}" must be one line of 1-24 characters`);
+    }
+    if (!OPTION_ID.test(option.id)) {
+      throw new UsageError(`Option "${option.label}" needs an id of lowercase letters, digits, - or _`, {
+        hint: "Write it as --option id=Label, for example --option v2=Version 2",
+      });
+    }
+  }
+  if (new Set(parsed.map((option) => option.id)).size !== parsed.length
+    || new Set(parsed.map((option) => option.label.toLowerCase())).size !== parsed.length) {
+    throw new UsageError("Options need different labels and ids");
+  }
+  return parsed;
 }
 
 export const ANSWER_LABELS = { approved: "Approved", denied: "Denied", yes: "Yes", no: "No",
@@ -86,29 +131,32 @@ export const ANSWER_LABELS = { approved: "Approved", denied: "Denied", yes: "Yes
  * The fallback when no card can reach the phone: a question answered in Relo, announced by a
  * notification that carries no answer buttons.
  */
-export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
-  command, idempotencyKey, context, title }) {
+export async function askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
+  command, idempotencyKey, context, title, buttons = false, reason }) {
   const identity = context ?? creationContext(options, stdin, undefined, dependencies.creationDefaults(), ASK_EXAMPLE);
   const askedAt = new Date(dependencies.now());
   const questionTitle = requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80);
   const deviceIds = await resolveTargetDevices(client, options.device.length > 0 ? options.device : []);
   // Sealed end to end for this computer's verified phones (E4.1).
-  const sealedQuestion = await sealQuestion({ title: questionTitle, prompt, key: `${idempotencyKey}:in-app`, client,
+  const sealedQuestion = await sealQuestion({ title: questionTitle, prompt, detail, key: `${idempotencyKey}:in-app`, client,
     config: { apiUrl: client.apiUrl }, dependencies, notes: [], deviceIds, context: identity });
   const sealed = sealedQuestion?.sealed;
   const created = deliveryGuard(await client.createInteraction(definedFields({
-    ...(sealed ? { sealed } : { prompt, title: questionTitle }), type, expiresInSeconds, answerInApp: true,
-    context: sealedQuestion?.context ?? identity,
+    ...(sealed ? { sealed } : { prompt, detail, title: questionTitle }), options: choices, type, expiresInSeconds,
+    answerInApp: buttons ? undefined : true, context: sealedQuestion?.context ?? identity,
     correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
     callback: await callbackOption(options, stdin, dependencies),
     deviceIds: sealed ? undefined : deviceIds,
   }), `${idempotencyKey}:in-app`));
-  const message = "This phone cannot show Live Activities, so the owner answers in Relo from a notification.";
-  const data = { ...created, card: null, fallback: "answer_in_app" };
-  if (!wait) return result(command, data, { message });
+  // With buttons the owner answers right on the notification; without, the phone has no card and opens Relo.
+  const message = reason ?? (buttons ? undefined
+    : "This phone cannot show Live Activities, so the owner answers in Relo from a notification.");
+  const data = { ...created, card: null, fallback: buttons ? "notification" : "answer_in_app" };
   const id = created?.interaction?.id;
+  // Remembered even without waiting, so `relo interaction wait` later checks the question-bound signature.
+  if (sealed && id) await rememberQuestion(dependencies.env, { interactionId: id, questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
+  if (!wait) return result(command, data, { message });
   if (!id) throw new ApiError("Interaction response did not include an ID.", { code: "INVALID_API_RESPONSE" });
-  if (sealed) await rememberQuestion(dependencies.env, { interactionId: id, questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
   try {
     const waited = await waitForInteraction(client, id, timeoutSeconds, dependencies);
     return result(command, mergeCreatedAndWaitedInteraction(data, waited), { message });
@@ -125,6 +173,23 @@ export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSe
 export const QUESTION_SECONDS = 300;
 
 /**
+ * A question is one line the owner answers from the Lock Screen (the card shows 120 characters).
+ * The why, the risk and what changes go in --detail: markdown, read in Relo.
+ */
+export const QUESTION_MAX_CHARACTERS = 120;
+export const QUESTION_DETAIL_MAX_CHARACTERS = 4_000;
+
+export function questionText(value) {
+  const text = requireText(value, "Question", 2_000);
+  if (Array.from(text).length > QUESTION_MAX_CHARACTERS || /[\r\n]/u.test(text)) {
+    throw new UsageError(`A question is one line of at most ${QUESTION_MAX_CHARACTERS} characters (this one has ${Array.from(text).length})`, {
+      hint: 'Ask the decision in one line and put the why, the risk and what changes in --detail "..." (markdown, up to 4,000 characters)',
+    });
+  }
+  return text;
+}
+
+/**
  * An agent's shell tool gives up on a command after about two minutes, so inside an agent session
  * a wait defaults to 100s. The question itself stays open; `relo interaction wait ID` resumes it.
  */
@@ -134,13 +199,18 @@ const ASK_EXAMPLE = 'relo ask "Deploy?" --approval';
 
 export const agentWaitSeconds = (dependencies) => (inAgentContext(dependencies.env) ? AGENT_WAIT_SECONDS : undefined);
 
-export function questionSeconds(value, flag, { defaultSeconds, minimumSeconds }) {
+/** The longest any server lets a question wait; each server's admin sets a lower limit (default 7 days). */
+export const QUESTION_CEILING_SECONDS = 30 * 86_400;
+
+export function questionSeconds(value, flag, { defaultSeconds, minimumSeconds, maximumSeconds = QUESTION_CEILING_SECONDS }) {
   try {
-    return parseDuration(value, { defaultSeconds, minimumSeconds, maximumSeconds: QUESTION_SECONDS });
+    return parseDuration(value, { defaultSeconds, minimumSeconds, maximumSeconds });
   } catch (error) {
     if (!(error instanceof UsageError)) throw error;
-    throw new UsageError(`${flag} must be between ${minimumSeconds}s and 5m: a question waits at most 5 minutes`, {
-      hint: `Use ${flag} 5m or less`,
+    throw new UsageError(flag === "--timeout"
+      ? `--timeout must be between ${minimumSeconds}s and the question's --expires-in`
+      : `--expires-in must be between ${minimumSeconds}s and 30d (the server's own limit may be lower)`, {
+      hint: flag === "--timeout" ? "Wait less, then resume with relo interaction wait ID" : "Use for example --expires-in 2h or 1d",
     });
   }
 }
@@ -150,15 +220,23 @@ export async function askCommand(words, options, client, config, dependencies, c
   if (options.timeout !== undefined && options["no-wait"]) throw new UsageError("--timeout cannot be combined with --no-wait");
   const stdin = await stdinObject(options, dependencies);
   const type = askType(options, stdin);
-  const prompt = requireText(joinedText(words) ?? stdin.prompt, "Question", 240);
+  const prompt = questionText(joinedText(words) ?? stdin.prompt);
+  const choices = type === "choice" ? choiceOptions(options, stdin) : undefined;
+  if (choices && (options["primary-label"] !== undefined || options["secondary-label"] !== undefined)) {
+    throw new UsageError("A choice labels its options; --primary-label and --secondary-label are for --approval/--yes-no");
+  }
+  const detail = optionalText(options.detail ?? stdin.detail, "Detail", QUESTION_DETAIL_MAX_CHARACTERS);
   const expiresInSeconds = questionSeconds(options["expires-in"] ?? stdin.expiresInSeconds, "--expires-in",
     { defaultSeconds: QUESTION_SECONDS, minimumSeconds: 30 });
   const wait = !options["no-wait"];
+  // Blocks for the question's life up to 5 minutes (100s in an agent session); a longer question stays
+  // open after that: `relo interaction wait ID` resumes it.
   const timeoutSeconds = wait
     ? questionSeconds(options.timeout, "--timeout", {
-      defaultSeconds: Math.min(expiresInSeconds, agentWaitSeconds(dependencies) ?? expiresInSeconds), minimumSeconds: 1 })
+      defaultSeconds: Math.min(expiresInSeconds, agentWaitSeconds(dependencies) ?? QUESTION_SECONDS),
+      minimumSeconds: 1, maximumSeconds: expiresInSeconds })
     : undefined;
-  return askOnCard({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin,
+  return askOnCard({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin,
     client, config, dependencies, command,
     labels: { primary: options["primary-label"] ?? stdin.primaryLabel, secondary: options["secondary-label"] ?? stdin.secondaryLabel } });
 }
@@ -167,15 +245,20 @@ export async function askCommand(words, options, client, config, dependencies, c
  * Asks on this work's card: the question appears on the card with answer buttons, and the
  * card returns to the work once answered. No card yet? Ask starts one for the question.
  */
-export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, timeoutSeconds,
+export async function askOnCard({ prompt, detail, choices, type, labels, expiresInSeconds, wait, timeoutSeconds,
   options, stdin, client, config, dependencies, command }) {
   if (dependencies.dryRun) {
-    return dryAsk({ prompt, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies });
+    return dryAsk({ prompt, detail, choices, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies });
   }
   const defaults = dependencies.creationDefaults();
   const idempotencyKey = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
   let createdByAsk = false;
   const named = activityName(options, stdin);
+  // An app that should not take a card asks with a notification that carries the answer buttons.
+  if (options["notification-only"]) {
+    return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
+      command, idempotencyKey, buttons: true, context: creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) });
+  }
   // Outside an agent session the identity names the card, so validate it before any request.
   const known = named === undefined && !agentSession(dependencies.env)
     ? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) : undefined;
@@ -196,7 +279,16 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
     // The card a question starts is sealed like any other card (E5).
     const sealedStart = await sealCardRequest({ body: startBody, cardId: null, key: `${idempotencyKey}:card`, client, config,
       dependencies, notes: [], deviceIds: startBody.deviceIds });
-    const started = await client.startActivity(sealedStart.body, `${idempotencyKey}:card`);
+    let started;
+    try {
+      started = await client.startActivity(sealedStart.body, `${idempotencyKey}:card`);
+    } catch (error) {
+      // This login may keep only so many cards open (set in the Dashboard): ask by notification instead.
+      if (error?.code !== "CARD_LIMIT_REACHED") throw error;
+      return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
+        command, idempotencyKey, context, buttons: true,
+        reason: "This login already has its maximum of open cards, so the question went out as a notification." });
+    }
     if (sealedStart.text && started?.activity?.id) {
       await saveCardText(sealedCardDirectory(dependencies.env), started.activity.id, sealedStart.text);
     }
@@ -207,7 +299,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
       if (card?.id) {
         await client.endActivity(card.id, { status: "Ended", dismissAfterSeconds: 0 }, `${idempotencyKey}:void`).catch(() => {});
       }
-      return askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
+      return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
         command, idempotencyKey, context });
     }
   }
@@ -215,11 +307,11 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   const notes = [];
   // Sealed end to end for this computer's verified phones (E4.1); the card shows a placeholder.
   const askedAt = new Date(dependencies.now());
-  const sealed = (await sealQuestion({ title: card.title, prompt, key: idempotencyKey, client, config, dependencies, notes }))?.sealed;
+  const sealed = (await sealQuestion({ title: card.title, prompt, detail, key: idempotencyKey, client, config, dependencies, notes }))?.sealed;
   let createdRaw;
   try {
     createdRaw = await client.createActivityWait(card.id, definedFields({
-      type, ...(sealed ? { sealed } : { prompt }), expiresInSeconds,
+      type, ...(sealed ? { sealed } : { prompt, detail }), options: choices, expiresInSeconds,
       primaryLabel: actionLabel(labels.primary, "primary-label"),
       secondaryLabel: actionLabel(labels.secondary, "secondary-label"),
       correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
@@ -227,7 +319,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
     }), idempotencyKey);
   } catch (error) {
     if (error?.code !== "ACTIVITY_TARGET_UNAVAILABLE") throw error;
-    return askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
+    return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
       command, idempotencyKey, title: card.title });
   }
   const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt: sealed ? undefined : prompt });
@@ -237,15 +329,16 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   if (!wait) return result(command, data, { notes });
   // A card started only for this question ends once answered, unless an agent session keeps
   // using it as its live view.
-  const settle = async (state) => {
+  const settle = async (state, chosenLabel) => {
     if (!createdByAsk || agentSession(dependencies.env)) return;
-    await client.endActivity(card.id, { status: ANSWER_LABELS[state] ?? "Answered",
-      symbol: state === "approved" || state === "yes" ? "success" : "warning", dismissAfterSeconds: 60 },
+    await client.endActivity(card.id, { status: chosenLabel ?? ANSWER_LABELS[state] ?? "Answered",
+      symbol: state === "approved" || state === "yes" || chosenLabel ? "success" : "warning", dismissAfterSeconds: 60 },
     `${idempotencyKey}:end`).catch(() => {});
   };
   try {
     const waited = await waitForInteraction(client, created.interaction.id, timeoutSeconds, dependencies);
-    await settle(waited?.interaction?.state ?? waited?.state);
+    const answer = waited?.interaction ?? waited;
+    await settle(answer?.state, answer?.type === "choice" ? answer?.response?.label : undefined);
     return result(command, mergeCreatedAndWaitedInteraction(data, waited), { notes });
   } catch (error) {
     if (!(error instanceof TerminalInteractionError)) throw error;
@@ -258,7 +351,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
 }
 
 /** `relo ask --dry-run`: every local check of the real ask, then what it would send. No request. */
-async function dryAsk({ prompt, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies }) {
+async function dryAsk({ prompt, detail, choices, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies }) {
   const notes = [];
   validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
   const defaults = dependencies.creationDefaults();
@@ -275,7 +368,7 @@ async function dryAsk({ prompt, type, labels, expiresInSeconds, wait, timeoutSec
   const callback = await callbackOption(options, stdin, dependencies);
   if (options.device.length > 0) notes.push("device IDs are not checked against the server in a dry run");
   return dryRunResult("ask", definedFields({
-    type, prompt, expiresInSeconds, wait,
+    type, prompt, detail, options: choices, expiresInSeconds, wait,
     ...(wait ? { timeoutSeconds } : {}),
     primaryLabel: actionLabel(labels.primary, "primary-label"),
     secondaryLabel: actionLabel(labels.secondary, "secondary-label"),
@@ -467,7 +560,7 @@ export async function runNotifyCommand(command) {
   }
 
   if (group === "ask") {
-    assertAllowedOptions(options, ["type","approval","yes-no","expires-in","timeout","no-wait","primary-label","secondary-label",
+    assertAllowedOptions(options, ["type","approval","yes-no","option","detail","notification-only","expires-in","timeout","no-wait","primary-label","secondary-label",
       "device","idempotency-key","stdin","name","source","project","topic","thread-name","task-title","computer","account",
       "correlation-id","callback-url","callback-token-file","dry-run"]);
     return askCommand([action, ...rest].filter((value) => value !== undefined), options, client, config, dependencies, "ask");

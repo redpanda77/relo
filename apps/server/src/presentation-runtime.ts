@@ -281,7 +281,9 @@ export function presentationCommandState(
   command: Record<string,unknown>,
 ): PresentationActivityKitContentState | null {
   const shape = presentationActivityKitContentStateSchema.shape;
-  const candidate = Object.fromEntries(Object.keys(shape).map((key) => [key,command[key]]));
+  // Optional fields (choiceOptions) are absent rather than undefined, which stable JSON refuses.
+  const candidate = Object.fromEntries(Object.keys(shape).filter((key) => command[key] !== undefined)
+    .map((key) => [key,command[key]]));
   const parsed = presentationActivityKitContentStateSchema.safeParse(candidate);
   return parsed.success ? parsed.data : null;
 }

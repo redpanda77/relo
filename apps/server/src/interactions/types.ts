@@ -1,4 +1,11 @@
-import type { SubjectVersion } from "@relo/notification-contracts";
+import type { ChoiceOption,SubjectVersion } from "@relo/notification-contracts";
+
+/** What a question asks for; text is legacy and refused for new questions. */
+export type QuestionKind = "approval" | "yes_no" | "text" | "choice";
+/** The answers a question offers: options only on a choice. */
+export type QuestionInteraction = {
+  kind: QuestionKind; prompt: string; actionSeconds: number; options?: ChoiceOption[] | undefined;
+};
 
 export type InteractionActor =
   | { kind: "device"; principalId: string; deviceId: string }
@@ -11,13 +18,14 @@ export type ExpireCommand = { interactionId: string; eventId: string };
 export type ExpiryResult = { kind: "expired" | "unchanged" | "not_found" };
 export type InteractionRow = {
   id: string; principal_id: string; notification_event_id: string;
-  kind: "approval" | "yes_no" | "text";
+  kind: QuestionKind;
+  options?: ChoiceOption[] | null;
   state: "pending" | "approved" | "denied" | "yes" | "no" | "replied" | "expired" | "canceled";
   expires_at: Date; responded_at: Date | null;
 };
 export type RespondCommand = {
   eventId: string; interactionId?: string | undefined;
-  kind: "approve" | "deny" | "yes" | "no" | "answer";
+  kind: "approve" | "deny" | "yes" | "no" | "answer" | "choose";
   value: Record<string,unknown>; idempotencyKey: string;
   expectedSubject?: SubjectVersion | undefined;
 };

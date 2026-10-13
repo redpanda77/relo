@@ -1,4 +1,6 @@
 import { sealedForDevice } from "./sealed-content.js";
+import type { ChoiceOption } from "@relo/notification-contracts";
+import type { QuestionKind } from "./interactions/types.js";
 import { z } from "zod";
 import { currentSubjectIdSchema,type CurrentInboxResponse,type CurrentSubjectProjection,type RetiredSubject } from "@relo/notification-contracts";
 import type { Database } from "./db.js";
@@ -102,7 +104,8 @@ SELECT page.*,to_char(page.sort_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.U
  project.id AS project_id,left(project.display_name,200) AS project_name,project.is_direct AS project_direct,
  project.palette_ordinal,project.icon AS project_icon,project.revision AS project_revision,
  COALESCE(a.conversation_id,e.conversation_id) AS conversation_id,COALESCE(a.work_item_id,e.work_item_id) AS work_item_id,
- COALESCE(a.sealed,e.payload->'sealed') AS sealed
+ COALESCE(a.sealed,e.payload->'sealed') AS sealed,
+ request_detail.options AS interaction_options
 FROM metadata CROSS JOIN clock LEFT JOIN page ON true
 LEFT JOIN notification_events e ON e.id=page.event_id
 LEFT JOIN live_activities a ON a.id=page.activity_id
@@ -116,7 +119,7 @@ type CurrentRow = {
  subject_id: string | null;event_id: string | null;activity_id: string | null;sort_at_iso: string;
  generation: string;revision: string;kind: CurrentSubjectProjection["kind"];retired_reason: RetiredSubject["reason"] | null;
  current_until: Date | null;fresh_until: Date | null;deliver_until: Date;occurred_at: Date | null;accepted_at: Date;
- interaction_id: string | null;interaction_kind: "approval" | "yes_no" | "text";interaction_expiry: Date;read_at: Date | null;
+ interaction_id: string | null;interaction_kind: QuestionKind;interaction_expiry: Date;interaction_options: ChoiceOption[] | null;read_at: Date | null;
  total: number;actionable: number;unread: number;next_expiry: Date | null;server_time: Date;
  title: string;source: string;summary: string;created_at: Date;updated_at: Date;
  activity_status: string | null;activity_progress: number | null;activity_generation: number;activity_sequence: string;
@@ -136,7 +139,8 @@ function projection(row: CurrentRow & {subject_id:string},devicePublicId?: strin
   createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString(),occurredAt:row.occurred_at?.toISOString()??null,acceptedAt:row.accepted_at.toISOString(),readAt:row.read_at?.toISOString()??null,
   currentUntil:row.current_until?.toISOString()??null,freshUntil:row.fresh_until?.toISOString()??null,deliverUntil:row.deliver_until.toISOString(),
   freshness:row.fresh_until===null?"unknown":row.fresh_until<=row.server_time?"stale":"fresh",
-  interaction:row.interaction_id?{id:`int_${row.interaction_id}`,type:row.interaction_kind,state:"pending",expiresAt:row.interaction_expiry.toISOString()}:null,
+  interaction:row.interaction_id?{id:`int_${row.interaction_id}`,type:row.interaction_kind,state:"pending",expiresAt:row.interaction_expiry.toISOString(),
+    ...(row.interaction_kind==="choice"&&row.interaction_options?{options:row.interaction_options}:{})}:null,
   activity:row.activity_id?{id:`act_${row.activity_id}`,generation:row.activity_generation,sequence:Number(row.activity_sequence),status:row.activity_status,progress:row.activity_progress}:null,
   resources:row.source_id && row.project_id?{
     source:{id:`src_${row.source_id}`,kind:row.source_kind,name:row.source_name},

@@ -38,7 +38,7 @@ final class ReloNotificationServiceOrchestrator<Content>: @unchecked Sendable {
     typealias ContentCopier = @Sendable (Content) -> Content
 
     private let lock = NSLock()
-    private let originalMetadata: ReloNotificationPresentationMetadata
+    private var originalMetadata: ReloNotificationPresentationMetadata
     private let applyMetadata: MetadataApplier
     private let copyContent: ContentCopier
     private var bestAttempt: Content
@@ -63,6 +63,7 @@ final class ReloNotificationServiceOrchestrator<Content>: @unchecked Sendable {
     /// The returned task remains owned by the extension and is cancelled at the deadline.
     func start(
         context: ReloNotificationOrchestrationContext,
+        prepareCategory: sending (() async -> String?)? = nil,
         enrichMedia: sending @escaping (Content) async -> Content,
         donateAndUpdate: sending @escaping (Content) async -> ReloNotificationDonationResult<Content>,
         scheduleTimeout: (TimeInterval, @escaping @Sendable () -> Void) -> Void = { seconds, callback in
@@ -70,7 +71,9 @@ final class ReloNotificationServiceOrchestrator<Content>: @unchecked Sendable {
         }
     ) -> Task<Void, Never> {
         let task = Task {
-            await run(context: context, enrichMedia: enrichMedia, donateAndUpdate: donateAndUpdate)
+            await run(
+                context: context, prepareCategory: prepareCategory,
+                enrichMedia: enrichMedia, donateAndUpdate: donateAndUpdate)
         }
         scheduleTimeout(ReloNotificationPresentationBudget.enrichmentSeconds) { [weak self] in
             self?.timeout()
@@ -81,6 +84,7 @@ final class ReloNotificationServiceOrchestrator<Content>: @unchecked Sendable {
 
     func run(
         context: ReloNotificationOrchestrationContext,
+        prepareCategory: (() async -> String?)? = nil,
         enrichMedia: (Content) async -> Content,
         donateAndUpdate: (Content) async -> ReloNotificationDonationResult<Content>
     ) async {
@@ -92,6 +96,12 @@ final class ReloNotificationServiceOrchestrator<Content>: @unchecked Sendable {
         guard !context.isPrivate else {
             finish(bestAttemptSnapshot(), outcome: .privateContent, conversationIdentifier: nil)
             return
+        }
+        // A per-question category is named only once it is registered. If the deadline wins,
+        // the server's static category is delivered: no buttons, and a tap opens Relo.
+        if let prepareCategory, let identifier = await prepareCategory() {
+            guard !hasCompleted, !Task.isCancelled else { return }
+            updateCategory(identifier)
         }
 
         let enriched = await enrichMedia(bestAttemptSnapshot())
@@ -127,6 +137,17 @@ final class ReloNotificationServiceOrchestrator<Content>: @unchecked Sendable {
 
     func timeout() {
         finish(bestAttemptSnapshot(), outcome: .timeout, conversationIdentifier: nil)
+    }
+
+    private func updateCategory(_ identifier: String) {
+        lock.lock()
+        if !completed {
+            originalMetadata = ReloNotificationPresentationMetadata(
+                categoryIdentifier: identifier,
+                threadIdentifier: originalMetadata.threadIdentifier,
+                badgeNumber: originalMetadata.badgeNumber)
+        }
+        lock.unlock()
     }
 
     private var hasCompleted: Bool {

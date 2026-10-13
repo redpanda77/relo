@@ -32,10 +32,16 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
         public let symbol: String?
         public let permitsResponse: Bool
 
-        public static func make(interaction: LiveActivityContentInteraction, now: Date) -> Self {
+        /// `chosenLabel` names an answered choice's option; without it a choice reads "Answered".
+        public static func make(
+            interaction: LiveActivityContentInteraction, now: Date, chosenLabel: String? = nil
+        ) -> Self {
             // Accepted transport evidence may outlive the request deadline. It never means
             // the affirmative choice: the canonical outcome determines both text and glyph.
             if interaction.responsePhase == .accepted || interaction.state != "pending" {
+                if interaction.kind == "choice", interaction.state == "replied" {
+                    return .init(label: chosenLabel ?? "Answered", symbol: "checkmark.circle.fill", permitsResponse: false)
+                }
                 return outcome(interaction.state)
             }
             if interaction.expiresAt <= now { return outcome("expired") }
@@ -50,10 +56,13 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
                     permitsResponse: false)
             case .accepted: return outcome(interaction.state)
             case nil:
+                let label = switch interaction.kind {
+                case "text": "Reply needed"
+                case "yes_no", "choice": "Response needed"
+                default: "Approval needed"
+                }
                 return .init(
-                    label: interaction.kind == "text"
-                        ? "Reply needed"
-                        : interaction.kind == "yes_no" ? "Response needed" : "Approval needed",
+                    label: label,
                     symbol: "questionmark.circle.fill", permitsResponse: true)
             }
         }
@@ -116,9 +125,10 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
             if case .progressBar(_, _, let value, _) = progress { value } else { nil }
         let decision: Bool =
             switch presentation.behavior {
-            case .approval, .yesNo, .unsupportedTextReply: true
+            case .approval, .yesNo, .choice, .unsupportedTextReply: true
             case .informational, .progress: false
             }
+        let chosenLabel = chosenLabel(presentation: presentation, interaction: interaction)
         let terminal: (String, String)? =
             switch presentation.state.kind {
             case "completed": ("Completed", "checkmark.circle.fill")
@@ -134,7 +144,7 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
             status = terminal.0
             fact = .symbol(terminal.1, status)
         } else if let interaction, decision {
-            let response = ResponseStatus.make(interaction: interaction, now: now)
+            let response = ResponseStatus.make(interaction: interaction, now: now, chosenLabel: chosenLabel)
             status = response.label
             fact = .symbol(response.symbol ?? "arrow.up.circle", status)
         } else if let terminal {
@@ -170,5 +180,18 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
                 && interaction.map { ResponseStatus.make(interaction: $0, now: now).permitsResponse }
                     == true
         )
+    }
+
+    /// The option this phone picked; for a choice answered elsewhere, the server's status line,
+    /// which names the chosen option when the card ends.
+    public static func chosenLabel(
+        presentation: LiveActivityPresentation, interaction: LiveActivityContentInteraction?
+    ) -> String? {
+        guard case .choice(let options) = presentation.behavior else { return nil }
+        if let id = interaction?.selectedOptionID, let option = options.first(where: { $0.id == id }) {
+            return option.label
+        }
+        let status = presentation.status.trimmingCharacters(in: .whitespacesAndNewlines)
+        return status.isEmpty ? nil : status
     }
 }

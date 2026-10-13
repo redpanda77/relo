@@ -1,4 +1,5 @@
 import type { Database } from "../db.js";
+import { choiceDeviceTargets } from "../choice-questions.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
 import { z } from "zod";
 import { relevanceItemSchema } from "@relo/notification-contracts";
@@ -58,6 +59,8 @@ export async function createNotificationInTransaction(tx: SubjectTransaction,act
   command: CreateNotificationCommand,dependencies: NotificationDependencies): Promise<CreateNotificationResult> {
   const sourceId=actor.kind==="credential"?`credential:${actor.credentialId}`:actor.kind==="service"?`service:${actor.serviceId}`:`account:${actor.principalId}`;
   const subjectActor={principalId:actor.principalId,sourceId};
+  // A choice reaches only phones whose Relo build can show it (throws ChoiceUnsupportedError).
+  if(command.interaction?.kind==="choice") command={...command,deviceIds:await choiceDeviceTargets(tx,actor.principalId,command.deviceIds)};
   await lockSubjectAdmission(tx,subjectActor,command.relevance?.subjectKey??independentSubjectKey(command.idempotencyKey));
   const eligible=await eligibleNotificationDevices(tx,actor,command.deviceIds);
   if(command.deviceIds&&eligible.length!==command.deviceIds.length) return {kind:"invalid_device_selection"};
@@ -83,7 +86,7 @@ export async function createNotificationInTransaction(tx: SubjectTransaction,act
   assertOrdinaryDeliveryIntentWithinBudget({title:command.title,body:command.content.preview,sourceName:command.sourceName,
     conversationId,avatarUrl:command.avatarUrl??null,imageUrl:command.imageUrl,deepLink:command.deepLink,notificationId:publicId("ntf",event.id),
     interactionKind:command.interaction?.kind??null,payload:{...command.payload,...(request?{interactionId:publicId("int",request.id),interactionType:command.interaction!.kind}:{})}});
-  const apnsJobs=await insertNotificationDelivery(tx,actor,event.id,command.deviceIds,dependencies.apnsMode);
+  const apnsJobs=await insertNotificationDelivery(tx,actor,event.id,command.deviceIds,dependencies.apnsMode,command.quiet??false);
   const delivery={eligibleDevices:eligible.length,durableCommands:1,apnsJobs};
   await saveNotificationDelivery(tx,event.id,delivery);
   return {kind:"created",eventId:event.id,createdAt:event.created_at,delivery,relevance:admission.relevance,

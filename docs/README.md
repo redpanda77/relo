@@ -8,6 +8,9 @@ documents for contributors and operators:
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — runtime boundaries and ownership;
 - [`SELF-HOSTING.md`](SELF-HOSTING.md) — current installation and operation guidance;
 - [`HARDENING.md`](HARDENING.md) — what protects a publicly reachable server and the open gaps;
+- [`INTEGRATING.md`](INTEGRATING.md) — asking the owner from an app, script or service: answers,
+  callbacks, `relo listen`, exit codes; [`api/openapi.json`](api/openapi.json) describes the HTTP API
+  and [`CHOICE-QUESTIONS.md`](CHOICE-QUESTIONS.md) the option-question wire format;
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — local toolchain, tests, and contribution workflow; and
 - [`adr/`](adr/) — accepted architectural decisions.
 

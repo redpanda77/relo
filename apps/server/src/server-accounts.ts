@@ -211,19 +211,8 @@ export async function requestAccountApproval(
   const tx = await db.connect();
   try {
     await tx.query("BEGIN");
-    const notification = await createNotificationInTransaction(tx,{ kind: "service",principalId,serviceId },{
-      idempotencyKey: `account-request:${person.subject}`,requestHash: hashToken(`account-request:${person.subject}`),
-      sourceName: "Relo accounts",title: "New account request",
-      content: prepareNotificationContent({ body: `${person.name} (${person.email}) wants to join this Relo server.` }),
-      imageUrl: null,deepLink: null,payload: { privacy: "standard",context: identity.context },
-      deviceIds: null,originHash: null,
-      interaction: { kind: "approval",prompt,actionSeconds: ACCOUNT_REQUEST_SECONDS },
-    },{ apnsMode: dependencies.apnsMode,contentCipher: dependencies.contentCipher });
-    if (notification.kind !== "created" || !notification.interaction) {
-      await tx.query("ROLLBACK");
-      return null;
-    }
-    const members = [notification.interaction.id];
+    // The card asks first and alerts; the notification then waits quietly in Relo. Without a phone
+    // that shows cards (Live Activities off) the notification alone asks, with an alert.
     await tx.query("SAVEPOINT account_request_card");
     const card = await createQuestionCardInTransaction(tx,{
       principalId,sourceId: `service:${serviceId}`,credentialId: null,serviceId,
@@ -234,9 +223,20 @@ export async function requestAccountApproval(
       sourceName: "Relo accounts",originHash: null,requestedDeviceIds: null,
       apnsMode: dependencies.apnsMode,deliveryApnsMode: dependencies.apnsMode,
     });
-    // No phone can show a card (Live Activities off): the notification alone asks.
-    if (card.kind === "created") members.push(card.interactionRequestId);
-    else await tx.query("ROLLBACK TO SAVEPOINT account_request_card");
+    if (card.kind !== "created") await tx.query("ROLLBACK TO SAVEPOINT account_request_card");
+    const notification = await createNotificationInTransaction(tx,{ kind: "service",principalId,serviceId },{
+      idempotencyKey: `account-request:${person.subject}`,requestHash: hashToken(`account-request:${person.subject}`),
+      sourceName: "Relo accounts",title: "New account request",
+      content: prepareNotificationContent({ body: `${person.name} (${person.email}) wants to join this Relo server.` }),
+      imageUrl: null,deepLink: null,payload: { privacy: "standard",context: identity.context },
+      deviceIds: null,originHash: null,quiet: card.kind === "created",
+      interaction: { kind: "approval",prompt,actionSeconds: ACCOUNT_REQUEST_SECONDS },
+    },{ apnsMode: dependencies.apnsMode,contentCipher: dependencies.contentCipher });
+    if (notification.kind !== "created" || !notification.interaction) {
+      await tx.query("ROLLBACK");
+      return null;
+    }
+    const members = [notification.interaction.id,...(card.kind === "created" ? [card.interactionRequestId] : [])];
     await tx.query("UPDATE interaction_requests SET decision_group_id=$1 WHERE id=ANY($2::uuid[])",[decisionGroupId,members]);
     await tx.query(
       `INSERT INTO account_requests(subject,decision_group_id) VALUES ($1,$2)

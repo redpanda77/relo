@@ -173,6 +173,7 @@ public enum HistoryRowProjection {
             case .approval: return "Approval"
             case .yesNo: return "Question"
             case .text: return "Reply request"
+            case .choice: return "Choice"
             }
         }
         switch item.kind {
@@ -209,7 +210,7 @@ public enum HistoryRowProjection {
         case .denied: .answered("Declined")
         case .yes: .answered("Yes")
         case .no: .answered("No")
-        case .replied: .answered("Replied")
+        case .replied: .answered(interaction.chosenLabel ?? "Replied")
         case .expired: .unanswered
         case .canceled: .answered("Withdrawn")
         }
@@ -222,7 +223,7 @@ public enum HistoryRowProjection {
         case .denied: "You declined"
         case .yes: "You said yes"
         case .no: "You said no"
-        case .replied: "You replied"
+        case .replied: interaction.chosenLabel.map { "You chose \($0)" } ?? "You replied"
         case .expired: "No answer in time"
         case .canceled: "Withdrawn"
         }

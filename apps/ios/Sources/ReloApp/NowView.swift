@@ -40,24 +40,88 @@ struct NowView: View {
         return .live(model.lastSyncedAt ?? model.currentTime)
     }
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// The deck as data from the director: it shows only what the director presents.
+    private func hero(topInset: CGFloat, bleed: CGFloat = 0) -> ReloNowHero {
+        let shown = model.deckDirector.shown ?? rawSnapshot
+        return ReloNowHero(
+            summary: shown.summary,
+            needsYou: shown.needsYou,
+            tasks: shown.tasks,
+            mix: shown.mix,
+            satellites: shown.satellites,
+            agentTime: agentTimeToday,
+            sync: deckSync, pendingResponses: model.pendingResponseCount,
+            connectionTrouble: connectionTrouble, topInset: topInset, bleed: bleed,
+            showConnection: { sheet = .connection },
+            director: model.deckDirector,
+            pull: pull, refreshing: refreshing)
+    }
+
     var body: some View {
-        let director = model.deckDirector
-        // The deck shows only what the director presents; the raw values feed it.
-        let shown = director.shown ?? rawSnapshot
+        Group {
+            if verticalSizeClass == .compact { landscape } else { portrait }
+        }
+        .onChange(of: deckInput, initial: true) { _, input in model.deckDirector.ingest(input) }
+        .onChange(of: model.deckDirector.ceremonyFinishes) { _, _ in model.finishLinkCeremony() }
+        .reloScreenBackground()
+        .navigationTitle("Now")
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $sheet) { destination in
+            NavigationStack {
+                if destination == .signIn {
+                    SignInView(model: model)
+                } else {
+                    ScrollView {
+                        recovery.padding(ReloLayout.screenInset)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .reloScreenBackground()
+                    .navigationTitle("Connection")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Phone on its side: the deck holds the left half, still, and the live work scrolls on the
+    /// right, so the sphere and the list are both in view instead of one scrolling past the other.
+    private var landscape: some View {
+        HStack(spacing: 0) {
+            // Scrolls only when the deck is taller than the screen, so nothing is ever cut off.
+            ScrollView {
+                hero(topInset: 8, bleed: sideInset + 40)
+                    .environment(\.reloMotionPaused, tab != .now || scenePhase != .active)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(.hidden)
+            // The deck's glow and dust fade out past its column instead of stopping at a box edge.
+            .scrollClipDisabled()
+            .containerRelativeFrame(.horizontal) { width, _ in width * 0.5 }
+            ScrollView {
+                CurrentAttentionView(model: model, viewHistory: { tab = .history })
+                    .padding(.horizontal, ReloLayout.screenInset)
+                    .padding(.top, 20).padding(.bottom, 24)
+            }
+            .refreshable { _ = await model.refresh() }
+        }
+        .onAppear { deckVisible = true }
+        .background { GeometryReader { proxy in Color.clear
+            .onAppear { sideInset = max(proxy.safeAreaInsets.leading, proxy.safeAreaInsets.trailing) }
+            .onChange(of: proxy.safeAreaInsets) { _, new in sideInset = max(new.leading, new.trailing) } } }
+    }
+
+    /// The Dynamic Island side's inset in landscape, which the deck's orbit runs under.
+    @State private var sideInset: CGFloat = 0
+
+    private var portrait: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
-                ReloNowHero(
-                    summary: shown.summary,
-                    needsYou: shown.needsYou,
-                    tasks: shown.tasks,
-                    mix: shown.mix,
-                    satellites: shown.satellites,
-                    agentTime: agentTimeToday,
-                    sync: deckSync, pendingResponses: model.pendingResponseCount,
-                    connectionTrouble: connectionTrouble, topInset: topInset,
-                    showConnection: { sheet = .connection },
-                    director: director,
-                    pull: pull, refreshing: refreshing)
+                hero(topInset: topInset)
                     .padding(.horizontal, -ReloLayout.screenInset)
                     // Scrolled out of view, the deck stops drawing (battery); it resumes on return.
                     .background { GeometryReader { proxy in
@@ -84,30 +148,7 @@ struct NowView: View {
         .background { GeometryReader { proxy in Color.clear
             .onAppear { topInset = proxy.safeAreaInsets.top }
             .onChange(of: proxy.safeAreaInsets.top) { _, new in topInset = new } } }
-        .onChange(of: deckInput, initial: true) { _, input in director.ingest(input) }
-        .onChange(of: director.ceremonyFinishes) { _, _ in model.finishLinkCeremony() }
-        .reloScreenBackground()
-        .navigationTitle("Now")
-        .toolbar(.hidden, for: .navigationBar)
         .scrollBounceBehavior(.always)
-        .sheet(item: $sheet) { destination in
-            NavigationStack {
-                if destination == .signIn {
-                    SignInView(model: model)
-                } else {
-                    ScrollView {
-                        recovery.padding(ReloLayout.screenInset)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .reloScreenBackground()
-                    .navigationTitle("Connection")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } }
-                    }
-                }
-            }
-        }
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -122,14 +163,28 @@ struct NowView: View {
             summary: InboxTodaySummary.make(items: visibleHistory + model.items, attention: model.attention,
                                             now: model.attentionDate),
             needsYou: screen.actionableCount,
-            // The same live cards as the Live now section, so the ring and the list agree.
-            tasks: live.map { ReloHoloTask(id: $0.id, progress: $0.progress) },
-            mix: todayMix(running: live.count, needsYou: screen.actionableCount ?? screen.needsMe.count),
+            // The same live cards as the Live now section, plus agents the hooks report running
+            // without a card, so the ring and RUNNING agree with Live now and Agents together.
+            // A card has progress; a hook-only agent reports none and draws as a travelling arc.
+            tasks: live.map { ReloHoloTask(id: $0.id, progress: $0.progress) } + cardlessAgents,
+            mix: todayMix(running: live.count + cardlessAgents.count,
+                          needsYou: screen.actionableCount ?? screen.needsMe.count),
             satellites: screen.needsMe.map { request in
                 let window = request.interaction.expiresAt.timeIntervalSince(request.createdAt)
                 let left = request.interaction.expiresAt.timeIntervalSince(model.attentionDate)
                 return ReloOrbitSatellite(id: request.id, remaining: window > 0 ? left / window : 0)
             })
+    }
+
+    /// Agent sessions running now that no live card already stands for (the hooks see them;
+    /// the agent never started a Relo card). Offline, the Agents list hides them, so does the HUD.
+    private var cardlessAgents: [ReloHoloTask] {
+        guard model.currentState?.connection != .offline else { return [] }
+        let cards = Set(liveNow.map(\.id))
+        return model.agentSessions
+            .filter { [.working, .quiet, .noCard].contains($0.presence) }
+            .filter { session in session.card.map { !cards.contains($0.id) } ?? true }
+            .map { ReloHoloTask(id: "agent-\($0.id)", progress: nil) }
     }
 
     private var deckInput: ReloDeckDirector.Input {

@@ -674,6 +674,8 @@ struct PresentationBehaviorModule: View {
             decisionOptions(primary: primary, secondary: secondary, expectedKind: "approval")
         case .yesNo(let primary, let secondary):
             decisionOptions(primary: primary, secondary: secondary, expectedKind: "yes_no")
+        case .choice(let options):
+            choiceOptions(options)
         case .unsupportedTextReply:
             decisionOptions(primary: "Reply", secondary: "Reply", expectedKind: "text")
                 .accessibilityHint("Inline text entry is not supported in Live Activities")
@@ -720,21 +722,65 @@ struct PresentationBehaviorModule: View {
         }
     }
 
+    /// 2 options: one row exactly like approval. 3–4: one row of compact buttons whose labels
+    /// may wrap to two lines, at the same 44 pt height, so the card's height budget holds.
+    @ViewBuilder
+    private func choiceOptions(_ options: [InteractionOption]) -> some View {
+        if let interaction, interaction.kind == "choice" {
+            let response = LiveActivityResponseWidgetPresentation.make(
+                interaction: interaction, primary: "", secondary: "", options: options,
+                fallbackStatus: fallbackStatus, now: .now
+            )
+            switch response.mode {
+            case .actions:
+                if permitsSubmission {
+                    let compact = options.count > 2
+                    HStack(spacing: compact ? 6 : 8) {
+                        ForEach(options) { option in
+                            decisionButton(
+                                label: option.label, action: NotificationInteractionAction.choose.rawValue,
+                                optionID: option.id, interaction: interaction, emphasized: false,
+                                compact: compact)
+                        }
+                    }
+                    .invalidatableContent()
+                } else {
+                    feedback(label: fallbackStatus, symbol: "info.circle.fill")
+                }
+            case .rejected:
+                feedback(label: "Response not recorded", symbol: "exclamationmark.triangle.fill")
+            case .sending, .queued, .accepted, .terminal:
+                feedback(
+                    label: response.label ?? "Response unavailable", symbol: response.symbol,
+                    showsProgress: response.showsProgress)
+            case .openTextReply, .placeholder:
+                feedback(label: fallbackStatus, symbol: "info.circle.fill")
+            }
+        } else {
+            feedback(label: "Response unavailable", symbol: "exclamationmark.triangle.fill")
+        }
+    }
+
     private func decisionButton(
-        label: String, action: String, interaction: ReloActivityAttributes.Interaction, emphasized: Bool
+        label: String, action: String, optionID: String = "",
+        interaction: ReloActivityAttributes.Interaction, emphasized: Bool, compact: Bool = false
     ) -> some View {
         Button(
             intent: ReloLiveActivityResponseIntent(
                 activityID: activityID, activityGeneration: activityGeneration,
                 notificationID: interaction.notificationID,
                 interactionID: interaction.id, accountID: interaction.accountID,
-                deviceID: interaction.targetDeviceID, action: action,
+                deviceID: interaction.targetDeviceID, action: action, optionID: optionID,
                 credential: interaction.credential, expiresAt: interaction.expiresAt
             )
         ) {
             Text(label)
-                .font(.caption.weight(.bold))
-                .fixedSize(horizontal: false, vertical: true)
+                .font(compact ? .caption2.weight(.bold) : .caption.weight(.bold))
+                .multilineTextAlignment(.center)
+                .lineLimit(compact ? 2 : nil)
+                .minimumScaleFactor(compact ? 0.8 : 1)
+                .padding(.horizontal, compact ? 4 : 0)
+                .fixedSize(horizontal: false, vertical: !compact)
                 .foregroundStyle(emphasized ? PresentationBackdrop.base : palette.primaryText)
                 .frame(maxWidth: .infinity, minHeight: controlHeight)
                 .background(

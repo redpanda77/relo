@@ -1,4 +1,5 @@
 import type { Database } from "./db.js";
+import type { QuestionKind } from "./interactions/types.js";
 import { relevanceDeliveryDeadline,relevanceDeliveryGuard } from "./relevance/delivery.js";
 import type { DeliveryLane } from "./delivery-dispatcher.js";
 import type { ApnsRuntimeResult } from "./apns-runtime.js";
@@ -28,9 +29,9 @@ export type ClaimedDeliveryJob = {
   deep_link: string | null;
   expires_at: Date | null;
   payload: Record<string, unknown>;
-  interaction_kind: "approval" | "yes_no" | "text" | null;
+  interaction_kind: QuestionKind | null;
   interaction_id: string | null;
-  interaction_state: "pending" | "approved" | "denied" | "yes" | "no" | "expired" | "canceled" | null;
+  interaction_state: "pending" | "approved" | "denied" | "yes" | "no" | "replied" | "expired" | "canceled" | null;
   interaction_expires_at: Date | null;
   credential_version: number;
   attempt_count: number;

@@ -1,9 +1,12 @@
 import { sealedNoticeSchema } from "../sealed-content.js";
+import { callbackUrlSchema } from "../callback-destinations.js";
 import { agentLifecycleIdentitySchema,LIVE_ACTIVITY_PRESENTATION_PRESETS,liveActivityPresentationSchema } from "@relo/notification-contracts";
 import { z } from "zod";
 import { originDescriptorSchema } from "../origin-slots.js";
-import { questionExpirySchema } from "../question-policy.js";
-import { publicHttpsUrlSchema } from "../url-policy.js";
+import {
+  checkQuestionAnswers,choiceOptionsSchema,QUESTION_MAX_CHARACTERS,questionDetailSchema,questionExpirySchema,
+  questionPromptMessage,questionTypeSchema,
+} from "../question-policy.js";
 
 export const liveActivityStyles = [
   "standard", "ring", "hero", "terminal", "steps",
@@ -153,23 +156,25 @@ const activityWaitLabelSchema = z.string().trim().min(1).max(24)
   .refine((value) => !/[\r\n]/.test(value),"Action labels must use one line");
 
 export const activityWaitSchema = z.object({
-  type: z.enum(["approval","yes-no","yes_no"],{ message: "Questions take tappable answers only: approval or yes_no" })
-    .transform((value) => value === "yes-no" ? "yes_no" as const : value),
+  type: questionTypeSchema,
   prompt: z.string().trim().min(1).max(2_000),
+  options: choiceOptionsSchema.optional(),
+  detail: questionDetailSchema.optional(),
   expiresInSeconds: questionExpirySchema,
   primaryLabel: activityWaitLabelSchema.optional(),
   secondaryLabel: activityWaitLabelSchema.optional(),
   correlationId: z.string().trim().min(1).max(100).optional(),
   callback: z.object({
-    url: publicHttpsUrlSchema,
+    url: callbackUrlSchema,
     token: z.string().min(16).max(512).refine((value) => !/\s/.test(value),"Callback tokens cannot contain whitespace"),
   }).strict().optional(),
   /** End-to-end sealed prompt (E4.1); the server fills a placeholder prompt before parsing. */
   sealed: sealedNoticeSchema.optional(),
 }).strict().superRefine((input,context) => {
-  if (input.prompt.length > 240) {
-    context.addIssue({ code: "custom",path: ["prompt"],message: "Live Activity prompts are limited to 240 characters" });
+  if (input.prompt.length > QUESTION_MAX_CHARACTERS || /[\r\n]/.test(input.prompt)) {
+    context.addIssue({ code: "custom",path: ["prompt"],message: questionPromptMessage });
   }
+  checkQuestionAnswers(input,context);
 });
 
 export const activityDeliverySummarySchema = z.object({

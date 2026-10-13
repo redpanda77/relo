@@ -13,7 +13,7 @@ Only when a relo command fails with an auth or no-phone error, or `relo doctor` 
 2. `relo doctor`, then run `next.run` for the first unmet `next.step`, repeating until `ready` is `true`:
    - `login`: `relo auth login --no-wait --api-url https://YOUR-RELO-SERVER` (the server address comes from
      the owner) prints `{"state":"pending","url","code"}` and returns. Relay the **url** to the owner, then run
-     `relo auth login --wait` (up to 100s; exit `4` state `pending`: run it again; "expired": start over).
+     `relo auth login --wait` (up to 100s; exit `4` state `pending`: run it again; exit `8` "expired": start over).
      A pending sign-in resumes (`next.run` is `relo auth login --wait`) instead of starting a second one.
    - `phone`: the owner opens the Relo app, signs in and allows Live Activities; `relo devices list` shows it.
    - `test`: `relo test` shows a short card and asks "Can you see this card on your iPhone?". Done once; a

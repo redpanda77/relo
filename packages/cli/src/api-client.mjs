@@ -71,6 +71,9 @@ export class ReloApiClient {
       throw new ApiError(
         typeof apiError?.message === "string"
           ? apiError.message
+          // {"error":"code","message":"…"}: the server's sentence, not just its code.
+          : typeof apiError === "string" && typeof payload?.message === "string"
+            ? payload.message
           : typeof apiError === "string"
             ? apiError
             : `Relo API returned HTTP ${response.status}`,
@@ -134,6 +137,14 @@ export class ReloApiClient {
 
   getInteraction(id) {
     return this.request("GET", `/api/interactions/${encodeURIComponent(id)}`);
+  }
+
+  /** Settled questions this login asked, after a cursor (or since a time), waiting up to timeoutSeconds. */
+  listAnswers({ after, since, timeoutSeconds }) {
+    return this.request("GET", "/api/interactions/answers", {
+      query: { ...(after ? { after } : {}), ...(since ? { since } : {}), timeoutSeconds },
+      timeoutMs: (timeoutSeconds + 5) * 1_000,
+    });
   }
 
   waitForInteraction(id, timeoutSeconds) {

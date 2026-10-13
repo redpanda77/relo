@@ -8,7 +8,7 @@ description: Show the owner your work live on their iPhone (Lock Screen and Dyna
 relo activity start --title "Deploying 0.7.57" --status "Building" --steps "Build,Test,Ship" --topic "Release 0.7.57"
 relo activity update --status "Running tests" --next-step    # judgment work: named steps; send only the change
 relo activity start --title "Polishing chapters" --status "Chapter 3" --progress 3/20 --topic "Book edit"   # counted job
-if relo ask "Deploy 0.7.57 to production?" --approval; then ./deploy.sh; fi   # 5 denied, 4 no answer: don't
+if relo ask "Deploy 0.7.57 to production?" --approval; then ./deploy.sh; fi   # 5 denied, 4 or 8: don't
 relo activity end --status "Live on production"
 ```
 
@@ -34,17 +34,17 @@ Only after a relo command fails with an auth or no-phone error, or `relo doctor`
 ## Output
 One compact JSON line (`{"ok":true,"id":"act_…","state":"active","sequence":3,"step":"2/5"}`); `--full`
 prints everything. Errors print once: `{"ok":false,"error":{code,message,hint}}`.
-Exit `0` ok · `1` server · `2` usage · `3` auth (`relo auth login`) · `4` no answer in time · `5` owner
-said no · `6` network (retry with the same `--idempotency-key`) · `7` no phone got it.
-In an agent session `ask` waits ~100s; exit `4` with state `timeout` means the question is still
-open: `relo interaction wait ID`. Other `4` states are closed: do not act.
+Exit `0` ok · `1` server · `2` usage · `3` auth (`relo auth login`) · `4` still open · `5` owner
+said no · `6` network (retry with the same `--idempotency-key`) · `7` no phone got it · `8` closed.
+In an agent session `ask` waits ~100s; exit `4`: still open, run `relo interaction wait ID`.
+Exit `8` (expired, canceled): do not act.
 
 ## Keep the card honest
 1. Start early; update on real milestones (a phase, a blocker), not every tool call.
 2. Progress is measured or absent. Judgment work: `--steps` (3-6 phases the owner would recognize,
    `--next-step`). A script or counted job (10 images, 400 rows): `--progress 3/10`. Never both on one
    card; never a percentage guessed from time.
-3. Ask only when the work depends on the answer: under 240 characters, self-contained.
+3. Ask only when the work depends on it: one line, ≤120 chars; the why in `--detail`.
 4. End exactly once, honestly (`--symbol warning` on failure). Leave `--style`/`--privacy` alone.
 
 ## Non-negotiable safety

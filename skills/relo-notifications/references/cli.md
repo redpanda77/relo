@@ -56,10 +56,11 @@ piped or with `--json`, otherwise plain text on stderr. Branch on the exit code,
 | `1` | Server or other failure |
 | `2` | Usage error: read `error.hint` (a corrected command, or "Did you mean …?" for a typo) |
 | `3` | Missing, invalid, or insufficient credential (`relo auth login`) |
-| `4` | No answer. State `timeout`: still open, run `relo interaction wait ID`. Otherwise (expired, canceled) closed: do not act |
+| `4` | Still open: this command stopped waiting. Run `relo interaction wait ID` |
 | `5` | The owner denied or said no |
 | `6` | Network unreachable: retry the same command with the same idempotency key |
 | `7` | No phone could receive it |
+| `8` | Closed without an answer (expired, canceled): do not act |
 
 ## Which card a command addresses
 
@@ -99,7 +100,12 @@ relo activity end --status "Live on production"
 relo activity end --status "Failed: 3 tests" --symbol warning
 ```
 
-- `activity start` reuses this work's running card (updating it) instead of creating another.
+- `activity start` reuses this work's running card (updating it) instead of creating another; the
+  outside an agent session the line carries a `note` saying so. `--new` starts a card of this run's
+  own beside it (for a second process on the same topic).
+- The owner can cap how many cards one login keeps running (Dashboard › Connections). At the cap a
+  start is refused with `card_limit_reached`; `relo ask` then puts the question in Relo's Needs you
+  instead of on a card (the line says so in `note`). `--notification-only` does that on purpose.
 - Steps: `--steps "A,B,C"` (up to 8, 40 characters each; repeated `--step` works too). The first is
   current unless `--step-current` says otherwise. `--step-current` takes a number from 1 or a step
   name, `--next-step` advances one (it reads the card first; no steps or already last is an error).
@@ -122,18 +128,29 @@ relo activity end --status "Failed: 3 tests" --symbol warning
 relo ask "Deploy 0.7.57 to production?" --approval --topic "Release 0.7.57"
 relo ask "Run the migration now?" --yes-no --primary-label Run --secondary-label Skip
 relo ask "Ship it?" --approval --no-wait          # returns the pending question at once
+relo ask "Run the 0042 migration on production?" --approval --detail "Rewrites orders and invoices (about 30s read-only). Backup taken 14:02. Undo: relo db rollback 0042"
+relo ask "Which release goes out today?" --option "1.4" --option "1.5 beta" --option Neither --detail "1.5 adds offline mode; its migration takes 2 minutes."
 ```
 
+- `--option LABEL` (2-4 times, or `ID=LABEL`) asks for one of several answers instead of approve/deny;
+  the reply is `{"ok":true,"id":"int_…","state":"chosen","option":"1-4","label":"1.4"}` with exit 0.
+  Ids come from the labels unless given. If a phone that would get the question runs an older Relo,
+  the ask is refused (`choice_unsupported`, the message names the phone) and nothing is asked.
+- QUESTION is one line of at most 120 characters (the card shows exactly that). `--detail` holds the
+  explanation: markdown, up to 4,000 characters, in the stdin JSON as `detail` too. The owner reads it
+  with the question in Relo; the card and the notification show only the question.
 - The question appears on this work's card with answer buttons, a countdown and an alert; the
-  command waits for the answer. A question waits at most 5 minutes (`--expires-in`, default and
-  maximum 5m). Unanswered, it expires and the card ends. The command waits for `--timeout` (default
-  the question's lifetime; **100s inside an agent session**, because an agent's shell tool kills
-  longer commands). If that passes first, it exits 4 with
+  command waits for the answer. A question waits 5 minutes by default; `--expires-in` asks for longer
+  (for example `2h` or `1d`), up to the server's limit (7 days unless the admin set another; a longer
+  ask is refused with `question_wait_too_long`). A card lives at most 8 hours, so past that the card
+  ends and the same question keeps waiting in Relo's Needs you. Unanswered, it expires. The command
+  waits for `--timeout` (default the question's lifetime up to 5 minutes; **100s inside an agent
+  session**, because an agent's shell tool kills longer commands). If that passes first, it exits 4 with
   `{"error":{"message":"No answer yet; the question is still open.","hint":"relo interaction wait int_… --timeout 100s","details":{"state":"timeout","id":"int_…"}}}`:
-  run the hint. Exit 4 with another state (`expired`, `canceled`) means closed: do not act.
+  run the hint. Exit 8 (state `expired` or `canceled`) means closed without an answer: do not act.
   No card running? `ask` starts one for the question and ends it after the answer (inside an agent
   session it stays as the session's card).
-- Up to 240 characters. Tappable answers only: `--approval` (Approve/Deny) or `--yes-no` (Yes/No);
+- Tappable answers only: `--approval` (Approve/Deny) or `--yes-no` (Yes/No);
   labels may be renamed (1-24 characters) while the canonical answer stays the same.
 - One question at a time per card. With a shorter `--timeout` the question stays answerable until
   it expires: resume with `relo interaction wait ID`; read with `interaction get`; withdraw with
@@ -141,7 +158,15 @@ relo ask "Ship it?" --approval --no-wait          # returns the pending question
 - Services that cannot block can pass `--no-wait --callback-url https://… --callback-token-file PATH`:
   Relo POSTs `{type, eventId, interactionId, correlationId, kind, status, action, respondedAt}` with
   `Authorization: Bearer <token>`, retried after 30s, 2m, 10m and 1h. Expired or canceled questions
-  never call back. `--correlation-id` is echoed in the callback.
+  never call back. `--correlation-id` is echoed in the callback. Every retry of one answer carries the
+  same `Relo-Delivery-Id` (handle each once) and `Relo-Signature: t=UNIX,v1=HEX`, the HMAC-SHA256 of
+  `UNIX.BODY` keyed by the token: check it and reject an old `t`. Callbacks to private or local
+  addresses need the server admin's permission (Dashboard › Server).
+- An app that cannot receive callbacks runs `relo listen`: one JSON line per answer to the questions
+  this login asked (`{id,eventId,state,option?,label?,correlationId?,respondedAt,cursor}`), over one
+  outgoing connection. Save the last `cursor`; `--since CURSOR` resumes after a restart without losing
+  or repeating an answer (`--since 2026-10-13T09:00:00Z` starts from a time). `--once` prints what is
+  waiting and exits. It reconnects on network errors and stops (exit 3) when the login stops working.
 
 ## Notifications
 

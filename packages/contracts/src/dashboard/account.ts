@@ -34,6 +34,10 @@ export const accountDashboardBootstrapSchema = z.object({
   /** Present only for the server admin (ADR 0004): account metadata, never account content. */
   server: z.object({
     registrationMode: z.enum(["closed", "approval", "open"]),
+    /** How long a question may wait on this server, in seconds. */
+    maxQuestionSeconds: z.number().int().positive(),
+    /** Who may send answer callbacks to private-network addresses. */
+    privateCallbacks: z.enum(["none", "admin", "everyone"]),
     accounts: z.array(z.object({
       id: z.string(), name: z.string(), email: z.string(),
       status: z.enum(["active", "pending", "disabled"]), admin: z.boolean(),

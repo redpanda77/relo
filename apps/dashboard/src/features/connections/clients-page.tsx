@@ -10,9 +10,61 @@ import {
 } from "@/features/connections/components"
 import type { ConnectionClient } from "@/features/connections/types"
 import { formatConnectionDate } from "@/features/connections/utils"
+import { Label } from "@/components/ui/label"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
 import { relativeTime } from "@/lib/format"
 import type { ConnectionsService } from "@/services/connections-service"
+
+const CARD_LIMITS: Array<{ value: string; label: string }> = [
+  { value: "", label: "No limit" },
+  { value: "1", label: "1 card" },
+  { value: "2", label: "2 cards" },
+  { value: "3", label: "3 cards" },
+  { value: "5", label: "5 cards" },
+]
+
+/** An app that should not crowd the Lock Screen: past the limit its questions arrive as notifications. */
+function CardLimitControl({ client, api }: { client: ConnectionClient; api: ConnectionsService }) {
+  const [limit, setLimit] = React.useState(client.maxActiveCards ?? null)
+  const [status, setStatus] = React.useState<{ error: boolean; text: string } | null>(null)
+  const id = `card-limit-${client.id}`
+  return (
+    <div className="grid gap-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <Label htmlFor={id}>Most open cards</Label>
+        <NativeSelect
+          id={id}
+          value={limit === null ? "" : String(limit)}
+          onChange={(event) => {
+            const next = event.target.value === "" ? null : Number(event.target.value)
+            setStatus(null)
+            void api
+              .setClientCardLimit(client.id, next)
+              .then(() => {
+                setLimit(next)
+                setStatus({ error: false, text: next === null ? "No limit." : `At most ${next} open card${next === 1 ? "" : "s"}.` })
+              })
+              .catch((cause) => setStatus({ error: true, text: cause instanceof Error ? cause.message : "Request failed." }))
+          }}
+        >
+          {CARD_LIMITS.map((option) => (
+            <NativeSelectOption key={option.value} value={option.value}>{option.label}</NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Past the limit this client's questions arrive as notifications with their answer buttons. Agents
+        that run several sessions on one login need no limit.
+      </p>
+      {status ? (
+        <p className={`text-xs ${status.error ? "text-destructive" : "text-[var(--status-success)]"}`} role={status.error ? "alert" : "status"}>
+          {status.text}
+        </p>
+      ) : null}
+    </div>
+  )
+}
 
 function ClientRow({
   client,
@@ -42,6 +94,7 @@ function ClientRow({
           <p className="text-xs text-muted-foreground">
             Can: {client.scopes.length ? client.scopes.join(", ") : "nothing"}
           </p>
+          <CardLimitControl client={client} api={api} />
           <PresentationPolicyControl
             scopeLabel={client.label}
             initialPolicy={client.effectiveLiveActivityPolicy}

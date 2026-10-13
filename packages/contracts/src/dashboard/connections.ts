@@ -83,6 +83,8 @@ const clientSchema = z.object({
   liveActivityPolicy: presentationPolicySchema.nullable(),
   effectiveLiveActivityPolicy: presentationPolicySchema,
   liveActivityPolicySource: z.enum(["client", "account", "system"]),
+  /** At most this many open cards for this login (null: no limit). */
+  maxActiveCards: z.number().int().nullable().optional(),
 })
 
 export const connectionsOverviewSchema = z.object({

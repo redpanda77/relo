@@ -16,7 +16,7 @@ export type ActivityStartReceipt={
   activity:ActivitySnapshot;delivery:ActivityDeliverySummary;queued:number;
   replayed?:boolean;disposition?:string;reused?:boolean;resumed?:boolean;replaced?:number;
 };
-export type ActivityStartFailure={error:string;code?:string;disposition?:string;activityId?:string};
+export type ActivityStartFailure={error:string;code?:string;message?:string;disposition?:string;activityId?:string};
 export type ActivityStartResult<T=ActivityStartReceipt>=
  |{kind:"started";created:boolean;receipt:T}
  |{kind:"start_rejected";reason:ActivityStartFailure;category:"invalid"|"conflict"|"missing"};

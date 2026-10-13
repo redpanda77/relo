@@ -52,6 +52,13 @@ enum InboxPresentationProjection {
             status = interactionStatus(item.interaction?.state, pending: "Reply needed")
             accentColor = LiveActivityPresentationFormatting.defaultAccentColor
             secondaryColor = nil
+        case .choice:
+            behavior = .choice(item.interaction?.options ?? [])
+            symbol = .question
+            status = item.interaction?.chosenLabel
+                ?? interactionStatus(item.interaction?.state, pending: "Response needed")
+            accentColor = LiveActivityPresentationFormatting.defaultAccentColor
+            secondaryColor = nil
         case nil:
             behavior = .informational
             symbol = InboxHierarchyProjection.project(for: item).presentationSymbol

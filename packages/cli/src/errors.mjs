@@ -7,6 +7,8 @@ export const EXIT = Object.freeze({
   NEGATIVE: 5,
   NETWORK: 6,
   NO_DELIVERY: 7,
+  /** Closed without an answer (expired, canceled): never act. TERMINAL (4) now means still open. */
+  CLOSED: 8,
 });
 
 export class ReloError extends Error {
@@ -51,9 +53,11 @@ export class ApiError extends ReloError {
 export class TerminalInteractionError extends ReloError {
   constructor(message, { state, details } = {}) {
     const negative = state === "denied" || state === "no";
+    // "timeout" is this command's own wait running out: the question is still open (4).
+    const open = state === "timeout";
     super(message, {
-      code: negative ? "NEGATIVE_RESPONSE" : "INTERACTION_TERMINAL",
-      exitCode: negative ? EXIT.NEGATIVE : EXIT.TERMINAL,
+      code: negative ? "NEGATIVE_RESPONSE" : open ? "INTERACTION_TERMINAL" : "INTERACTION_CLOSED",
+      exitCode: negative ? EXIT.NEGATIVE : open ? EXIT.TERMINAL : EXIT.CLOSED,
       details: { state, ...details },
     });
   }

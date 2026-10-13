@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { ConnectionsFeature } from "@/features/connections/connections-feature"
@@ -13,6 +13,7 @@ const api: ConnectionsService = {
   deleteService: vi.fn(),
   revokePhone: vi.fn(),
   revokeClient: vi.fn(),
+  setClientCardLimit: vi.fn().mockResolvedValue(undefined),
   saveServiceLiveActivityPolicy: vi.fn(),
   resetServiceLiveActivityPolicy: vi.fn(),
   saveClientLiveActivityPolicy: vi.fn(),
@@ -91,5 +92,14 @@ describe("Connections", () => {
     const manage = screen.getByText("Manage").closest("details")
     expect(manage?.hasAttribute("open")).toBe(false)
     expect(manage?.textContent).toContain("notifications:send")
+  })
+
+  it("lets the owner cap how many cards one client keeps open", async () => {
+    render(<ConnectionsFeature bootstrap={overview()} service={api} />)
+    const select = screen.getByLabelText("Most open cards") as HTMLSelectElement
+    expect(select.value).toBe("")
+    fireEvent.change(select, { target: { value: "2" } })
+    await waitFor(() => expect(api.setClientCardLimit).toHaveBeenCalledWith(expect.any(String), 2))
+    expect(await screen.findByText("At most 2 open cards.")).toBeTruthy()
   })
 })

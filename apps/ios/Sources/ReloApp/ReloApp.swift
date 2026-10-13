@@ -150,28 +150,47 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         notificationID: String
     ) -> NotificationActionRequest? {
         let action: NotificationInteractionAction
+        var optionID: String?
         switch response.actionIdentifier {
         case "RELO_APPROVE": action = .approve
         case "RELO_DENY": action = .deny
         case "RELO_YES": action = .yes
         case "RELO_NO": action = .no
-        default: return nil
+        case let identifier:
+            guard let chosen = ChoiceNotificationCategoryPolicy.optionID(fromActionIdentifier: identifier)
+            else { return nil }
+            action = .choose
+            optionID = chosen
         }
         let text = (response as? UNTextInputNotificationResponse)?.userText
         let relo = response.notification.request.content.userInfo["relo"] as? [String: Any] ?? [:]
         return NotificationActionRequest(notificationID: notificationID, action: action, text: text,
-            metadata: NotificationDecisionMetadata(relo: relo))
+            optionID: optionID, metadata: NotificationDecisionMetadata(relo: relo))
     }
 
     private static func registerNotificationCategories() {
+        Task { await installNotificationCategories() }
+    }
+
+    nonisolated private static func installNotificationCategories() async {
         let approve = UNNotificationAction(identifier: "RELO_APPROVE", title: "Approve", options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: "RELO_DENY", title: "Deny", options: [.authenticationRequired, .destructive])
         let yes = UNNotificationAction(identifier: "RELO_YES", title: "Yes", options: [.authenticationRequired])
         let no = UNNotificationAction(identifier: "RELO_NO", title: "No", options: [.authenticationRequired, .destructive])
-        UNUserNotificationCenter.current().setNotificationCategories([
+        let fixed: Set<UNNotificationCategory> = [
             UNNotificationCategory(identifier: "RELO_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
             UNNotificationCategory(identifier: "RELO_YES_NO", actions: [yes, no], intentIdentifiers: []),
-        ])
+            // A choice's buttons live in its per-question category; this one only opens Relo.
+            UNNotificationCategory(
+                identifier: ChoiceNotificationCategoryPolicy.staticCategoryIdentifier, actions: [], intentIdentifiers: []),
+        ]
+        // Keep the per-question categories the Notification Service Extension registered, so
+        // delivered choice questions keep their buttons across launches.
+        let center = UNUserNotificationCenter.current()
+        let registered = await center.notificationCategories()
+        center.setNotificationCategories(fixed.union(registered.filter {
+            ChoiceNotificationCategoryPolicy.isPerQuestionCategory($0.identifier)
+        }))
     }
 
 
@@ -202,6 +221,8 @@ struct NotificationActionRequest: Equatable, Sendable {
     let notificationID: String
     let action: NotificationInteractionAction
     let text: String?
+    /// The option a tapped `RELO_OPTION.<optionId>` action picks.
+    var optionID: String? = nil
     var metadata: NotificationDecisionMetadata? = nil
 }
 

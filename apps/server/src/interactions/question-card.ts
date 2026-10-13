@@ -1,5 +1,9 @@
+import { cardLimitBody,cardLimitReached } from "../card-limit.js";
 import type { ApnsMode } from "../activities.js";
+import type { ChoiceOption } from "@relo/notification-contracts";
+import { assertChoiceTargets,CHOICE_CAPABILITY,ChoiceUnsupportedError,choiceUnsupportedBody,questionBehavior } from "../choice-questions.js";
 import { publicId } from "../ids.js";
+import { persistNotificationContent,prepareNotificationContent,type NotificationContentCipher } from "../notification-content.js";
 import { presentationCommandProjection,terminalPresentationColumnsFromRow,canonicalPresentation,
   persistedPresentationColumns } from "../presentation-runtime.js";
 import { resolveActivityPresentation,SYSTEM_PRESENTATION_POLICY,systemPresentationPolicySnapshot } from "../presentation-policy.js";
@@ -13,14 +17,14 @@ export type QuestionCardRequester = {
 };
 
 export type QuestionCardInput = {
-  type: "approval" | "yes_no"; title: string; prompt: string; expiresInSeconds: number;
-  primaryLabel?: string | undefined; secondaryLabel?: string | undefined;
+  type: "approval" | "yes_no" | "choice"; title: string; prompt: string; detail?: string | undefined; expiresInSeconds: number;
+  primaryLabel?: string | undefined; secondaryLabel?: string | undefined; options?: ChoiceOption[] | undefined;
   privacy?: "standard" | "private" | undefined; style?: string | undefined;
   context?: Record<string,any> | undefined; relevance?: SubjectCommand | undefined;
 };
 
 export type QuestionCardResult =
-  | { kind: "rejected"; commit: false; status: 400 | 409; body: { error: string } }
+  | { kind: "rejected"; commit: false; status: 400 | 409 | 503; body: { error: string; message?: string; devices?: string[] } }
   | { kind: "created" | "replayed"; commit: boolean; interactionRequestId: string; body: Record<string,unknown> };
 
 /**
@@ -31,10 +35,12 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
   input: QuestionCardInput,options: {
     idempotencyKey: string; requestHash: string; sourceName: string; originHash: string | null;
     requestedDeviceIds: string[] | null; apnsMode: ApnsMode; deliveryApnsMode: ApnsMode | undefined;
+    contentCipher?: NotificationContentCipher | null | undefined;
   }): Promise<QuestionCardResult> {
   const { idempotencyKey,requestHash,sourceName,originHash,requestedDeviceIds,apnsMode,deliveryApnsMode } = options;
-  const primaryLabel = input.primaryLabel ?? (input.type === "approval" ? "Approve" : "Yes");
-  const secondaryLabel = input.secondaryLabel ?? (input.type === "approval" ? "Deny" : "No");
+  if (input.detail && !options.contentCipher) {
+    return { kind: "rejected",commit: false,status: 503,body: { error: "content_encryption_unavailable" } };
+  }
   const interactivePresentation = canonicalPresentation({
     content: {
       header: input.title,title: input.title,subtitle: input.prompt,status: "Waiting for input",
@@ -44,11 +50,7 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
     }).stored.presentation.identity,
     state: { kind: "needs_action",tone: "attention",icon: "needs_action" },
     components: [],surfaces: {},
-    behavior: input.type === "approval"
-      ? { type: "approval",primary: { action: "approve",label: primaryLabel },
-          secondary: { action: "deny",label: secondaryLabel } }
-      : { type: "yes_no",primary: { action: "yes",label: primaryLabel },
-          secondary: { action: "no",label: secondaryLabel } },
+    behavior: questionBehavior(input.type,{ primary: input.primaryLabel,secondary: input.secondaryLabel,options: input.options }),
     appearance: { theme: "system",roles: {
       cardIdentity: "project",componentIdentity: "thread",statusEmphasis: "state",
     } },
@@ -57,14 +59,33 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
   const interactiveStored = persistedPresentationColumns(interactivePresentation);
   await lockSubjectAdmission(client,{ principalId: requester.principalId,sourceId: requester.sourceId },
     input.relevance?.subjectKey ?? independentSubjectKey(idempotencyKey));
+  const cap = await cardLimitReached(client,requester.credentialId);
+  if (cap !== null) return { kind: "rejected",commit: false,status: 409,body: cardLimitBody(cap) };
+  // A choice reaches only phones that can show it: named phones must all be able to, and without
+  // names the question goes to the phones that can.
+  const choice = input.type === "choice";
+  try {
+    if (choice && requestedDeviceIds) await assertChoiceTargets(client,requester.principalId,requestedDeviceIds);
+  } catch (error) {
+    if (error instanceof ChoiceUnsupportedError) return { kind: "rejected",commit: false,status: 409,body: choiceUnsupportedBody(error) };
+    throw error;
+  }
   const eligible = await client.query<any>(
     `SELECT id,apns_environment,live_activity_push_to_start_token
      FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
        AND live_activity_authorization='authorized'
        AND ($2::uuid[] IS NULL OR id=ANY($2::uuid[]))
+       AND (NOT $3 OR $4=ANY(capabilities))
      ORDER BY last_seen_at DESC,id LIMIT 50`,
-    [requester.principalId,requestedDeviceIds],
+    [requester.principalId,requestedDeviceIds,choice,CHOICE_CAPABILITY],
   );
+  if (choice && !eligible.rowCount) {
+    try { await assertChoiceTargets(client,requester.principalId,null); }
+    catch (error) {
+      if (error instanceof ChoiceUnsupportedError) return { kind: "rejected",commit: false,status: 409,body: choiceUnsupportedBody(error) };
+      throw error;
+    }
+  }
   if (!eligible.rowCount || (requestedDeviceIds && eligible.rowCount !== requestedDeviceIds.length)) {
     return { kind: "rejected",commit: false,status: 400,
       body: { error: requestedDeviceIds ? "invalid_device_selection" : "no_eligible_device" } };
@@ -108,7 +129,7 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
   },{
     apnsMode,kind: "decision",eventId: event.rows[0]!.id,intentHash: requestHash,
     relevance: input.relevance,idempotencyKey,createdAt: event.rows[0]!.created_at,
-    interaction: { kind: input.type,prompt: input.prompt,actionSeconds: input.expiresInSeconds },
+    interaction: { kind: input.type,prompt: input.prompt,actionSeconds: input.expiresInSeconds,options: input.options },
   });
   if (admission.kind === "duplicate") {
     const receipt = (await client.query<any>(
@@ -148,6 +169,11 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
      SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
     [event.rows[0]!.id,eligibleDeviceIds],
   );
+  // The detail is read in Relo, encrypted like any message body; the card carries only the question.
+  if (input.detail && options.contentCipher) {
+    await persistNotificationContent(client,options.contentCipher,event.rows[0]!.id,
+      prepareNotificationContent({ body: input.detail,summary: input.prompt,bodyFormat: "markdown" }));
+  }
   const liveActivityId = publicId("act",activity.rows[0].id);
   const command = {
     operation: expired ? "end" : "start", activityId: liveActivityId, targetDeviceId: publicId("dev",device.id),

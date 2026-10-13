@@ -75,6 +75,8 @@ const notOwnerScopedById: Record<string, string> = {
   "GET /api/inbox/events": "stream; covered by its snapshot",
   "GET /api/dashboard/server": "server admin account metadata (ADR 0004); server-accounts.test.ts",
   "PUT /api/dashboard/server/registration": "server admin setting; server-accounts.test.ts",
+  "PUT /api/dashboard/server/question-wait": "server admin setting; long-question.test.ts",
+  "PUT /api/dashboard/server/private-callbacks": "server admin setting; callback-destinations.test.ts",
   "POST /api/dashboard/server/accounts": "server admin creates an isolated account; server-accounts.test.ts",
   "POST /api/dashboard/server/accounts/:userId/delete": "server admin manages accounts by design; server-accounts.test.ts",
   "POST /api/dashboard/server/accounts/:userId/:action": "server admin manages accounts by design; server-accounts.test.ts",
@@ -313,6 +315,7 @@ suite("tenant isolation (ADR 0004)", () => {
 
   /** A plausible body, so a foreign id reaches the ownership check instead of stopping at validation. */
   function bodyFor(route: string): unknown {
+    if (route.endsWith("/card-limit")) return { limit: 2 };
     if (route === "PATCH /api/dashboard/services/:serviceId") return { title: "A rename",imageUrl: null,destinationUrl: null };
     if (route === "POST /api/dashboard/live-activities/:activityId/update") return { presentation: bPresentation };
     if (route === "POST /api/dashboard/live-activities/:activityId/wait") return { kind: "approval",prompt: "A?" };

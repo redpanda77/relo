@@ -41,6 +41,18 @@ function job(overrides: Partial<ApnsRuntimeJob> = {}): ApnsRuntimeJob {
 }
 
 describe("current delivery serialization", () => {
+  test("a choice push names the RELO_CHOICE category and carries its options for the phone's extension", () => {
+    const options = [{ id: "ship",label: "Ship" },{ id: "wait",label: "Wait" },{ id: "rollback",label: "Roll back" }];
+    const projection = deliveryProjection(job({
+      interactionKind: "choice",interactionId: "int_22222222-2222-4222-8222-222222222222",
+      payload: { privacy: "standard",context: { project: "Relo" },interactionOptions: options },
+    }));
+    expect(projection).toMatchObject({ category: "RELO_CHOICE",
+      customData: { relo: { interactionType: "choice",interactionOptions: options } } });
+    const binary = deliveryProjection(job({ interactionKind: "yes_no",interactionId: "int_22222222-2222-4222-8222-222222222222" }));
+    expect(JSON.stringify(binary)).not.toContain("interactionOptions");
+  });
+
   test("standard alerts carry the account label in safe context", () => {
     const projection = deliveryProjection(job({
       payload: { privacy: "standard",context: { computer: "Mac",account: "work" } },

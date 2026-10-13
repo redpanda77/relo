@@ -130,9 +130,18 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
     if(!row) return await finish(reject(capability?"not_found":"interaction_not_found"));
     if(!validCapability(row)) return await finish(reject("invalid_credential"));
     if(command.interactionId&&command.interactionId!==row.id) return await finish(reject("interaction_version_mismatch"));
-    const nextState=({approve:"approved",deny:"denied",yes:"yes",no:"no",answer:"replied"} as const)[command.kind];
-    const matches=row.kind==="approval"?["approved","denied"].includes(nextState):row.kind==="yes_no"?["yes","no"].includes(nextState):nextState==="replied";
+    const nextState=({approve:"approved",deny:"denied",yes:"yes",no:"no",answer:"replied",choose:"replied"} as const)[command.kind];
+    // A choice is answered with one of its own options, stored as replied with that option.
+    const chosen=row.kind==="choice"&&command.kind==="choose"
+      ?(row.options??[]).find((option)=>option.id===command.value.optionId):undefined;
+    const matches=row.kind==="approval"?["approved","denied"].includes(nextState)
+      :row.kind==="yes_no"?["yes","no"].includes(nextState)
+      :row.kind==="choice"?chosen!==undefined
+      :command.kind==="answer";
     if(!matches) return await finish(reject("invalid_action"));
+    // A phone's signature over the choice (E4.2) is kept with it so the CLI can check it.
+    const signature=Object.fromEntries(Object.entries(command.value).filter(([key])=>key.startsWith("e2ee")));
+    const response=chosen?{optionId:chosen.id,label:chosen.label,...signature}:command.value;
     const relevance=await readDecisionRelevance(tx,row.principal_id,command.eventId,command.expectedSubject);
     if(!relevance.matchesExpected) return await finish(reject("interaction_version_mismatch"));
     const exact=(evidence:ResponseEvidenceRow)=>evidence.notification_event_id===command.eventId&&evidence.device_id===actor.deviceId
@@ -142,7 +151,7 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
     if(relevance.evaluation?.action==="superseded") return await finish(reject(capability?"interaction_terminal":"interaction_superseded",row.state));
     if(row.state!=="pending"||row.event_state!=="active") return await finish(reject(capability?"interaction_terminal":"interaction_not_pending",row.state));
     if(relevance.evaluation&&!["available","expired"].includes(relevance.evaluation.action)) return await finish(reject(capability?"interaction_terminal":"interaction_not_pending",row.state));
-    const accepted=relevance.evaluation?.action==="expired"?null:await acceptLockedResponse(tx,row,nextState,command.value);
+    const accepted=relevance.evaluation?.action==="expired"?null:await acceptLockedResponse(tx,row,nextState,response);
     if(!accepted) {
       if(await expireLockedRequest(tx,row)) await settleInteractiveLiveActivity(tx,{
         principalId:row.principal_id,notificationEventId:row.notification_event_id,responseState:"expired",apnsMode:dependencies.apnsMode,
@@ -161,7 +170,7 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
     await settleInteractiveLiveActivity(tx,{principalId:row.principal_id,notificationEventId:row.notification_event_id,responseState:nextState,apnsMode:dependencies.apnsMode});
     // The same decision shown elsewhere stops asking: this answer is the decision.
     if(group) await settleDecisionGroup(tx,{groupId:group,exceptInteractionId:row.id,
-      outcome:{state:nextState,response:command.value},apnsMode:dependencies.apnsMode});
+      outcome:{state:nextState,response},apnsMode:dependencies.apnsMode});
     return await finish({kind:"accepted",evidenceId:evidence.id,interactionId:row.id,state:nextState,respondedAt:accepted.responded_at},true);
   }catch(error){await tx.query("ROLLBACK");throw error;}
   finally{tx.release();}

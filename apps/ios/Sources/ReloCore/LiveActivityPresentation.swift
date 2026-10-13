@@ -15,6 +15,7 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
         case approval
         case yesNo = "yes_no"
         case textReply = "text_reply"
+        case choice
     }
 
     public enum Theme: String, Codable, CaseIterable, Sendable {
@@ -110,6 +111,8 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
         case progress
         case approval(primary: String, secondary: String)
         case yesNo(primary: String, secondary: String)
+        /// 2–4 labeled options, answered with `choose`.
+        case choice([InteractionOption])
         case unsupportedTextReply(label: String, placeholder: String?, maxLength: Int)
 
         public var type: BehaviorType {
@@ -118,8 +121,13 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
             case .progress: .progress
             case .approval: .approval
             case .yesNo: .yesNo
+            case .choice: .choice
             case .unsupportedTextReply: .textReply
             }
+        }
+
+        public var choiceOptions: [InteractionOption]? {
+            if case .choice(let options) = self { options } else { nil }
         }
     }
 
@@ -168,7 +176,7 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
 
     public var permitsLiveActivityActions: Bool {
         switch behavior {
-        case .approval, .yesNo: privacy == .standard
+        case .approval, .yesNo, .choice: privacy == .standard
         case .informational, .progress, .unsupportedTextReply: false
         }
     }
@@ -443,7 +451,7 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case header, title, subtitle, status, componentsJson, surfacesJson
         case identityJson, stateJson, behaviorType, primaryAction, primaryLabel
-        case secondaryAction, secondaryLabel, appearanceJson, privacy
+        case secondaryAction, secondaryLabel, appearanceJson, privacy, choiceOptions
     }
 
     public init(
@@ -491,6 +499,8 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         case .yesNo: .yesNo(
             primary: try values.decode(String.self, forKey: .primaryLabel),
             secondary: try values.decode(String.self, forKey: .secondaryLabel))
+        case .choice:
+            try Self.decodeChoice(from: values)
         case .textReply:
             throw DecodingError.dataCorruptedError(
                 forKey: .behaviorType, in: values,
@@ -520,6 +530,9 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
             try values.encode(primary, forKey: .primaryLabel); try values.encode(secondary, forKey: .secondaryLabel)
         case .informational, .progress:
             try values.encodeNil(forKey: .primaryLabel); try values.encodeNil(forKey: .secondaryLabel)
+        case .choice(let options):
+            try values.encodeNil(forKey: .primaryLabel); try values.encodeNil(forKey: .secondaryLabel)
+            try values.encode(options, forKey: .choiceOptions)
         case .unsupportedTextReply:
             throw EncodingError.invalidValue(
                 behavior,
@@ -531,9 +544,21 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         try values.encode(privacy, forKey: .privacy)
     }
 
+    /// `choiceOptions` is a flat array beside the other content-state fields, never a JSON string.
+    private static func decodeChoice(
+        from values: KeyedDecodingContainer<CodingKeys>
+    ) throws -> LiveActivityDisplayPresentation.Behavior {
+        let options = try values.decode([InteractionOption].self, forKey: .choiceOptions)
+        guard InteractionOption.isValidList(options) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .choiceOptions, in: values, debugDescription: "A choice needs 2–4 distinct options")
+        }
+        return .choice(options)
+    }
+
     public var projectedForDisplay: LiveActivityPresentation? { privacy == .private ? nil : self }
     public var permitsLiveActivityActions: Bool {
-        privacy == .standard && (behavior.type == .approval || behavior.type == .yesNo)
+        privacy == .standard && [.approval, .yesNo, .choice].contains(behavior.type)
     }
     public func components(for surface: Surface) -> [Component] {
         let byID = Dictionary(uniqueKeysWithValues: components.map { ($0.id, $0) })

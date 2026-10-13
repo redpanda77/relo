@@ -45,6 +45,8 @@ public struct LiveActivityResponseConfirmation: Codable, Equatable, Sendable {
     public let activityGeneration: Int
     public let interactionID: String
     public let action: NotificationInteractionAction
+    /// The option a confirmed `choose` picked; absent for every other action and in older records.
+    public let optionID: String?
     public let idempotencyKey: String
     public let canonicalState: String
     public let confirmedAt: Date
@@ -74,6 +76,7 @@ public struct LiveActivityResponseConfirmation: Codable, Equatable, Sendable {
         self.activityGeneration = activityGeneration
         self.interactionID = interactionID
         self.action = response.action
+        self.optionID = response.optionID
         self.idempotencyKey = response.idempotencyKey
         self.canonicalState = canonicalState
         self.confirmedAt = confirmedAt
@@ -82,7 +85,7 @@ public struct LiveActivityResponseConfirmation: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case accountID, deviceID, notificationID, activityID, activityGeneration, interactionID
-        case action, idempotencyKey, canonicalState, confirmedAt, expiresAt
+        case action, optionID, idempotencyKey, canonicalState, confirmedAt, expiresAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -101,6 +104,7 @@ public struct LiveActivityResponseConfirmation: Codable, Equatable, Sendable {
         }
         interactionID = try values.decode(String.self, forKey: .interactionID)
         action = try values.decode(NotificationInteractionAction.self, forKey: .action)
+        optionID = try values.decodeIfPresent(String.self, forKey: .optionID)
         idempotencyKey = try values.decode(String.self, forKey: .idempotencyKey)
         canonicalState = try values.decode(String.self, forKey: .canonicalState)
         confirmedAt = try values.decode(Date.self, forKey: .confirmedAt)
@@ -124,7 +128,7 @@ public struct LiveActivityResponseConfirmation: Codable, Equatable, Sendable {
             deviceID: deviceID,
             notificationID: notificationID,
             action: action,
-            value: [:],
+            value: optionID.map { ["optionId": $0] } ?? [:],
             idempotencyKey: idempotencyKey,
             expiresAt: expiresAt,
             endpoint: .liveActivity,

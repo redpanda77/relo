@@ -1,3 +1,4 @@
+import { choiceOptionSchema } from "./presentation.js";
 import { z } from "zod";
 import { agentSessionListSchema } from "./agent-sessions.js";
 
@@ -205,13 +206,17 @@ export const notificationEventSchema = z
   .strict();
 
 export const inboxKindSchema = z.enum(["notification", "live_activity", "response"]);
+export const chosenOptionSchema = z.object({ optionId: z.string(), label: z.string() }).strict();
 export const inboxInteractionSchema = z.object({
   id: identifierSchema,
-  kind: z.enum(["approval", "yes_no", "text"]),
+  kind: z.enum(["approval", "yes_no", "text", "choice"]),
   prompt: z.string(),
   state: z.enum(["pending", "approved", "denied", "yes", "no", "replied", "expired", "canceled"]),
   expiresAt: isoTimestampSchema,
   respondedAt: isoTimestampSchema.nullable(),
+  /** Choice questions only: the options, and the one picked once answered. */
+  options: z.array(choiceOptionSchema).optional(),
+  response: chosenOptionSchema.nullable().optional(),
 }).strict();
 export const inboxContextSchema = safeContextSchema;
 
@@ -246,8 +251,8 @@ export const LIVE_ACTIVITY_DEFAULT_STALE_AFTER_SECONDS = 14_400 as const;
 export const inboxLiveActivityInteractionSchema = z.object({
   id: identifierSchema,
   notificationId: identifierSchema,
-  kind: z.enum(["approval", "yes_no"]),
-  state: z.enum(["pending", "approved", "denied", "yes", "no", "expired", "canceled"]),
+  kind: z.enum(["approval", "yes_no", "choice"]),
+  state: z.enum(["pending", "approved", "denied", "yes", "no", "replied", "expired", "canceled"]),
   credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   expiresAt: isoTimestampSchema,
 }).strict();
@@ -408,7 +413,7 @@ export const notificationWithdrawalResponseSchema = z.object({
   replayed: z.boolean(),
 }).strict();
 
-export const interactionKindSchema = z.enum(["approval", "yes_no", "text"]);
+export const interactionKindSchema = z.enum(["approval", "yes_no", "text", "choice"]);
 export const interactionStateSchema = z.enum([
   "pending", "approved", "denied", "yes", "no", "replied", "expired", "canceled",
 ]);
@@ -417,8 +422,9 @@ export const interactionResultSchema = z.object({
   eventId: identifierSchema,
   type: interactionKindSchema,
   prompt: z.string(),
+  options: z.array(choiceOptionSchema).optional(),
   state: interactionStateSchema,
-  action: z.enum(["approve", "deny", "yes", "no", "reply"]).nullable(),
+  action: z.enum(["approve", "deny", "yes", "no", "reply", "choose"]).nullable(),
   response: z.unknown().nullable(),
   respondingDevice: z.object({
     id: identifierSchema,
@@ -427,6 +433,7 @@ export const interactionResultSchema = z.object({
   expiresAt: isoTimestampSchema,
   respondedAt: isoTimestampSchema.nullable(),
   createdAt: isoTimestampSchema,
+  callback: z.unknown().optional(),
 }).strict();
 export const interactionResultResponseSchema = z.object({ interaction: interactionResultSchema }).strict();
 export const interactionResponseSchema = z

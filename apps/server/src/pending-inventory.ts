@@ -1,4 +1,6 @@
 import { sealedForDevice } from "./sealed-content.js";
+import type { ChoiceOption } from "@relo/notification-contracts";
+import type { QuestionKind } from "./interactions/types.js";
 import { z } from "zod";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
@@ -17,7 +19,7 @@ export type PendingInteractionSummary = {
   createdAt: string;
   readAt: string | null;
   urgencyRank: 0;
-  interaction: { id: string; type: "approval" | "yes_no" | "text"; state: "pending"; expiresAt: string };
+  interaction: { id: string; type: QuestionKind; state: "pending"; expiresAt: string; options?: ChoiceOption[] };
 };
 export type PendingInteractionPage = {
   items: PendingInteractionSummary[];
@@ -102,7 +104,7 @@ function encodePendingCursor(cursor: PendingCursor, actor: InboxActor): string {
 
 type PendingRow = {
   id: string | null; event_id: string; subject_id: string | null; generation: string; revision: string;
-  kind: "approval" | "yes_no" | "text"; title: string; summary: string; source: string;
+  kind: QuestionKind; options: ChoiceOption[] | null; title: string; summary: string; source: string;
   created_at_iso: string; read_at: Date | null; expires_at_iso: string;
   total: number; next_expiry_at: Date | null; server_time: Date; sealed: unknown;
 };
@@ -131,7 +133,7 @@ export async function loadPendingInteractions(
       ORDER BY expires_at,id LIMIT $5
     )
     SELECT page.id,page.event_id,page.kind,page.subject_id,page.generation,page.revision,
-      left(e.title,200) AS title,left(e.source,200) AS source,
+      left(e.title,200) AS title,left(e.source,200) AS source,request_detail.options,
       CASE WHEN e.payload->>'privacy'='private' OR page.activity_privacy='private' THEN 'Private notification'
         ELSE left(request_detail.prompt,240) END AS summary,
       to_char(e.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso,
@@ -157,7 +159,8 @@ export async function loadPendingInteractions(
       version: row.subject_id ? { generation: Number(row.generation),revision: Number(row.revision) } : null,
       kind: "decision",title: row.title,summary: row.summary,source: row.source,
       createdAt: row.created_at_iso,readAt: row.read_at?.toISOString() ?? null,urgencyRank: 0,
-      interaction: { id: publicId("int",row.id),type: row.kind,state: "pending",expiresAt: row.expires_at_iso },
+      interaction: { id: publicId("int",row.id),type: row.kind,state: "pending",expiresAt: row.expires_at_iso,
+        ...(row.kind === "choice" && row.options ? { options: row.options } : {}) },
       // A sealed question's text for this phone; title and summary are placeholders.
       ...(() => { const sealed = sealedForDevice({ sealed: row.sealed },actor.deviceId ? publicId("dev",actor.deviceId) : undefined);
         return sealed ? { sealed } : {}; })(),

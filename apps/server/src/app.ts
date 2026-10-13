@@ -1,5 +1,6 @@
 import { answerSignatureSchema } from "./sealed-content.js";
 import { respondToInteraction } from "./interactions/commands.js";
+import { choiceOptionIdSchema } from "@relo/notification-contracts";
 import { type InteractionChangeHub } from "./interaction-change-hub.js";
 import type { CurrentChangeHub } from "./current-change-hub.js";
 import { SubjectAdmissionError } from "./relevance/commands.js";
@@ -147,16 +148,19 @@ export function createApp(
     const interactionId = internalId("int",context.req.param("interactionId") ?? "");
     const input = z.object({
       notificationId: z.string(), deviceId: z.string(),
-      action: z.enum(["approve","deny","yes","no"]),
+      action: z.enum(["approve","deny","yes","no","choose"]),
+      optionId: choiceOptionIdSchema.optional(),
       credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
       idempotencyKey: z.string().trim().min(1).max(200),
       signature: answerSignatureSchema.optional(),
-    }).strict().parse(await context.req.json());
+    }).strict().refine((value) => (value.action === "choose") === (value.optionId !== undefined),
+      "A choice is answered with exactly one optionId").parse(await context.req.json());
     const notificationEventId = internalId("ntf",input.notificationId);
     const deviceId = internalId("dev",input.deviceId);
     if (!interactionId || !notificationEventId || !deviceId) return context.json({ error: "not_found" }, 404);
     const result = await respondToInteraction(db,{ kind: "live_activity",deviceId,credential: input.credential },{
-      eventId: notificationEventId,interactionId,kind: input.action,value: { action: input.action,...input.signature },idempotencyKey: input.idempotencyKey,
+      eventId: notificationEventId,interactionId,kind: input.action,
+      value: { action: input.action,...(input.optionId ? { optionId: input.optionId } : {}),...input.signature },idempotencyKey: input.idempotencyKey,
     },{ apnsMode,credentialDerivationSecret: integratedDependencies.credentialDerivationSecret });
     if (result.kind === "rejected") return context.json({ error: result.error,...(result.state ? { state: result.state } : {}) },
       result.error === "invalid_credential" ? 401 : result.error === "invalid_action" ? 400
@@ -176,7 +180,7 @@ export function createApp(
     let family = "authenticated-mutations";
     if (/^\/api\/notifications\/[^/]+\/interactions$/.test(path)) {
       const body = await context.req.json().catch(() => null);
-      if (["approve","deny","yes","no","answer"].includes(body?.kind)) family = "decision-responses";
+      if (["approve","deny","yes","no","answer","choose"].includes(body?.kind)) family = "decision-responses";
     }
     const account = await consumeRateLimit(db,{
       scope: "account", id: auth.principalId, family, limit: 300,

@@ -23,13 +23,19 @@ describe("identity and persistence contracts", () => {
     expect(hashToken(token)).not.toContain(token);
   });
 
-  test("device registration requires current app identity", () => {
+  test("device registration requires current app identity and declares only known capabilities", () => {
     expect(registerDeviceSchema.safeParse({ installationId: "missing-everything" }).success).toBe(false);
     expect(registerDeviceSchema.parse({
       stableDeviceId: "stable-1", installationId: "install-1", name: "iPhone",
       bundleIdentifier: "com.example.relo.notifications", appVersion: "1.0.0", appBuild: "1",
       osVersion: "18.0", apnsEnvironment: "sandbox",
-    })).not.toHaveProperty("capabilities");
+    })).toMatchObject({ capabilities: [] });
+    const identity = { stableDeviceId: "stable-1", installationId: "install-1", name: "iPhone",
+      bundleIdentifier: "com.example.relo.notifications", appVersion: "1.0.0", appBuild: "1",
+      osVersion: "18.0", apnsEnvironment: "sandbox" };
+    expect(registerDeviceSchema.parse({ ...identity,capabilities: ["choice_questions","choice_questions"] }).capabilities)
+      .toEqual(["choice_questions"]);
+    expect(registerDeviceSchema.safeParse({ ...identity,capabilities: ["telepathy"] }).success).toBe(false);
   });
 
   test("a partial heartbeat does not apply registration defaults", () => {

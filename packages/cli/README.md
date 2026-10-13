@@ -108,10 +108,11 @@ Codex config directory). `relo auth login` names the credential after the comput
 | `1` | Server or other failure |
 | `2` | Usage error: read `error.hint` |
 | `3` | Missing, invalid, or insufficient credential |
-| `4` | No answer. State `timeout`: still open, `relo interaction wait ID`. Expired or canceled: closed, do not act |
+| `4` | Still open: this command stopped waiting. Run `relo interaction wait ID` |
 | `5` | The owner denied or said no |
 | `6` | Network unreachable: retry with the same idempotency key |
 | `7` | No phone could receive it |
+| `8` | Closed without an answer (expired, canceled): do not act |
 
 A yes/no answer is never permission, and exit `0` alone never authorizes an action: only an
 `--approval` question answered `approved` does.
@@ -170,6 +171,21 @@ relo setup --mcp --remove                         # deletes only Relo's entry
 
 The entry lives in one config file per harness (`--move` relocates it, `--dry-run` previews); `relo doctor --full` lists it
 and never suggests it. Paths and formats: `skills/relo-notifications/references/install.md`.
+
+## Integrating an app
+
+The full guide is [docs/INTEGRATING.md](../../docs/INTEGRATING.md); the HTTP API is described in
+[docs/api/openapi.json](../../docs/api/openapi.json).
+
+- Questions: one line of at most 120 characters; the explanation in `--detail` (markdown, 4,000 characters).
+  `--option LABEL` (2-4) asks for one of several answers. No typed replies.
+- Waiting: `ask` blocks up to `--timeout`; `--expires-in 2h` keeps the question open longer (up to the
+  admin's limit, 7 days by default). Exit 4 means still open (`relo interaction wait ID`), 8 closed.
+- Not blocking: `--no-wait` plus `--callback-url` (signed with `Relo-Signature`, deduplicated by
+  `Relo-Delivery-Id`), or `relo listen` for a stream of answers with a resumable cursor.
+- Cards: `activity start --new` starts a card of this run's own instead of joining one already running; the owner may cap cards per login, and
+  `ask --notification-only` skips the card entirely.
+- A refused login says why: `ACCOUNT_DISABLED`, `CREDENTIAL_REVOKED` or `LOGIN_EXPIRED` (exit 3).
 
 ## Profiles
 

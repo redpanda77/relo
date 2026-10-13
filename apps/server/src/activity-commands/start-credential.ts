@@ -1,3 +1,4 @@
+import { cardLimitBody,cardLimitReached } from "../card-limit.js";
 import { randomUUID } from "node:crypto";
 import { beginActivityTransaction,sameActivityTargets } from "../activity-lifecycle-domain.js";
 import { recordActivityCorrelationDecision,recordActivityStartEvidence } from "../activity-relationships.js";
@@ -380,6 +381,12 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
           apnsMode,
         })
         : 0;
+      // A login the owner limited to N open cards: a new one waits until one ends.
+      const cap = await cardLimitReached(client,auth.credentialId);
+      if (cap !== null) {
+        await transaction.rollback();
+        return startRejected(cardLimitBody(cap),"conflict");
+      }
       await retireOverflowCards(client,auth.principalId,devices.map((device) => device.id),apnsMode);
       const storedKey = key ?? `server:${randomUUID()}`;
       const privacy = storedPresentation.privacy;

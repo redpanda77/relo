@@ -248,6 +248,20 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     return result.rowCount ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
   });
 
+  app.put("/api/dashboard/credentials/:credentialId/card-limit", async (context) => {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    const credentialId = internalId("key",context.req.param("credentialId"));
+    if (!credentialId) return context.json({ error: "not_found" },404);
+    const input = z.object({ limit: z.number().int().min(1).max(10).nullable() }).strict().parse(await context.req.json());
+    const result = await db.query(
+      `UPDATE principal_api_keys SET max_active_cards=$3
+       WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL RETURNING id`,
+      [credentialId,account.principalId,input.limit],
+    );
+    return result.rowCount ? context.json({ maxActiveCards: input.limit }) : context.json({ error: "not_found" },404);
+  });
+
   app.put("/api/dashboard/credentials/:credentialId/live-activity-policy", async (context) => {
     const account = await dashboardMutationAccount(context);
     if (account instanceof Response) return account;

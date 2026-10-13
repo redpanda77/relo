@@ -748,3 +748,211 @@ final class ContractCodingTests: XCTestCase {
         )
     }
 }
+
+/// docs/CHOICE-QUESTIONS.md, as the phone reads and writes it.
+final class ChoiceQuestionContractTests: XCTestCase {
+    private let options = [
+        InteractionOption(id: "ship", label: "Ship"), InteractionOption(id: "wait", label: "Wait"),
+        InteractionOption(id: "rollback", label: "Roll back"),
+    ]
+
+    private func inboxItem(_ interaction: String, id: String = "ntf_abcdefghijkl") -> String {
+        #"{"id":"\#(id)","kind":"notification","sourceName":"Relo","title":"Which release?","createdAt":"2027-01-15T11:59:00Z","interaction":\#(interaction)}"#
+    }
+
+    func testInboxDecodesAChoiceWithOptionsAndShowsTheChosenLabel() throws {
+        let pending = #"{"id":"int_abcdefghijkl","kind":"choice","prompt":"Which release?","state":"pending","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null,"options":[{"id":"ship","label":"Ship"},{"id":"wait","label":"Wait"},{"id":"rollback","label":"Roll back"}]}"#
+        let answered = #"{"id":"int_bcdefghijklm","kind":"choice","prompt":"Which release?","state":"replied","expiresAt":"2027-01-15T12:10:00Z","respondedAt":"2027-01-15T12:01:00Z","options":[{"id":"ship","label":"Ship"},{"id":"wait","label":"Wait"}],"response":{"optionId":"wait","label":"Wait"}}"#
+        let json = #"{"items":[\#(inboxItem(pending)),\#(inboxItem(answered, id: "ntf_bcdefghijklm"))],"cursor":null,"hasMore":false,"serverTime":"2027-01-15T12:00:01Z"}"#
+        let page = try ReloWireJSON.decoder().decode(InboxPage.self, from: Data(json.utf8))
+
+        let question = try XCTUnwrap(page.items.first?.interaction)
+        XCTAssertEqual(question.kind, .choice)
+        XCTAssertEqual(question.options, options)
+        XCTAssertNil(question.chosenLabel)
+        XCTAssertTrue(NotificationResponsePolicy.supports(.choose, kind: .choice))
+        XCTAssertFalse(NotificationResponsePolicy.supports(.approve, kind: .choice))
+
+        let answer = try XCTUnwrap(page.items.last?.interaction)
+        XCTAssertEqual(answer.chosenLabel, "Wait")
+        let row = HistoryRowProjection.typeLabel(page.items[1])
+        XCTAssertEqual(row, "Choice")
+    }
+
+    func testAnUnknownInteractionKindOrStateCostsOnlyThatInteractionNotThePage() throws {
+        let future = #"{"id":"int_abcdefghijkl","kind":"ranking","prompt":"Rank these","state":"pending","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null}"#
+        let futureState = #"{"id":"int_bcdefghijklm","kind":"approval","prompt":"Ship?","state":"delegated","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null}"#
+        let known = #"{"id":"int_cdefghijklmn","kind":"yes_no","prompt":"Continue?","state":"pending","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null}"#
+        let items = [inboxItem(future), inboxItem(futureState, id: "ntf_bcdefghijklm"), inboxItem(known, id: "ntf_cdefghijklmn")]
+        let json = #"{"items":[\#(items.joined(separator: ","))],"cursor":null,"hasMore":false,"total":3,"serverTime":"2027-01-15T12:00:01Z"}"#
+
+        let history = try ReloWireJSON.decoder().decode(InboxHistoryPage.self, from: Data(json.utf8))
+        XCTAssertEqual(history.items.map(\.id), ["ntf_abcdefghijkl", "ntf_bcdefghijklm", "ntf_cdefghijklmn"])
+        XCTAssertNil(history.items[0].interaction)
+        XCTAssertNil(history.items[1].interaction)
+        XCTAssertEqual(history.items[2].interaction?.kind, .yesNo)
+
+        // A known kind that breaks its own contract is still refused, as before.
+        let broken = #"{"id":"int_abcdefghijkl","kind":"choice","prompt":"Which?","state":"pending","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null}"#
+        let invalid = #"{"items":[\#(inboxItem(broken))],"cursor":null,"hasMore":false,"serverTime":"2027-01-15T12:00:01Z"}"#
+        XCTAssertThrowsError(try ReloWireJSON.decoder().decode(InboxPage.self, from: Data(invalid.utf8)))
+    }
+
+    func testOptionRulesFollowTheWireSpecification() {
+        XCTAssertTrue(InteractionOption.isValidID("roll-back_2"))
+        XCTAssertTrue(InteractionOption.isValidID(String(repeating: "a", count: 32)))
+        XCTAssertFalse(InteractionOption.isValidID(String(repeating: "a", count: 33)))
+        XCTAssertFalse(InteractionOption.isValidID("-ship"))
+        XCTAssertFalse(InteractionOption.isValidID("Ship"))
+        XCTAssertFalse(InteractionOption.isValidID(""))
+        XCTAssertTrue(InteractionOption.isValidList(Array(options.prefix(2))))
+        XCTAssertFalse(InteractionOption.isValidList(Array(options.prefix(1))))
+        XCTAssertFalse(InteractionOption.isValidList(options + [.init(id: "a", label: "A"), .init(id: "b", label: "B")]))
+        XCTAssertFalse(InteractionOption.isValidList([.init(id: "a", label: "Ship"), .init(id: "b", label: "SHIP")]))
+        XCTAssertFalse(InteractionOption.isValidList([.init(id: "a", label: "Two\nlines"), .init(id: "b", label: "B")]))
+    }
+
+    func testChoiceContentStateDecodesFlatOptionsAndRoundTrips() throws {
+        let base = #"{"generation":2,"updatedAt":1786060800,"header":"Relo","title":"Release","subtitle":"Which release?","status":"Response needed","componentsJson":"[]","surfacesJson":"{\"compact_leading\":[],\"compact_trailing\":[],\"expanded_bottom\":[],\"expanded_leading\":[],\"expanded_trailing\":[],\"lock_screen\":[],\"minimal\":[]}","identityJson":"{\"direct\":true}","stateJson":"{\"icon\":\"needs_action\",\"kind\":\"needs_action\",\"tone\":\"attention\"}","behaviorType":"choice","primaryAction":null,"primaryLabel":null,"secondaryAction":null,"secondaryLabel":null,"appearanceJson":"{\"roles\":{\"cardIdentity\":\"project\",\"componentIdentity\":\"thread\",\"statusEmphasis\":\"state\"},\"theme\":\"system\"}","privacy":"standard","sequence":1,"interaction":{"id":"int_abcdefghijkl","notificationID":"ntf_abcdefghijkl","targetDeviceID":"dev_abcdefghijkl","accountID":"acc_abcdefghijkl","kind":"choice","state":"pending","credential":"credential-at-least-32-characters-long","expiresAtUnixSeconds":1786061400}"#
+        let state = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self,
+            from: Data((base + #","choiceOptions":[{"id":"ship","label":"Ship"},{"id":"wait","label":"Wait"},{"id":"rollback","label":"Roll back"}]}"#).utf8))
+        XCTAssertEqual(state.presentation.behavior, .choice(options))
+        XCTAssertTrue(state.presentation.permitsLiveActivityActions)
+        XCTAssertEqual(state.interaction?.kind, "choice")
+        XCTAssertNil(state.primaryLabel)
+
+        // Dates travel as Unix seconds, as they do on the wire.
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        let encoded = try encoder.encode(state)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["behaviorType"] as? String, "choice")
+        XCTAssertEqual((object["choiceOptions"] as? [[String: String]])?.map { $0["id"] }, ["ship", "wait", "rollback"])
+        XCTAssertEqual(try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: encoded), state)
+
+        for invalid in [#"}"#, #","choiceOptions":[{"id":"ship","label":"Ship"}]}"#, #","choiceOptions":"[]"}"#] {
+            XCTAssertThrowsError(try JSONDecoder().decode(
+                ReloActivityAttributes.ContentState.self, from: Data((base + invalid).utf8)), invalid)
+        }
+    }
+
+    func testCardInteractionCarriesAChosenOptionOnlyForChoose() {
+        func interaction(action: NotificationInteractionAction?, optionID: String?, state: String = "pending")
+            -> LiveActivityContentInteraction {
+            .init(id: "int_abcdefghijkl", notificationID: "ntf_abcdefghijkl", targetDeviceID: "dev_abcdefghijkl",
+                  accountID: "acc_abcdefghijkl", kind: "choice", state: state,
+                  credential: String(repeating: "c", count: 43), expiresAtUnixSeconds: 1_786_061_400,
+                  responsePhase: action == nil ? nil : (state == "pending" ? .sending : .accepted),
+                  selectedAction: action, selectedOptionID: optionID)
+        }
+        XCTAssertTrue(interaction(action: nil, optionID: nil).isValidForPresentation)
+        XCTAssertTrue(interaction(action: .choose, optionID: "ship").isValidForPresentation)
+        XCTAssertTrue(interaction(action: .choose, optionID: "ship", state: "replied").isValidForPresentation)
+        XCTAssertFalse(interaction(action: .choose, optionID: nil).isValidForPresentation)
+        XCTAssertFalse(interaction(action: .choose, optionID: "Bad Id").isValidForPresentation)
+        XCTAssertFalse(interaction(action: .approve, optionID: nil).isValidForPresentation)
+        XCTAssertFalse(interaction(action: .choose, optionID: "ship", state: "approved").isValidForPresentation)
+    }
+
+    func testChooseStatusNamesThePickedOption() {
+        XCTAssertEqual(LiveActivityResponsePolicy.canonicalState(for: .choose), "replied")
+        XCTAssertEqual(NotificationResponsePolicy.canonicalState(for: .choose), "replied")
+        XCTAssertEqual(LiveActivityResponsePolicy.status(phase: .accepted, action: .choose, confirmedState: "replied", optionLabel: "Ship"), "Ship")
+        XCTAssertEqual(LiveActivityResponsePolicy.status(phase: .sending, action: .choose, optionLabel: "Ship"), "Sending Ship…")
+        XCTAssertEqual(LiveActivityResponsePolicy.status(phase: .accepted, action: .choose, confirmedState: "replied"), "Replied")
+    }
+
+    func testOutboxRoundTripsTheChosenOptionAndKeysEachOptionSeparately() throws {
+        let response = PendingNotificationResponse(
+            accountID: "acc_abcdefghijkl", deviceID: "dev_abcdefghijkl", notificationID: "ntf_abcdefghijkl",
+            action: .choose, value: ["optionId": "rollback"], idempotencyKey: "ios:install:ntf_abcdefghijkl:choose:rollback",
+            expiresAt: Date(timeIntervalSince1970: 1_786_061_400.5), interactionID: "int_abcdefghijkl",
+            serverOrigin: URL(string: "https://relo.example.test"))
+        let restored = try JSONDecoder().decode(PendingNotificationResponse.self, from: JSONEncoder().encode(response))
+        XCTAssertEqual(restored, response)
+        XCTAssertEqual(restored.optionID, "rollback")
+        XCTAssertTrue(restored.hasValidOption)
+
+        let card = PendingNotificationResponse.liveActivity(
+            accountID: "acc_abcdefghijkl", deviceID: "dev_abcdefghijkl", notificationID: "ntf_abcdefghijkl",
+            activityID: "act_abcdefghijkl", activityGeneration: 3, interactionID: "int_abcdefghijkl",
+            action: .choose, optionID: "ship", credential: String(repeating: "c", count: 43),
+            expiresAt: Date(timeIntervalSince1970: 1_786_061_400))
+        XCTAssertEqual(card.idempotencyKey, "live-activity:act_abcdefghijkl:3:int_abcdefghijkl:choose:ship")
+        XCTAssertEqual(card.value, ["optionId": "ship"])
+        let other = PendingNotificationResponse.liveActivity(
+            accountID: "acc_abcdefghijkl", deviceID: "dev_abcdefghijkl", notificationID: "ntf_abcdefghijkl",
+            activityID: "act_abcdefghijkl", activityGeneration: 3, interactionID: "int_abcdefghijkl",
+            action: .choose, optionID: "wait", credential: String(repeating: "c", count: 43),
+            expiresAt: Date(timeIntervalSince1970: 1_786_061_400))
+        XCTAssertNotEqual(card.idempotencyKey, other.idempotencyKey)
+        XCTAssertEqual(try JSONDecoder().decode(PendingNotificationResponse.self, from: JSONEncoder().encode(card)), card)
+
+        // A confirmed card answer replays with its option.
+        let confirmation = try LiveActivityResponseConfirmation(response: card, canonicalState: "replied", confirmedAt: .now)
+        let replayed = try JSONDecoder().decode(LiveActivityResponseConfirmation.self, from: JSONEncoder().encode(confirmation))
+        XCTAssertEqual(replayed.response(using: String(repeating: "c", count: 43)), card)
+        XCTAssertThrowsError(try LiveActivityResponseConfirmation(response: card, canonicalState: "approved", confirmedAt: .now))
+
+        let missing = PendingNotificationResponse(
+            accountID: "acc_abcdefghijkl", deviceID: "dev_abcdefghijkl", notificationID: "ntf_abcdefghijkl",
+            action: .choose, value: [:], idempotencyKey: "k", expiresAt: .now)
+        XCTAssertFalse(missing.hasValidOption)
+    }
+
+    func testAcknowledgementMustMatchTheChosenOption() throws {
+        let response = PendingNotificationResponse(
+            accountID: "acc_abcdefghijkl", deviceID: "dev_abcdefghijkl", notificationID: "ntf_abcdefghijkl",
+            action: .choose, value: ["optionId": "ship"], idempotencyKey: "k",
+            expiresAt: Date(timeIntervalSince1970: 1_786_061_400), interactionID: "int_abcdefghijkl")
+        let at = Date(timeIntervalSince1970: 1_786_061_000)
+        XCTAssertNoThrow(try NotificationDecisionAcknowledgement(id: "int_abcdefghijkl", state: "replied", respondedAt: at).validate(response))
+        XCTAssertNoThrow(try NotificationDecisionAcknowledgement(
+            id: "int_abcdefghijkl", state: "replied", respondedAt: at,
+            response: .init(optionId: "ship", label: "Ship")).validate(response))
+        XCTAssertThrowsError(try NotificationDecisionAcknowledgement(
+            id: "int_abcdefghijkl", state: "replied", respondedAt: at,
+            response: .init(optionId: "wait", label: "Wait")).validate(response))
+        XCTAssertThrowsError(try NotificationDecisionAcknowledgement(id: "int_abcdefghijkl", state: "approved", respondedAt: at).validate(response))
+        let decoded = try ReloWireJSON.decoder().decode(NotificationDecisionAcknowledgement.self, from: Data(
+            #"{"id":"int_abcdefghijkl","state":"replied","respondedAt":"2026-08-06T23:56:40Z","response":{"optionId":"ship","label":"Ship"}}"#.utf8))
+        XCTAssertEqual(decoded.response?.label, "Ship")
+    }
+
+    func testNotificationMetadataReadsChoiceOptionsAndRefusesAChoiceWithout() {
+        var relo: [String: Any] = [
+            "accountId": "acc_abcdefghijkl", "deviceId": "dev_abcdefghijkl", "interactionId": "int_abcdefghijkl",
+            "interactionType": "choice", "interactionExpiresAt": "2027-01-15T12:10:00Z",
+        ]
+        XCTAssertNil(NotificationDecisionMetadata(relo: relo))
+        relo["interactionOptions"] = [["id": "ship", "label": "Ship"], ["id": "wait", "label": "Wait"]]
+        XCTAssertEqual(NotificationDecisionMetadata(relo: relo)?.options?.map(\.id), ["ship", "wait"])
+        relo["interactionType"] = "approval"
+        XCTAssertNil(NotificationDecisionMetadata(relo: relo)?.options)
+    }
+
+    func testRegistrationAndHeartbeatDeclareChoiceQuestions() throws {
+        let registration = DeviceRegistrationRequest(
+            stableDeviceId: UUID(), installationId: UUID(), name: "iPhone", bundleIdentifier: "com.example.relo",
+            appVersion: "1.0", appBuild: "1", osVersion: "18.0", model: "iPhone", apnsEnvironment: "sandbox",
+            notificationAuthorization: .authorized, liveActivityAuthorization: .authorized)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(registration)) as? [String: Any])
+        XCTAssertEqual(object["capabilities"] as? [String], ["choice_questions"])
+
+        // A registration attempt saved by an older build declared nothing.
+        var legacy = object
+        legacy["capabilities"] = nil
+        let restored = try JSONDecoder().decode(
+            DeviceRegistrationRequest.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(restored.capabilities, [])
+        XCTAssertNotEqual(restored, registration)
+
+        let heartbeat = DeviceHeartbeat(
+            deviceId: "dev_abcdefghijkl", installationId: UUID(), deviceName: "iPhone", bundleId: "com.example.relo",
+            appVersion: "1.0", appBuild: "1", iosVersion: "18.0", deviceModel: "iPhone", apnsToken: "aabb",
+            apnsEnvironment: "sandbox", notificationAuthorization: .authorized, liveActivityAuthorization: .authorized)
+        let beat = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(heartbeat)) as? [String: Any])
+        XCTAssertEqual(beat["capabilities"] as? [String], ["choice_questions"])
+    }
+}

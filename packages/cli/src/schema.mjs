@@ -24,15 +24,20 @@ export const OPTIONS = {
   device: text("Target one phone by ID (repeatable). Omit to reach every phone.", { repeatable: true }),
   "idempotency-key": text("Retry-safe key: a replay returns the first result without a second push.", { pattern: "^[A-Za-z0-9._:-]{1,200}$" }),
   stdin: flag("Read a JSON object from stdin; flags win over its fields."),
-  type: choice(["approval", "yes-no"], "Answer type."),
+  type: choice(["approval", "yes-no", "choice"], "Answer type (choice is implied by --option)."),
   approval: flag("Approve/Deny buttons."),
   "yes-no": flag("Yes/No buttons."),
   "no-wait": flag("ask: return as soon as the question is on the card instead of waiting for the answer. auth login: start the sign-in, store it, print {state:pending,url,code,next} and exit 0 (the default in an agent context)."),
-  "expires-in": duration("How long the question stays answerable (default and maximum 5m; unanswered, the card ends) or the card stays live (default 8h)."),
-  timeout: duration("How long to wait locally (default: --expires-in; 100s inside an agent session, whose shell tool kills long commands). The question stays answerable until it expires: resume with `relo interaction wait ID`."),
+  "expires-in": duration("ask: how long the question stays answerable (default 5m, up to the server's limit, 7 days unless the admin changed it; past 8h the card ends and the question waits in Relo). Cards: how long the card stays live (default 8h)."),
+  "notification-only": flag("ask: send the question as a notification with its answer buttons and never take a Live Activity card (for apps that should not crowd the Lock Screen)."),
+  new: flag("activity start: a card of its own, even when one is already running for this topic (another process's run)."),
+  since: text("listen: resume after this cursor (from an earlier line) or start at this ISO time. Without it, only new answers."),
+  once: flag("listen: one round (up to 60s), then exit."),
+  timeout: duration("listen: stop after this long. Otherwise: how long to wait locally (default: --expires-in; 100s inside an agent session, whose shell tool kills long commands). The question stays answerable until it expires: resume with `relo interaction wait ID`."),
   wait: flag("activity diagnose: wait for the phone to report the card. auth login: resume the sign-in started by --no-wait (up to 100s in an agent context, else --timeout/10m)."),
   style: choice(["standard", "ring", "hero", "terminal", "steps", "approval", "shell", "verdict", "signal"],
     "Layout. Activities: standard|ring|hero|terminal|steps. Live Activity questions: approval|shell|verdict|signal."),
+  option: text("ask: one answer of a choice question (repeat 2-4 times). LABEL, or ID=LABEL to choose the id; labels are one line of up to 24 characters. The reply reports state \"chosen\" with option and label.", { repeatable: true, maxLength: 57 }),
   "primary-label": text("Primary button label on a Live Activity question.", { maxLength: 24 }),
   "secondary-label": text("Secondary button label on a Live Activity question.", { maxLength: 24 }),
   privacy: choice(["standard", "private"], "private: the phone shows only 'Private activity'; title, status and progress are never stored or sent, and the card cannot carry questions."),
@@ -42,7 +47,7 @@ export const OPTIONS = {
   name: text("Pin an explicit card name instead of the session or topic.", { maxLength: 100 }),
   replace: flag("End whatever activity occupies the phone (or holds this name) before starting."),
   status: text("Short state line. Longer text is shortened with an ellipsis, and the reply carries a note.", { maxLength: 60 }),
-  detail: text("Secondary line. Longer text is shortened with a note.", { maxLength: 240 }),
+  detail: text("Cards: one secondary line (up to 240 characters; longer is shortened with a note). ask: the question's explanation (why, risk, what changes), markdown up to 4,000 characters, read in Relo.", { maxLength: 4000 }),
   "clear-detail": flag("Remove the detail line."),
   progress: { type: "string", description: "For scripts and counted jobs (generate 10 images, migrate 400 rows): done/total (3/20, labelled \"3 of 20\" automatically), a percent (40%) or a fraction 0 to 1. Judgment work uses --steps instead; never both on one card; never a guess from time. A bare number above 1 is rejected as ambiguous." },
   "clear-progress": flag("Remove progress."),
@@ -86,9 +91,9 @@ export const OPTIONS = {
 };
 
 const IDENTITY = ["source", "project", "topic", "thread-name", "task-title", "computer", "account"];
-const ASK = ["dry-run", "type", "approval", "yes-no", "expires-in", "timeout", "no-wait", "primary-label", "secondary-label",
+const ASK = ["dry-run", "type", "approval", "yes-no", "option", "detail", "notification-only", "expires-in", "timeout", "no-wait", "primary-label", "secondary-label",
   "device", "idempotency-key", "stdin", "name", ...IDENTITY, "correlation-id", "callback-url", "callback-token-file"];
-const START = ["dry-run", "name", "replace", "title", "status", "detail", "progress", "progress-label", "step", "steps", "step-current", "symbol",
+const START = ["dry-run", "name", "replace", "new", "title", "status", "detail", "progress", "progress-label", "step", "steps", "step-current", "symbol",
   "style", "preset", "theme", "accent-color", "privacy", "expires-in", "stale-after", "device", "idempotency-key", ...IDENTITY, "stdin"];
 
 export const COMMANDS = [
@@ -100,7 +105,7 @@ export const COMMANDS = [
   { name: "activity end", summary: "Finish this work's card. Without --status it reads 'Complete' with a success icon.", positionals: "[CARD]",
     options: ["dry-run", "name", "status", "detail", "clear-detail", "progress", "clear-progress", "symbol", "accent-color", "dismiss-after",
       "if-sequence", "idempotency-key", "stdin"] },
-  { name: "ask", summary: "Ask on this work's card and wait for the answer (inside an agent session, up to 100s). Exit 0 approved/yes, 5 denied/no, 4 no answer: state timeout means the question is still open, so run `relo interaction wait ID`; any other state means closed, do not act.",
+  { name: "ask", summary: "Ask on this work's card and wait for the answer (inside an agent session, up to 100s). The question is one line of at most 120 characters; the why and the risk go in --detail. Exit 0 approved/yes/chosen, 5 denied/no, 4 still open: run `relo interaction wait ID`, 8 closed without an answer (expired, canceled): do not act.",
     positionals: "QUESTION", identity: true, options: ASK },
   { name: "notify send", alias: "notify", summary: "Sparingly: a one-shot message about a finished outcome. Never a question. Inside an agent session the topic comes from the session's card.",
     positionals: "BODY...", identity: true,
@@ -117,6 +122,7 @@ export const COMMANDS = [
   { name: "activity list", summary: "List recent cards, newest first: id, state, title, status, step, progress, updatedAt. --full for everything.", options: ["limit"] },
   { name: "interaction get", summary: "Read a question's state and answer.", positionals: "ID", options: [] },
   { name: "interaction wait", summary: "Resume waiting for an answer (default 60s; 100s inside an agent session).", positionals: "ID", options: ["timeout"] },
+  { name: "listen", summary: "Stream every answer to the questions this login asked, one JSON line each ({id,eventId,state,action,option?,label?,correlationId?,respondedAt,cursor}), over one long-lived connection the app opens. Ends with {cursor,received}. Resume after a restart with --since CURSOR.", options: ["since", "once", "timeout"] },
   { name: "interaction cancel", summary: "Withdraw a pending question.", positionals: "ID", options: [] },
   { name: "devices list", summary: "List signed-in phones: id, name, liveActivities, lastSeenAt. --full for everything.", options: ["page-size"] },
   { name: "services create", summary: "Create a webhook service; returns a secret webhook URL.", options: ["title", "image", "url", "stdin", "secret-file"] },

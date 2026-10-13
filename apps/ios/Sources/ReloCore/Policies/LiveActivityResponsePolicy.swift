@@ -13,6 +13,7 @@ public enum LiveActivityResponsePolicy {
         case .deny: "denied"
         case .yes: "yes"
         case .no: "no"
+        case .choose: "replied"
         case .answer, .opened, .received: nil
         }
     }
@@ -28,6 +29,7 @@ public enum LiveActivityResponsePolicy {
         switch kind {
         case "approval": [.approve, .deny].contains(action)
         case "yes_no": [.yes, .no].contains(action)
+        case "choice": action == .choose
         default: false
         }
     }
@@ -51,11 +53,22 @@ public enum LiveActivityResponsePolicy {
         return interactionState == "pending"
     }
 
+    /// A choice names the picked option (`optionLabel`) in place of the generic action word,
+    /// so the card ends showing what was chosen.
     public static func status(
         phase: LiveActivityResponsePhase,
         action: NotificationInteractionAction,
-        confirmedState: String? = nil
+        confirmedState: String? = nil,
+        optionLabel: String? = nil
     ) -> String {
+        if action == .choose, let optionLabel {
+            switch phase {
+            case .sending: return "Sending \(optionLabel)…"
+            case .queued: return "\(optionLabel) queued"
+            case .accepted: return optionLabel
+            case .rejected: return "Response not recorded"
+            }
+        }
         let label = actionLabel(action)
         switch phase {
         case .sending: return "Sending \(label)…"
@@ -76,6 +89,7 @@ public enum LiveActivityResponsePolicy {
         case .yes: "yes"
         case .no: "no"
         case .answer: "reply"
+        case .choose: "choice"
         case .opened: "opened"
         case .received: "received"
         }

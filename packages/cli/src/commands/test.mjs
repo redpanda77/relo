@@ -1,4 +1,7 @@
 import { parseDuration } from "../args.mjs";
+import { rememberQuestion } from "../answer-verify.mjs";
+import { forgetCardText, saveCardText, sealCardRequest, sealedCardDirectory } from "../seal-card.mjs";
+import { sealQuestion } from "../seal-notice.mjs";
 import { ApiError, EXIT, ReloError, TerminalInteractionError } from "../errors.mjs";
 import { assertAllowedOptions, assertNoExtra, result, validateIdempotencyKey } from "../support.mjs";
 import { DEFAULT_ACTIVITY_STALE_SECONDS, validateActivityWaitResponse } from "./activity.mjs";
@@ -48,10 +51,19 @@ export async function runTestCommand(command) {
       "NO_PHONE", EXIT.NO_DELIVERY, { hint: PHONE_CHECKS });
   }
 
+  // On an account that requires end-to-end encryption the test card and question are sealed
+  // like any other; otherwise the server refuses readable text and the test could never pass.
+  const notes = [];
   const finish = async (cardId, status, symbol) => {
     if (!cardId) return;
-    await client.endActivity(cardId, { status, symbol, dismissAfterSeconds: 60 },
-      `${validateIdempotencyKey(undefined, dependencies.generateIdempotencyKey)}:end`).catch(() => {});
+    const key = validateIdempotencyKey(undefined, dependencies.generateIdempotencyKey);
+    try {
+      const sealed = await sealCardRequest({ body: { status, symbol, dismissAfterSeconds: 60 }, cardId, key, client, config, dependencies, notes });
+      await client.endActivity(cardId, sealed.body, `${key}:end`);
+      if (sealed.text) await forgetCardText(sealedCardDirectory(dependencies.env), cardId);
+    } catch {
+      // Ending the test card is best effort; it goes stale on its own.
+    }
   };
 
   let pending = again ? undefined : config.pendingTest;
@@ -61,21 +73,27 @@ export async function runTestCommand(command) {
   for (;;) {
     if (interactionId === undefined) {
       const key = validateIdempotencyKey(undefined, dependencies.generateIdempotencyKey);
-      const started = await client.startActivity({
+      const card = await sealCardRequest({ body: {
         key: CARD_KEY, acquireMode: "ensure",
         title: "Relo test", status: "Tap Yes if you can see this", symbol: "success",
         context: { providerName: "Relo", project: "Relo setup", threadName: "Phone test", providerThreadId: "relo-test" },
         expiresInSeconds: 900, staleAfterSeconds: DEFAULT_ACTIVITY_STALE_SECONDS,
-      }, `${key}:card`);
+      }, cardId: null, key: CARD_KEY, client, config, dependencies, notes });
+      const started = await client.startActivity(card.body, `${key}:card`);
       cardId = started?.activity?.id;
+      if (card.text && cardId) await saveCardText(sealedCardDirectory(dependencies.env), cardId, card.text);
       if (!started?.delivery?.durableCommands) {
         await finish(cardId, "Ended", "warning");
         throw failure("The test card did not reach any iPhone.", "NO_PHONE", EXIT.NO_DELIVERY, { hint: PHONE_CHECKS });
       }
+      const askedAt = new Date(dependencies.now());
+      const sealed = (await sealQuestion({ title: "Relo test", prompt: PROMPT, key: `${key}:ask`, client, config, dependencies, notes }))?.sealed;
       const created = validateActivityWaitResponse(await client.createActivityWait(cardId, {
-        type: "yes_no", prompt: PROMPT, expiresInSeconds: QUESTION_SECONDS,
-      }, `${key}:ask`), { parentActivityId: cardId, type: "yes_no", prompt: PROMPT });
+        type: "yes_no", ...(sealed ? { sealed } : { prompt: PROMPT }), expiresInSeconds: QUESTION_SECONDS,
+      }, `${key}:ask`), { parentActivityId: cardId, type: "yes_no", prompt: sealed ? undefined : PROMPT });
       interactionId = created.interaction.id;
+      if (sealed) await rememberQuestion(dependencies.env, { interactionId,
+        questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
       await remember(dependencies, config, { pendingTest: { interactionId, cardId, startedAt: new Date(dependencies.now()).toISOString() } });
     }
     try {
@@ -98,7 +116,7 @@ export async function runTestCommand(command) {
         }
         if (pending === undefined) {
           await finish(cardId, "Test ended", "warning");
-          throw failure(`The test question closed with no answer (${state}).`, "PHONE_TEST_CLOSED", EXIT.TERMINAL, {
+          throw failure(`The test question closed with no answer (${state}).`, "PHONE_TEST_CLOSED", EXIT.CLOSED, {
             state, hint: "Run it again: relo test --again",
           });
         }

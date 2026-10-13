@@ -247,6 +247,7 @@ struct ReloRequestGlyph: View {
         case .approval: "checkmark.seal.fill"
         case .yesNo: "arrow.triangle.branch"
         case .text: "text.bubble.fill"
+        case .choice: "list.bullet.circle.fill"
         default: "bell.badge.fill"
         }
     }

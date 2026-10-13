@@ -1,6 +1,8 @@
 import { sealedAlertFor,storedSealedCard,type SealedNotice } from "../sealed-content.js";
 import { SESSION_LOST_AFTER_SECONDS } from "../agent-sessions.js";
 import { createHash,randomUUID } from "node:crypto";
+import { isQuestionBehavior } from "../choice-questions.js";
+import { persistNotificationContent,type NotificationContentCipher,type PreparedNotificationContent } from "../notification-content.js";
 import type { ActivityDeliverySummary,ApnsMode } from "../activities.js";
 import { retireUnsentActivityFrames } from "../activity-delivery-frame.js";
 import { syncActivityPresentationLease } from "../activity-presentation-leases.js";
@@ -196,6 +198,8 @@ export async function createActivityCommands(
     alert?: boolean | undefined;
     /** End-to-end sealed question text, stored on each phone's question event (E4.1). */
     sealed?: SealedNotice | undefined;
+    /** The question's longer detail, stored encrypted with each question event and shown in Relo. */
+    decisionDetail?: { content: PreparedNotificationContent; cipher: NotificationContentCipher } | undefined;
   },
 ): Promise<ActivityDeliverySummary> {
   const freshness = await recordNativeMutation(query,{ activityId: input.activity.id,
@@ -211,9 +215,9 @@ export async function createActivityCommands(
   const provider = input.activity.requester_credential_id && !input.activity.requester_service_id
     ? (input.activity.context as { providerName?: unknown } | null)?.providerName : undefined;
   const sourceName = typeof provider === "string" && provider.trim() ? provider.trim() : input.sourceName;
-  const decisionKind = input.operation !== "end"
-    && (canonical.behavior.type === "approval" || canonical.behavior.type === "yes_no")
+  const decisionKind = input.operation !== "end" && isQuestionBehavior(canonical.behavior.type)
     ? canonical.behavior.type : null;
+  const decisionOptions = canonical.behavior.type === "choice" ? canonical.behavior.options : undefined;
   // Native decisions keep their parent's absolute deadline. Device projections
   // remain separate, but only this native owner can admit their subject keys.
   // No producer-controlled ordinary subject can contend in this namespace.
@@ -302,6 +306,9 @@ export async function createActivityCommands(
     );
     await query.query("UPDATE notification_events SET activity_mutation_id=$2 WHERE id=$1",
       [event.rows[0]!.id,freshness.id]);
+    if (decisionKind && inserted && input.decisionDetail) {
+      await persistNotificationContent(query,input.decisionDetail.cipher,event.rows[0]!.id,input.decisionDetail.content);
+    }
     if (decisionKind && inserted) {
       const admission = await admitOrdinaryEvent(query,decisionActor,{
         kind: "decision",apnsMode: input.apnsMode,eventId: event.rows[0]!.id,
@@ -312,7 +319,7 @@ export async function createActivityCommands(
         }),
         actionDeadlineCap: input.activity.expires_at,
         interaction: { kind: decisionKind,prompt: canonical.content.subtitle ?? canonical.content.status,
-          actionSeconds: decisionSeconds },
+          actionSeconds: decisionSeconds,options: decisionOptions },
       });
       if (admission.kind === "duplicate") throw new Error("unexpected_native_decision_replay");
       if (admission.request?.state === "expired") {

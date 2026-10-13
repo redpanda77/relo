@@ -40,7 +40,7 @@ async function setup({ trust = true, level = "auto" } = {}) {
 }
 
 const refused = (promise, reason) => assert.rejects(promise,
-  (error) => error.exitCode === 4 && error.details.state === "unverified" && (!reason || error.details.reason === reason));
+  (error) => error.exitCode === 8 && error.details.state === "unverified" && (!reason || error.details.reason === reason));
 
 test("without a trusted phone the answer passes through unchanged", async () => {
   const { dependencies, client, cleanup } = await setup({ trust: false });
@@ -98,5 +98,15 @@ test("H2: an answer from a pending (server-added) phone is refused, and verifica
   const { phone, dependencies, client, cleanup } = await setup({ level: "pending" });
   try {
     await refused(verifyAnswer(signed(phone, { question: null }), client, dependencies, { interactionId }));
+  } finally { cleanup(); }
+});
+
+test("a signed choice covers the option: the picked one passes, a swapped one is refused", async () => {
+  const { phone, dependencies, client, cleanup } = await setup(true);
+  try {
+    const picked = signed(phone, { state: "replied", value: "choose:eu", response: { optionId: "eu", label: "EU" } });
+    assert.equal((await verifyAnswer(picked, client, dependencies)).verified, true);
+    const swapped = signed(phone, { state: "replied", value: "choose:eu", response: { optionId: "us", label: "US" } });
+    await refused(verifyAnswer(swapped, client, dependencies));
   } finally { cleanup(); }
 });

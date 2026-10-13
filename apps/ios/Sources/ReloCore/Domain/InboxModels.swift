@@ -336,7 +336,9 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         activitySummary = try values.decodeIfPresent(InboxActivitySummary.self, forKey: .activitySummary)
         activityEvent = try values.decodeIfPresent(InboxHistoryMetadata.ActivityEvent.self, forKey: .activityEvent)
         activity = try values.decodeIfPresent(InboxCardDigest.self, forKey: .activity)
-        interaction = try values.decodeIfPresent(InboxInteraction.self, forKey: .interaction)
+        // An interaction kind or state from a newer server leaves the item readable without it.
+        interaction = try values.decodeSupportedInteraction(
+            InboxInteraction.self, forKey: .interaction, isSupported: InboxInteraction.isSupported)
         context = try values.decodeIfPresent(InboxContext.self, forKey: .context)
         resources = try values.decodeIfPresent(InboxResourceLinks.self, forKey: .resources)
         sealed = try values.decodeIfPresent(InboxSealedNotice.self, forKey: .sealed)

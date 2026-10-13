@@ -1,3 +1,6 @@
+import { assertQuestionWait } from "../question-wait.js";
+import { QuestionWaitTooLongError,questionWaitTooLongBody } from "../question-policy.js";
+import { ChoiceUnsupportedError,choiceUnsupportedBody } from "../choice-questions.js";
 import { cancelLockedInteraction,expireInteraction,respondToInteraction } from "../interactions/commands.js";
 import { createQuestionCardInTransaction } from "../interactions/question-card.js";
 import { createNotification,withdrawNotification } from "../notifications/commands.js";
@@ -91,6 +94,8 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     if (sealedRequest && "error" in sealedRequest) return context.json({ error: sealedRequest.error },400);
     const parsed = createInteractionSchema.parse(sealedRequest ? sealedRequest.body : raw);
     const sealedQuestion = sealedRequest?.sealed ?? null;
+    try { await assertQuestionWait(db,parsed.expiresInSeconds); }
+    catch (error) { if (error instanceof QuestionWaitTooLongError) return context.json(questionWaitTooLongBody(error),400); throw error; }
     if (sealedQuestion && parsed.presentation !== "notification") return context.json({ error: "sealed_requires_notification" },400);
     if (!sealedQuestion && context.get("auth").credentialKind === "principal"
       && await endToEndRequired(db,context.get("auth").principalId)) return context.json(END_TO_END_REQUIRED,409);
@@ -124,7 +129,7 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
           principalId: auth.principalId,sourceId: `credential:${auth.credentialId}`,
           credentialId: auth.credentialId,serviceId: null,
         },input,{ idempotencyKey,requestHash,sourceName,originHash,requestedDeviceIds,
-          apnsMode,deliveryApnsMode: dependencies?.apnsMode });
+          apnsMode,deliveryApnsMode: dependencies?.apnsMode,contentCipher: notificationContentCipher });
         if (result.kind === "created" && input.callback) await registerInteractionCallback(client,callbackEncryption(),{
           principalId: auth.principalId,interactionRequestId: result.interactionRequestId,...input.callback,correlationId: input.correlationId,
         });
@@ -136,9 +141,12 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
         throw error;
       } finally { client.release(); }
     }
-    const result = await createNotification(db,{ kind: "credential",principalId: auth.principalId,credentialId: auth.credentialId },{
+    let result: Awaited<ReturnType<typeof createNotification>>;
+    try {
+    result = await createNotification(db,{ kind: "credential",principalId: auth.principalId,credentialId: auth.credentialId },{
       idempotencyKey,requestHash,sourceName,title: input.title,
-      content: { ...prepareNotificationContent({ body: input.prompt,
+      content: { ...prepareNotificationContent({ body: input.detail ? `${input.prompt}\n\n${input.detail}` : input.prompt,
+        ...(input.detail ? { bodyFormat: "markdown" as const,summary: input.prompt } : {}),
         ...(input.answerInApp ? { summary: "Relo needs you. Open Relo to answer." } : {}) }),
         preview: input.answerInApp ? "Relo needs you. Open Relo to answer." : input.prompt },
       imageUrl: input.imageUrl ?? null,deepLink: input.destinationUrl ?? null,
@@ -147,8 +155,12 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
         ...(input.answerInApp ? { answerInApp: true } : {}),
         ...(sealedQuestion ? { privacy: "private",sealed: sealedQuestion } : {}) },
       deviceIds: requestedDeviceIds,originHash,relevance: input.relevance,
-      interaction: { kind: input.type,prompt: input.prompt,actionSeconds: input.expiresInSeconds },
+      interaction: { kind: input.type,prompt: input.prompt,actionSeconds: input.expiresInSeconds,options: input.options },
     },{ apnsMode,contentCipher: notificationContentCipher });
+    } catch (error) {
+      if (error instanceof ChoiceUnsupportedError) return context.json(choiceUnsupportedBody(error),409);
+      throw error;
+    }
     if (result.kind === "invalid_device_selection") return context.json({ error: result.kind },400);
     if (result.kind === "idempotency_conflict") return context.json({ error: result.kind },409);
     if (!result.interaction) throw new Error("notification_receipt_invalid");
@@ -158,6 +170,45 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     return context.json({ interaction: { id: publicId("int",result.interaction.id),state: result.interaction.state },
       eventId: publicId("ntf",result.eventId),delivery: result.delivery,queued: result.delivery.apnsJobs,
       replayed: result.kind === "replayed",relevance: result.relevance },result.kind === "created" ? 201 : 200);
+  });
+
+  // `relo listen`: every settled question this credential asked, in settle order, resumable by cursor.
+  app.get("/api/interactions/answers", requireScope("interactions:read"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
+    const timeoutSeconds = boundedIntegerQuery(context.req.query("timeoutSeconds"),60,0,300);
+    if (timeoutSeconds === null) return context.json({ error: "invalid_timeout" },400);
+    const after = answerCursor(context.req.query("after"),context.req.query("since"));
+    if (!after) return context.json({ error: "invalid_cursor" },400);
+    const deadline = performance.now() + timeoutSeconds * 1000;
+    const subscription = dependencies?.interactionChanges
+      ? dependencies.interactionChanges.subscribe(auth.principalId,"*",auth.credentialId)
+      : new ChangeSubscription();
+    if (!subscription) return context.json({ error: "wait_capacity_exceeded" },429);
+    try {
+      do {
+        if (context.req.raw.signal.aborted) return new Response(null,{ status: 499 });
+        const result = await db.query<any>(
+          `SELECT *,to_char(settled_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS settled_at_iso FROM (${interactionResultSelection.replace("SELECT r.id,","SELECT COALESCE(r.responded_at,r.expires_at) AS settled_at,e.payload->>'correlationId' AS correlation_id,r.id,")}
+             WHERE r.principal_id=$1 AND e.requester_credential_id=$2 AND r.state<>'pending'
+               AND EXISTS (SELECT 1 FROM principal_api_keys k WHERE k.id=$2 AND k.revoked_at IS NULL
+                 AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))) answered
+           WHERE (settled_at,id)>($3::timestamptz,$4::uuid)
+           ORDER BY settled_at,id LIMIT 50`,
+          [auth.principalId,auth.credentialId,after.at,after.id],
+        );
+        if (result.rowCount || performance.now() >= deadline) {
+          const last = result.rows.at(-1);
+          const cursor = last ? encodeAnswerCursor(last.settled_at_iso,last.id) : encodeAnswerCursor(after.at,after.id);
+          return context.json({ answers: result.rows.map((row: any) => ({
+            ...interactionResource(row),correlationId: row.correlation_id ?? null,
+            cursor: encodeAnswerCursor(row.settled_at_iso,row.id),
+          })),cursor });
+        }
+        const remaining = Math.max(0,Math.min(5_000,deadline-performance.now()));
+        if (await subscription.wait(remaining,context.req.raw.signal) === "aborted") return new Response(null,{ status: 499 });
+      } while (true);
+    } finally { subscription.close(); }
   });
 
   app.get("/api/interactions/:interactionId", requireScope("interactions:read"), async (context) => {
@@ -354,4 +405,27 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     finally { client.release(); }
   });
 
+}
+
+const ZERO_ID = "00000000-0000-0000-0000-000000000000";
+
+/** Opaque, URL-safe position in the answer stream: settle time (to the microsecond) and request id. */
+export function encodeAnswerCursor(at: string,id: string): string {
+  return Buffer.from(JSON.stringify(["answers-v1",at,id])).toString("base64url");
+}
+
+/** after=<cursor> resumes; since=<ISO time> starts there; neither starts now (only new answers). */
+export function answerCursor(after: string | undefined,since: string | undefined): { at: string; id: string } | null {
+  if (after !== undefined) {
+    try {
+      const [version,at,id] = JSON.parse(Buffer.from(after,"base64url").toString("utf8"));
+      if (version !== "answers-v1" || Number.isNaN(Date.parse(at)) || !z.uuid().safeParse(id).success) return null;
+      return { at,id };
+    } catch { return null; }
+  }
+  if (since !== undefined) {
+    const at = Date.parse(since);
+    return Number.isNaN(at) ? null : { at: new Date(at).toISOString(),id: ZERO_ID };
+  }
+  return { at: new Date().toISOString(),id: ZERO_ID };
 }

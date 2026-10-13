@@ -331,6 +331,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - [ROADMAP.md](ROADMAP.md) — current outcome, priorities, and release sequence
 - [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) — deployment and private-network notes
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system boundaries and ownership
+- [docs/INTEGRATING.md](docs/INTEGRATING.md) — integrating an app: questions, callbacks, `relo listen`, exit codes
 - [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) — threat model, protocol, and
   rollout of end-to-end encryption
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution workflow

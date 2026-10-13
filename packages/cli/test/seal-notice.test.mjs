@@ -129,6 +129,11 @@ test("questions are sealed for the account's phones automatically, with the prom
     assert.deepEqual(openEnvelope(sealed.alerts[0], options).content, { title: "Release", summary: args.prompt });
     const { sealed: retry } = await sealQuestion(args);
     assert.equal(retry.content.ct, sealed.content.ct, "an exact retry seals identically");
+    // The question's detail is the sealed body, never sent beside it.
+    const { sealed: detailed } = await sealQuestion({ ...args, key: "k-q2", detail: "Rewrites the orders table" });
+    assert.ok(!JSON.stringify(detailed).includes("orders table"));
+    assert.deepEqual(openEnvelope(detailed.content, options).content,
+      { title: "Release", summary: args.prompt, body: "Rewrites the orders table", bodyFormat: "markdown" });
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

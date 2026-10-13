@@ -67,7 +67,11 @@ test("questions carry a callback read from a token file and a correlation ID", a
   await assert.rejects(execute(["ask","Ship?","--approval","--topic","Release","--callback-url","https://ci.example.com/relo"],deps),
     /16-512 character token/);
   await assert.rejects(execute(["ask","Ship?","--approval","--topic","Release","--callback-url","https://localhost/relo",
-    "--callback-token-file","/secure/token"],deps),/public HTTPS/);
+    "--callback-token-file","/secure/token"],deps),/server's own localhost/);
+  // A private-network receiver is the server admin's call, not the CLI's.
+  await execute(["ask","Ship?","--approval","--no-wait","--topic","Release","--callback-url","http://ci.internal:8080/relo",
+    "--callback-token-file","/secure/token"],deps);
+  assert.equal(fake.calls.filter((call) => call.op === "ask").at(-1).body.callback.url,"http://ci.internal:8080/relo");
 });
 
 test("activities accept the ring style and private mode", async () => {

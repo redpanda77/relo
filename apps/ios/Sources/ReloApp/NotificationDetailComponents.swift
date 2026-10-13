@@ -17,10 +17,12 @@ struct ReloMessageKind {
                 case .approval: (label, symbol) = ("Approval request", "checkmark.seal.fill")
                 case .yesNo: (label, symbol) = ("Question", "arrow.triangle.branch")
                 case .text: (label, symbol) = ("Reply requested", "text.bubble.fill")
+                case .choice: (label, symbol) = ("Choice", "list.bullet.circle.fill")
                 }
             case .approved, .yes, .replied:
-                (label, symbol, color) = (interaction.state == .replied ? "Replied" : interaction.state == .yes ? "Answered yes" : "Approved",
-                                          "checkmark.circle.fill", .reloDone)
+                let answered = interaction.chosenLabel.map { "Chose \($0)" }
+                    ?? (interaction.state == .replied ? "Replied" : interaction.state == .yes ? "Answered yes" : "Approved")
+                (label, symbol, color) = (answered, "checkmark.circle.fill", .reloDone)
             case .denied, .no:
                 (label, symbol, color) = (interaction.state == .no ? "Answered no" : "Denied", "xmark.circle.fill", .reloErrorText)
             case .expired, .canceled:

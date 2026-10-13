@@ -3,6 +3,7 @@ import Foundation
 import UserNotifications
 #endif
 @testable import ReloNotificationSupport
+@testable import ReloCore
 import XCTest
 
 final class ReloNotificationEnvelopeTests: XCTestCase {
@@ -511,6 +512,131 @@ final class ReloNotificationEnvelopeTests: XCTestCase {
         await fulfillment(of: [receiptFinished], timeout: 1)
         orchestrator.timeout()
         XCTAssertEqual(capture.values.count, 1)
+    }
+
+    // MARK: Choice questions
+
+    private func choicePayload(privacy: String = "standard", options: Any? = nil) -> [AnyHashable: Any] {
+        ["relo": [
+            "notificationId": "ntf_choice123456",
+            "privacy": privacy,
+            "interactionType": "choice",
+            "interactionId": "int_choice123456",
+            "interactionOptions": options ?? [
+                ["id": "ship", "label": "Ship"], ["id": "wait", "label": "Wait"],
+                ["id": "rollback", "label": "Roll back"],
+            ],
+        ] as [String: Any]]
+    }
+
+    func testStandardChoiceEnvelopeBuildsOnePerQuestionCategoryWithOptionActions() throws {
+        let envelope = try XCTUnwrap(ReloNotificationEnvelope(userInfo: choicePayload(), requestIdentifier: "fallback"))
+        let category = try XCTUnwrap(envelope.choiceCategory)
+        XCTAssertEqual(category.identifier, "RELO_CHOICE.int_choice123456")
+        XCTAssertEqual(category.actions.map(\.identifier), ["RELO_OPTION.ship", "RELO_OPTION.wait", "RELO_OPTION.rollback"])
+        XCTAssertEqual(category.actions.map(\.title), ["Ship", "Wait", "Roll back"])
+    }
+
+    func testPrivateOrMalformedChoiceRegistersNoCategory() throws {
+        let hidden = try XCTUnwrap(ReloNotificationEnvelope(
+            userInfo: choicePayload(privacy: "private"), requestIdentifier: "fallback"))
+        XCTAssertNil(hidden.choiceCategory)
+        for options: Any in [
+            [["id": "ship", "label": "Ship"]],
+            [["id": "Ship", "label": "Ship"], ["id": "wait", "label": "Wait"]],
+            [["id": "ship", "label": "Ship"], ["id": "wait", "label": "ship"]],
+            [["id": "ship", "label": "Ship"], ["id": "ship", "label": "Wait"]],
+            [["id": "ship", "label": String(repeating: "x", count: 25)], ["id": "wait", "label": "Wait"]],
+            [["id": "ship"], ["id": "wait", "label": "Wait"]],
+            "not-a-list",
+        ] {
+            let envelope = try XCTUnwrap(ReloNotificationEnvelope(
+                userInfo: choicePayload(options: options), requestIdentifier: "fallback"))
+            XCTAssertNil(envelope.choiceCategory, "\(options)")
+        }
+        let approval = try XCTUnwrap(ReloNotificationEnvelope(
+            userInfo: ["relo": ["notificationId": "ntf_choice123456", "interactionType": "approval",
+                                "interactionId": "int_choice123456"]],
+            requestIdentifier: "fallback"))
+        XCTAssertNil(approval.choiceCategory)
+    }
+
+    func testChoiceCategoryRetentionKeepsTheNewestTwentyAndNeverTouchesStaticCategories() {
+        let policy = ChoiceNotificationCategoryPolicy.self
+        let registered = ["RELO_APPROVAL", "RELO_YES_NO", "RELO_CHOICE"]
+            + (0..<25).map { "RELO_CHOICE.int_\($0)" } + ["RELO_CHOICE.int_unknown"]
+        let order = (0..<25).map { "RELO_CHOICE.int_\($0)" }
+        let retained = policy.retainedIdentifiers(registered: registered, recentOrder: order, adding: "RELO_CHOICE.int_new")
+        XCTAssertEqual(retained.count, 20)
+        XCTAssertEqual(retained.last, "RELO_CHOICE.int_new")
+        XCTAssertEqual(retained.first, "RELO_CHOICE.int_6")
+        XCTAssertFalse(retained.contains("RELO_CHOICE.int_unknown"), "unordered categories are the oldest")
+        XCTAssertFalse(retained.contains("RELO_CHOICE"))
+        XCTAssertFalse(retained.contains("RELO_APPROVAL"))
+
+        // Re-registering a question moves it to the newest end without duplicating it.
+        let again = policy.retainedIdentifiers(
+            registered: ["RELO_CHOICE.int_a", "RELO_CHOICE.int_b"], recentOrder: ["RELO_CHOICE.int_a", "RELO_CHOICE.int_b"],
+            adding: "RELO_CHOICE.int_a")
+        XCTAssertEqual(again, ["RELO_CHOICE.int_b", "RELO_CHOICE.int_a"])
+
+        XCTAssertTrue(policy.isPerQuestionCategory("RELO_CHOICE.int_a"))
+        XCTAssertFalse(policy.isPerQuestionCategory("RELO_CHOICE"))
+        XCTAssertFalse(policy.isPerQuestionCategory("RELO_CHOICE."))
+        XCTAssertEqual(policy.optionID(fromActionIdentifier: "RELO_OPTION.roll-back"), "roll-back")
+        XCTAssertNil(policy.optionID(fromActionIdentifier: "RELO_OPTION.Ship"))
+        XCTAssertNil(policy.optionID(fromActionIdentifier: "RELO_APPROVE"))
+        XCTAssertNil(policy.category(interactionID: "int bad", options: [.init(id: "a", label: "A"), .init(id: "b", label: "B")]))
+    }
+
+    func testRegisteredChoiceCategoryReplacesTheStaticOneBeforeDelivery() async {
+        let capture = LockedCapture<TestNotificationContent>()
+        let orchestrator = makeTestOrchestrator(capture: capture)
+        var order: [String] = []
+        await orchestrator.run(
+            context: ReloNotificationOrchestrationContext(
+                hasEnvelope: true, isPrivate: false, supportsCommunicationStyle: false, conversationIdentifier: nil),
+            prepareCategory: {
+                order.append("category")
+                return "RELO_CHOICE.int_choice123456"
+            },
+            enrichMedia: { content in
+                order.append("media")
+                return content
+            },
+            donateAndUpdate: { _ in .donationFailed }
+        )
+        XCTAssertEqual(order, ["category", "media"])
+        XCTAssertEqual(capture.values.count, 1)
+        XCTAssertEqual(capture.values.first?.category, "RELO_CHOICE.int_choice123456")
+        XCTAssertEqual(capture.values.first?.thread, "existing-thread")
+    }
+
+    func testUnregisteredOrLateChoiceCategoryKeepsTheServerCategory() async {
+        let failed = LockedCapture<TestNotificationContent>()
+        await makeTestOrchestrator(capture: failed).run(
+            context: ReloNotificationOrchestrationContext(
+                hasEnvelope: true, isPrivate: false, supportsCommunicationStyle: false, conversationIdentifier: nil),
+            prepareCategory: { nil },
+            enrichMedia: { $0 },
+            donateAndUpdate: { _ in .donationFailed }
+        )
+        XCTAssertEqual(failed.values.map(\.category), ["RELO_APPROVAL"])
+
+        // The deadline wins while registration is still pending: the content never names it.
+        let late = LockedCapture<TestNotificationContent>()
+        let orchestrator = makeTestOrchestrator(capture: late)
+        await orchestrator.run(
+            context: ReloNotificationOrchestrationContext(
+                hasEnvelope: true, isPrivate: false, supportsCommunicationStyle: false, conversationIdentifier: nil),
+            prepareCategory: {
+                orchestrator.timeout()
+                return "RELO_CHOICE.int_choice123456"
+            },
+            enrichMedia: { $0 },
+            donateAndUpdate: { _ in .donationFailed }
+        )
+        XCTAssertEqual(late.values.map(\.category), ["RELO_APPROVAL"])
     }
 
     private func makeTestOrchestrator(

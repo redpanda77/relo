@@ -20,8 +20,8 @@ Identity: source, project, computer and account are automatic; only --topic (the
 Several agent accounts on this computer? Name each once: relo account work
 
 Output is one compact JSON line (--full for the whole server reply). Errors print once, with a hint.
-Exit: 0 ok/approved/yes · 5 denied/no · 4 no answer (card ended: do not act) · 2 usage · 3 auth (relo auth login)
-      1 server · 6 network · 7 no phone got it
+Exit: 0 ok/approved/yes/chosen · 5 denied/no · 4 still open (resume) · 8 closed, no answer (do not act)
+      2 usage · 3 auth (relo auth login) · 1 server · 6 network · 7 no phone got it
 relo doctor: ready? (follow next.run) · relo auth login (agents: prints the link, then relo auth login --wait) · relo test (once)
 relo skill install --agent <claude-code|codex|opencode|gemini|amp|cursor|copilot> · relo skill status (owner's choice)
 relo keys status: end-to-end encryption is automatic (relo keys verify is optional)
@@ -79,14 +79,26 @@ Cards (Live Activities): the default for anything in progress or waiting on the 
       and print {"ok":true,"dryRun":true,"would":{"command","body"},"note"?} with no request and no login needed.
       update --next-step/--step-current cannot read the card in a dry run; the note says the step resolution is skipped.
 
-Questions: on this work's card, with answer buttons (up to 240 characters)
-  relo ask QUESTION (--approval|--yes-no) [--topic NAME] [--expires-in 5m] [--timeout 100s|--no-wait]
+Questions: on this work's card, with answer buttons
+  relo ask QUESTION (--approval|--yes-no|--option LABEL ×2-4) [--detail TEXT] [--topic NAME] [--expires-in 5m] [--timeout 100s|--no-wait]
            [--primary-label L] [--secondary-label L] [--correlation-id ID]
            [--callback-url URL --callback-token-file PATH] [--name NAME] [--idempotency-key KEY]
-      Waits for the answer: up to 5m, or 100s inside an agent session (your shell tool would kill it
-      sooner). Exit 0 approved/yes, 5 denied/no, 4 no answer. State "timeout" means still open: run
-      relo interaction wait ID. Anything else (expired, canceled) means closed: do not act. No card yet? ask starts one.
+      The question waits 5m by default; --expires-in asks for longer, up to the server's limit (7 days
+      unless the admin changed it). Past 8h the card ends and the question keeps waiting in Relo. The
+      command waits up to 5m, or 100s inside an agent session (your shell tool would kill it sooner). Exit 0 approved/yes/chosen, 5 denied/no, 4 still open: run
+      relo interaction wait ID, 8 closed without an answer (expired, canceled): do not act. No card yet? ask starts one.
+      QUESTION is the decision in one line of at most 120 characters: the card and its buttons show it.
+      --detail carries the rest (why, risk, what changes): markdown up to 4,000 characters, read in Relo.
+      --option offers 2-4 answers instead of Approve/Deny (LABEL or ID=LABEL, up to 24 characters each). The
+      reply is {"state":"chosen","option":"ID","label":"LABEL"}, exit 0. Every phone it reaches needs a current
+      Relo build; otherwise it is refused with choice_unsupported and nothing is asked.
+      --notification-only asks with a notification that carries the answer buttons and takes no card. A login
+      the owner limited to N open cards (Dashboard > Connections) does this on its own once the limit is reached.
   relo interaction get ID · relo interaction wait ID [--timeout 60s; 100s in an agent session] · relo interaction cancel ID
+  relo listen [--since CURSOR|TIME] [--once] [--timeout DURATION]
+      Every answer to this login's questions as one JSON line each, over one connection the app opens (no
+      inbound port needed). Each line has a cursor; --since CURSOR resumes after a restart. Answers can
+      also arrive by --callback-url (signed: Relo-Signature, Relo-Delivery-Id) or by relo interaction wait ID.
 
 Notifications: sparingly, for finished outcomes
   relo notify [BODY...] [--title T] [--summary T] [--markdown|--format text|markdown] [--image URL] [--url URL]
@@ -185,8 +197,8 @@ Global options:
 
 Exit codes:
   0 success/approved/yes   1 API/other failure   2 usage
-  3 authentication/scope   4 timeout/canceled/expired
-  5 denied/no              6 network             7 no accepted device
+  3 authentication/scope   4 still open (resume)     5 denied/no
+  6 network                7 no accepted device  8 closed without an answer (expired/canceled)
 
 Supplied idempotency keys use 1-200 characters from A-Z, a-z, 0-9, ., _, :, and -.
 Credentials come from the mode-0600 config file (relo auth login) or RELO_TOKEN. Token flags are forbidden.`;

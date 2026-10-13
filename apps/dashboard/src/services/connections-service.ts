@@ -37,6 +37,7 @@ export interface ConnectionsService {
   deleteService(id: string): Promise<void>
   revokePhone(id: string): Promise<void>
   revokeClient(id: string): Promise<void>
+  setClientCardLimit(id: string, limit: number | null): Promise<void>
   saveServiceLiveActivityPolicy(
     id: string,
     input: PresentationPolicy
@@ -114,6 +115,13 @@ export function createHttpConnectionsService(): ConnectionsService {
         `/api/dashboard/devices/${encodeURIComponent(id)}/revoke`,
         { method: "POST" }
       )
+    },
+    async setClientCardLimit(id, limit) {
+      await jsonRequest(`/api/dashboard/credentials/${encodeURIComponent(id)}/card-limit`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ limit }),
+      })
     },
     async revokeClient(id) {
       await jsonRequest(

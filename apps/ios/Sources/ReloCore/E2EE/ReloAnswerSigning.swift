@@ -11,8 +11,9 @@ public enum ReloAnswerSigning {
     public static let questionField = "e2eeQuestion"
     public static let questionSignatureField = "e2eeQuestionSignature"
 
-    /// What the signature covers for an action: the action itself, or a digest of a typed reply.
+    /// What the signature covers for an action: the action itself, the picked option, or a digest of a typed reply.
     public static func signedValue(action: NotificationInteractionAction, value: [String: String]) -> String {
+        if action == .choose { return "choose:" + (value["optionId"] ?? "") }
         if action == .answer {
             let text = value["response"] ?? ""
             return "answer:" + SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()

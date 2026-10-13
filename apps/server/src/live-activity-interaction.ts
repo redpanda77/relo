@@ -16,8 +16,8 @@ export const activityKitInteractionWireSchema = z.object({
   notificationID: z.string().regex(/^ntf_[0-9a-f-]{36}$/i),
   targetDeviceID: z.string().regex(/^dev_[0-9a-f-]{36}$/i),
   accountID: z.string().regex(/^acc_[0-9a-f-]{36}$/i),
-  kind: z.enum(["approval", "yes_no"]),
-  state: z.enum(["pending", "approved", "denied", "yes", "no", "expired", "canceled"]),
+  kind: z.enum(["approval", "yes_no", "choice"]),
+  state: z.enum(["pending", "approved", "denied", "yes", "no", "replied", "expired", "canceled"]),
   credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   expiresAtUnixSeconds: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 }).strict();
@@ -70,7 +70,7 @@ export function verifyLiveActivityCredential(
 export function projectLiveActivityCommand(
   secret: string,
   input: LiveActivityCredentialInput & {
-    interactionKind: "approval" | "yes_no";
+    interactionKind: "approval" | "yes_no" | "choice";
     interactionState: string;
   },
   command: Record<string,unknown>,

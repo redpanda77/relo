@@ -1,4 +1,5 @@
 import type { RelevanceItem } from "@relo/notification-contracts";
+import type { QuestionInteraction } from "../interactions/types.js";
 import type { ApnsMode } from "../activities.js";
 import type { PreparedNotificationContent,NotificationContentCipher } from "../notification-content.js";
 import type { SubjectCommand } from "../relevance/commands.js";
@@ -23,10 +24,9 @@ export type CreateNotificationCommand = {
   imageUrl: string | null; deepLink: string | null; avatarUrl?: string | null | undefined;
   payload: Record<string,unknown>; deviceIds: string[] | null; originHash: string | null;
   relevance?: SubjectCommand | undefined;
-  interaction?: {
-    kind: "approval" | "yes_no" | "text"; prompt: string; actionSeconds: number;
-    actionDeadlineCap?: Date | string | undefined;
-  } | undefined;
+  interaction?: (QuestionInteraction & { actionDeadlineCap?: Date | string | undefined }) | undefined;
+  /** Stored and shown in Relo without an alert: another surface of the same decision already alerted. */
+  quiet?: boolean | undefined;
 };
 export type NotificationDependencies = { apnsMode: ApnsMode; contentCipher: NotificationContentCipher | null };
 export type NotificationReceipt = {

@@ -7,12 +7,63 @@ public struct CurrentVersion: Codable, Equatable, Sendable {
 }
 
 public struct CurrentDecision: Codable, Equatable, Sendable {
-    public enum Kind: String, Codable, Sendable { case approval, yesNo = "yes_no", text }
+    public enum Kind: String, Codable, Sendable { case approval, yesNo = "yes_no", text, choice }
     public enum State: String, Codable, Sendable { case pending }
     public let id: String
     public let type: Kind
     public let state: State
     public let expiresAt: Date
+    /// A choice question's answers; nil for every other kind.
+    public let options: [InteractionOption]?
+
+    public init(id: String, type: Kind, state: State, expiresAt: Date, options: [InteractionOption]? = nil) {
+        self.id = id; self.type = type; self.state = state; self.expiresAt = expiresAt
+        self.options = type == .choice ? options : nil
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, type, state, expiresAt, options }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        type = try values.decode(Kind.self, forKey: .type)
+        state = try values.decode(State.self, forKey: .state)
+        expiresAt = try values.decode(Date.self, forKey: .expiresAt)
+        if type == .choice {
+            let decoded = try values.decode([InteractionOption].self, forKey: .options)
+            guard InteractionOption.isValidList(decoded) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .options, in: values, debugDescription: "A choice needs 2–4 distinct options")
+            }
+            options = decoded
+        } else {
+            options = nil
+        }
+    }
+
+    static func isSupported(_ probe: InteractionCompatibilityProbe) -> Bool {
+        probe.type.flatMap(Kind.init(rawValue:)) != nil && probe.state.flatMap(State.init(rawValue:)) != nil
+    }
+}
+
+/// One element of a current or pending list: the decoded item, or the subject a newer server
+/// sent with an interaction this build cannot answer. Such an item is left out of the list.
+private struct SupportedCurrentElement<Item: Decodable>: Decodable {
+    private struct Probe: Decodable {
+        let subjectId: String?
+        let interaction: InteractionCompatibilityProbe?
+    }
+    let item: Item?
+    let unsupportedSubjectID: String?
+
+    init(from decoder: Decoder) throws {
+        let probe = try Probe(from: decoder)
+        if let interaction = probe.interaction, !CurrentDecision.isSupported(interaction) {
+            item = nil; unsupportedSubjectID = probe.subjectId
+        } else {
+            item = try Item(from: decoder); unsupportedSubjectID = nil
+        }
+    }
 }
 
 public struct CurrentActivity: Codable, Equatable, Sendable {
@@ -98,6 +149,35 @@ public struct CurrentInboxResponse: Codable, Equatable, Sendable {
     public let counts: CurrentCounts
     public let nextExpiryAt: Date?
     public let serverTime: Date
+    /// Subjects the server sent with an interaction this build cannot answer. They are left out
+    /// of `items` but still count as answered when specific subjects were requested.
+    public var unsupportedSubjectIDs: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case items, retired, total, cursor, hasMore, counts, nextExpiryAt, serverTime
+    }
+
+    public init(
+        items: [CurrentSubjectProjection], retired: [RetiredCurrentSubject], total: Int, cursor: String?,
+        hasMore: Bool, counts: CurrentCounts, nextExpiryAt: Date?, serverTime: Date
+    ) {
+        self.items = items; self.retired = retired; self.total = total; self.cursor = cursor
+        self.hasMore = hasMore; self.counts = counts; self.nextExpiryAt = nextExpiryAt; self.serverTime = serverTime
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let elements = try values.decode([SupportedCurrentElement<CurrentSubjectProjection>].self, forKey: .items)
+        items = elements.compactMap(\.item)
+        unsupportedSubjectIDs = elements.compactMap(\.unsupportedSubjectID)
+        retired = try values.decode([RetiredCurrentSubject].self, forKey: .retired)
+        total = try values.decode(Int.self, forKey: .total)
+        cursor = try values.decodeIfPresent(String.self, forKey: .cursor)
+        hasMore = try values.decode(Bool.self, forKey: .hasMore)
+        counts = try values.decode(CurrentCounts.self, forKey: .counts)
+        nextExpiryAt = try values.decodeIfPresent(Date.self, forKey: .nextExpiryAt)
+        serverTime = try values.decode(Date.self, forKey: .serverTime)
+    }
 
     public func isValid(requestedIDs: [String]?) -> Bool {
         let identities = items.map(\.subjectId) + retired.map(\.subjectId)
@@ -108,7 +188,9 @@ public struct CurrentInboxResponse: Codable, Equatable, Sendable {
               retired.allSatisfy({ CurrentWireIdentity.isSubject($0.subjectId) && ($0.version?.isValid ?? true)
                 && ($0.reason != .notFound || $0.version == nil) }),
               hasMore == (cursor != nil), (cursor?.utf8.count ?? 0) <= 512 else { return false }
-        if let requestedIDs { return !hasMore && Set(identities) == Set(requestedIDs) }
+        if let requestedIDs {
+            return !hasMore && Set(identities).union(unsupportedSubjectIDs) == Set(requestedIDs)
+        }
         return retired.isEmpty
     }
 }
@@ -137,6 +219,28 @@ public struct PendingCurrentPage: Codable, Equatable, Sendable {
     public let cursor: String?
     public let nextExpiryAt: Date?
     public let serverTime: Date
+
+    private enum CodingKeys: String, CodingKey { case items, total, hasMore, cursor, nextExpiryAt, serverTime }
+
+    public init(
+        items: [PendingCurrentDecision], total: Int, hasMore: Bool, cursor: String?,
+        nextExpiryAt: Date?, serverTime: Date
+    ) {
+        self.items = items; self.total = total; self.hasMore = hasMore; self.cursor = cursor
+        self.nextExpiryAt = nextExpiryAt; self.serverTime = serverTime
+    }
+
+    /// A decision whose kind or state this build cannot answer is left out of the page.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        items = try values.decode([SupportedCurrentElement<PendingCurrentDecision>].self, forKey: .items)
+            .compactMap(\.item)
+        total = try values.decode(Int.self, forKey: .total)
+        hasMore = try values.decode(Bool.self, forKey: .hasMore)
+        cursor = try values.decodeIfPresent(String.self, forKey: .cursor)
+        nextExpiryAt = try values.decodeIfPresent(Date.self, forKey: .nextExpiryAt)
+        serverTime = try values.decode(Date.self, forKey: .serverTime)
+    }
 
     public func isValid(limit: Int) -> Bool {
         items.count <= limit && total >= items.count && hasMore == (cursor != nil)

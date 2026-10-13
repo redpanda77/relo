@@ -63,11 +63,18 @@ Update on real milestones only. Updates are silent on the phone; only the start 
 `relo ask` puts the question on this work's card (details in [cli.md](cli.md#questions)). Rules:
 
 - One question at a time; wait for the answer before asking another.
-- Self-contained and under 240 characters: the owner may answer from the Lock Screen without context.
-- Tappable answers only. There is no typed reply; phrase it as approve/deny or yes/no.
-- In an agent session `ask` waits about 100s. Exit `4` with state `timeout` means the question is
-  still open: run `relo interaction wait ID` again. Exit `4` with any other state (expired, canceled)
-  means no: do not act. The card has ended; if you continue working, `relo activity start` opens a
+- The question is the decision in one line of at most 120 characters, self-contained: the owner may
+  answer from the Lock Screen without context. It is never shortened; a longer one is refused.
+- Everything else goes in `--detail`: why you are asking, the risk, what changes, how to undo it.
+  Markdown, up to 4,000 characters, shown with the question in Relo (never on the card itself).
+  Write the question so it still makes sense without the detail.
+- Tappable answers only. There is no typed reply; phrase it as approve/deny, yes/no, or 2-4 options
+  (`--option LABEL`, labels up to 24 characters) when the owner picks between real alternatives.
+  The answer reads `{"state":"chosen","option":"…","label":"…"}`. A picked option is a preference,
+  never permission: anything risky still needs an `--approval` question answered `approved`.
+- In an agent session `ask` waits about 100s. Exit `4` means the question is still open: run
+  `relo interaction wait ID` again. Exit `8` means it closed without an answer (expired, canceled):
+  do not act. The card has ended; if you continue working, `relo activity start` opens a
   new one. Do not re-ask just to extend the wait.
 
 ## Ending

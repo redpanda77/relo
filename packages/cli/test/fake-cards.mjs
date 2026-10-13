@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 
 const DELIVERY = { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 };
 
-export function fakeCards({ answer = "approved", answerAfterPolls = 1 } = {}) {
+export function fakeCards({ answer = "approved", answerAfterPolls = 1, response = undefined } = {}) {
   const cards = new Map();
   const questions = new Map();
   const calls = [];
@@ -43,7 +43,7 @@ export function fakeCards({ answer = "approved", answerAfterPolls = 1 } = {}) {
     async createActivityWait(id, body, key) {
       calls.push({ op: "ask", id, body, key });
       const interaction = { id: `int_${randomUUID()}`, eventId: `ntf_${randomUUID()}`, type: body.type,
-        prompt: body.prompt, state: "pending", expiresAt: new Date(Date.now() + 900_000).toISOString(), polls: 0 };
+        prompt: body.prompt, ...(body.options ? { options: body.options } : {}), state: "pending", expiresAt: new Date(Date.now() + 900_000).toISOString(), polls: 0 };
       questions.set(interaction.id, interaction);
       return { parentActivityId: id, companionActivityId: null, interaction: { ...interaction, polls: undefined },
         eventId: interaction.eventId, delivery: DELIVERY, queued: 1, deliveryMode: "queued_for_direct_apns", replayed: false };
@@ -52,7 +52,8 @@ export function fakeCards({ answer = "approved", answerAfterPolls = 1 } = {}) {
       const interaction = questions.get(id);
       interaction.polls += 1;
       if (interaction.polls >= answerAfterPolls) interaction.state = answer;
-      return { interaction: { id, type: interaction.type, prompt: interaction.prompt, state: interaction.state } };
+      const answered = interaction.state !== "pending" && response !== undefined ? { response } : {};
+      return { interaction: { id, type: interaction.type, prompt: interaction.prompt, state: interaction.state, ...answered } };
     },
     async listDevices() { return { devices: [] }; },
   };

@@ -43,7 +43,12 @@ export async function settleInteractiveLiveActivity(
   const activityId = internalId("act",command.activityId);
   if (!activityId) return;
   const activityState = input.responseState === "expired" ? "expired" : "ended";
-  const status = ({
+  // A choice ends showing the option the owner picked.
+  const chosenLabel = input.responseState === "replied" ? (await query.query(
+    "SELECT response->>'label' AS label FROM interaction_requests WHERE notification_event_id=$1 AND principal_id=$2",
+    [input.notificationEventId,input.principalId],
+  )).rows[0]?.label as string | undefined : undefined;
+  const status = chosenLabel ?? ({
     approved: "Approved", denied: "Denied", yes: "Yes", no: "No", replied: "Replied",
     canceled: "Canceled", expired: "No answer",
   } as const)[input.responseState];

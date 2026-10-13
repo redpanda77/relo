@@ -1,5 +1,9 @@
 import { checkSealedCard,sealedQuestionRequest,unsignedSealed,withUnsignedSealed } from "./sealed-content.js";
 import { carriesCardText,END_TO_END_REQUIRED,endToEndRequired } from "./end-to-end-policy.js";
+import { continueQuestionBeyondCard } from "./activity-commands/long-question.js";
+import { assertQuestionWait } from "./question-wait.js";
+import { QUESTION_SECONDS,QuestionWaitTooLongError,questionWaitTooLongBody } from "./question-policy.js";
+import { choiceUnsupportedBody } from "./choice-questions.js";
 import {
 type RelevanceItem
 } from "@relo/notification-contracts";
@@ -370,6 +374,8 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     const input = activityWaitSchema.parse(sealedRequest ? sealedRequest.body : raw);
     const sealedQuestion = sealedRequest?.sealed ?? null;
     if (!sealedQuestion && await endToEndRequired(db,auth.principalId)) return context.json(END_TO_END_REQUIRED,409);
+    try { await assertQuestionWait(db,input.expiresInSeconds); }
+    catch (error) { if (error instanceof QuestionWaitTooLongError) return context.json(questionWaitTooLongBody(error),400); throw error; }
     const hash = taskActivityRequestHash("wait",{ activityId: externalActivityId,...input,
       ...(sealedQuestion ? { sealed: unsignedSealed(sealedQuestion) } : {}) });
     const existing = await activityWaitReplay(db,auth.principalId,auth.credentialId,activityId,key);
@@ -421,7 +427,8 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
       }
       const folded = await foldQuestionIntoCard(client,{
         principalId: auth.principalId,row: parentRow,apnsMode,fallbackSourceName: auth.clientName ?? "Relo CLI",
-        question: { type: input.type,prompt: input.prompt,expiresInSeconds: input.expiresInSeconds,
+        contentCipher: dependencies.contentCipher,
+        question: { type: input.type,prompt: input.prompt,detail: input.detail,options: input.options,expiresInSeconds: input.expiresInSeconds,
           primaryLabel: input.primaryLabel,secondaryLabel: input.secondaryLabel,sealed: sealedQuestion },
       });
       if (folded.kind !== "folded") {
@@ -429,13 +436,28 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
         return folded.kind === "question_pending"
           ? context.json({ error: "question_pending",
               message: "This card is already waiting for an answer. Wait for it, or cancel it first." },409)
+          : folded.kind === "choice_unsupported"
+            ? context.json(choiceUnsupportedBody(folded.error),409)
+          : folded.kind === "content_encryption_unavailable"
+            ? context.json({ error: "content_encryption_unavailable" },503)
           : folded.kind === "private_activity_question"
             ? context.json({ error: "private_activity_question",message: "A private card cannot show a question." },409)
             : context.json({ error: "activity_target_unavailable" },409);
       }
       const updated = { rows: [folded.activity] };
       const delivery = folded.delivery;
-      const request = { rows: [{ id: folded.interactionRequestId }] };
+      // Asked to wait past the usual 5 minutes and longer than the card lives: the same decision keeps
+      // waiting in Relo after the card ends. A usual question still ends with its card.
+      const cardSeconds = Math.floor((new Date(parentRow.expires_at).getTime()-Date.now())/1_000);
+      const longer = input.expiresInSeconds > QUESTION_SECONDS && input.expiresInSeconds > cardSeconds
+        && dependencies.contentCipher;
+      const request = { rows: [{ id: longer
+        ? await continueQuestionBeyondCard(client,{ principalId: auth.principalId,credentialId: auth.credentialId,
+            card: folded.activity,idempotencyKey: key,sourceName: auth.clientName ?? "Relo CLI",apnsMode,
+            contentCipher: dependencies.contentCipher!,
+            question: { type: input.type,prompt: input.prompt,detail: input.detail,options: input.options,
+              expiresInSeconds: input.expiresInSeconds } })
+        : folded.interactionRequestId }] };
       await client.query(
         `INSERT INTO live_activity_operations(
            live_activity_id,principal_id,requester_credential_id,idempotency_key,operation,

@@ -123,11 +123,14 @@ suite("Activity wait canonical admission",()=>{
     expect(end).toHaveLength(1);expect(end[0].payload.liveActivity.dismissAfterSeconds).toBeLessThanOrEqual(5);
     expect(end[0].payload.liveActivity.interaction).toBeNull();
   });
-  test("a question waits at most five minutes",async()=>{
-    const parent=await start();
-    const tooLong=await post(`/api/live-activities/${parent.id}/wait`,{type:"yes_no",prompt:"Continue?",expiresInSeconds:301});
-    expect(tooLong.status).toBe(400);
-    expect((await post("/api/interactions",{type:"yes_no",prompt:"Continue?",expiresInSeconds:301})).status).toBe(400);
+  test("a question waits at most as long as the server allows",async()=>{
+    await db.query("UPDATE server_settings SET max_question_seconds=3600");
+    try {
+      const parent=await start();
+      const tooLong=await post(`/api/live-activities/${parent.id}/wait`,{type:"yes_no",prompt:"Continue?",expiresInSeconds:3601});
+      expect(tooLong.status).toBe(400);
+      expect((await post("/api/interactions",{type:"yes_no",prompt:"Continue?",expiresInSeconds:3601})).status).toBe(400);
+    } finally { await db.query("UPDATE server_settings SET max_question_seconds=604800"); }
   });
   test("a start sent while a question waits succeeds and is shown after the answer",async()=>{
     const context={providerName:"Claude Code",project:"relo",threadName:"Release"};

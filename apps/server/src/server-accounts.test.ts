@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { resetAuthAttempts } from "./auth-throttle.js";
 import { createWebhookService } from "./services.js";
+import { createTransportTokenEncryption } from "./token-encryption.js";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
 import { generateToken,hashToken } from "./auth.js";
@@ -407,5 +408,37 @@ suite("server admin and registration (ADR 0004)", () => {
         expect(prompt).toMatch(/^Let Alexandria .*… join\?$/u);
       }
     });
+  });
+
+  test("an account request alerts once: the card asks, the notification waits quietly", async () => {
+    await adminAndMode("approval");
+    const pushing = createApp(db,{ accountAuth: createAccountAuth(authDb,appUrl,secret),bootstrapOwnerHandle: "owner",
+      credentialDerivationSecret: secret,appUrl,apnsMode: "sandbox" });
+    const encryption = createTransportTokenEncryption(secret);
+    const insertPhone = (liveActivities: boolean) => db.query(
+      `INSERT INTO devices (principal_id,stable_device_id,installation_id,name,bundle_identifier,app_version,app_build,
+         os_version,model,apns_environment,apns_token,live_activity_push_to_start_token,notification_authorization,
+         live_activity_authorization,credential_version)
+       SELECT principal_id,$1,$1,'Admin iPhone','com.example.relo.notifications','1','1','18','iPhone','sandbox',$2,$3,
+         'authorized',$4,1 FROM account_identities WHERE server_admin`,
+      [randomUUID(),encryption.encrypt("a".repeat(64),"device.apns_token"),
+        encryption.encrypt("b".repeat(64),"device.live_activity_push_to_start_token"),liveActivities ? "authorized" : "denied"]);
+    const alerts = async (name: string) => (await db.query(
+      `SELECT e.kind,(SELECT count(*)::int FROM delivery_jobs j WHERE j.notification_event_id=e.id) AS jobs
+       FROM account_requests a JOIN interaction_requests r ON r.decision_group_id=a.decision_group_id
+       JOIN notification_events e ON e.id=r.notification_event_id
+       JOIN auth.users u ON u.id=a.subject WHERE u.email=$1 ORDER BY e.kind`,[`${name}@accounts.example`])).rows;
+    const register = (name: string) => pushing.request("/api/auth/sign-up/email",{ method: "POST",headers: json,
+      body: JSON.stringify({ name,email: `${name}@accounts.example`,password: `${name}-password-123` }) });
+
+    await insertPhone(true);
+    expect((await register("guest")).status).toBe(202);
+    const withCard = await alerts("guest");
+    expect(withCard.find((row: any) => row.kind === "approval")).toMatchObject({ jobs: 0 });
+    expect(withCard.find((row: any) => row.kind === "live_activity").jobs).toBeGreaterThan(0);
+
+    await db.query("UPDATE devices SET live_activity_authorization='denied'");
+    expect((await register("second")).status).toBe(202);
+    expect(await alerts("second")).toEqual([{ kind: "approval",jobs: 1 }]);
   });
 });

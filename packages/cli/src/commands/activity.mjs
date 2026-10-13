@@ -3,7 +3,8 @@ import { parseDuration, numberOption, progressCountLabel, progressFraction, requ
 import { ApiError, UsageError } from "../errors.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
 import { privacyOption } from "./notify.mjs";
-import { activityContext, cardKey, creationContext, partialIdentity } from "../identity.mjs";
+import { randomUUID } from "node:crypto";
+import { activityContext, agentSession, cardKey, creationContext, partialIdentity } from "../identity.mjs";
 import { assertAllowedOptions, assertAtMostOne, dryRunResult, assertNoExtra, booleanStdin, definedFields, deliveryGuard, enumOption, fitRequiredText, fitText, isIsoTimestamp, optionalText, result, stdinDeviceIds, stdinObject, validateCanonicalId, validateIdempotencyKey } from "../support.mjs";
 
 export const DEFAULT_LIST_LIMIT = 10;
@@ -255,6 +256,7 @@ export async function runActivityCommand(command) {
     assertAllowedOptions(options, [
       "name",
       "replace",
+      "new",
       "title",
       "status",
       "detail",
@@ -289,7 +291,10 @@ export async function runActivityCommand(command) {
     const notes = [];
     const dryRun = Boolean(dependencies.dryRun);
     // Starting again reuses this work's running card: one card per agent session or topic.
-    const manualKey = cardKey({ name: activityName(options,stdin), context, env: dependencies.env });
+    const named = activityName(options,stdin);
+    const sharedKey = cardKey({ name: named, context, env: dependencies.env });
+    // --new: a card of this run's own, never joining one another process already has running.
+    const manualKey = options.new ? `${sharedKey.slice(0,80)}-${randomUUID().slice(0,8)}` : sharedKey;
     const requestedStyle = options.style ?? stdin.style;
     const progress = progressFraction(options.progress ?? stdin.progress, "progress");
     const progressLabel = fitText(
@@ -358,6 +363,9 @@ export async function runActivityCommand(command) {
     const started = await client.startActivity(sealed.body,key);
     if (sealed.text && started?.activity?.id) await saveCardText(sealedCardDirectory(dependencies.env),started.activity.id,sealed.text);
     noteProgressOnSteps(progress,started,notes);
+    if (started?.disposition === "reused" && !options.new && named === undefined && !agentSession(dependencies.env)) {
+      notes.push("joined the card already running for this topic; if another process started it, pass --new (or set RELO_SESSION / --name) for a card of your own");
+    }
     return cardResult(`activity.${action}`,started,notes);
   }
 

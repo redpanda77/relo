@@ -43,6 +43,10 @@ const behaviorSchema = z.discriminatedUnion("type", [
     primary: actionSchema,
     secondary: actionSchema,
   }),
+  z.object({
+    type: z.literal("choice"),
+    options: z.array(z.object({ id: z.string(), label: z.string() })),
+  }),
 ])
 
 const identityRoleSchema = z.enum([

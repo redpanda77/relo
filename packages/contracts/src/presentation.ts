@@ -111,13 +111,33 @@ const presentationStepsSchema = z.array(presentationStepSchema)
 const actionSchema = <Action extends string>(action: Action) => z.object({
   action: z.literal(action), label: singleLine(LIVE_ACTIVITY_PRESENTATION_LIMITS.actionLabel),
 }).strict();
-export const PRESENTATION_BEHAVIOR_TYPES = ["informational", "progress", "approval", "yes_no"] as const;
+/** A choice question offers 2–4 labeled options (docs/CHOICE-QUESTIONS.md). */
+export const CHOICE_OPTION_LIMITS = Object.freeze({ minimum: 2, maximum: 4 } as const);
+export const choiceOptionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/u,
+  "Option ids use 1-32 lowercase letters, digits, - or _");
+export const choiceOptionSchema = z.object({
+  id: choiceOptionIdSchema, label: singleLine(LIVE_ACTIVITY_PRESENTATION_LIMITS.actionLabel),
+}).strict();
+export const choiceOptionsSchema = z.array(choiceOptionSchema)
+  .min(CHOICE_OPTION_LIMITS.minimum).max(CHOICE_OPTION_LIMITS.maximum)
+  .superRefine((options, context) => {
+    if (new Set(options.map((option) => option.id)).size !== options.length) {
+      context.addIssue({ code: "custom", message: "Option ids must be unique" });
+    }
+    if (new Set(options.map((option) => option.label.toLowerCase())).size !== options.length) {
+      context.addIssue({ code: "custom", message: "Option labels must be unique" });
+    }
+  });
+export type ChoiceOption = z.infer<typeof choiceOptionSchema>;
+
+export const PRESENTATION_BEHAVIOR_TYPES = ["informational", "progress", "approval", "yes_no", "choice"] as const;
 export const presentationBehaviorTypeSchema = z.enum(PRESENTATION_BEHAVIOR_TYPES);
 export const presentationBehaviorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("informational") }).strict(),
   z.object({ type: z.literal("progress") }).strict(),
   z.object({ type: z.literal("approval"), primary: actionSchema("approve"), secondary: actionSchema("deny") }).strict(),
   z.object({ type: z.literal("yes_no"), primary: actionSchema("yes"), secondary: actionSchema("no") }).strict(),
+  z.object({ type: z.literal("choice"), options: choiceOptionsSchema }).strict(),
 ]);
 
 export const PRESENTATION_COMPONENT_TYPES = ["progress_bar", "steps", "image"] as const;
@@ -281,6 +301,8 @@ export const presentationActivityKitContentStateSchema = z.object({
   behaviorType: presentationBehaviorTypeSchema,
   primaryAction: z.enum(["approve", "yes"]).nullable(), primaryLabel: z.string().nullable(),
   secondaryAction: z.enum(["deny", "no"]).nullable(), secondaryLabel: z.string().nullable(),
+  /** Present only on a choice card; phones that cannot show one never receive it. */
+  choiceOptions: z.array(choiceOptionSchema).optional(),
   appearanceJson: z.string(), privacy: presentationPrivacySchema,
 }).strict();
 export type PresentationActivityKitContentState = z.infer<typeof presentationActivityKitContentStateSchema>;
@@ -299,6 +321,7 @@ export function projectLiveActivityPresentationToActivityKitContentState(
     behaviorType: presentation.behavior.type, primaryAction: actions?.primary.action ?? null,
     primaryLabel: actions?.primary.label ?? null, secondaryAction: actions?.secondary.action ?? null,
     secondaryLabel: actions?.secondary.label ?? null,
+    ...(presentation.behavior.type === "choice" ? { choiceOptions: presentation.behavior.options } : {}),
     appearanceJson: stableJsonStringify(presentation.appearance), privacy: presentation.privacy,
   });
   if (stableJsonByteLength(projected) > LIVE_ACTIVITY_PRESENTATION_APNS_RESERVED_ENVELOPE_BYTES) {

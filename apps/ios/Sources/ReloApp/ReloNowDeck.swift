@@ -8,6 +8,8 @@ struct ReloDeckField: View {
     let state: ReloSignalState
     let mix: NowMix
     let waves: [ReloOrbWave]
+    /// Where this view's left edge sits in the deck, whose coordinates the ripples use.
+    var deckOffsetX: CGFloat = 0
 
     private struct Mote { let x, y, speed, size, phase, slot: Double }
 
@@ -41,7 +43,7 @@ struct ReloDeckField: View {
             var point = CGPoint(x: mote.x * size.width + sin(t * 0.3 + mote.phase) * 6, y: wrapped * size.height)
             var lift = 0.0
             for wave in live {
-                let push = wave.push(point, now: now)
+                let push = wave.push(CGPoint(x: point.x + deckOffsetX, y: point.y), now: now)
                 point.x += push.dx * 0.8; point.y += push.dy * 0.8; lift += push.lift
             }
             // Fade near the deck's top and bottom so the field has no hard edge.

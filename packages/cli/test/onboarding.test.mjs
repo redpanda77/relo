@@ -223,7 +223,7 @@ test("auth login --wait with an expired, missing, or denied sign-in says what to
   await cli(["auth", "login", "--no-wait"], late.deps);
   late.state.now += 601_000;
   const expired = await cli(["auth", "login", "--wait"], late.deps);
-  assert.equal(expired.exitCode, EXIT.TERMINAL);
+  assert.equal(expired.exitCode, EXIT.CLOSED);
   assert.equal(expired.line.error.code, "AUTHORIZATION_EXPIRED");
   assert.match(expired.line.error.hint, /Start over: relo auth login --no-wait/u);
   assert.equal(existsSync(late.pending), false);

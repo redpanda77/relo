@@ -18,6 +18,7 @@ import { isReadyResponse, openBrowser, runAuthCommand, safeCredential } from "./
 import { runHookCommand } from "./commands/hook.mjs";
 import { runNotifyCommand } from "./commands/notify.mjs";
 import { runSessionsCommand } from "./commands/sessions.mjs";
+import { runListenCommand } from "./commands/listen.mjs";
 import { runTestCommand } from "./commands/test.mjs";
 import { clearPendingLogin, pendingLoginPath, readPendingLogin, writePendingLogin } from "./pending-login.mjs";
 import { runSetupCommand } from "./commands/setup.mjs";
@@ -30,7 +31,7 @@ import { errorLine, errorText, successLine } from "./output.mjs";
 import { selectSchemaCommands, unknownCommandHint } from "./suggest.mjs";
 import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result } from "./support.mjs";
 
-const VERSION = "0.14.8";
+const VERSION = "0.15.0";
 
 async function executeCommand(parsed, dependencies) {
   const { positionals, options } = parsed;
@@ -57,9 +58,10 @@ async function executeCommand(parsed, dependencies) {
       only = selected.commands;
     }
     return result("schema", commandSchema({ version: VERSION, only, exitCodes: {
-      0: "success, approved, yes, or replied", 1: "server or other failure", 2: "usage error",
-      3: "authentication or scope", 4: "timed out, canceled, or expired", 5: "denied or no",
-      6: "network", 7: "no phone accepted the push",
+      0: "success, approved, yes, chosen, or replied", 1: "server or other failure", 2: "usage error",
+      3: "authentication or scope", 4: "still open: this command stopped waiting (resume with relo interaction wait ID)",
+      5: "denied or no", 6: "network", 7: "no phone accepted the push",
+      8: "closed without an answer (expired or canceled): do not act",
     } }));
   }
   if (positionals[0] === "mcp") {
@@ -107,11 +109,31 @@ async function executeCommand(parsed, dependencies) {
   if (dryRun) dependencies.dryRun = true;
   const { config, client } = dryRun ? { config: undefined, client: refusingClient() } : await getAuthenticated(dependencies);
   Object.assign(command, { config, client });
-  for (const runGroup of [runNotifyCommand, runActivityCommand, runAdminCommand, runTestCommand, runSessionsCommand, runKeysCommand]) {
+  // Outside a repository an app's work belongs to the integration it signed in as.
+  const detected = dependencies.creationDefaults;
+  dependencies.creationDefaults = () => {
+    const defaults = detected();
+    const project = defaults.project ?? integrationProject(config, dependencies);
+    return project === undefined ? defaults : { ...defaults, project };
+  };
+  for (const runGroup of [runNotifyCommand, runActivityCommand, runAdminCommand, runTestCommand, runSessionsCommand, runKeysCommand, runListenCommand]) {
     const output = await runGroup(command);
     if (output !== undefined) return output;
   }
   throw new UsageError(`Unknown command: ${positionals.join(" ")}`, { hint: "Commands: relo help all" });
+}
+
+/**
+ * The project for work started outside a git repository: a named profile (RELO_PROFILE=deploy-bot),
+ * else the login's client name unless that is just this computer's name (the default).
+ */
+export function integrationProject(config, dependencies) {
+  if (config?.profile && config.profile !== "default") return config.profile;
+  const name = typeof config?.principal?.name === "string" ? config.principal.name.trim() : "";
+  if (!name) return undefined;
+  let computer;
+  try { computer = dependencies.computerName?.(); } catch { computer = undefined; }
+  return name.toLowerCase() === String(computer ?? "").trim().toLowerCase() ? undefined : name;
 }
 
 function refusingClient() {
@@ -147,6 +169,8 @@ function createDependencies(overrides = {}) {
     accountProbes: probes,
     loadAccounts,
     commandOccurredAt: (overrides.now ?? Date.now)(),
+    // Streaming commands (relo listen) print one JSON line per item as it arrives.
+    emit: overrides.emit ?? ((line) => process.stdout.write(`${JSON.stringify(line)}\n`)),
     captureActivityCommand: overrides.captureActivityCommand ?? captureActivityCommand,
     prepareNotificationCommand: overrides.prepareNotificationCommand ?? prepareNotificationCommand,
     activityCaptureDirectory: overrides.activityCaptureDirectory,
@@ -266,6 +290,7 @@ export async function run(argv, io = {}, overrides = {}) {
   const structured = wantsJson || !stdoutIsTTY;
   try {
     const output = await execute(argv, {
+      emit: (line) => stdout(JSON.stringify(line)),
       ...overrides,
       stderr: overrides.stderr ?? stderr,
       stderrIsTTY: overrides.stderrIsTTY ?? Boolean(process.stderr.isTTY),

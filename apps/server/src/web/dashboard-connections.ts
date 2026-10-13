@@ -84,6 +84,7 @@ export type ConnectionsClientsBootstrap = ConnectionsBootstrapBase & {
     liveActivityPolicy: LiveActivityPresentationPolicy | null;
     effectiveLiveActivityPolicy: LiveActivityPresentationPolicy;
     liveActivityPolicySource: "client" | "account" | "system";
+    maxActiveCards: number | null;
   }>;
 };
 
@@ -266,7 +267,7 @@ async function loadPhones(db: Database, principalId: string, limit: number) {
 
 async function loadClients(db: Database, principalId: string, accountPolicy: unknown, limit: number) {
   const result = await db.query<any>(
-    `SELECT id,label,token_prefix,scopes,live_activity_policy,created_at,expires_at,last_used_at
+    `SELECT id,label,token_prefix,scopes,live_activity_policy,max_active_cards,created_at,expires_at,last_used_at
     FROM principal_api_keys WHERE principal_id=$1 AND revoked_at IS NULL
       AND (expires_at IS NULL OR expires_at>now())
     ORDER BY created_at DESC,id DESC LIMIT $2`,
@@ -282,6 +283,7 @@ async function loadClients(db: Database, principalId: string, accountPolicy: unk
       liveActivityPolicy: parsePresentationPolicy(row.live_activity_policy),
       effectiveLiveActivityPolicy: resolved.policy,
       liveActivityPolicySource: resolved.source as "client" | "account" | "system",
+      maxActiveCards: row.max_active_cards == null ? null : Number(row.max_active_cards),
       createdAt: isoDate(row.created_at),
       expiresAt: isoDate(row.expires_at),
       lastUsedAt: isoDate(row.last_used_at),
