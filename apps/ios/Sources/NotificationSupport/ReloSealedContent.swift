@@ -48,7 +48,7 @@ public struct ReloSealedContent: Sendable {
     public func open(_ envelope: ReloEnvelope, deviceID: String, itemID: String? = nil, now: Date = Date()) -> Outcome {
         guard let state = try? ring.store.load(), let senders = try? trust.trustedSenders() else { return .unavailable }
         do {
-            guard ["notice", "question"].contains(envelope.kind) else { return .unavailable }
+            guard ["notice", "question", "card"].contains(envelope.kind) else { return .unavailable }
             let data = try ReloE2EE.open(envelope, deviceID: deviceID, prekey: ring.prekeyOpener(state: state),
                                          trustedSenders: senders)
             if let itemID, let ledger, !ledger.admit(context: envelope.context, itemID: itemID, now: now) { return .replayed }
@@ -96,4 +96,21 @@ public extension ReloSealedContent {
         let sealed = self
         return { sealed.openForThisPhone($0, itemID: $1) }
     }
+}
+
+public extension ReloSealedContent {
+    /// Opens card and question text for Live Activities. Cards skip the replay ledger: the server
+    /// legitimately repeats a card's latest envelope on updates it makes itself.
+    var cardOpener: @Sendable (ReloEnvelope) -> Data? {
+        let sealed = self
+        return { envelope in
+            guard let state = try? sealed.ringState() else { return nil }
+            let held = Set(state.prekeys.map(\.id))
+            guard let entry = envelope.recipients.first(where: { held.contains($0.prekey) }),
+                  case .opened(let data) = sealed.open(envelope, deviceID: entry.device) else { return nil }
+            return data
+        }
+    }
+
+    internal func ringState() throws -> ReloKeyRingState? { try ring.store.load() }
 }

@@ -30,7 +30,7 @@ import { errorLine, errorText, successLine } from "./output.mjs";
 import { selectSchemaCommands, unknownCommandHint } from "./suggest.mjs";
 import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result } from "./support.mjs";
 
-const VERSION = "0.11.0";
+const VERSION = "0.13.0";
 
 async function executeCommand(parsed, dependencies) {
   const { positionals, options } = parsed;

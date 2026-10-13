@@ -143,6 +143,22 @@ export function compactData(command, data) {
       return { cards: (Array.isArray(data?.activities) ? data.activities : []).map(cardRow) };
     case "devices.list":
       return { devices: (Array.isArray(data?.devices) ? data.devices : []).map(deviceRow) };
+    case "keys.status":
+      return present({
+        identity: data?.identity?.keyId,
+        required: data?.required === true ? true : undefined,
+        devices: (Array.isArray(data?.devices) ? data.devices : []).map((device) =>
+          present({ id: device.deviceId, name: device.name, trust: device.trust, prekey: device.prekey })),
+        next: data?.next,
+      });
+    case "keys.verify":
+      return present({ id: data?.deviceId, trust: data?.trust, safetyNumber: data?.safetyNumber });
+    case "keys.require":
+      return present({ required: data?.required, changed: data?.changed });
+    case "keys.forget":
+      return present({ id: data?.deviceId, removed: data?.removed });
+    case "keys.rotate":
+      return present({ rotated: data?.rotated, keyId: data?.keyId, previous: data?.previous });
     case "doctor":
       return doctorFields(data);
     case "auth.status":
@@ -230,6 +246,10 @@ function friendly(error, group) {
   const wait = error.details?.retryAfterSeconds;
   const noun = NOUN[group] ?? "item";
   switch (error.code) {
+    case "END_TO_END_REQUIRED":
+    case "end_to_end_required":
+      return { message: "This account requires end-to-end encryption and this computer could not seal the content.",
+        hint: "Verify a phone: relo keys status, then relo keys verify DEVICE_ID (a person at a terminal)" };
     case "SESSIONS_UNSUPPORTED":
       return { message: error.message };
     case "ACTIVITY_TERMINAL":

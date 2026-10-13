@@ -1,5 +1,6 @@
 import { sealNoticeRequest, sealQuestion } from "../seal-notice.mjs";
 import { verifyAnswer } from "../answer-verify.mjs";
+import { saveCardText, sealCardRequest, sealedCardDirectory } from "../seal-card.mjs";
 import { parseDuration, requireText, validateDestinationUrl, validatePublicHttpsUrl } from "../args.mjs";
 import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
 import { notificationRelevance } from "../relevance.mjs";
@@ -178,7 +179,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   let card = key === undefined ? null : await activeCard(client, key);
   if (!card) {
     const context = known ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE);
-    const started = await client.startActivity(definedFields({
+    const startBody = definedFields({
       key: key ?? cardKey({ env: {}, context }),
       acquireMode: "ensure",
       title: requireText(context.taskTitle ?? context.threadName, "Card title", 80),
@@ -187,7 +188,14 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
       expiresInSeconds: Math.min(28_800, Math.max(DEFAULT_ACTIVITY_EXPIRES_SECONDS, expiresInSeconds + 300)),
       staleAfterSeconds: DEFAULT_ACTIVITY_STALE_SECONDS,
       deviceIds: await resolveTargetDevices(client, options.device.length > 0 ? options.device : []),
-    }), `${idempotencyKey}:card`);
+    });
+    // The card a question starts is sealed like any other card (E5).
+    const sealedStart = await sealCardRequest({ body: startBody, cardId: null, key: `${idempotencyKey}:card`, client, config,
+      dependencies, notes: [], deviceIds: startBody.deviceIds });
+    const started = await client.startActivity(sealedStart.body, `${idempotencyKey}:card`);
+    if (sealedStart.text && started?.activity?.id) {
+      await saveCardText(sealedCardDirectory(dependencies.env), started.activity.id, sealedStart.text);
+    }
     card = started?.activity;
     createdByAsk = true;
     if (!started?.delivery?.durableCommands) {

@@ -10,6 +10,7 @@ import {  requireScope } from "../auth.js";
 import { internalId, publicId } from "../ids.js";
 import { createInteractionSchema,  interactionSchema,  notificationRequestSchema,  sealedNotificationRequestSchema } from "../schemas.js";
 import { checkSealedNotice,SEALED_BODY,SEALED_TITLE,sealedQuestionRequest,unsignedSealed } from "../sealed-content.js";
+import { END_TO_END_REQUIRED,endToEndRequired } from "../end-to-end-policy.js";
 import {
   
   markActivityPresentationApplied } from "../activity-presentation-leases.js";
@@ -39,6 +40,8 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     const sealed = raw !== null && typeof raw === "object" && "sealed" in raw
       ? sealedNotificationRequestSchema.parse(raw) : null;
     const input = sealed ?? notificationRequestSchema.parse(raw);
+    if (!sealed && context.get("auth").credentialKind === "principal"
+      && await endToEndRequired(db,context.get("auth").principalId)) return context.json(END_TO_END_REQUIRED,409);
     if (!notificationContentCipher) return context.json({ error: "content_encryption_unavailable" },503);
     const sealedCheck = sealed ? checkSealedNotice(sealed.sealed) : null;
     if (sealedCheck && !sealedCheck.ok) return context.json({ error: sealedCheck.error },400);
@@ -89,6 +92,8 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     const parsed = createInteractionSchema.parse(sealedRequest ? sealedRequest.body : raw);
     const sealedQuestion = sealedRequest?.sealed ?? null;
     if (sealedQuestion && parsed.presentation !== "notification") return context.json({ error: "sealed_requires_notification" },400);
+    if (!sealedQuestion && context.get("auth").credentialKind === "principal"
+      && await endToEndRequired(db,context.get("auth").principalId)) return context.json(END_TO_END_REQUIRED,409);
     const sealedDevices = sealedQuestion ? checkSealedNotice(sealedQuestion,"question") : null;
     if (sealedDevices?.ok && parsed.deviceIds !== undefined
       && [...parsed.deviceIds].sort().join() !== [...sealedDevices.deviceIds].sort().join()) {

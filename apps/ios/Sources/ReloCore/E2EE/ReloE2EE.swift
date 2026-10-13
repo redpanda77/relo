@@ -28,8 +28,8 @@ public enum ReloE2EEError: Error, Equatable, Sendable {
 }
 
 /// Wire form of a sealed envelope. Field names match the CLI and the server's opaque storage.
-public struct ReloEnvelope: Codable, Equatable, Sendable {
-    public struct Recipient: Codable, Equatable, Sendable {
+public struct ReloEnvelope: Codable, Hashable, Sendable {
+    public struct Recipient: Codable, Hashable, Sendable {
         public var device: String
         public var prekey: String
         public var enc: String

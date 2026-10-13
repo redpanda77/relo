@@ -1,4 +1,5 @@
-import { sealedQuestionRequest,unsignedSealed } from "./sealed-content.js";
+import { checkSealedCard,sealedQuestionRequest,unsignedSealed,withUnsignedSealed } from "./sealed-content.js";
+import { carriesCardText,END_TO_END_REQUIRED,endToEndRequired } from "./end-to-end-policy.js";
 import {
 type RelevanceItem
 } from "@relo/notification-contracts";
@@ -182,6 +183,8 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     if (!auth.scopes.has("activities:write")) return context.json({ error: "forbidden" },403);
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
     const parsedStart = activityStartSchema.parse(await context.req.json());
+    if (checkSealedCard(parsedStart.sealed)?.ok === false) return context.json({ error: "invalid_sealed_content" },400);
+    if (!parsedStart.sealed && await endToEndRequired(db,auth.principalId)) return context.json(END_TO_END_REQUIRED,409);
     const identity = requireWorkIdentity(`credential:${auth.credentialId}`,parsedStart.context,parsedStart.origin);
     if (!identity.ok) return context.json(workIdentityError(identity.missing),422);
     const rawInput = { ...parsedStart,context: identity.context };
@@ -210,7 +213,7 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     const requestedIds = internalDeviceIds(input.deviceIds);
     if (input.deviceIds && !requestedIds?.length) return context.json({ error: "invalid_device_selection" },400);
     const hash = taskActivityRequestHash("start",{
-      ...rawInput,
+      ...withUnsignedSealed(rawInput),
       deviceIds: rawInput.deviceIds ? [...rawInput.deviceIds].sort() : undefined,
     });
     const result=await executeActivityCommand(db,{kind:"credential",principalId:auth.principalId,credentialId:auth.credentialId,sourceName:auth.clientName??"Relo CLI"},{
@@ -284,11 +287,15 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
     const identifier = context.req.param("activityId") ?? "";
     const rawInput = activityUpdateSchema.parse(await context.req.json());
+    if (checkSealedCard(rawInput.sealed)?.ok === false) return context.json({ error: "invalid_sealed_content" },400);
+    if (!rawInput.sealed && carriesCardText(rawInput) && await endToEndRequired(db,auth.principalId)) {
+      return context.json(END_TO_END_REQUIRED,409);
+    }
     const key = idempotencyKey(context.req.header("idempotency-key"));
-    let hashInput: unknown = rawInput;
+    let hashInput: unknown = withUnsignedSealed(rawInput);
     try {
       if (rawInput.presentation) {
-        hashInput = { ...rawInput,presentation: canonicalPresentation(rawInput.presentation) };
+        hashInput = { ...withUnsignedSealed(rawInput),presentation: canonicalPresentation(rawInput.presentation) };
       }
     } catch (error) {
       if (error instanceof PresentationRuntimeError) return context.json({ error: error.code },400);
@@ -362,6 +369,7 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     if (sealedRequest && "error" in sealedRequest) return context.json({ error: sealedRequest.error },400);
     const input = activityWaitSchema.parse(sealedRequest ? sealedRequest.body : raw);
     const sealedQuestion = sealedRequest?.sealed ?? null;
+    if (!sealedQuestion && await endToEndRequired(db,auth.principalId)) return context.json(END_TO_END_REQUIRED,409);
     const hash = taskActivityRequestHash("wait",{ activityId: externalActivityId,...input,
       ...(sealedQuestion ? { sealed: unsignedSealed(sealedQuestion) } : {}) });
     const existing = await activityWaitReplay(db,auth.principalId,auth.credentialId,activityId,key);
@@ -466,10 +474,14 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
     const identifier = context.req.param("activityId") ?? "";
     const input = activityEndSchema.parse(await context.req.json().catch(() => ({})));
+    if (checkSealedCard(input.sealed)?.ok === false) return context.json({ error: "invalid_sealed_content" },400);
+    if (!input.sealed && carriesCardText(input) && await endToEndRequired(db,auth.principalId)) {
+      return context.json(END_TO_END_REQUIRED,409);
+    }
     const key = idempotencyKey(context.req.header("idempotency-key"));
-    let hashInput: unknown = input;
+    let hashInput: unknown = withUnsignedSealed(input);
     try {
-      if (input.presentation) hashInput = { ...input,presentation: canonicalPresentation(input.presentation) };
+      if (input.presentation) hashInput = { ...withUnsignedSealed(input),presentation: canonicalPresentation(input.presentation) };
     } catch (error) {
       if (error instanceof PresentationRuntimeError) return context.json({ error: error.code },400);
       throw error;

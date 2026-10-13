@@ -297,8 +297,9 @@ directory, `relo keys` and the iPhone's Security screen for safety-number verifi
 `relo notify` messages and `relo ask` questions that the iPhone opens itself, signed answers
 that `relo ask` verifies before acting, and automatic server retention
 (`RELO_CONTENT_RETENTION_HOURS`, see [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md#content-retention)).
-Next: sealed Live Activity cards, opaque project names, and enforcement. Until then, card text and
-project and topic names are encrypted only at rest with a server-held key. See [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) for the
+Sealed Live Activity cards are built too, and `relo keys require on` makes the server refuse
+anything a CLI sends unsealed. Next: opaque project and topic names.
+Until then, project and topic names are encrypted only at rest with a server-held key. See [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) for the
 threat model, the protocol and the current state of each phase.
 
 ## Development

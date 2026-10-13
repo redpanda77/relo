@@ -56,7 +56,7 @@ export type SealedNoticeCheck =
  * Each alert names exactly one phone, no phone twice, the body is sealed to every alerted phone,
  * all envelopes come from one sender, and every envelope is bound to the same request context.
  */
-export function checkSealedNotice(sealed: SealedNotice,kind: "notice" | "question" = "notice"): SealedNoticeCheck {
+export function checkSealedNotice(sealed: SealedNotice,kind: "notice" | "question" | "card" = "notice"): SealedNoticeCheck {
   const devices = new Set<string>();
   for (const alert of sealed.alerts) {
     if (alert.kind !== kind || alert.recipients.length !== 1) return { ok: false,error: "invalid_sealed_content" };
@@ -120,4 +120,26 @@ export function sealedQuestionRequest(raw: unknown,{ title = true }: { title?: b
   const check = checkSealedNotice(parsed.data,"question");
   if (!check.ok) return { error: check.error };
   return { body: { ...body,...(title ? { title: SEALED_QUESTION_TITLE } : {}),prompt: SEALED_PROMPT },sealed: parsed.data };
+}
+
+/** A sealed card's envelopes are kind "card" (E5); Live Activity pushes carry this phone's alert. */
+export function checkSealedCard(sealed: SealedNotice | undefined): SealedNoticeCheck | null {
+  return sealed ? checkSealedNotice(sealed,"card") : null;
+}
+
+/** Hash input for an idempotent card command: envelopes without their randomized signatures. */
+export function withUnsignedSealed<T extends { sealed?: SealedNotice | undefined }>(input: T): T | (Omit<T,"sealed"> & { sealed: unknown }) {
+  return input.sealed ? { ...input,sealed: unsignedSealed(input.sealed) } : input;
+}
+
+/** `{ sealed }` with the alert envelope sealed to this phone, or nothing. */
+export function sealedAlertFor(sealed: SealedNotice | undefined,devicePublicId: string): { sealed?: SealedEnvelope } {
+  const alert = sealed?.alerts.find((envelope) => envelope.recipients[0]?.device === devicePublicId);
+  return alert ? { sealed: alert } : {};
+}
+
+/** The card row's stored envelopes, when it is a sealed card. */
+export function storedSealedCard(activity: unknown): SealedNotice | undefined {
+  const parsed = sealedNoticeSchema.safeParse((activity as { sealed?: unknown } | null)?.sealed);
+  return parsed.success && parsed.data.content.kind === "card" ? parsed.data : undefined;
 }

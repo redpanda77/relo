@@ -3,7 +3,7 @@ import { fromB64u, safetyNumber, verifyPrekey } from "../e2ee.mjs";
 import { ensureIdentity, keyStorePath, saveKeyStore, trustKey, trustState } from "../keystore.mjs";
 import { assertAllowedOptions, assertNoExtra, result, validateDeviceId } from "../support.mjs";
 
-const USAGE = "Usage: relo keys status | relo keys verify DEVICE_ID | relo keys forget DEVICE_ID | relo keys rotate";
+const USAGE = "Usage: relo keys status | relo keys verify DEVICE_ID | relo keys forget DEVICE_ID | relo keys rotate | relo keys require on|off";
 const PHONE_SCREEN = "Settings → Security on the iPhone";
 
 function needsPerson(action) {
@@ -57,8 +57,14 @@ export async function runKeysCommand(command) {
     const { devices } = await client.listDeviceKeys();
     const described = devices.map((device) => describeDevice(store, apiUrl, device));
     const unverified = described.find((device) => device.trust !== "trusted");
+    // An older server has no policy route; status still reports the keys.
+    let policy = null;
+    try {
+      policy = await client.endToEndPolicy();
+    } catch {}
     return result("keys.status", {
       identity: { keyId: store.identity.keyId, createdAt: store.identity.createdAt },
+      required: policy?.required === true,
       devices: described,
       ...(unverified ? { next: `relo keys verify ${unverified.deviceId}` } : {}),
     });
@@ -109,6 +115,20 @@ export async function runKeysCommand(command) {
     const { store: fresh } = await loadIdentity(dependencies);
     await publishIdentity(client, fresh);
     return result("keys.rotate", { rotated: true, previous, keyId: fresh.identity.keyId });
+  }
+
+  if (action === "require") {
+    assertNoExtra(rest, 1, USAGE);
+    if (!["on", "off"].includes(rest[0])) throw new UsageError(USAGE);
+    const required = rest[0] === "on";
+    // Agents cannot change protection: like verifying a phone, this needs the owner at a terminal.
+    if (!dependencies.stdinIsTTY || !dependencies.confirm) throw needsPerson(`require ${rest[0]}`);
+    const question = required
+      ? "Refuse every readable notice, question and card from this account's CLIs, so only sealed content is accepted? [y/N] "
+      : "Allow readable notices, questions and cards from CLIs again? [y/N] ";
+    if (!(await dependencies.confirm(question))) return result("keys.require", { required: !required, changed: false });
+    const policy = await client.setEndToEndPolicy(required);
+    return result("keys.require", { required: policy.required === true, changed: true });
   }
 
   throw new UsageError(USAGE);

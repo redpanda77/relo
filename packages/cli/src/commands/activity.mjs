@@ -1,3 +1,4 @@
+import { cardStepLabelsFor,forgetCardText,saveCardText,sealCardRequest,sealedCardDirectory } from "../seal-card.mjs";
 import { parseDuration, numberOption, progressCountLabel, progressFraction, requireText } from "../args.mjs";
 import { ApiError, UsageError } from "../errors.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
@@ -351,7 +352,11 @@ export async function runActivityCommand(command) {
     }
     const captured = await preparedActivityCommand({ config,client,operation: "start",key,body,
       selector: manualKey,originalOccurrence: stdin.occurredAt },dependencies);
-    const started = await client.startActivity(captured.body,key);
+    // Sealed end to end for this computer's verified phones (E5); the server sees placeholders.
+    const sealed = await sealCardRequest({ body: captured.body,cardId: null,key,client,config,dependencies,notes,
+      deviceIds: captured.body.deviceIds });
+    const started = await client.startActivity(sealed.body,key);
+    if (sealed.text && started?.activity?.id) await saveCardText(sealedCardDirectory(dependencies.env),started.activity.id,sealed.text);
     noteProgressOnSteps(progress,started,notes);
     return cardResult(`activity.${action}`,started,notes);
   }
@@ -465,7 +470,8 @@ export async function runActivityCommand(command) {
     if (needsCard && !dryRun && !stepCard) {
       throw new ApiError("activity_terminal",{ status: 409,code: "ACTIVITY_TERMINAL" });
     }
-    const storedLabels = needsCard ? cardStepLabels(stepCard) : undefined;
+    // A sealed card's real step labels live only in this computer's cache; the server holds "Step n".
+    const storedLabels = needsCard ? await cardStepLabelsFor(stepCard?.id,cardStepLabels(stepCard),dependencies) : undefined;
     let nextStep;
     if (wantsNext && !dryRun) {
       const progress = cardStepProgress(stepCard);
@@ -532,7 +538,9 @@ export async function runActivityCommand(command) {
     }
     const captured = await preparedActivityCommand({ config,client,operation: "update",key,body,target,
       selector: target,originalOccurrence: stdin.occurredAt },dependencies);
-    const updated = await client.updateActivity(captured.target,captured.body,key);
+    const sealed = await sealCardRequest({ body: captured.body,cardId: captured.target,key,client,config,dependencies,notes });
+    const updated = await client.updateActivity(captured.target,sealed.body,key);
+    if (sealed.text) await saveCardText(sealedCardDirectory(dependencies.env),captured.target,sealed.text);
     noteProgressOnSteps(body.progress,updated,notes);
     return cardResult("activity.update",updated,notes);
   }
@@ -582,7 +590,10 @@ export async function runActivityCommand(command) {
     if (dependencies.dryRun) return dryRunResult("activity end", { target, ...body }, notes);
     const captured = await preparedActivityCommand({ config,client,operation: "end",key,body,target,
       selector: target,originalOccurrence: stdin.occurredAt },dependencies);
-    return result("activity.end",deliveryGuard(await client.endActivity(captured.target,captured.body,key)),{ notes });
+    const sealed = await sealCardRequest({ body: captured.body,cardId: captured.target,key,client,config,dependencies,notes });
+    const ended = deliveryGuard(await client.endActivity(captured.target,sealed.body,key));
+    if (sealed.text) await forgetCardText(sealedCardDirectory(dependencies.env),captured.target);
+    return result("activity.end",ended,{ notes });
   }
 
   if (group === "activity" && action === "list") {

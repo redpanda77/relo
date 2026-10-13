@@ -227,6 +227,14 @@ export class ReloApiClient {
     return this.request("GET", "/api/devices/keys");
   }
 
+  endToEndPolicy() {
+    return this.request("GET", "/api/end-to-end/policy");
+  }
+
+  setEndToEndPolicy(required) {
+    return this.request("PUT", "/api/end-to-end/policy", { body: { required } });
+  }
+
   publishClientKey(body) {
     return this.request("PUT", "/api/clients/self/keys", { body });
   }

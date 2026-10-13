@@ -20,3 +20,10 @@ privately until a fix and disclosure plan are ready.
 Relo is self-hosted. Operators are responsible for TLS, account access, server updates, Apple
 credentials, and network exposure. See [the self-hosting guide](docs/SELF-HOSTING.md) for the
 supported deployment boundary.
+
+## End-to-end encryption
+
+Relo seals notifications, questions and Live Activity text on the sending computer for the iPhones
+the owner verified, and the phone signs every answer. The threat model, what the server can still
+see, and the state of each phase are in [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md).
+Reports about the protocol or its implementation follow the private advisory flow above.

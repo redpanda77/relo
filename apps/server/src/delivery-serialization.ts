@@ -164,6 +164,8 @@ export function activityContentState(
       expiresAt: nullableEpochSeconds(command.expiresAt),
       staleAt: nullableEpochSeconds(command.staleAt),
       interaction: privacy === "private" ? null : (jsonObject(command.interaction) ?? null),
+      // This phone's sealed card or question text, opened by the widget (E5).
+      ...(privacy === "standard" && jsonObject(command.sealed) ? { sealed: command.sealed } : {}),
     };
   }
   return {

@@ -11,7 +11,7 @@ import type { SubjectTransaction } from "../relevance/commands.js";
 import { NativeOccurrenceError } from "../relevance/native-occurrence.js";
 import { createDashboardActivityEvent,dashboardActivitySourceName } from "./dashboard-projection.js";
 import {
-boundedPresentationText,cancelPendingActivityInteractions,cleanupUndeliverableTerminalTokens,createActivityCommands,
+boundedPresentationText,cancelPendingActivityInteractions,cleanupUndeliverableTerminalTokens,createActivityCommands,storeSealedCard,
 expireLockedRows,serializeTaskActivity
 } from "./runtime.js";
 import { startCredentialActivity } from "./start-credential.js";
@@ -125,8 +125,8 @@ export async function executeActivityCommandInTransaction(tx: SubjectTransaction
       return await finish(result,true);
     }
     const delivery=await createActivityCommands(tx,{principalId:actor.principalId,sourceName:authorized.sourceName,
-      activity:updated,operation:command.operation,apnsMode:command.apnsMode,occurredAt:command.input.occurredAt,
-      dismissAfterSeconds,priority:10});
+      activity:await storeSealedCard(tx,updated,command.input.sealed),operation:command.operation,apnsMode:command.apnsMode,
+      occurredAt:command.input.occurredAt,dismissAfterSeconds,priority:10});
     if(command.operation==="end") await cleanupUndeliverableTerminalTokens(tx,current.id);
     const result={kind:"applied" as const,activity:serializeTaskActivity(updated),delivery,dismissAfterSeconds};
     await saveActivityCommandReceipt(tx,authorized,command,result);

@@ -60,6 +60,8 @@ export const activityStartSchema = z.object({
   expiresInSeconds: z.number().int().min(60).max(28_800).default(DEFAULT_EXPIRES_IN_SECONDS),
   staleAfterSeconds: z.number().int().min(0).max(28_800).default(DEFAULT_STALE_AFTER_SECONDS),
   presentation: liveActivityPresentationSchema.optional(),
+  /** End-to-end sealed card text (E5); the readable fields carry placeholders. */
+  sealed: sealedNoticeSchema.optional(),
 }).strict().superRefine((value,context) => {
   if (value.lifecycle !== undefined && value.origin === undefined) {
     context.addIssue({ code: "custom",path: ["origin"],message: "Lifecycle acquisition requires an origin" });
@@ -104,6 +106,8 @@ export const activityUpdateSchema = z.object({
   lifecycle: agentLifecycleIdentitySchema.optional(),
   ifSequence: z.number().int().min(0).optional(),
   presentation: liveActivityPresentationSchema.optional(),
+  /** End-to-end sealed card text (E5); the readable fields carry placeholders. */
+  sealed: sealedNoticeSchema.optional(),
 }).strict().refine(
   (value) => Object.entries(value).some(([key,part]) => !["ifSequence","lifecycle","occurredAt"].includes(key) && part !== undefined),
   "At least one activity field is required",
@@ -133,6 +137,8 @@ export const activityEndSchema = z.object({
   ifSequence: z.number().int().min(0).optional(),
   lifecycle: agentLifecycleIdentitySchema.optional(),
   presentation: liveActivityPresentationSchema.optional(),
+  /** End-to-end sealed card text (E5); the readable fields carry placeholders. */
+  sealed: sealedNoticeSchema.optional(),
 }).strict().superRefine((value,context) => {
   if (value.occurredAt !== undefined && value.ifSequence === undefined) context.addIssue({ code: "custom",path: ["ifSequence"],message: "Original occurrence requires an exact sequence" });
   if (!value.presentation) return;

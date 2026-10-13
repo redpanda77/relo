@@ -30,6 +30,8 @@ struct ReloActivityAttributes: Codable {
         var presentation: LiveActivityPresentation
         /// When the work began, for the elapsed timer; absent in older payloads.
         var startedAt: Date?
+        /// This phone's sealed card or question text (E5), opened while decoding.
+        var sealed: ReloEnvelope?
 
         init(
             generation: Int,
@@ -53,7 +55,7 @@ struct ReloActivityAttributes: Codable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt
+            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed
         }
 
         init(from decoder: Decoder) throws {
@@ -66,7 +68,10 @@ struct ReloActivityAttributes: Codable {
                     debugDescription: "Live Activity generation must be a positive integer"
                 )
             }
-            presentation = try LiveActivityPresentation(from: decoder)
+            let decodedPresentation = try LiveActivityPresentation(from: decoder)
+            sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
+            // Opened on this phone: every surface shows the real text instead of the placeholders.
+            presentation = sealed.flatMap(ReloSealedCards.open).map(decodedPresentation.applying) ?? decodedPresentation
             updatedAt = try Self.decodeDate(.updatedAt, from: values)
             sequence = try values.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
             expiresAt = try Self.decodeDateIfPresent(.expiresAt, from: values)
@@ -87,6 +92,7 @@ struct ReloActivityAttributes: Codable {
             try values.encodeIfPresent(staleAt, forKey: .staleAt)
             try values.encodeIfPresent(startedAt, forKey: .startedAt)
             try values.encodeIfPresent(interaction, forKey: .interaction)
+            try values.encodeIfPresent(sealed, forKey: .sealed)
         }
 
         private static func decodeDateIfPresent(

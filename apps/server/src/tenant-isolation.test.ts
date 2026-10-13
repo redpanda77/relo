@@ -67,6 +67,7 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/devices/register": "registers the caller's own device",
   "PUT /api/devices/self/keys": "publishes the caller's own device keys; device-keys.test.ts",
   "PUT /api/clients/self/keys": "publishes the calling CLI's own identity key; device-keys.test.ts",
+  "PUT /api/end-to-end/policy": "the caller's own account setting; end-to-end-policy.test.ts",
   "POST /api/account/delete": "deletes the caller's own account",
   "GET /api/inbox/events": "stream; covered by its snapshot",
   "GET /api/dashboard/server": "server admin account metadata (ADR 0004); server-accounts.test.ts",

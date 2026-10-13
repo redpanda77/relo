@@ -149,3 +149,21 @@ test("the key store refuses loose permissions and corrupted identities", async (
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("require needs a person and reports the account setting", async () => {
+  const calls = [];
+  const h = harness({ devices: [], tty: true, answer: true });
+  try {
+    const client = { endToEndPolicy: async () => ({ required: false }), setEndToEndPolicy: async (required) => { calls.push(required); return { required }; } };
+    const run = (rest, dependencies) => runKeysCommand({ group: "keys", action: "require", rest, options: {},
+      dependencies, client, config: { apiUrl } });
+    const dependencies = { configPath: () => join(h.folder, "config.json"), env: {}, now: () => 0, stdinIsTTY: true, confirm: async () => true };
+    assert.deepEqual((await run(["on"], dependencies)).data, { required: true, changed: true });
+    assert.deepEqual((await run(["off"], { ...dependencies, confirm: async () => false })).data, { required: true, changed: false });
+    await assert.rejects(run(["on"], { ...dependencies, stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");
+    await assert.rejects(run(["maybe"], dependencies), /Usage/);
+    assert.deepEqual(calls, [true]);
+  } finally {
+    h.cleanup();
+  }
+});

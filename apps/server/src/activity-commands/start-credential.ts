@@ -8,7 +8,7 @@ import { preserveActivePresentationPolicy } from "../presentation-policy.js";
 import { PresentationRuntimeError,assertAccountPresentationAssets } from "../presentation-runtime.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
 import { NativeOccurrenceError,assertNativeStartChronology } from "../relevance/native-occurrence.js";
-import { createActivityCommands,eligibleDevices,expireLockedRows,replaceBlockingTaskActivities,retireOverflowCards,serializeTaskActivity } from "./runtime.js";
+import { createActivityCommands,storeSealedCard,eligibleDevices,expireLockedRows,replaceBlockingTaskActivities,retireOverflowCards,serializeTaskActivity } from "./runtime.js";
 import { activityReplay,completeActiveCardReuse,replayStoredStart,replayedOperation } from "./start-store.js";
 import type { ActivityStartRow } from "./start-types.js";
 import { startAccepted,startRejected,type ActivityStartResult,type ProducerStartCommand } from "./start-types.js";
@@ -404,7 +404,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         occurredAt: input.occurredAt,
         principalId: auth.principalId,
         sourceName: auth.clientName ?? "Relo CLI",
-        activity: result.rows[0]!,
+        activity: await storeSealedCard(client,result.rows[0]!,rawInput.sealed),
         operation: "start",
         apnsMode,
         requestedDeviceIds: devices.map((device) => device.id),

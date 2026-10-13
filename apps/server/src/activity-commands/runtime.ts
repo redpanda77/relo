@@ -1,4 +1,4 @@
-import type { SealedNotice } from "../sealed-content.js";
+import { sealedAlertFor,storedSealedCard,type SealedNotice } from "../sealed-content.js";
 import { SESSION_LOST_AFTER_SECONDS } from "../agent-sessions.js";
 import { createHash,randomUUID } from "node:crypto";
 import type { ActivityDeliverySummary,ApnsMode } from "../activities.js";
@@ -171,6 +171,13 @@ export function activityProviderTimestamp(activity: {
   return updated;
 }
 
+/** Keeps a sealed card's latest envelopes on its row; the caller passes the row it updated. */
+export async function storeSealedCard(query: Queryable,activity: ActivityRow,sealed: SealedNotice | undefined): Promise<ActivityRow> {
+  if (!sealed) return activity;
+  await query.query("UPDATE live_activities SET sealed=$2 WHERE id=$1",[activity.id,sealed]);
+  return { ...activity,sealed } as ActivityRow;
+}
+
 export async function createActivityCommands(
   query: Queryable,
   input: {
@@ -269,6 +276,9 @@ export async function createActivityCommands(
           priority: 10,
           dismissAfterSeconds: input.dismissAfterSeconds ?? null,
           interaction: null,
+          // This phone's sealed card or question text; the widget opens it on the phone (E5).
+          ...(canonical.privacy === "standard"
+            ? sealedAlertFor(input.sealed ?? storedSealedCard(input.activity),publicId("dev",device.id)) : {}),
         },
       },eventKey,input.operation === "end"
         ? new Date(Date.now()+3_600_000)

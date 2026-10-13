@@ -41,7 +41,7 @@ export function fitAlert({ title, summary }) {
   return alert;
 }
 
-export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, kind = "notice" }) {
+export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, kind = "notice", alert }) {
   const plaintext = sentAt === undefined ? { ...content } : { ...content, sentAt };
   const recipients = [...phones].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
   const seed = createHmac("sha256", sender.privateKey).update([
@@ -50,7 +50,8 @@ export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, ki
     createHash("sha256").update(JSON.stringify(plaintext)).digest("hex"),
   ].join("\n")).digest();
   const context = `ntf:${createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
-  const alertContent = { ...fitAlert({ title: content.title, summary: content.summary }), ...(sentAt === undefined ? {} : { sentAt }) };
+  // A card's per-phone envelope is what the Lock Screen renders, so it carries the whole card text.
+  const alertContent = alert ?? { ...fitAlert({ title: content.title, summary: content.summary }), ...(sentAt === undefined ? {} : { sentAt }) };
   const alerts = recipients.map((phone, index) => sealEnvelope({
     kind, context, sender, recipients: [phone], content: alertContent,
     contentKey: derive(seed, `alert-key ${index}`, 32), nonce: derive(seed, `alert-nonce ${index}`, 12),

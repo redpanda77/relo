@@ -52,7 +52,7 @@ let package = Package(
         ),
         .target(
             name: "ReloActivityResponse",
-            dependencies: ["ReloCore", "ReloTransport", "ReloPersistence"],
+            dependencies: ["ReloCore", "ReloTransport", "ReloPersistence", "ReloNotificationSupport"],
             path: "Sources/SharedActivity",
             exclude: [
                 "ImmutablePresentationAssetCache.swift",

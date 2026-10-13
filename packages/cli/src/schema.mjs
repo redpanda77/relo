@@ -145,6 +145,7 @@ export const COMMANDS = [
   { name: "keys status", summary: "End-to-end encryption: this computer's identity key and each phone's trust (trusted|unverified|changed) and prekey (fresh|stale|missing|invalid). Publishes this computer's public key so phones can show the same safety number. Prints {ok,identity,devices,next?}.", options: [] },
   { name: "keys verify", summary: "A person at a terminal compares the 60-digit safety number with Settings → Security on the iPhone and confirms; only then is that phone trusted. Agents cannot run it (exit 2, PERSON_REQUIRED).", positionals: "DEVICE_ID", options: [] },
   { name: "keys forget", summary: "Stop trusting one phone on this computer (nothing is sealed to it until verified again).", positionals: "DEVICE_ID", options: [] },
+  { name: "keys require", summary: "A person at a terminal turns on (or off) \"require end-to-end encryption\" for this account: the server then refuses readable notices, questions and card text from CLIs. Agents cannot run it (exit 2, PERSON_REQUIRED).", positionals: "on|off", options: [] },
   { name: "keys rotate", summary: "A person at a terminal replaces this computer's identity key; every phone must verify it again.", options: [] },
   { name: "help", summary: "Short guide; `help identity` or `help all` for more.", positionals: "[identity|all]", options: [] },
   { name: "schema", summary: "This machine-readable reference; `relo schema activity update` (or activity.update) prints only those commands plus exitCodes.", positionals: "[COMMAND...]", options: [] },

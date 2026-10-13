@@ -515,6 +515,22 @@ final class AppModel {
         answerSigner = dependencies.answerSigner
     }
 
+    /// Why this phone's encryption keys could not be created or published, shown in Settings → Security.
+    var encryptionKeysProblem: String?
+
+    static func encryptionKeysProblem(_ error: Error) -> String {
+        switch error {
+        case CredentialStoreError.keychain(let status):
+            "The Keychain refused the encryption keys (status \(status)). Check that this build has the shared Keychain group."
+        case MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden:
+            "The server refused this iPhone's keys. Sign in again."
+        case MobileAPIError.unavailable:
+            "The server is unreachable or does not accept encryption keys yet."
+        default:
+            "Encryption keys could not be published: \(String(describing: error))"
+        }
+    }
+
     /// This phone's identity signer for answers; nil in previews and tests.
     @ObservationIgnored var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)?
 
@@ -524,8 +540,13 @@ final class AppModel {
 
     func maintainEncryptionKeys(credential: DeviceCredential) async {
         guard let encryptionKeys else { return }
-        // Unpublished keys only delay sealing to this phone; the next heartbeat tries again.
-        _ = try? await encryptionKeys.run(credential: credential)
+        // Unpublished keys only delay sealing to this phone; the next launch or foreground tries again.
+        do {
+            try await encryptionKeys.run(credential: credential)
+            encryptionKeysProblem = nil
+        } catch {
+            encryptionKeysProblem = Self.encryptionKeysProblem(error)
+        }
     }
 
     var recoveryQueues: [RecoveryQueueStatus] {
@@ -711,6 +732,8 @@ final class AppModel {
             await synchronizeLiveActivityTokens()
             guard isCurrentSelection(revision) else { return }
             await sendHeartbeat()
+            guard isCurrentSelection(revision) else { return }
+            if let credential { await maintainEncryptionKeys(credential: credential) }
             guard isCurrentSelection(revision) else { return }
             await refresh()
             guard isCurrentSelection(revision) else { return }
@@ -1733,6 +1756,9 @@ final class AppModel {
             await sendHeartbeat()
             await refresh()
         }
+        guard !Task.isCancelled, isForeground else { return }
+        // Signed-in phones register instead of sending a heartbeat, so keys are kept current here too.
+        if let credential { await maintainEncryptionKeys(credential: credential) }
         guard !Task.isCancelled, isForeground else { return }
         requestMaintenance()
     }

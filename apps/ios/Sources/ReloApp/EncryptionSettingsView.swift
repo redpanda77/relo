@@ -85,6 +85,12 @@ struct EncryptionSettingsView: View {
                     Text("This iPhone opens end-to-end encrypted messages only from computers you verified. The server cannot read them or add a computer.")
                 }
                 .listRowBackground(ReloListRowBackground())
+                if let problem = model.encryptionKeysProblem {
+                    Section {
+                        Text(problem).foregroundStyle(Color.reloErrorText)
+                    } header: { Text("Keys not published") }
+                    .listRowBackground(ReloListRowBackground())
+                }
                 if let phoneKeyID = security.phoneKeyID {
                     Section {
                         LabeledContent("This iPhone", value: phoneKeyID).font(.footnote.monospaced())

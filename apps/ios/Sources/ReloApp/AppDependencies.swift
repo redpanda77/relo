@@ -47,6 +47,7 @@ struct AppDependencies {
     var makeDetailCache: (StorageScope) -> any NotificationDetailCaching = { _ in InMemoryNotificationDetailCache() }
 
     static func live() -> AppDependencies {
+        ReloSealedCards.install(ReloSealedContent.live().cardOpener)
         let tokenRegistrar = BackgroundLiveActivityTokenRegistrar()
         var system = AppSystemServices.live
         system.configureActivityTokens = { tokenRegistrar.configure($0) }

@@ -4,7 +4,7 @@ import { createApp } from "./app.js";
 import { generateToken,hashToken } from "./auth.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
-import { assertOrdinaryDeliveryIntentWithinBudget,deliveryProjection } from "./delivery-serialization.js";
+import { activityContentState,assertOrdinaryDeliveryIntentWithinBudget,deliveryProjection } from "./delivery-serialization.js";
 import { migrate } from "./migrate.js";
 import { checkSealedNotice,SEALED_PROMPT,SEALED_QUESTION_TITLE,SEALED_TITLE,sealedNoticeSchema,type SealedEnvelope } from "./sealed-content.js";
 
@@ -170,5 +170,32 @@ suite("sealed notices through the API (E3.1)",() => {
     }
     expect((await request("POST",`/api/live-activities/${started.body.activity.id}/wait`,
       { type: "approval",expiresInSeconds: 120,sealed,prompt: "Leak" },owner)).body).toEqual({ error: "sealed_with_plaintext" });
+  });
+
+  test("a sealed card carries each phone's envelope in its push and keeps it for later updates (E5)",async () => {
+    const shown = await cardPhone();
+    const alerts = [envelope([shown.publicId],{ kind: "card" })];
+    const sealed = { alerts,content: envelope([shown.publicId],{ kind: "card" }) };
+    const started = await request("POST","/api/live-activities",{ key: "sealed-card",title: "Encrypted card",status: "Updating…",
+      context,deviceIds: [shown.publicId],sealed },owner);
+    expect(started).toMatchObject({ status: 201 });
+    const cardId = started.body.activity.id.slice(4);
+    expect((await db.query("SELECT sealed FROM live_activities WHERE id=$1",[cardId])).rows[0].sealed).toEqual(sealed);
+    const startEvent = (await db.query(`SELECT payload FROM notification_events WHERE payload#>>'{liveActivity,activityId}'=$1
+      AND payload#>>'{liveActivity,operation}'='start'`,[started.body.activity.id])).rows[0];
+    expect(startEvent.payload.liveActivity.sealed).toEqual(alerts[0]);
+    const state = activityContentState({ ...startEvent.payload.liveActivity,generation: 1 },"standard",0);
+    expect(state.sealed).toEqual(alerts[0]);
+
+    // An update without new text (here only progress) still carries the stored envelope.
+    const updated = await request("PATCH",`/api/live-activities/${started.body.activity.id}`,{ progress: 0.5 },owner);
+    expect(updated).toMatchObject({ status: 200 });
+    const latest = (await db.query(`SELECT payload FROM notification_events WHERE payload#>>'{liveActivity,activityId}'=$1
+      ORDER BY created_at DESC LIMIT 1`,[started.body.activity.id])).rows[0];
+    expect(latest.payload.liveActivity.sealed).toEqual(alerts[0]);
+
+    const wrongKind = { alerts: [envelope([shown.publicId])],content: envelope([shown.publicId]) };
+    expect((await request("POST","/api/live-activities",{ key: "bad-card",title: "Encrypted card",status: "Updating…",
+      context,deviceIds: [shown.publicId],sealed: wrongKind },owner)).body).toEqual({ error: "invalid_sealed_content" });
   });
 });
