@@ -130,6 +130,44 @@ export async function executeNotificationRetentionBatch(
   };
 }
 
+export type ScheduledContentRetention = {
+  retentionHours: number;
+  releaseIdentity: string;
+};
+
+/** One bounded batch per call (200 events); the worker loops while a batch comes back full. */
+export const SCHEDULED_CONTENT_RETENTION_BATCH = 200;
+const MAXIMUM_SCHEDULED_BATCHES = 50;
+
+/** The worker's automatic retention: runs through the runtime-callable function with fixed limits. */
+export async function runScheduledContentRetention(
+  db: Pick<Database,"query">,
+  policy: ScheduledContentRetention,
+): Promise<{ batches: number; eventsPruned: number; tombstonesExpired: number; cardsPruned: number }> {
+  if (!Number.isInteger(policy.retentionHours) || policy.retentionHours<1 || policy.retentionHours>8_760
+    || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(policy.releaseIdentity)) {
+    throw new Error("invalid_scheduled_content_retention");
+  }
+  let batches = 0;
+  let eventsPruned = 0;
+  let tombstonesExpired = 0;
+  let cardsPruned = 0;
+  while (batches<MAXIMUM_SCHEDULED_BATCHES) {
+    const result = await db.query<{ events_pruned: number; tombstones_expired: number; cards_pruned: number }>(
+      "SELECT * FROM run_scheduled_content_retention($1,$2)",
+      [policy.retentionHours,policy.releaseIdentity],
+    );
+    const row = result.rows[0]!;
+    batches += 1;
+    eventsPruned += Number(row.events_pruned);
+    tombstonesExpired += Number(row.tombstones_expired);
+    cardsPruned += Number(row.cards_pruned);
+    if (Number(row.events_pruned)<SCHEDULED_CONTENT_RETENTION_BATCH
+      && Number(row.cards_pruned)<SCHEDULED_CONTENT_RETENTION_BATCH) break;
+  }
+  return { batches,eventsPruned,tombstonesExpired,cardsPruned };
+}
+
 export function validateNotificationRetentionPolicy(policy: NotificationRetentionPolicy): void {
   if (!Number.isFinite(policy.cutoff.getTime()) || policy.cutoff.getTime()>Date.now()
     || !Number.isInteger(policy.maximumEventsPerPrincipal) || policy.maximumEventsPerPrincipal<1

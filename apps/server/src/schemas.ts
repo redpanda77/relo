@@ -5,6 +5,7 @@ import { MAX_NOTIFICATION_BODY_BYTES } from "./notification-content.js";
 import { decisionSubjectCommandSchema, notificationSubjectCommandSchema } from "./relevance/admission.js";
 import { subjectVersionSchema } from "@relo/notification-contracts";
 import { questionExpirySchema } from "./question-policy.js";
+import { sealedNoticeSchema } from "./sealed-content.js";
 
 const notificationLongBodySchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value,"utf8") <= MAX_NOTIFICATION_BODY_BYTES,
@@ -40,6 +41,12 @@ export const notificationRequestSchema = z.object({
   }).strict().optional(),
   origin: originDescriptorSchema.optional(),
 }).strict();
+
+/** An end-to-end sealed notice: no title or body in the clear (docs/END-TO-END-ENCRYPTION.md, E3). */
+export const sealedNotificationRequestSchema = notificationRequestSchema
+  .omit({ title: true,body: true,summary: true,bodyFormat: true,imageUrl: true,destinationUrl: true })
+  .extend({ sealed: sealedNoticeSchema })
+  .strict();
 
 export const registerDeviceSchema = z.object({
   stableDeviceId: z.string().min(1).max(200),
@@ -147,6 +154,8 @@ export const createInteractionSchema = z.object({
   callback: interactionCallbackSchema.optional(),
   /** The phone cannot show a card: notify without answer buttons; the owner answers in Relo. */
   answerInApp: z.boolean().optional(),
+  /** End-to-end sealed title and prompt (E4.1); the server fills placeholders before parsing. */
+  sealed: sealedNoticeSchema.optional(),
 }).strict().superRefine((input,context) => {
   if (input.relevance?.policy.kind === "decision" && input.relevance.policy.actionSeconds !== undefined
     && input.relevance.policy.actionSeconds !== input.expiresInSeconds) {

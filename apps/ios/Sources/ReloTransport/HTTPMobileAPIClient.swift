@@ -401,7 +401,7 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
         }
     }
 
-    private func request(path: String, method: String = "GET") -> URLRequest {
+    func request(path: String, method: String = "GET") -> URLRequest {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -411,7 +411,7 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
         return request
     }
 
-    private func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {

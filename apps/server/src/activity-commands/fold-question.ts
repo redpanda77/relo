@@ -1,3 +1,4 @@
+import type { SealedNotice } from "../sealed-content.js";
 import { canonicalPresentation,persistedPresentationColumns } from "../presentation-runtime.js";
 import { publicId } from "../ids.js";
 import { createActivityCommands } from "./runtime.js";
@@ -8,6 +9,8 @@ type Queryable = { query: (text: string, values?: unknown[]) => Promise<any> };
 export type FoldQuestionInput = {
   type: "approval" | "yes_no"; prompt: string; expiresInSeconds: number;
   primaryLabel?: string | undefined; secondaryLabel?: string | undefined;
+  /** End-to-end sealed title and prompt for the question's events (E4.1). */
+  sealed?: SealedNotice | null | undefined;
 };
 
 export type FoldQuestionResult =
@@ -60,7 +63,7 @@ export async function foldQuestionIntoCard(client: Queryable, input: {
   const delivery = await createActivityCommands(client as any,{
     principalId: input.principalId,sourceName: source.rows[0]?.source ?? input.fallbackSourceName,
     activity: updated,operation: "update",apnsMode: input.apnsMode,
-    priority: 10,decisionSeconds: asked.expiresInSeconds,alert: true,
+    priority: 10,decisionSeconds: asked.expiresInSeconds,alert: true,sealed: asked.sealed ?? undefined,
   });
   const request = await client.query(
     `SELECT r.id FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id

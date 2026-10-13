@@ -6,3 +6,5 @@ for (const name of ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "RELO_SOURCE", 
 }
 // Tests never ask GitHub for the latest release.
 process.env.RELO_NO_UPDATE_CHECK = "1";
+// Tests never read or write the developer's end-to-end encryption key store.
+process.env.RELO_KEY_STORE_PATH = `/nonexistent/relo-test-${process.pid}/e2ee.json`;

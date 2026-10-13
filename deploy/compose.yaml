@@ -121,6 +121,7 @@ services:
       APNS_CUTOVER_AT: ${APNS_CUTOVER_AT:-}
       WORKER_POLL_MS: ${WORKER_POLL_MS:-2000}
       WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-20}
+      RELO_CONTENT_RETENTION_HOURS: ${RELO_CONTENT_RETENTION_HOURS:-}
     volumes:
       - ./secrets:/run/secrets:ro
     healthcheck:

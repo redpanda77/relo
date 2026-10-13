@@ -1,3 +1,4 @@
+import type { SealedNotice } from "../sealed-content.js";
 import { SESSION_LOST_AFTER_SECONDS } from "../agent-sessions.js";
 import { createHash,randomUUID } from "node:crypto";
 import type { ActivityDeliverySummary,ApnsMode } from "../activities.js";
@@ -186,6 +187,8 @@ export async function createActivityCommands(
     decisionSeconds?: number | undefined;
     /** Alert the owner on an update: a question has just landed on this card. */
     alert?: boolean | undefined;
+    /** End-to-end sealed question text, stored on each phone's question event (E4.1). */
+    sealed?: SealedNotice | undefined;
   },
 ): Promise<ActivityDeliverySummary> {
   const freshness = await recordNativeMutation(query,{ activityId: input.activity.id,
@@ -243,6 +246,7 @@ export async function createActivityCommands(
         canonical.content.subtitle ?? "",{
         ...(input.activity.context ? { context: input.activity.context } : {}),
         privacy: canonical.privacy,
+        ...(input.sealed ? { sealed: input.sealed } : {}),
         liveActivity: {
           operation: input.operation,
           activityId: publicId("act",input.activity.id),

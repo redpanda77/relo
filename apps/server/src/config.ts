@@ -42,6 +42,11 @@ const schema = z.object({
   WORKER_POLL_MS: z.coerce.number().int().min(250).default(2000),
   WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(20),
   WORKER_URGENT_RESERVED_SLOTS: z.coerce.number().int().min(0).max(99).optional(),
+  /** Hours after which the worker deletes notification content; unset keeps it (manual retention). */
+  RELO_CONTENT_RETENTION_HOURS: z.preprocess(
+    emptyStringAsUndefined,
+    z.coerce.number().int().min(1).max(8760).optional(),
+  ),
 });
 
 export type Config = z.infer<typeof schema>;

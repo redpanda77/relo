@@ -1,0 +1,225 @@
+{
+  "version": "relo.e2e.v1",
+  "note": "Interop vectors. Every key here is a public test key; never reuse one.",
+  "keys": {
+    "cliIdentity": {
+      "privateKey": "DCFCmlj0FpkVS3VAyrU0ONDhjQ7qwR8zVQxxXjWU000",
+      "publicKey": "BNU-KGyoTf4HGJSvm91hEw-hoFbLgsrlcNUNuUJt-30wQb7qc4IOmXoARaZ5ilobmvdu0frajFK_MXfqw0kse8s",
+      "keyId": "k_RF5NjmNTY42kIwjc-3qtRA"
+    },
+    "deviceIdentity": {
+      "privateKey": "3yy27TbkGGF8K6BrxSHUi890KSBcLQ0hvimylBCxExg",
+      "publicKey": "BNSlFw4xFKPt94j3JMs0TVpOxGnBc5AZbSABVNWQTxq_6HTNLKfHS_62gnMp6IsmzhvmpusboAc64uiQCZZJc2E",
+      "keyId": "k__ju1nLki9uG57esXk9jWnQ"
+    },
+    "prekey": {
+      "privateKey": "HZ7o0xRZZMQLkjDfWYqfNBjeyIDneaOhf_gz0Y-2PAk",
+      "publicKey": "BCV2P3owVylf5BkOeMt4U4GMCtx2nrqoECsxV4F4yLEqUenEthPmLQuKH-v0WSfVhCoXlHOZMxPkuEFXjlwnu64",
+      "keyId": "k_tP-ufqWAZYCwy831L9aNCw"
+    },
+    "otherDevicePrekey": {
+      "privateKey": "sgUX7Or4JGaw7vC4HHQxC8O-7HOisk803EyjAYHgDz8",
+      "publicKey": "BEYxv8wNOeTaM3sNeaLxjt4O6PncDqfhB2LUVARhFPyQqhlw1j6MV9EIgvRPTjbRLBCBVN9r4rWyGdZXO7Kfyxc",
+      "keyId": "k_q-P8t-79NcyM55jgHmP8ug"
+    }
+  },
+  "hpke": {
+    "suite": "DHKEM(P-256, HKDF-SHA256), HKDF-SHA256, AES-256-GCM; base mode",
+    "info": "cmVsby5lMmUudjEgdGVzdCBocGtl",
+    "aad": "cmVsby5lMmUudjEgdGVzdCBhYWQ",
+    "plaintext": "VGhlIHNlcnZlciBjYW5ub3QgcmVhZCB0aGlzLg",
+    "enc": "BPbQ3tLGXfOvXipT8QOx_AlZ0s6ybdwrJWVu3cEZAPHHTt7coh9xewtuyUk-pfeB-DvpqzHRRwB8ULE7Ai6NliM",
+    "ciphertext": "3WSgf0ubiKjnyJxSec2tqForLI0pEb2Vopr9Kd0ymwS4hsE5qmzMkq1ytwI"
+  },
+  "node": {
+    "envelope": {
+      "v": "relo.e2e.v1",
+      "kind": "notice",
+      "context": "acct:acc_test/idem:vector-1",
+      "sender": "k_RF5NjmNTY42kIwjc-3qtRA",
+      "recipients": [
+        {
+          "device": "dev_phone",
+          "prekey": "pk_1",
+          "enc": "BB_fpnFrEfI096LNkeyaSQ9a6G8x8qo3eSkvMFvUd9c3DQrfS6YFhxhVxNjYqmgQY1iZae4xDCG7xwn4z3P1AcA",
+          "key": "K8b0DKYI8j6jgT-XIymOgKfn589EvPxT6Jv5XnALR795e5loAUBB8hO2oM_D62Sq"
+        },
+        {
+          "device": "dev_ipad",
+          "prekey": "pk_9",
+          "enc": "BFKZQxK7TzlzgLb_ENLisBz3bhLgj6n8Wv6Cx49X3iJosLHFXgCqusvsoHImNXki9fRdwkDCFmgkqtp9WZTQb1A",
+          "key": "SPuzktRgdo2SA3lUYZMIOyWS3QZCMnpqafteLRry6YoazLbo2bLfO85i1KyZAH80"
+        }
+      ],
+      "nonce": "Eesi4meZumNa4OXY",
+      "ct": "ZUDiHF5QLY2mnA22u6EG9LC3bczUHTEd5EzDqW8YF0hbbMxHH9VWOKVosSjhFe2vvOPKfFL8I3lESvtN7r7xVnNFmBevek2lvM8z8qDLkuvBFryANfO_KP_arbVFOwFQZ-_UaWTxiPN5RY4GpQmn6Xf2LpUB9NxyCNulUL4E03rQMH1376CP-JrQjcFxCSsMLQtQtXzspmLZWl9cMuD9f9SCTwjiEdTgPeBj7uxUVi6xiNtgAMxUM1hcMUzMLqPHUBDws0Kv2SXBLtF8St5V-ScdYlEamZKAocZpwgjxxe0ly334IgnW47MtPpeKQIWzXeuKB-UPPJc3SP92eFMjhHz953mddWFB3UlwuPc6XzM",
+      "sig": "GKa-nxOCOU6bJPkFUwV1ePpa2z78QCvImDOzdlGIddi5TLvU09sofQDS30VKbbA-f5dOhMdwWL0nvOCIggFE_w"
+    },
+    "content": {
+      "title": "Deploy finished",
+      "summary": "All 848 tests passed",
+      "body": "## Result\nEvery check passed. Ünïcödé and emoji ✅ survive sealing.",
+      "project": "relo",
+      "topic": "end-to-end encryption"
+    },
+    "context": "acct:acc_test/idem:vector-1",
+    "prekey": {
+      "deviceId": "dev_phone",
+      "prekeyId": "pk_1",
+      "publicKey": "BCV2P3owVylf5BkOeMt4U4GMCtx2nrqoECsxV4F4yLEqUenEthPmLQuKH-v0WSfVhCoXlHOZMxPkuEFXjlwnu64",
+      "createdAt": "2026-10-13T16:00:00.000Z",
+      "signature": "2cZAsh30VDvHpo-s1EN3z_NrfOZzP_VVE_Q_xZypk5pFt0WmDmQ68ZM7CIH2IPxx2lmdcfbXsAvz3qh3L9j6HQ"
+    },
+    "answer": {
+      "interactionId": "int_1",
+      "notificationId": "ntf_1",
+      "deviceId": "dev_phone",
+      "value": "approved",
+      "respondedAt": "2026-10-13T16:01:00.000Z",
+      "signature": "05HvVoY5ypvUKZZrGRCEz4eMvcO2e60MORdRDLfwEIDDkcvyYMRtjDSqQRYANPZ5IN_znVBgid124lNvad9YwA"
+    }
+  },
+  "safetyNumber": "40198 48204 18246 06089 57844 27998 88618 40399 54115 09844 44362 40151",
+  "rejections": [
+    {
+      "name": "context swapped to another account",
+      "envelope": {
+        "v": "relo.e2e.v1",
+        "kind": "notice",
+        "context": "acct:acc_other/idem:vector-1",
+        "sender": "k_RF5NjmNTY42kIwjc-3qtRA",
+        "recipients": [
+          {
+            "device": "dev_phone",
+            "prekey": "pk_1",
+            "enc": "BB_fpnFrEfI096LNkeyaSQ9a6G8x8qo3eSkvMFvUd9c3DQrfS6YFhxhVxNjYqmgQY1iZae4xDCG7xwn4z3P1AcA",
+            "key": "K8b0DKYI8j6jgT-XIymOgKfn589EvPxT6Jv5XnALR795e5loAUBB8hO2oM_D62Sq"
+          },
+          {
+            "device": "dev_ipad",
+            "prekey": "pk_9",
+            "enc": "BFKZQxK7TzlzgLb_ENLisBz3bhLgj6n8Wv6Cx49X3iJosLHFXgCqusvsoHImNXki9fRdwkDCFmgkqtp9WZTQb1A",
+            "key": "SPuzktRgdo2SA3lUYZMIOyWS3QZCMnpqafteLRry6YoazLbo2bLfO85i1KyZAH80"
+          }
+        ],
+        "nonce": "Eesi4meZumNa4OXY",
+        "ct": "ZUDiHF5QLY2mnA22u6EG9LC3bczUHTEd5EzDqW8YF0hbbMxHH9VWOKVosSjhFe2vvOPKfFL8I3lESvtN7r7xVnNFmBevek2lvM8z8qDLkuvBFryANfO_KP_arbVFOwFQZ-_UaWTxiPN5RY4GpQmn6Xf2LpUB9NxyCNulUL4E03rQMH1376CP-JrQjcFxCSsMLQtQtXzspmLZWl9cMuD9f9SCTwjiEdTgPeBj7uxUVi6xiNtgAMxUM1hcMUzMLqPHUBDws0Kv2SXBLtF8St5V-ScdYlEamZKAocZpwgjxxe0ly334IgnW47MtPpeKQIWzXeuKB-UPPJc3SP92eFMjhHz953mddWFB3UlwuPc6XzM",
+        "sig": "GKa-nxOCOU6bJPkFUwV1ePpa2z78QCvImDOzdlGIddi5TLvU09sofQDS30VKbbA-f5dOhMdwWL0nvOCIggFE_w"
+      },
+      "error": "invalid_signature"
+    },
+    {
+      "name": "kind changed",
+      "envelope": {
+        "v": "relo.e2e.v1",
+        "kind": "card",
+        "context": "acct:acc_test/idem:vector-1",
+        "sender": "k_RF5NjmNTY42kIwjc-3qtRA",
+        "recipients": [
+          {
+            "device": "dev_phone",
+            "prekey": "pk_1",
+            "enc": "BB_fpnFrEfI096LNkeyaSQ9a6G8x8qo3eSkvMFvUd9c3DQrfS6YFhxhVxNjYqmgQY1iZae4xDCG7xwn4z3P1AcA",
+            "key": "K8b0DKYI8j6jgT-XIymOgKfn589EvPxT6Jv5XnALR795e5loAUBB8hO2oM_D62Sq"
+          },
+          {
+            "device": "dev_ipad",
+            "prekey": "pk_9",
+            "enc": "BFKZQxK7TzlzgLb_ENLisBz3bhLgj6n8Wv6Cx49X3iJosLHFXgCqusvsoHImNXki9fRdwkDCFmgkqtp9WZTQb1A",
+            "key": "SPuzktRgdo2SA3lUYZMIOyWS3QZCMnpqafteLRry6YoazLbo2bLfO85i1KyZAH80"
+          }
+        ],
+        "nonce": "Eesi4meZumNa4OXY",
+        "ct": "ZUDiHF5QLY2mnA22u6EG9LC3bczUHTEd5EzDqW8YF0hbbMxHH9VWOKVosSjhFe2vvOPKfFL8I3lESvtN7r7xVnNFmBevek2lvM8z8qDLkuvBFryANfO_KP_arbVFOwFQZ-_UaWTxiPN5RY4GpQmn6Xf2LpUB9NxyCNulUL4E03rQMH1376CP-JrQjcFxCSsMLQtQtXzspmLZWl9cMuD9f9SCTwjiEdTgPeBj7uxUVi6xiNtgAMxUM1hcMUzMLqPHUBDws0Kv2SXBLtF8St5V-ScdYlEamZKAocZpwgjxxe0ly334IgnW47MtPpeKQIWzXeuKB-UPPJc3SP92eFMjhHz953mddWFB3UlwuPc6XzM",
+        "sig": "GKa-nxOCOU6bJPkFUwV1ePpa2z78QCvImDOzdlGIddi5TLvU09sofQDS30VKbbA-f5dOhMdwWL0nvOCIggFE_w"
+      },
+      "error": "invalid_signature"
+    },
+    {
+      "name": "ciphertext replaced",
+      "envelope": {
+        "v": "relo.e2e.v1",
+        "kind": "notice",
+        "context": "acct:acc_test/idem:vector-1",
+        "sender": "k_RF5NjmNTY42kIwjc-3qtRA",
+        "recipients": [
+          {
+            "device": "dev_phone",
+            "prekey": "pk_1",
+            "enc": "BB_fpnFrEfI096LNkeyaSQ9a6G8x8qo3eSkvMFvUd9c3DQrfS6YFhxhVxNjYqmgQY1iZae4xDCG7xwn4z3P1AcA",
+            "key": "K8b0DKYI8j6jgT-XIymOgKfn589EvPxT6Jv5XnALR795e5loAUBB8hO2oM_D62Sq"
+          },
+          {
+            "device": "dev_ipad",
+            "prekey": "pk_9",
+            "enc": "BFKZQxK7TzlzgLb_ENLisBz3bhLgj6n8Wv6Cx49X3iJosLHFXgCqusvsoHImNXki9fRdwkDCFmgkqtp9WZTQb1A",
+            "key": "SPuzktRgdo2SA3lUYZMIOyWS3QZCMnpqafteLRry6YoazLbo2bLfO85i1KyZAH80"
+          }
+        ],
+        "nonce": "Eesi4meZumNa4OXY",
+        "ct": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+        "sig": "GKa-nxOCOU6bJPkFUwV1ePpa2z78QCvImDOzdlGIddi5TLvU09sofQDS30VKbbA-f5dOhMdwWL0nvOCIggFE_w"
+      },
+      "error": "invalid_signature"
+    },
+    {
+      "name": "recipient entry dropped",
+      "envelope": {
+        "v": "relo.e2e.v1",
+        "kind": "notice",
+        "context": "acct:acc_test/idem:vector-1",
+        "sender": "k_RF5NjmNTY42kIwjc-3qtRA",
+        "recipients": [
+          {
+            "device": "dev_ipad",
+            "prekey": "pk_9",
+            "enc": "BFKZQxK7TzlzgLb_ENLisBz3bhLgj6n8Wv6Cx49X3iJosLHFXgCqusvsoHImNXki9fRdwkDCFmgkqtp9WZTQb1A",
+            "key": "SPuzktRgdo2SA3lUYZMIOyWS3QZCMnpqafteLRry6YoazLbo2bLfO85i1KyZAH80"
+          }
+        ],
+        "nonce": "Eesi4meZumNa4OXY",
+        "ct": "ZUDiHF5QLY2mnA22u6EG9LC3bczUHTEd5EzDqW8YF0hbbMxHH9VWOKVosSjhFe2vvOPKfFL8I3lESvtN7r7xVnNFmBevek2lvM8z8qDLkuvBFryANfO_KP_arbVFOwFQZ-_UaWTxiPN5RY4GpQmn6Xf2LpUB9NxyCNulUL4E03rQMH1376CP-JrQjcFxCSsMLQtQtXzspmLZWl9cMuD9f9SCTwjiEdTgPeBj7uxUVi6xiNtgAMxUM1hcMUzMLqPHUBDws0Kv2SXBLtF8St5V-ScdYlEamZKAocZpwgjxxe0ly334IgnW47MtPpeKQIWzXeuKB-UPPJc3SP92eFMjhHz953mddWFB3UlwuPc6XzM",
+        "sig": "GKa-nxOCOU6bJPkFUwV1ePpa2z78QCvImDOzdlGIddi5TLvU09sofQDS30VKbbA-f5dOhMdwWL0nvOCIggFE_w"
+      },
+      "error": "invalid_signature"
+    }
+  ],
+  "cryptokit": {
+    "answer": {
+      "deviceId": "dev_phone",
+      "interactionId": "int_2",
+      "notificationId": "ntf_2",
+      "respondedAt": "2026-10-13T16:02:00.000Z",
+      "signature": "NDn30fqt683Ph-BcKczoJz9fSBUXknn1DO4C3mTXzHE1eHkv5SWvXzraz-AlrfqvXnwsmxjXP1Ok16POk60s0g",
+      "value": "denied"
+    },
+    "context": "acct:acc_test/int:vector-1",
+    "envelope": {
+      "context": "acct:acc_test/int:vector-1",
+      "ct": "QV02SSKagJkLsFrAL5WZAE6R443pcEsgE2CgZZfi8Qt1j2izC_PzKr6qXh5dwlgfJF9FF0ldQlkyJZlsb51ovyFPn-SYjoDnWCX1ArR6ziiWHcysBvDc9jwy4OaAe02J9kFA1LyBQAiqk4Vi7z4saJelDZvInFbUuj1eAl2gXp9IWtKo9EvkjAsn5m6kpJA9EjeQECyu1HiFi7eCGbAiUY83XcvSZbApCX4jv32ILjJANf1RlAVE1cbDP80UkexRj0Ihk8uZDUdxMu2EH_4BinedcNxSIQNEJkpUMjujozARoQkGhPI_g-mrDcOqomXUi03tlGubkKXYLBycRBD9FRYzUUly4_68tywtqSkQLUM",
+      "kind": "reply",
+      "nonce": "YhqN5YSnq6dywmkn",
+      "recipients": [
+        {
+          "device": "dev_phone",
+          "enc": "BLkwozZrxXvtRJv6WVLhnPJLSYrxdWd5KVplzRd1yV_dht8C1Glj956DkSeG4aX8BHj-XoBdsG4RxlMP7DpHZPE",
+          "key": "APCBtPtiXbEE37PMICbsdOFbbqFJP70SgAIcLMc23BCXev4tNIO-sV1nhNuUrIP5",
+          "prekey": "pk_1"
+        },
+        {
+          "device": "dev_ipad",
+          "enc": "BMXlvZ_D2BdSfNcf5lS3FiAC9DUFgoqzqZsJSsNxbNLjbf6PJMbS1fau70viLXx0Q0MQBT51ysLSvciQllGXyOA",
+          "key": "3rSRjvWMb_6xvXelsLLI06ELFcNERrvASacr7bKNLBRv7XTOl4hhzCHcCoMKl6_8",
+          "prekey": "pk_9"
+        }
+      ],
+      "sender": "k__ju1nLki9uG57esXk9jWnQ",
+      "sig": "NZ5QzwIHFET-0b4eb0cCtRiQpPKuMd3CmsIZZS0KA4Zo3I6PGuQ3khsvr_jvO2tEnO6nm6S5vIMOe7XrPr2yrQ",
+      "v": "relo.e2e.v1"
+    },
+    "hpke": {
+      "ciphertext": "lMcvKLnoCdm8CgON1pqI0qRDvYvjDrQpFJV8dD4IZyRDxI39dXWrNF2NGiM",
+      "enc": "BLKV8n4z_5yenKbV80TB7hn7I94tLn8xhu0flJYKtrxiNXgZMT3hWGYuXqbpqIufmzGs1ivITps8jTWGozI-d4c"
+    }
+  }
+}

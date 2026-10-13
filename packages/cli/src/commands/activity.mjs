@@ -211,7 +211,8 @@ export function validateActivityWaitResponse(value, expected) {
     || !validateCanonicalId(interaction.eventId, "ntf")
     || interaction.eventId !== value.eventId
     || interaction.type !== expected.type
-    || interaction.prompt !== expected.prompt
+    // A sealed question comes back with the server's placeholder prompt.
+    || (expected.prompt !== undefined && interaction.prompt !== expected.prompt)
     || typeof interaction.state !== "string" || interaction.state.length === 0
     || !isIsoTimestamp(interaction.expiresAt)
     || !Number.isInteger(value.queued) || value.queued < 0

@@ -54,6 +54,8 @@
 	<string>$(RELO_APP_GROUP)</string>
 	<key>RELOBuildOrigin</key>
 	<string>$(RELO_API_ORIGIN)</string>
+	<key>RELOKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)$(RELO_BUNDLE_ID).e2ee</string>
 	<key>RELOSourceCommit</key>
 	<string>$(RELO_GIT_COMMIT)</string>
 	<key>UIApplicationSceneManifest</key>

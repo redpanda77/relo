@@ -7,6 +7,7 @@ import {
   executeContextResourceRetention,
   previewContextResourceRetention,
   previewNotificationRetention,
+  runScheduledContentRetention,
   type NotificationRetentionPolicy,
 } from "./notification-retention.js";
 import { currentTestPresentationRecord } from "./test-current-presentation.js";
@@ -178,5 +179,95 @@ suite("bounded notification retention", () => {
     } finally {
       client.release();
     }
+  });
+
+  test("lets the runtime role delete content past the configured window and nothing newer", async () => {
+    const principal = (await db.query<{ id: string }>(
+      "INSERT INTO owner_principals(handle) VALUES ('window-owner') RETURNING id",
+    )).rows[0]!.id;
+    const insertEvent = async (key: string,ageHours: number) => (await db.query<{ id: string }>(
+      `INSERT INTO notification_events(
+         principal_id,source,title,body,idempotency_key,created_at,updated_at
+       ) VALUES ($1,'Retention',$2,'Private words',$2,
+         now()-make_interval(hours => $3),now()-make_interval(hours => $3)) RETURNING id`,
+      [principal,key,ageHours],
+    )).rows[0]!.id;
+    const expired = await insertEvent("window-expired",11);
+    const recent = await insertEvent("window-recent",9);
+    const pendingExpired = await insertEvent("window-pending",30);
+    await db.query(
+      `INSERT INTO interaction_requests(
+         principal_id,notification_event_id,kind,prompt,response_token_hash,expires_at
+       ) VALUES ($1,$2,'approval','Still waiting',$3,now()+interval '1 day')`,
+      [principal,pendingExpired,"b".repeat(64)],
+    );
+
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE relo_runtime");
+      const result = await runScheduledContentRetention(client as any,{
+        retentionHours: 10,releaseIdentity: "worker-test",
+      });
+      expect(result).toEqual({ batches: 1,eventsPruned: 1,tombstonesExpired: 0,cardsPruned: 0 });
+      await expect(client.query("SELECT * FROM run_scheduled_content_retention(0,'worker-test')"))
+        .rejects.toThrow("invalid content retention window");
+      await client.query("ROLLBACK");
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE relo_runtime");
+      await runScheduledContentRetention(client as any,{ retentionHours: 10,releaseIdentity: "worker-test" });
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+    const remaining = (await db.query<{ id: string }>(
+      "SELECT id FROM notification_events WHERE principal_id=$1",[principal],
+    )).rows.map(row => row.id).sort();
+    expect(remaining).toEqual([recent,pendingExpired].sort());
+    expect(remaining).not.toContain(expired);
+    await expect(runScheduledContentRetention(db,{ retentionHours: 0,releaseIdentity: "worker-test" }))
+      .rejects.toThrow("invalid_scheduled_content_retention");
+  });
+
+  test("removes ended cards past the window once their events are gone, never active ones (E1.2)", async () => {
+    const principal = (await db.query<{ id: string }>(
+      "INSERT INTO owner_principals(handle) VALUES ('card-window-owner') RETURNING id",
+    )).rows[0]!.id;
+    const device = (await db.query<{ id: string }>(
+      `INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,app_version,app_build,
+         os_version,apns_environment) VALUES ($1,'card-stable','card-install','Card iPhone','com.example.relo.notifications',
+         '1','1','18','sandbox') RETURNING id`,[principal],
+    )).rows[0]!.id;
+    const presentation = currentTestPresentationRecord("Secret card","Secret status");
+    const card = async (key: string,state: "active" | "ended",endedHoursAgo: number) => (await db.query<{ id: string }>(
+      `INSERT INTO live_activities(
+         principal_id,activity_key,title,status,target_device_ids,start_idempotency_key,expires_at,state,ended_at,updated_at,
+         presentation,presentation_sha256,presentation_policy,presentation_policy_source,presentation_preset_id,
+         presentation_preset_revision
+       ) VALUES ($1,$2,'Secret card','Secret status',ARRAY[$3::uuid],$2,now()+interval '1 day',$4::live_activity_state,
+         CASE WHEN $4='ended' THEN now()-make_interval(hours => $5) END,now()-make_interval(hours => $5),
+         $6::jsonb,$7,$8::jsonb,$9,$10,$11) RETURNING id`,
+      [principal,key,device,state,endedHoursAgo,presentation.presentation,presentation.presentationHash,
+        presentation.presentationPolicy,presentation.presentationPolicySource,presentation.presentationPresetId,
+        presentation.presentationPresetRevision],
+    )).rows[0]!.id;
+    const oldEnded = await card("old-ended","ended",30);
+    const recentEnded = await card("recent-ended","ended",2);
+    const oldActive = await card("old-active","active",30);
+
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL ROLE relo_runtime");
+      const result = await runScheduledContentRetention(client as any,{ retentionHours: 10,releaseIdentity: "worker-test" });
+      expect(result.cardsPruned).toBe(1);
+      await client.query("COMMIT");
+    } finally {
+      client.release();
+    }
+    const remaining = (await db.query<{ id: string }>("SELECT id FROM live_activities WHERE principal_id=$1",[principal]))
+      .rows.map(row => row.id).sort();
+    expect(remaining).toEqual([recentEnded,oldActive].sort());
+    expect(remaining).not.toContain(oldEnded);
   });
 });

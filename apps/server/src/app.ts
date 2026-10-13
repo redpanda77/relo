@@ -1,3 +1,4 @@
+import { answerSignatureSchema } from "./sealed-content.js";
 import { respondToInteraction } from "./interactions/commands.js";
 import { type InteractionChangeHub } from "./interaction-change-hub.js";
 import type { CurrentChangeHub } from "./current-change-hub.js";
@@ -130,12 +131,13 @@ export function createApp(
       action: z.enum(["approve","deny","yes","no"]),
       credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
       idempotencyKey: z.string().trim().min(1).max(200),
+      signature: answerSignatureSchema.optional(),
     }).strict().parse(await context.req.json());
     const notificationEventId = internalId("ntf",input.notificationId);
     const deviceId = internalId("dev",input.deviceId);
     if (!interactionId || !notificationEventId || !deviceId) return context.json({ error: "not_found" }, 404);
     const result = await respondToInteraction(db,{ kind: "live_activity",deviceId,credential: input.credential },{
-      eventId: notificationEventId,interactionId,kind: input.action,value: { action: input.action },idempotencyKey: input.idempotencyKey,
+      eventId: notificationEventId,interactionId,kind: input.action,value: { action: input.action,...input.signature },idempotencyKey: input.idempotencyKey,
     },{ apnsMode,credentialDerivationSecret: integratedDependencies.credentialDerivationSecret });
     if (result.kind === "rejected") return context.json({ error: result.error,...(result.state ? { state: result.state } : {}) },
       result.error === "invalid_credential" ? 401 : result.error === "invalid_action" ? 400

@@ -223,6 +223,14 @@ export class ReloApiClient {
     });
   }
 
+  listDeviceKeys() {
+    return this.request("GET", "/api/devices/keys");
+  }
+
+  publishClientKey(body) {
+    return this.request("PUT", "/api/clients/self/keys", { body });
+  }
+
   listServices() {
     return this.request("GET", "/api/services");
   }

@@ -7,6 +7,9 @@ import {
   activityPresentationScopeKey } from "../activity-presentation-leases.js";
 import { encodeDeviceInventoryCursor,decodeDeviceInventoryCursor,deviceInventoryResource } from "./resources.js";
 import type { ApiRouteContext } from "./route-context.js";
+import {
+  listClientKeys, listDeviceKeys, publishClientKey, publishClientKeySchema, publishDeviceKeys, publishDeviceKeysSchema,
+} from "../device-keys.js";
 
 /** Phone inventory, self-registration updates, Live Activity tokens and dismissals, and revocation. */
 export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
@@ -62,6 +65,40 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       cursor: hasMore && last ? encodeDeviceInventoryCursor(last.registered_at_cursor,last.id) : null,
       hasMore,
     });
+  });
+
+  // End-to-end encryption key directory: public halves only (docs/END-TO-END-ENCRYPTION.md).
+  app.get("/api/devices/keys", requireScope("devices:read"), async (context) => {
+    return context.json({ devices: await listDeviceKeys(db,context.get("auth").principalId) });
+  });
+
+  app.put("/api/devices/self/keys", requireScope("device:self"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
+    const parsed = publishDeviceKeysSchema.safeParse(await context.req.json().catch(() => null));
+    if (!parsed.success) return context.json({ error: "invalid_keys" }, 400);
+    const result = await publishDeviceKeys(db,{ principalId: auth.principalId,deviceId: auth.deviceId,keys: parsed.data });
+    if (!result.ok) {
+      const status = result.error === "device_not_found" ? 404 : result.error === "prekey_conflict" ? 409 : 400;
+      return context.json({ error: result.error }, status);
+    }
+    return context.json({ keyId: result.keyId,identityChanged: result.identityChanged });
+  });
+
+  app.put("/api/clients/self/keys", async (context) => {
+    const auth = context.get("auth");
+    if (auth.credentialKind !== "principal" || !auth.credentialId) return context.json({ error: "cli_credential_required" }, 403);
+    const parsed = publishClientKeySchema.safeParse(await context.req.json().catch(() => null));
+    if (!parsed.success) return context.json({ error: "invalid_keys" }, 400);
+    const result = await publishClientKey(db,{
+      principalId: auth.principalId,apiKeyId: auth.credentialId,identityKey: parsed.data.identityKey,
+    });
+    if (!result.ok) return context.json({ error: result.error }, 400);
+    return context.json({ keyId: result.keyId,changed: result.changed });
+  });
+
+  app.get("/api/clients/keys", requireScope("inbox:read"), async (context) => {
+    return context.json({ clients: await listClientKeys(db,context.get("auth").principalId) });
   });
 
   app.get("/api/devices/self", requireScope("device:self"), async (context) => {

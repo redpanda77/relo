@@ -69,7 +69,8 @@ let package = Package(
                 .copy("Fixtures/activitykit-content-state-interaction-generation.json"),
                 .copy("Fixtures/delivery-evidence-v1.json"),
                 .copy("Fixtures/relevance.json"),
-                .copy("Fixtures/receipt-scope-v1.json")
+                .copy("Fixtures/receipt-scope-v1.json"),
+                .copy("Fixtures/e2ee-v1.json")
             ]
         ),
         .testTarget(

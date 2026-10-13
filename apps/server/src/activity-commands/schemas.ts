@@ -1,3 +1,4 @@
+import { sealedNoticeSchema } from "../sealed-content.js";
 import { agentLifecycleIdentitySchema,LIVE_ACTIVITY_PRESENTATION_PRESETS,liveActivityPresentationSchema } from "@relo/notification-contracts";
 import { z } from "zod";
 import { originDescriptorSchema } from "../origin-slots.js";
@@ -157,6 +158,8 @@ export const activityWaitSchema = z.object({
     url: publicHttpsUrlSchema,
     token: z.string().min(16).max(512).refine((value) => !/\s/.test(value),"Callback tokens cannot contain whitespace"),
   }).strict().optional(),
+  /** End-to-end sealed prompt (E4.1); the server fills a placeholder prompt before parsing. */
+  sealed: sealedNoticeSchema.optional(),
 }).strict().superRefine((input,context) => {
   if (input.prompt.length > 240) {
     context.addIssue({ code: "custom",path: ["prompt"],message: "Live Activity prompts are limited to 240 characters" });

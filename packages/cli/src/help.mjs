@@ -24,6 +24,7 @@ Exit: 0 ok/approved/yes · 5 denied/no · 4 no answer (card ended: do not act) �
       1 server · 6 network · 7 no phone got it
 relo doctor: ready? (follow next.run) · relo auth login (agents: prints the link, then relo auth login --wait) · relo test (once)
 relo skill install --agent <claude-code|codex|opencode|gemini|amp|cursor|copilot> · relo skill status (owner's choice)
+relo keys status · relo keys verify DEVICE_ID (a person compares the safety number with the iPhone)
 relo update [--check] [--rollback]: new CLI release (owner's choice; doctor warns "update":"behind")
 relo setup: owner's choice, never automatic (--hooks: session hooks; --mcp: MCP server entry for shell-less harnesses) · relo sessions · --dry-run checks a command without sending · relo help identity · relo help all (every flag) · relo schema [COMMAND] (JSON)`;
 

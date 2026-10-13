@@ -29,13 +29,18 @@ public enum LiveActivityResponseRequestFactory {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.timeoutInterval = 15
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var body: [String: Any] = [
             "notificationId": response.notificationID,
             "deviceId": response.deviceID,
             "action": response.action.rawValue,
             "credential": credential,
             "idempotencyKey": response.idempotencyKey,
-        ])
+        ]
+        // The phone's signature over this answer, made when it was queued (E4.2).
+        let signature = [ReloAnswerSigning.keyIDField, ReloAnswerSigning.signedAtField, ReloAnswerSigning.signatureField]
+            .reduce(into: [String: String]()) { fields, key in fields[key] = response.value[key] }
+        if signature.count == 3 { body["signature"] = signature }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
 }

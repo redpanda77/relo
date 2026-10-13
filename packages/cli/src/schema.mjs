@@ -142,6 +142,10 @@ export const COMMANDS = [
   { name: "skill remove", summary: "Archive and remove one harness's copy of the skill (--agent NAME or --dir PATH).", options: ["agent", "dir", "dry-run"] },
   { name: "update", summary: "Owner's choice, never automatic (agents run it only after the owner agrees, never mid-task): move this CLI to the latest GitHub release of redpanda77/relo (tag cli-v<version>) after verifying relo-cli-<version>.tgz against SHA256SUMS, then `npm install --global` it. --check prints {ok,current,latest,updateAvailable} and installs nothing; success prints {ok,from,to,verified:true}; already latest prints updateAvailable:false. --rollback restores the previous stored release. A checksum mismatch installs nothing.",
     options: ["check", "rollback", "version", "dry-run"] },
+  { name: "keys status", summary: "End-to-end encryption: this computer's identity key and each phone's trust (trusted|unverified|changed) and prekey (fresh|stale|missing|invalid). Publishes this computer's public key so phones can show the same safety number. Prints {ok,identity,devices,next?}.", options: [] },
+  { name: "keys verify", summary: "A person at a terminal compares the 60-digit safety number with Settings → Security on the iPhone and confirms; only then is that phone trusted. Agents cannot run it (exit 2, PERSON_REQUIRED).", positionals: "DEVICE_ID", options: [] },
+  { name: "keys forget", summary: "Stop trusting one phone on this computer (nothing is sealed to it until verified again).", positionals: "DEVICE_ID", options: [] },
+  { name: "keys rotate", summary: "A person at a terminal replaces this computer's identity key; every phone must verify it again.", options: [] },
   { name: "help", summary: "Short guide; `help identity` or `help all` for more.", positionals: "[identity|all]", options: [] },
   { name: "schema", summary: "This machine-readable reference; `relo schema activity update` (or activity.update) prints only those commands plus exitCodes.", positionals: "[COMMAND...]", options: [] },
 ];

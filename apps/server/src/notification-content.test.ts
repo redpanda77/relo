@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe,expect,test } from "vitest";
 import {
   MAX_NOTIFICATION_BODY_BYTES,
@@ -41,5 +42,18 @@ describe("notification content",() => {
     expect(privateContent.summary).toBe("Private notification");
     expect(privateContent.preview).toBe("Open Relo to view");
     expect(privateContent.body).toBe("Secret release detail");
+  });
+});
+
+describe("keyed body digest (E1.3)",() => {
+  test("is not the body's plain SHA-256 and depends on the server secret",() => {
+    const body = "Deploy 0.11.0 to production";
+    const plain = createHash("sha256").update(body,"utf8").digest("hex");
+    const first = createNotificationContentCipher("a".repeat(32));
+    const second = createNotificationContentCipher("b".repeat(32));
+    expect(first.digest(body)).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.digest(body)).not.toBe(plain);
+    expect(first.digest(body)).toBe(first.digest(body));
+    expect(second.digest(body)).not.toBe(first.digest(body));
   });
 });

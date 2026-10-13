@@ -1,3 +1,4 @@
+import { sealedQuestionRequest,unsignedSealed } from "./sealed-content.js";
 import {
 type RelevanceItem
 } from "@relo/notification-contracts";
@@ -355,8 +356,14 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     if (!activityId) return context.json({ error: "not_found" },404);
     const key = requiredIdempotencyKey(context.req.header("idempotency-key"));
     if (!key) return context.json({ error: "idempotency_key_required" },400);
-    const input = activityWaitSchema.parse(await context.req.json());
-    const hash = taskActivityRequestHash("wait",{ activityId: externalActivityId,...input });
+    const raw = await context.req.json();
+    // A sealed question carries no readable prompt (E4.1): the card shows a placeholder.
+    const sealedRequest = sealedQuestionRequest(raw,{ title: false });
+    if (sealedRequest && "error" in sealedRequest) return context.json({ error: sealedRequest.error },400);
+    const input = activityWaitSchema.parse(sealedRequest ? sealedRequest.body : raw);
+    const sealedQuestion = sealedRequest?.sealed ?? null;
+    const hash = taskActivityRequestHash("wait",{ activityId: externalActivityId,...input,
+      ...(sealedQuestion ? { sealed: unsignedSealed(sealedQuestion) } : {}) });
     const existing = await activityWaitReplay(db,auth.principalId,auth.credentialId,activityId,key);
     if (existing) {
       if (existing.request_hash !== hash) return context.json({ error: "idempotency_conflict" },409);
@@ -407,7 +414,7 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
       const folded = await foldQuestionIntoCard(client,{
         principalId: auth.principalId,row: parentRow,apnsMode,fallbackSourceName: auth.clientName ?? "Relo CLI",
         question: { type: input.type,prompt: input.prompt,expiresInSeconds: input.expiresInSeconds,
-          primaryLabel: input.primaryLabel,secondaryLabel: input.secondaryLabel },
+          primaryLabel: input.primaryLabel,secondaryLabel: input.secondaryLabel,sealed: sealedQuestion },
       });
       if (folded.kind !== "folded") {
         await transaction.rollback();

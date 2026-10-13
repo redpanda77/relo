@@ -20,14 +20,6 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>RELOAPIOrigin</key>
-	<string>$(RELO_API_ORIGIN)</string>
-	<key>RELOBuildOrigin</key>
-	<string>$(RELO_API_ORIGIN)</string>
-	<key>RELOSourceCommit</key>
-	<string>$(RELO_GIT_COMMIT)</string>
-	<key>RELOAppGroup</key>
-	<string>$(RELO_APP_GROUP)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -40,5 +32,15 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>
+	<key>RELOAPIOrigin</key>
+	<string>$(RELO_API_ORIGIN)</string>
+	<key>RELOAppGroup</key>
+	<string>$(RELO_APP_GROUP)</string>
+	<key>RELOBuildOrigin</key>
+	<string>$(RELO_API_ORIGIN)</string>
+	<key>RELOKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)$(RELO_BUNDLE_ID).e2ee</string>
+	<key>RELOSourceCommit</key>
+	<string>$(RELO_GIT_COMMIT)</string>
 </dict>
 </plist>

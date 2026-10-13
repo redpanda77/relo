@@ -8,7 +8,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {  requireScope } from "../auth.js";
 import { internalId, publicId } from "../ids.js";
-import { createInteractionSchema,  interactionSchema,  notificationRequestSchema } from "../schemas.js";
+import { createInteractionSchema,  interactionSchema,  notificationRequestSchema,  sealedNotificationRequestSchema } from "../schemas.js";
+import { checkSealedNotice,SEALED_BODY,SEALED_TITLE,sealedQuestionRequest,unsignedSealed } from "../sealed-content.js";
 import {
   
   markActivityPresentationApplied } from "../activity-presentation-leases.js";
@@ -33,17 +34,33 @@ import type { ApiRouteContext } from "./route-context.js";
 export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): void {
   const { db,apnsMode,dependencies,notificationContentCipher,callbackEncryption } = shared;
   app.post("/api/notifications", requireScope("notifications:send"), async (context) => {
-    const input = notificationRequestSchema.parse(await context.req.json());
+    const raw = await context.req.json();
+    // A sealed notice carries no readable text: the server stores its envelopes and shows a placeholder.
+    const sealed = raw !== null && typeof raw === "object" && "sealed" in raw
+      ? sealedNotificationRequestSchema.parse(raw) : null;
+    const input = sealed ?? notificationRequestSchema.parse(raw);
     if (!notificationContentCipher) return context.json({ error: "content_encryption_unavailable" },503);
-    const content = prepareNotificationContent(input);
+    const sealedCheck = sealed ? checkSealedNotice(sealed.sealed) : null;
+    if (sealedCheck && !sealedCheck.ok) return context.json({ error: sealedCheck.error },400);
+    if (sealedCheck?.ok && input.deviceIds !== undefined
+      && [...input.deviceIds].sort().join() !== [...sealedCheck.deviceIds].sort().join()) {
+      return context.json({ error: "invalid_device_selection" },400);
+    }
+    const title = sealed ? SEALED_TITLE : (input as { title: string }).title;
+    const content = prepareNotificationContent(sealed ? { body: SEALED_BODY } : input as { body: string });
     const suppliedKey = context.req.header("idempotency-key");
     const idempotencyKey = suppliedKey === undefined
       ? `server:${randomUUID()}`
       : z.string().trim().min(1).max(200).parse(suppliedKey);
-    const requestedDeviceIds = selectedDeviceIds(input.deviceIds);
+    const requestedDeviceIds = selectedDeviceIds(sealedCheck?.ok ? sealedCheck.deviceIds : input.deviceIds);
     if (input.deviceIds !== undefined && !requestedDeviceIds?.length) return context.json({ error: "invalid_device_selection" },400);
+    // ECDSA signatures are randomized; an exact sealed retry differs only in them.
+    const hashedInput = sealed ? { ...sealed,sealed: {
+      alerts: sealed.sealed.alerts.map(({ sig: _sig,...rest }) => rest),
+      content: (({ sig: _sig,...rest }) => rest)(sealed.sealed.content),
+    } } : input;
     const requestHash = mutationRequestHash("notification",{
-      input, deviceIds: requestedDeviceIds ? [...requestedDeviceIds].sort() : null,
+      input: hashedInput, deviceIds: requestedDeviceIds ? [...requestedDeviceIds].sort() : null,
     });
     const auth = context.get("auth");
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
@@ -51,9 +68,11 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     if (!identity.ok) return context.json(workIdentityError(identity.missing),422);
     const originHash = input.origin ? canonicalOriginHash(auth.principalId,input.origin) : null;
     const result = await createNotification(db,{ kind: "credential",principalId: auth.principalId,credentialId: auth.credentialId },{
-      idempotencyKey,requestHash,sourceName: input.sourceName,title: input.title,content,
-      imageUrl: input.imageUrl ?? null,deepLink: input.destinationUrl ?? null,
-      payload: { context: identity.context },deviceIds: requestedDeviceIds,originHash,relevance: input.relevance,
+      idempotencyKey,requestHash,sourceName: input.sourceName,title,content,
+      imageUrl: sealed ? null : (input as { imageUrl?: string }).imageUrl ?? null,
+      deepLink: sealed ? null : (input as { destinationUrl?: string }).destinationUrl ?? null,
+      payload: sealed ? { context: identity.context,privacy: "private",sealed: sealed.sealed } : { context: identity.context },
+      deviceIds: requestedDeviceIds,originHash,relevance: input.relevance,
     },{ apnsMode,contentCipher: notificationContentCipher });
     if (result.kind === "invalid_device_selection") return context.json({ error: result.kind },400);
     if (result.kind === "idempotency_conflict") return context.json({ error: result.kind },409);
@@ -63,15 +82,27 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
   });
 
   app.post("/api/interactions", requireScope("interactions:create"), async (context) => {
-    const parsed = createInteractionSchema.parse(await context.req.json());
+    const raw = await context.req.json();
+    // A sealed question carries no readable title or prompt (E4.1): the server shows placeholders.
+    const sealedRequest = sealedQuestionRequest(raw);
+    if (sealedRequest && "error" in sealedRequest) return context.json({ error: sealedRequest.error },400);
+    const parsed = createInteractionSchema.parse(sealedRequest ? sealedRequest.body : raw);
+    const sealedQuestion = sealedRequest?.sealed ?? null;
+    if (sealedQuestion && parsed.presentation !== "notification") return context.json({ error: "sealed_requires_notification" },400);
+    const sealedDevices = sealedQuestion ? checkSealedNotice(sealedQuestion,"question") : null;
+    if (sealedDevices?.ok && parsed.deviceIds !== undefined
+      && [...parsed.deviceIds].sort().join() !== [...sealedDevices.deviceIds].sort().join()) {
+      return context.json({ error: "invalid_device_selection" },400);
+    }
     const suppliedKey = context.req.header("idempotency-key");
     const idempotencyKey = suppliedKey === undefined
       ? `server:${randomUUID()}`
       : z.string().trim().min(1).max(200).parse(suppliedKey);
-    const requestedDeviceIds = selectedDeviceIds(parsed.deviceIds);
+    const requestedDeviceIds = selectedDeviceIds(sealedDevices?.ok ? sealedDevices.deviceIds : parsed.deviceIds);
     if (parsed.deviceIds !== undefined && !requestedDeviceIds?.length) return context.json({ error: "invalid_device_selection" },400);
     const requestHash = mutationRequestHash("interaction",{
-      input: parsed, deviceIds: requestedDeviceIds ? [...requestedDeviceIds].sort() : null,
+      input: sealedQuestion ? { ...parsed,sealed: unsignedSealed(sealedQuestion) } : parsed,
+      deviceIds: requestedDeviceIds ? [...requestedDeviceIds].sort() : null,
     });
     const auth = context.get("auth");
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
@@ -108,7 +139,8 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
       imageUrl: input.imageUrl ?? null,deepLink: input.destinationUrl ?? null,
       payload: { interactionType: input.type,...(input.context ? { context: input.context } : {}),
         ...(input.correlationId ? { correlationId: input.correlationId } : {}),
-        ...(input.answerInApp ? { answerInApp: true } : {}) },
+        ...(input.answerInApp ? { answerInApp: true } : {}),
+        ...(sealedQuestion ? { privacy: "private",sealed: sealedQuestion } : {}) },
       deviceIds: requestedDeviceIds,originHash,relevance: input.relevance,
       interaction: { kind: input.type,prompt: input.prompt,actionSeconds: input.expiresInSeconds },
     },{ apnsMode,contentCipher: notificationContentCipher });

@@ -511,6 +511,21 @@ final class AppModel {
             makeDetailCache: dependencies.makeDetailCache
         )
         chosenServerOrigin = dependencies.chosenServerURL?.absoluteString
+        encryptionKeys = dependencies.encryptionKeys
+        answerSigner = dependencies.answerSigner
+    }
+
+    /// This phone's identity signer for answers; nil in previews and tests.
+    @ObservationIgnored var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)?
+
+    /// End-to-end encryption keys: rotated and published beside the heartbeat. A failure never
+    /// affects registration; the next heartbeat retries (docs/END-TO-END-ENCRYPTION.md, E2.1).
+    @ObservationIgnored var encryptionKeys: E2EEKeyMaintenance?
+
+    func maintainEncryptionKeys(credential: DeviceCredential) async {
+        guard let encryptionKeys else { return }
+        // Unpublished keys only delay sealing to this phone; the next heartbeat tries again.
+        _ = try? await encryptionKeys.run(credential: credential)
     }
 
     var recoveryQueues: [RecoveryQueueStatus] {
@@ -1395,7 +1410,7 @@ final class AppModel {
             return
         }
         let value = trimmedText.map { ["response": $0] } ?? [:]
-        let pending = PendingNotificationResponse(
+        let unsigned = PendingNotificationResponse(
             accountID: accountID,
             deviceID: credential.deviceId,
             notificationID: notificationID,
@@ -1406,6 +1421,8 @@ final class AppModel {
             interactionID: interactionID,
             serverOrigin: serverURL
         )
+        // Signed once, here, so the queued answer retries with identical bytes (E4.2).
+        let pending = ReloAnswerSigning.sign(unsigned, signer: answerSigner?())
         var selectedResponse = pending
         do {
             let enqueue = try await pendingResponseStore.enqueue(pending)
@@ -1665,6 +1682,7 @@ final class AppModel {
             serverAcceptedCurrentAPNSToken = apnsTokenAvailable
                 && (try? pushTokenStore.load()) == apnsToken
             registrationState = serverAcceptedCurrentAPNSToken ? .registered : .waitingForAPNSToken
+            await maintainEncryptionKeys(credential: credential)
         } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
             guard ownsHeartbeat() else { return }
             await handleRevokedDeviceCredential()

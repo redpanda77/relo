@@ -48,6 +48,19 @@ The admin can also sign an account out everywhere, revoke its access (every sess
 service and phone stops working, and its data is kept), restore it, or delete it with all its
 data. The iPhone signs in through the same web page, so registration and approval apply there too.
 
+## Content retention
+
+Set `RELO_CONTENT_RETENTION_HOURS` in `deploy/.env` to have the worker delete notification
+content automatically, then restart the worker. Every five minutes it deletes notifications, their
+sealed bodies, questions, replies and delivery records once they are older than the window. A
+question still waiting for an answer, an active Live Activity, and the current item for a topic
+are kept until they settle. A value of `10` matches the window used by end-to-end encryption
+([plan](END-TO-END-ENCRYPTION.md)). Leave the variable empty to keep content until you run
+`pnpm notification-retention` yourself.
+
+Deleted notifications also leave the History that the iPhone loads from the server. Until the
+phone keeps its own history (item E1.4 of the plan), a short window means a short History.
+
 ## Completion links and artifacts
 
 An ordinary notification can carry one HTTPS link to a report, artifact, file, or page:

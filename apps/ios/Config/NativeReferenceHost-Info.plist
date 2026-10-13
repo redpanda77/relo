@@ -20,12 +20,14 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>RELOAPIOrigin</key>
 	<string>$(RELO_API_ORIGIN)</string>
 	<key>RELOAppGroup</key>
 	<string>$(RELO_APP_GROUP)</string>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
+	<key>RELOKeychainAccessGroup</key>
+	<string>$(AppIdentifierPrefix)$(RELO_BUNDLE_ID).e2ee</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

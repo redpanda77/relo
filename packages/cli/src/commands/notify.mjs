@@ -1,3 +1,5 @@
+import { sealNoticeRequest, sealQuestion } from "../seal-notice.mjs";
+import { verifyAnswer } from "../answer-verify.mjs";
 import { parseDuration, requireText, validateDestinationUrl, validatePublicHttpsUrl } from "../args.mjs";
 import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
 import { notificationRelevance } from "../relevance.mjs";
@@ -86,12 +88,16 @@ export const ANSWER_LABELS = { approved: "Approved", denied: "Denied", yes: "Yes
 export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
   command, idempotencyKey, context, title }) {
   const identity = context ?? creationContext(options, stdin, undefined, dependencies.creationDefaults(), ASK_EXAMPLE);
+  const questionTitle = requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80);
+  const deviceIds = await resolveTargetDevices(client, options.device.length > 0 ? options.device : []);
+  // Sealed end to end for this computer's verified phones (E4.1).
+  const sealed = await sealQuestion({ title: questionTitle, prompt, key: `${idempotencyKey}:in-app`, client,
+    config: { apiUrl: client.apiUrl }, dependencies, notes: [], deviceIds });
   const created = deliveryGuard(await client.createInteraction(definedFields({
-    prompt, type, expiresInSeconds, answerInApp: true, context: identity,
-    title: requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80),
+    ...(sealed ? { sealed } : { prompt, title: questionTitle }), type, expiresInSeconds, answerInApp: true, context: identity,
     correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
     callback: await callbackOption(options, stdin, dependencies),
-    deviceIds: await resolveTargetDevices(client, options.device.length > 0 ? options.device : []),
+    deviceIds: sealed ? undefined : deviceIds,
   }), `${idempotencyKey}:in-app`));
   const message = "This phone cannot show Live Activities, so the owner answers in Relo from a notification.";
   const data = { ...created, card: null, fallback: "answer_in_app" };
@@ -194,10 +200,13 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
     }
   }
   const callback = await callbackOption(options, stdin, dependencies);
+  const notes = [];
+  // Sealed end to end for this computer's verified phones (E4.1); the card shows a placeholder.
+  const sealed = await sealQuestion({ title: card.title, prompt, key: idempotencyKey, client, config, dependencies, notes });
   let createdRaw;
   try {
     createdRaw = await client.createActivityWait(card.id, definedFields({
-      type, prompt, expiresInSeconds,
+      type, ...(sealed ? { sealed } : { prompt }), expiresInSeconds,
       primaryLabel: actionLabel(labels.primary, "primary-label"),
       secondaryLabel: actionLabel(labels.secondary, "secondary-label"),
       correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
@@ -208,9 +217,9 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
     return askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
       command, idempotencyKey, title: card.title });
   }
-  const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt });
-  const data = { ...created, card: { id: card.id, createdForQuestion: createdByAsk } };
-  if (!wait) return result(command, data);
+  const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt: sealed ? undefined : prompt });
+  const data = { ...created, card: { id: card.id, createdForQuestion: createdByAsk }, endToEnd: Boolean(sealed) };
+  if (!wait) return result(command, data, { notes });
   // A card started only for this question ends once answered, unless an agent session keeps
   // using it as its live view.
   const settle = async (state) => {
@@ -222,7 +231,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   try {
     const waited = await waitForInteraction(client, created.interaction.id, timeoutSeconds, dependencies);
     await settle(waited?.interaction?.state ?? waited?.state);
-    return result(command, mergeCreatedAndWaitedInteraction(data, waited));
+    return result(command, mergeCreatedAndWaitedInteraction(data, waited), { notes });
   } catch (error) {
     if (!(error instanceof TerminalInteractionError)) throw error;
     const { state, result: waitedResult, ...details } = error.details ?? {};
@@ -309,7 +318,8 @@ export async function waitForInteraction(client, id, timeoutSeconds, dependencie
     const remainingSeconds = Math.max(1, Math.ceil((deadline - startedAt) / 1_000));
     const pollSeconds = Math.min(300, remainingSeconds);
     latest = await client.waitForInteraction(id, pollSeconds);
-    if (interactionState(latest) !== "pending") return interactionResult(latest);
+    // A positive answer is acted on only when a phone this computer verified signed it (E4.2).
+    if (interactionState(latest) !== "pending") return verifyAnswer(interactionResult(latest), client, dependencies);
     if (dependencies.now() >= deadline) break;
     const elapsedMilliseconds = Math.max(0, dependencies.now() - startedAt);
     if (elapsedMilliseconds < pollSeconds * 1_000) {
@@ -318,7 +328,7 @@ export async function waitForInteraction(client, id, timeoutSeconds, dependencie
       );
     }
   }
-  return interactionResult(latest);
+  return verifyAnswer(interactionResult(latest), client, dependencies);
 }
 
 export function mergeCreatedAndWaitedInteraction(created, waited) {
@@ -418,12 +428,14 @@ export async function runNotifyCommand(command) {
     }
     const capturedBody=await dependencies.prepareNotificationCommand({config,key,body,kind:"notice",
       occurredAt:dependencies.commandOccurredAt},{root:dependencies.activityCaptureDirectory,environment:dependencies.env});
+    // Sealed end to end for the phones this computer verified (relo keys verify); plain otherwise.
+    const outgoing = await sealNoticeRequest({ body: capturedBody, key, client, config, dependencies, notes });
     const data = deliveryGuard(
       await client.sendNotification(
-        capturedBody,key,
+        outgoing,key,
       ),
     );
-    return result("notify.send", data, { notes });
+    return result("notify.send", { ...data, endToEnd: Boolean(outgoing.sealed) }, { notes });
   }
 
   if (group === "notify" && action === "withdraw") {

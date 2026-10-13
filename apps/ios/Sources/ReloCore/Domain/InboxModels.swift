@@ -227,6 +227,8 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
     public let interaction: InboxInteraction?
     public let context: InboxContext?
     public let resources: InboxResourceLinks?
+    /// End-to-end sealed envelopes (docs/END-TO-END-ENCRYPTION.md); text above is a placeholder until opened.
+    public let sealed: InboxSealedNotice?
 
     public init(
         id: String,
@@ -252,7 +254,8 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         context: InboxContext? = nil,
         resources: InboxResourceLinks? = nil,
         activityEvent: InboxHistoryMetadata.ActivityEvent? = nil,
-        activity: InboxCardDigest? = nil
+        activity: InboxCardDigest? = nil,
+        sealed: InboxSealedNotice? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -278,6 +281,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         self.interaction = interaction
         self.context = context
         self.resources = resources
+        self.sealed = sealed
     }
 
     public var validatedDestinationURL: URL? {
@@ -293,7 +297,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         case id, kind, sourceName, sourceImageUrl, title, detail, content, readAt, withdrawnAt
         case result, deliveryState
         case apnsAcceptedAt, receivedAt, openedAt, createdAt, destinationUrl, privacy
-        case liveActivity, activitySummary, interaction, context, resources, activityEvent, activity
+        case liveActivity, activitySummary, interaction, context, resources, activityEvent, activity, sealed
     }
 
     public init(from decoder: Decoder) throws {
@@ -322,6 +326,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         interaction = try values.decodeIfPresent(InboxInteraction.self, forKey: .interaction)
         context = try values.decodeIfPresent(InboxContext.self, forKey: .context)
         resources = try values.decodeIfPresent(InboxResourceLinks.self, forKey: .resources)
+        sealed = try values.decodeIfPresent(InboxSealedNotice.self, forKey: .sealed)
     }
 }
 

@@ -22,6 +22,7 @@ import { runTestCommand } from "./commands/test.mjs";
 import { clearPendingLogin, pendingLoginPath, readPendingLogin, writePendingLogin } from "./pending-login.mjs";
 import { runSetupCommand } from "./commands/setup.mjs";
 import { runSkillCommand } from "./commands/skill.mjs";
+import { runKeysCommand } from "./commands/keys.mjs";
 import { runUpdateCommand } from "./commands/update.mjs";
 import { GUIDE, HELP, IDENTITY_HELP } from "./help.mjs";
 import { detectComputerName, detectIdentityDefaults, detectOrigin } from "./identity.mjs";
@@ -29,7 +30,7 @@ import { errorLine, errorText, successLine } from "./output.mjs";
 import { selectSchemaCommands, unknownCommandHint } from "./suggest.mjs";
 import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result } from "./support.mjs";
 
-const VERSION = "0.10.0";
+const VERSION = "0.11.0";
 
 async function executeCommand(parsed, dependencies) {
   const { positionals, options } = parsed;
@@ -106,7 +107,7 @@ async function executeCommand(parsed, dependencies) {
   if (dryRun) dependencies.dryRun = true;
   const { config, client } = dryRun ? { config: undefined, client: refusingClient() } : await getAuthenticated(dependencies);
   Object.assign(command, { config, client });
-  for (const runGroup of [runNotifyCommand, runActivityCommand, runAdminCommand, runTestCommand, runSessionsCommand]) {
+  for (const runGroup of [runNotifyCommand, runActivityCommand, runAdminCommand, runTestCommand, runSessionsCommand, runKeysCommand]) {
     const output = await runGroup(command);
     if (output !== undefined) return output;
   }
@@ -157,6 +158,16 @@ function createDependencies(overrides = {}) {
     switchProfile: overrides.switchProfile ?? switchProfile,
     removeConfig: overrides.removeConfig ?? ((path, options) => removeConfig(path, { profile: dependencies.profile, ...options })),
     stdinIsTTY: overrides.stdinIsTTY ?? Boolean(process.stdin.isTTY),
+    // Asks the person at the terminal; only commands a person must confirm (relo keys verify) use it.
+    confirm: overrides.confirm ?? (async (question) => {
+      const { createInterface } = await import("node:readline/promises");
+      const prompt = createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        return /^y(es)?$/i.test((await prompt.question(question)).trim());
+      } finally {
+        prompt.close();
+      }
+    }),
     hookStateDirectory: overrides.hookStateDirectory
       ?? join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state"), "relo", "hooks"),
     configRevision: overrides.configRevision ?? configRevision,

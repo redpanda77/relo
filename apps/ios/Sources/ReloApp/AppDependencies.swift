@@ -1,6 +1,7 @@
 import ReloTransport
 import ReloRuntime
 import ReloPersistence
+import ReloNotificationSupport
 import Foundation
 import ReloCore
 import UIKit
@@ -30,8 +31,11 @@ struct AppDependencies {
     var diagnostics: any DiagnosticStoring = NoopDiagnosticStore()
     var system: AppSystemServices = .live
     var tokenRegistrar: BackgroundLiveActivityTokenRegistrar? = nil
+    /// End-to-end encryption key upkeep; nil in previews and tests.
+    var encryptionKeys: E2EEKeyMaintenance? = nil
+    var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)? = nil
     var makeInboxDataSource: (URL, String) -> any InboxDataSource = {
-        HTTPInboxDataSource(baseURL: $0, token: $1)
+        HTTPInboxDataSource(baseURL: $0, token: $1, sealedOpener: ReloSealedContent.live().opener)
     }
 
     var makeCurrentDataSource: (URL, String) -> any CurrentStateSource = {
@@ -92,6 +96,8 @@ struct AppDependencies {
                 fileURL: reloDirectory.appendingPathComponent("diagnostics.json"))),
             system: system,
             tokenRegistrar: tokenRegistrar,
+            encryptionKeys: E2EEKeyMaintenance(ring: .live(), publisher: HTTPMobileAPIClient(baseURL: origin)),
+            answerSigner: { ReloKeyRing.live().existingIdentitySigner() },
             makeCurrentCache: { scope in
                 FileCurrentStateCache(baseDirectory: reloDirectory.appendingPathComponent("current", isDirectory: true), scope: scope)
             },

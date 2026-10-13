@@ -1,11 +1,11 @@
 {
   "name": "@relo/notifications-skill",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "private": true,
   "description": "Agent skill: a live view of an agent's work on the owner's iPhone through self-hosted Relo",
   "type": "module",
   "reviewedToolingVersions": {
-    "@relo/cli": "0.10.0"
+    "@relo/cli": "0.11.0"
   },
   "scripts": {
     "check": "node scripts/validate-skill.mjs",

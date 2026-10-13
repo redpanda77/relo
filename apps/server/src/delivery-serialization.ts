@@ -1,3 +1,4 @@
+import { sealedAlertDevices,sealedForDevice } from "./sealed-content.js";
 import { createHash } from "node:crypto";
 import { presentationCommandState } from "./presentation-runtime.js";
 import type { ApnsRuntimeJob } from "./apns-runtime.js";
@@ -106,7 +107,12 @@ export function deliveryProjection(job: ApnsRuntimeJob): DeliveryProjection {
 }
 
 export function assertOrdinaryDeliveryIntentWithinBudget(input: OrdinaryDeliveryIntent): void {
-  const size = ordinaryDeliveryPayloadSize(input);
+  // A sealed notice pushes a different alert envelope to each phone: measure every one.
+  const sealedDevices = sealedAlertDevices(input.payload);
+  const sizes = sealedDevices.length && input.deviceId === undefined
+    ? sealedDevices.map((deviceId) => ordinaryDeliveryPayloadSize({ ...input,deviceId }))
+    : [ordinaryDeliveryPayloadSize(input)];
+  const size = Math.max(...sizes);
   if (size > 4_096) throw new ApnsPayloadTooLargeError(size);
 }
 
@@ -316,6 +322,9 @@ function ordinaryAlert(input: OrdinaryDeliveryIntent): { title: string; body: st
 function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unknown> {
   const privacy = isPrivate(input.payload) ? "private" : "standard";
   const data: Record<string, unknown> = { privacy };
+  // Only this phone's sealed alert rides in the push; its Notification Service Extension opens it.
+  const sealed = sealedForDevice(input.payload,input.deviceId);
+  if (sealed?.alert) data.sealed = sealed.alert;
   if (input.serverOriginHash !== undefined) {
     if (!/^[0-9a-f]{64}$/.test(input.serverOriginHash)
         || !/^acc_[A-Za-z0-9-]{8,}$/.test(input.accountId ?? "")

@@ -27,6 +27,9 @@ struct SettingsView: View {
                         ReloSettingLabel(title: "Notifications", symbol: "bell.badge.fill", color: .reloCoral)
                     }
                 }
+                NavigationLink { EncryptionSettingsView(model: model) } label: {
+                    ReloSettingLabel(title: "Security", symbol: "lock.shield.fill", color: .reloIndigo)
+                }
             }
             .listRowBackground(ReloListRowBackground())
             Section {

@@ -9,10 +9,14 @@ public struct HTTPInboxDataSource: InboxDataSource {
     private let token: String
     private let session: URLSession
 
-    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared) {
+    /// Opens end-to-end sealed items on this phone as they arrive; nil leaves placeholders.
+    private let sealedOpener: ReloSealedOpener?
+
+    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared, sealedOpener: ReloSealedOpener? = nil) {
         self.baseURL = baseURL
         self.token = token
         self.session = session
+        self.sealedOpener = sealedOpener
     }
 
     public func fetchSnapshot() async throws -> InboxRepairResponse {
@@ -53,7 +57,7 @@ public struct HTTPInboxDataSource: InboxDataSource {
                 guard InboxHistoryPagePolicy.isValid(page, requestedCursor: cursor) else {
                     throw InboxRemoteError.unavailable
                 }
-                return page
+                return sealedOpener.map { page.openingSealed($0) } ?? page
             } catch let error as InboxRemoteError {
                 throw error
             } catch {
@@ -113,8 +117,10 @@ public struct HTTPInboxDataSource: InboxDataSource {
             if [401, 403].contains(http.statusCode) { throw InboxRemoteError.unauthorized }
             throw InboxRemoteError.unavailable
         }
-        do { return try Self.decoder().decode(InboxNotificationDetail.self, from: data) }
+        let detail: InboxNotificationDetail
+        do { detail = try Self.decoder().decode(InboxNotificationDetail.self, from: data) }
         catch { throw InboxRemoteError.incompatibleResponse }
+        return sealedOpener.map { detail.openingSealed($0) } ?? detail
     }
 
 

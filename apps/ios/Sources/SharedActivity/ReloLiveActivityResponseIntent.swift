@@ -1,5 +1,6 @@
 import ReloTransport
 import ReloPersistence
+import ReloNotificationSupport
 import Foundation
 import ReloCore
 #if os(iOS)
@@ -609,7 +610,8 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
         guard let responseAction = NotificationInteractionAction(rawValue: action) else {
             return .result()
         }
-        let requested = PendingNotificationResponse.liveActivity(
+        // Signed with this phone's identity key so the CLI can trust the button (E4.2).
+        let requested = ReloAnswerSigning.sign(PendingNotificationResponse.liveActivity(
             accountID: accountID,
             deviceID: deviceID,
             notificationID: notificationID,
@@ -619,7 +621,7 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
             action: responseAction,
             credential: credential,
             expiresAt: expiresAt
-        )
+        ), signer: ReloKeyRing.live().existingIdentitySigner())
         guard LiveActivityResponseActivityPresenter.hasExactActivity(for: requested) else {
             return .result()
         }

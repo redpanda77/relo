@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from "node:crypto";
 
 export const MAX_NOTIFICATION_BODY_BYTES = 65_536;
 export const MAX_NOTIFICATION_SUMMARY_CHARACTERS = 240;
@@ -12,7 +12,6 @@ export type PreparedNotificationContent = {
   summary: string;
   preview: string;
   bodyBytes: number;
-  contentSha256: string;
 };
 
 export function notificationContentForPrivacy(
@@ -96,14 +95,20 @@ export function prepareNotificationContent(input: {
     summary,
     preview: truncateUtf8(summary, MAX_NOTIFICATION_PREVIEW_BYTES),
     bodyBytes,
-    contentSha256: createHash("sha256").update(body, "utf8").digest("hex"),
   };
 }
 
 export type NotificationContentCipher = {
   encrypt: (eventId: string, body: string) => string;
   decrypt: (eventId: string, envelope: string) => string;
+  /**
+   * Keyed digest of a body (HMAC-SHA256 with a key derived from the server secret). A plain
+   * SHA-256 would let anyone holding a database dump confirm a guessed body (E1.3).
+   */
+  digest: (body: string) => string;
 };
+
+const digestSalt = Buffer.from("relo:notification-content:digest:v1","utf8");
 
 function aad(eventId: string): Buffer {
   return Buffer.from(`relo:notification-content:aad:v1\n${eventId}`,"utf8");
@@ -112,7 +117,11 @@ function aad(eventId: string): Buffer {
 export function createNotificationContentCipher(secret: string): NotificationContentCipher {
   if (secret.length < 32) throw new Error("Notification content encryption secret is required");
   const key = Buffer.from(hkdfSync("sha256", Buffer.from(secret, "utf8"), keySalt, keyInfo, 32));
+  const digestKey = Buffer.from(hkdfSync("sha256", Buffer.from(secret, "utf8"), digestSalt, "hmac-sha256", 32));
   return {
+    digest(body) {
+      return createHmac("sha256", digestKey).update(body, "utf8").digest("hex");
+    },
     encrypt(eventId,body) {
       const nonce = randomBytes(12);
       const cipher = createCipheriv("aes-256-gcm", key, nonce);
@@ -151,7 +160,7 @@ export async function persistNotificationContent(
        notification_event_id,summary,body_ciphertext,body_format,body_bytes,content_sha256
      ) VALUES ($1,$2,$3,$4,$5,$6)`,
     [eventId,content.summary,cipher.encrypt(eventId,content.body),content.bodyFormat,
-      content.bodyBytes,content.contentSha256],
+      content.bodyBytes,cipher.digest(content.body)],
   );
 }
 

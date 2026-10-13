@@ -261,6 +261,46 @@ CLI / agent / webhook / Dashboard / iPhone
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for responsibilities and boundaries.
 
+## Privacy and security
+
+Relo is designed so that what your agents tell you can be read only on the devices you paired.
+The server, the person who runs it, its backups, and Apple's push service carry your content but
+cannot read it, and they cannot forge your answer to a question.
+
+**The design:**
+
+- **End-to-end encryption.** The `relo` CLI seals every notification, question and Live Activity
+  update to keys held in your iPhone's Secure Enclave. It uses HPKE (RFC 9180) with P-256 and
+  AES-256-GCM, a standard scheme with no custom cryptography. The server stores and relays sealed
+  envelopes and never holds a key that opens them.
+- **You verify the keys yourself.** Before encrypting to a device, the CLI checks that device's key
+  against a safety number you compare on the phone. A key supplied only by the server is never
+  trusted, so the server cannot add a device that receives your content.
+- **Answers are signed.** Approvals and replies are signed by the phone's device key. The CLI acts
+  on an approval only when that signature verifies, so a compromised server cannot approve
+  anything on your behalf.
+- **Rotating keys and short retention.** Phones replace their receiving keys every few hours and
+  delete the old private keys. The server deletes content after a short window, 10 hours by
+  default. Expired content is gone for good, including copies taken before deletion.
+- **Isolated accounts.** Each person on a server has their own account. The server admin manages
+  accounts but cannot open them ([ADR 0004](docs/adr/0004-isolated-multi-user-accounts.md)).
+
+**What stays visible:** the server always sees metadata. That means which device and key is
+involved, when something was sent, roughly how large it is, whether a card is active or ended, and
+whether a question was approved. Webhooks and other producers that hold no Relo key cannot
+encrypt end to end. Their content stays encrypted at rest on the server, and the phone labels it
+as not end-to-end encrypted. The web Dashboard shows end-to-end-encrypted items as metadata only.
+
+**Status:** end-to-end encryption is being rolled out in phases and is not yet in a release.
+Built so far: device keys in the iPhone's Secure Enclave that rotate every 10 hours, the key
+directory, `relo keys` and the iPhone's Security screen for safety-number verification, sealed
+`relo notify` messages and `relo ask` questions that the iPhone opens itself, signed answers
+that `relo ask` verifies before acting, and automatic server retention
+(`RELO_CONTENT_RETENTION_HOURS`, see [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md#content-retention)).
+Next: sealed Live Activity cards, opaque project names, and enforcement. Until then, card text and
+project and topic names are encrypted only at rest with a server-held key. See [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) for the
+threat model, the protocol and the current state of each phase.
+
 ## Development
 
 Development requires Node.js 22+ and pnpm 11.20.0:
@@ -288,6 +328,8 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - [ROADMAP.md](ROADMAP.md) — current outcome, priorities, and release sequence
 - [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) — deployment and private-network notes
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system boundaries and ownership
+- [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) — threat model, protocol, and
+  rollout of end-to-end encryption
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution workflow
 - [SECURITY.md](SECURITY.md) — private vulnerability reporting
 

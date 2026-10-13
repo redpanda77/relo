@@ -43,6 +43,11 @@ final class NotificationService: UNNotificationServiceExtension {
     ) {
         let content = (request.content.mutableCopy() as? UNMutableNotificationContent)
             ?? UNMutableNotificationContent()
+        // End-to-end sealed alert: open it on this phone before anything else, inside the budget.
+        if let opened = ReloSealedContent.live().openAlert(userInfo: request.content.userInfo) {
+            content.title = opened.title
+            content.body = opened.body
+        }
         let metadata = ReloNotificationPresentationMetadata(
             categoryIdentifier: content.categoryIdentifier,
             threadIdentifier: content.threadIdentifier,

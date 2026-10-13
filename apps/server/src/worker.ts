@@ -70,6 +70,7 @@ import { recordWorkerHeartbeat } from "./runtime-health.js";
 import { dispatchDueInteractionCallbacks } from "./interaction-callbacks.js";
 import { notifyUnseenQuestionCards } from "./activity-commands/question-fallback.js";
 import { createNotificationContentCipher } from "./notification-content.js";
+import { runScheduledContentRetention } from "./notification-retention.js";
 
 function projectLiveActivityInteraction(
   job: ClaimedDeliveryJob,
@@ -121,6 +122,26 @@ async function reconcileSessions(mode: "disabled" | "sandbox" | "production"): P
   }
 }
 
+/** Content past RELO_CONTENT_RETENTION_HOURS is deleted every few minutes; a failure never stops the cycle. */
+const CONTENT_RETENTION_INTERVAL_MS = 5*60_000;
+let contentRetentionDueAt = 0;
+async function pruneExpiredContent(): Promise<void> {
+  const retentionHours = config.RELO_CONTENT_RETENTION_HOURS;
+  if (retentionHours === undefined || Date.now()<contentRetentionDueAt) return;
+  contentRetentionDueAt = Date.now()+CONTENT_RETENTION_INTERVAL_MS;
+  try {
+    const result = await runScheduledContentRetention(db,{
+      retentionHours,releaseIdentity: config.RELO_RELEASE_IDENTITY ?? "worker",
+    });
+    if (result.eventsPruned || result.tombstonesExpired || result.cardsPruned) {
+      console.info(JSON.stringify({ event: "content_retention",retentionHours,...result }));
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "content_retention_failed",
+      message: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
 // Answer callbacks run beside APNs delivery in every mode; a slow endpoint never holds a push.
 const CALLBACK_POLL_MS = 2_000;
 const callbackLoop = (async () => {
@@ -160,6 +181,7 @@ if (config.APNS_MODE === "disabled") {
     cycle.expiredActivities = await expireDueActivities(db,"disabled");
     cycle.expiredInteractions = await expireDueInteractiveActivities(db,"disabled");
     await reconcileSessions("disabled");
+    await pruneExpiredContent();
     cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
     if (Object.values(cycle).some((value) => value > 0)) {
       console.info(apnsOperationalLog("apns_worker_cycle",{ mode: "disabled",...cycle }));
@@ -215,6 +237,7 @@ if (config.APNS_MODE === "disabled") {
         cycle.expiredActivities = await expireDueActivities(db,config.APNS_MODE);
         cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
         await reconcileSessions(config.APNS_MODE);
+        await pruneExpiredContent();
         cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
         if (Object.values(cycle).some(value => value > 0)) {
           console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason: "maintenance",...cycle }));

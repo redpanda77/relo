@@ -1,3 +1,4 @@
+import { sealedForDevice } from "../sealed-content.js";
 import { decodeCursor,encodeCursor } from "../cursor.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -338,6 +339,7 @@ export function inboxItemResource(
     receivedAt: row.received_at, openedAt: row.opened_at, createdAt: row.created_at_iso,
     destinationUrl: row.deep_link ?? null,
     privacy: inboxPrivacy(row.payload),
+    sealed: sealedForDevice(row.payload,auth.deviceId ? publicId("dev",auth.deviceId) : undefined),
     liveActivity: row.kind === "live_activity"
       ? projectedInboxLiveActivity(
         row.payload,row,auth.deviceId,auth.deviceCredentialVersion,credentialDerivationSecret,

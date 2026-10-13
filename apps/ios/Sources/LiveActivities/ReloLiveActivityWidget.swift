@@ -5,13 +5,21 @@ import SwiftUI
 import UIKit
 import WidgetKit
 
-struct ReloLiveActivityWidget: Widget {
+/// iOS 18+: the same activity, plus the `.small` family the Apple Watch Smart Stack renders.
+/// Without it the watch falls back to the island's compact pair: two glyphs on a black tile.
+@available(iOS 18.0, *)
+struct ReloLiveActivityWatchWidget: Widget {
     var body: some WidgetConfiguration {
+        ReloLiveActivityWidget().configuration.supplementalActivityFamilies([.small])
+    }
+}
+
+struct ReloLiveActivityWidget: Widget {
+    var body: some WidgetConfiguration { configuration }
+
+    var configuration: some WidgetConfiguration {
         ActivityConfiguration(for: ReloActivityAttributes.self) { context in
-            PresentationCardView(
-                presentation: context.state.presentation, context: context, surface: .lockScreen
-            )
-            .activityBackgroundTint(PresentationBackdrop.base)
+            ReloActivityContentView(context: context)
             .activitySystemActionForegroundColor(.white)
             .widgetURL(ReloDeepLink.activityURL(identity: context.attributes.identity))
             .accessibilityElement(children: .contain)
@@ -654,6 +662,8 @@ struct PresentationBehaviorModule: View {
     let fallbackStatus: String
     let palette: PresentationPalette
     let permitsSubmission: Bool
+    /// 44 on the phone; the watch tile has room for about 30.
+    var controlHeight: CGFloat = 44
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -726,7 +736,7 @@ struct PresentationBehaviorModule: View {
                 .font(.caption.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(emphasized ? PresentationBackdrop.base : palette.primaryText)
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: controlHeight)
                 .background(
                     emphasized
                         ? AnyShapeStyle(palette.rampGradient)
@@ -751,7 +761,7 @@ struct PresentationBehaviorModule: View {
         }
         .font(.caption.weight(.bold))
         .foregroundStyle(palette.primaryText)
-        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: controlHeight, alignment: .leading)
         .transition(.opacity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
