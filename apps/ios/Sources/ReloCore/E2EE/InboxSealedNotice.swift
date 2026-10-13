@@ -213,6 +213,10 @@ public extension InboxRepairResponse {
             summary.item = summary.item.openingSealed(open)
             return summary
         }
+        // Opening a session's names teaches the name book; rows show them when displayed.
+        for session in sessions ?? [] {
+            if let names = session.sealedNames, names.kind == "names" { _ = open(names, session.id) }
+        }
         return opened
     }
 }

@@ -1,4 +1,5 @@
-import { hookLabels } from "../opaque-names.mjs";
+import { hookLabelsWithNames } from "../opaque-names.mjs";
+import { sealSessionNames } from "../seal-notice.mjs";
 // `relo hook <event>`: the one entry point for agent-harness hooks (installed by `relo setup --hooks`).
 // It reports THAT a session started, is working, stopped or ended, on its own channel, never what the
 // agent did. From the harness's hook JSON (stdin) it keeps the session id, the event name and the cwd
@@ -62,6 +63,27 @@ async function coalesced(directory, session, now) {
   return false;
 }
 
+/**
+ * The session's names sealed for the phones, once per session (again only if they change), so the
+ * phone can show "relo" and "MacBook Pro" instead of handles. Returns null when nothing is to be sent.
+ */
+async function sessionNames(directory, session, names, client, config, dependencies) {
+  if (!names || Object.keys(names).length === 0) return null;
+  const digest = createHash("sha256").update(JSON.stringify(Object.entries(names).sort())).digest("hex");
+  const marker = join(directory, `names-${session.slice(0, 24)}`);
+  try {
+    if (await readFile(marker, "utf8") === digest) return null;
+  } catch { /* not sent yet */ }
+  try {
+    const envelope = await sealSessionNames({ names, session, client, config: { apiUrl: config.apiUrl }, dependencies });
+    if (!envelope) return null;
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    return { envelope, marker, digest };
+  } catch {
+    return null;
+  }
+}
+
 async function computerFor(dependencies, config) {
   const fromEnv = label(dependencies.env.RELO_COMPUTER, 120);
   if (fromEnv) return fromEnv;
@@ -103,7 +125,9 @@ export async function processHook({ positionals, options, dependencies }) {
     const now = dependencies.now();
     const stateDirectory = dependencies.hookStateDirectory;
     if (event === "tool" && await coalesced(stateDirectory, session, now)) return { sent: false, reason: "coalesced" };
-    if (event === "end") await rm(join(stateDirectory, `tool-${session.slice(0, 24)}`), { force: true }).catch(() => {});
+    if (event === "end") {
+      for (const prefix of ["tool", "names"]) await rm(join(stateDirectory, `${prefix}-${session.slice(0, 24)}`), { force: true }).catch(() => {});
+    }
 
     const config = await dependencies.loadConfig(dependencies.configPath());
     const env = harnessName === "claude-code" && detectAgent(dependencies.env) === undefined
@@ -116,16 +140,20 @@ export async function processHook({ positionals, options, dependencies }) {
     const plainLabels = { project, computer: await computerFor(dependencies, config),
       account: label(detectAccount(env, dependencies.accountProbes).account, 40) };
     // On any failure send no labels rather than readable ones.
-    const labels = await hookLabels(plainLabels, config?.apiUrl, dependencies).catch(() => ({}));
+    const { labels, names } = await hookLabelsWithNames(plainLabels, config?.apiUrl, dependencies)
+      .catch(() => ({ labels: {}, names: {} }));
     project = labels.project;
     const { computer, account } = labels;
+    const client = dependencies.clientFactory(config);
+    const sealedNames = event === "end" ? undefined : await sessionNames(stateDirectory, session, names, client, config, dependencies);
     // The card key the activity commands derive for this session, so the server can link card and session.
     const explicit = agentSession(dependencies.env)?.agent === "relo";
     const key = explicit ? cardKey({ env: dependencies.env })
       : harness.linksCard ? cardKey({ env: { CLAUDE_CODE_SESSION_ID: id } }) : undefined;
     const body = definedFields({ session, harness: harnessName, event, at: new Date(now).toISOString(),
-      project, computer, account, cardKey: label(key, 100) });
-    await dependencies.clientFactory(config).sendAgentSessionEvent(body);
+      project, computer, account, cardKey: label(key, 100), sealedNames: sealedNames?.envelope });
+    await client.sendAgentSessionEvent(body);
+    if (sealedNames) await writeFile(sealedNames.marker, sealedNames.digest, { mode: 0o600 }).catch(() => {});
     return { sent: true, event };
   } catch (error) {
     await debug(dependencies, `hook failed: ${error?.code ?? error?.name ?? "error"}: ${error?.message ?? ""}`);

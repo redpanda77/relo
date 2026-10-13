@@ -134,6 +134,6 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     value.context = context.success ? context.data : null;
     return value;
   });
-  return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
+  return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions,{ withSealedNames: true }),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
     readWatermark:row.latest_at && row.latest_id ? Buffer.from(JSON.stringify([row.latest_at,row.latest_id])).toString("base64url") : null});
 }

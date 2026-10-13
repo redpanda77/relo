@@ -2,6 +2,7 @@ import { agentSessionEventRequestSchema,type AgentSessionEventResponse } from "@
 import type { Context,Hono } from "hono";
 import { listAgentSessions,recordAgentSessionEvent } from "../agent-sessions.js";
 import { consumeRateLimit } from "../rate-limit.js";
+import { sealedEnvelopeSchema } from "../sealed-content.js";
 import type { ApiRouteContext } from "./route-context.js";
 
 /** Per minute; the CLI coalesces tool events to one a minute, so real traffic is far below this. */
@@ -28,6 +29,10 @@ export function registerAgentSessionRoutes(app: Hono,shared: ApiRouteContext): v
     let body: unknown;
     try { body = await context.req.json(); } catch { return context.json({ error: "invalid_request" },400); }
     const input = agentSessionEventRequestSchema.parse(body);
+    if (input.sealedNames !== undefined) {
+      const sealed = sealedEnvelopeSchema.safeParse(input.sealedNames);
+      if (!sealed.success || sealed.data.kind !== "names") return context.json({ error: "invalid_request" },400);
+    }
     const state = await recordAgentSessionEvent(db,auth.principalId,input);
     return context.json({ ok: true,state } satisfies AgentSessionEventResponse);
   });

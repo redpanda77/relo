@@ -35,6 +35,11 @@ export const agentSessionEventRequestSchema = z.object({
   account: label(40).optional(),
   /** The activity key the CLI derives for this session's card (session-<agent>-<hash>). */
   cardKey: label(100).optional(),
+  /**
+   * End-to-end sealed names for the handles above (kind "names"); only the account's phones can
+   * open it. The server checks its shape and stores it as is.
+   */
+  sealedNames: z.unknown().optional(),
 }).strict();
 export type AgentSessionEventRequest = z.infer<typeof agentSessionEventRequestSchema>;
 
@@ -59,6 +64,8 @@ export const agentSessionSummarySchema = z.object({
     quietForSeconds: z.number().int().nonnegative(),
   }).strict().nullable(),
   presence: agentSessionPresenceSchema,
+  /** The sealed names for this session's handles, in the phone's snapshot only. */
+  sealedNames: z.unknown().nullable().optional(),
 }).strict();
 export type AgentSessionSummary = z.infer<typeof agentSessionSummarySchema>;
 

@@ -13,7 +13,7 @@ const binding = z.string().regex(/^[\x21-\x7e]{1,200}$/);
 
 export const sealedEnvelopeSchema = z.object({
   v: z.literal("relo.e2e.v1"),
-  kind: z.enum(["notice","question","card","card-update","reply","grouping-key"]),
+  kind: z.enum(["notice","question","card","card-update","reply","grouping-key","names"]),
   context: binding,
   sender: z.string().regex(/^k_[A-Za-z0-9_-]{22}$/),
   recipients: z.array(z.object({

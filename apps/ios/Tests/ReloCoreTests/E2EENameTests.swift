@@ -90,6 +90,31 @@ final class E2EENameTests: XCTestCase {
         XCTAssertEqual(AgentSessionsProjection.groupTitle(session), "Work Mac")
     }
 
+    func testAnAgentSessionsSealedNamesTeachThePhoneItsNames() throws {
+        let ring = ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory())
+        let state = try ring.maintain()
+        let trust = ReloTrustedClients(store: TrustStore())
+        let mac = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
+        try trust.markVerified(ReloClientKey(clientId: "key_1", name: "Mac", keyId: ReloE2EE.keyID(publicKeyX963: mac.publicKeyX963),
+                                             publicKey: ReloE2EE.base64URL(mac.publicKeyX963), changedAt: ""))
+        let book = MemoryBook()
+        let sealed = ReloSealedContent(ring: ring, trust: trust, ledger: nil, nameBook: book)
+        let envelope = try ReloE2EE.seal(kind: "names", context: "ses:abc", sender: mac,
+                                         recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)],
+                                         content: try JSONSerialization.data(withJSONObject: ["names": [project: "relo"]]))
+        let json = """
+        {"id":"ags_00000000-0000-4000-8000-000000000001","harness":"claude-code","project":"\(project)","state":"active",
+         "startedAt":"2026-10-13T17:00:00.000Z","lastEventAt":"2026-10-13T17:00:00.000Z","card":null,"presence":"no_card",
+         "sealedNames":\(String(decoding: try JSONEncoder().encode(envelope), as: UTF8.self))}
+        """
+        let session = try ReloWireJSON.decoder().decode(AgentSession.self, from: Data(json.utf8))
+        let snapshot = InboxRepairResponse(items: [], total: 0, serverTime: Date(), readWatermark: nil,
+                                           unread: InboxUnreadSummary(account: 0, projects: [:]), sessions: [session])
+        XCTAssertTrue(book.names().isEmpty)
+        _ = snapshot.openingSealed(sealed.opener)
+        XCTAssertEqual(book.names(), [project: "relo"])
+    }
+
     func testCardIdentityLabelsShowRealNames() {
         let presentation = LiveActivityPresentation(
             title: topic, status: "Working",

@@ -53,6 +53,21 @@ export async function trustFor({ client, config, dependencies, notes }) {
   }
 }
 
+/**
+ * The names behind an agent session's handles, sealed for this computer's trusted phones (kind
+ * "names"), or null when there is nobody to seal for. Agent sessions carry no other envelope, so
+ * without this the phone could only show the handles.
+ */
+export async function sealSessionNames({ names, session, client, config, dependencies }) {
+  if (!names || Object.keys(names).length === 0) return null;
+  const trust = await trustFor({ client, config, dependencies, notes: [] });
+  if (!trust) return null;
+  const { eligible } = sealablePhones(trust.store, config.apiUrl, trust.devices);
+  if (eligible.length === 0) return null;
+  return sealEnvelope({ kind: "names", context: `ses:${String(session).slice(0, 32)}`, sender: identityKeys(trust.store),
+    recipients: eligible, content: { names } });
+}
+
 export function sealingUnavailable(reason) {
   return new ReloError(`End-to-end encryption is on for this server but the phone's keys are unavailable${reason ? ` (${reason})` : ""}. Nothing was sent.`,
     { code: "E2EE_UNAVAILABLE", exitCode: EXIT.API, details: { hint: "Open Relo on the iPhone, then retry; relo keys status shows the phones" } });

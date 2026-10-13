@@ -1,4 +1,4 @@
-import { createHash,randomUUID } from "node:crypto";
+import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import { agentSessionListResponseSchema,inboxSnapshotResponseSchema } from "@relo/notification-contracts";
 import { createApp } from "./app.js";
@@ -408,6 +408,23 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       const snapshot = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
       expect(snapshot.sessions).toHaveLength(1);
       expect(snapshot.sessions[0]).toMatchObject({ computer: "mac",presence: "no_card",state: "active" });
+    });
+
+    test("sealed session names reach the phone's snapshot only, as stored",async () => {
+      const bytes = (n: number) => randomBytes(n).toString("base64url");
+      const names = { v: "relo.e2e.v1",kind: "names",context: "ses:abc",sender: `k_${bytes(16)}`,
+        recipients: [{ device: "dev_1",prekey: "pk_1",enc: bytes(65),key: bytes(48) }],nonce: bytes(12),ct: bytes(272),sig: bytes(64) };
+      expect((await event({ event: "start",project: "p-aaaaaaaaaaaaaaaa",sealedNames: { ...names,kind: "notice" } })).status).toBe(400);
+      expect((await event({ event: "start",project: "p-aaaaaaaaaaaaaaaa",sealedNames: { ...names,ct: "short" } })).status).toBe(400);
+      expect((await event({ event: "start",project: "p-aaaaaaaaaaaaaaaa",sealedNames: names })).status).toBe(200);
+      expect((await event({ event: "tool" })).status).toBe(200);
+      const device = await phone();
+      const credential = generateToken();
+      await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[device,hashToken(credential)]);
+      const snapshot = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
+      expect(snapshot.sessions[0]!.sealedNames).toEqual(names);
+      const listed = await request("GET","/api/agent-sessions");
+      expect(listed.body.sessions[0].sealedNames).toBeUndefined();
     });
 
     test("another account never sees the sessions",async () => {

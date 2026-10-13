@@ -102,10 +102,15 @@ export async function rememberNames(env, names) {
 
 /** Labels an agent-session hook sends ({ project, computer, account }): handles once this computer seals for a phone. */
 export async function hookLabels(labels, apiUrl, dependencies) {
-  if (!apiUrl) return labels;
+  return (await hookLabelsWithNames(labels, apiUrl, dependencies)).labels;
+}
+
+/** The hook's labels as handles plus the handle → name map the phone needs to show them. */
+export async function hookLabelsWithNames(labels, apiUrl, dependencies) {
+  if (!apiUrl) return { labels, names: {} };
   const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
   const sealing = store.identity && Object.keys(store.trusted).some((entry) => entry.startsWith(`${apiUrl}|`));
-  if (!sealing) return labels;
+  if (!sealing) return { labels, names: {} };
   const key = groupingKey(identityKeys(store).privateKey);
   const prefixes = { project: "p", computer: "c", account: "a" };
   const opaque = { ...labels };
@@ -116,5 +121,5 @@ export async function hookLabels(labels, apiUrl, dependencies) {
     names[opaque[field]] = labels[field];
   }
   await rememberNames(dependencies.env, names);
-  return opaque;
+  return { labels: opaque, names };
 }

@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { Database } from "./db.js";
 
-const CURRENT_SCHEMA = "0084_end_to_end_by_default.sql";
+const CURRENT_SCHEMA = "0085_agent_session_sealed_names.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";

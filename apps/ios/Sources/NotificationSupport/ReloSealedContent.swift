@@ -59,11 +59,11 @@ public struct ReloSealedContent: Sendable {
     public func open(_ envelope: ReloEnvelope, deviceID: String, itemID: String? = nil, now: Date = Date()) -> Outcome {
         guard let state = try? ring.store.load(), let senders = try? trust.trustedSenders() else { return .unavailable }
         do {
-            guard ["notice", "question", "card"].contains(envelope.kind) else { return .unavailable }
+            guard ["notice", "question", "card", "names"].contains(envelope.kind) else { return .unavailable }
             let data = try ReloE2EE.open(envelope, deviceID: deviceID, prekey: ring.prekeyOpener(state: state),
                                          trustedSenders: senders)
-            // Cards are exempt: the server repeats a card's latest envelope on updates it makes itself.
-            if envelope.kind != "card", let itemID, let ledger,
+            // Cards and session names are exempt: the server repeats them with every update or snapshot.
+            if !["card", "names"].contains(envelope.kind), let itemID, let ledger,
                !ledger.admit(context: envelope.context, itemID: itemID, now: now) { return .replayed }
             let carried = ReloNames.carried(in: data)
             if !carried.isEmpty { nameBook?.learn(carried, sender: envelope.sender) }

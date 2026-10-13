@@ -54,9 +54,9 @@ export async function recordAgentSessionEvent(
          clock_timestamp()+make_interval(secs=>$11::double precision)) AS at
      )
      INSERT INTO agent_sessions(principal_id,session_hash,harness,computer,account,project,state,
-       started_at,last_event_at,last_event,ended_at,ended_reason,card_key)
+       started_at,last_event_at,last_event,ended_at,ended_reason,card_key,sealed_names)
      SELECT $1::uuid,$2::text,$3::text,$5::text,$6::text,$7::text,$8::text,clock.at,clock.at,$9::text,
-       CASE WHEN $9::text='end' THEN clock.at END,CASE WHEN $9::text='end' THEN 'session_end' END,$10::text
+       CASE WHEN $9::text='end' THEN clock.at END,CASE WHEN $9::text='end' THEN 'session_end' END,$10::text,$12::jsonb
      FROM clock
      ON CONFLICT (principal_id,session_hash) DO UPDATE SET
        harness=EXCLUDED.harness,
@@ -64,6 +64,7 @@ export async function recordAgentSessionEvent(
        account=COALESCE(EXCLUDED.account,agent_sessions.account),
        project=COALESCE(EXCLUDED.project,agent_sessions.project),
        card_key=COALESCE(EXCLUDED.card_key,agent_sessions.card_key),
+       sealed_names=COALESCE(EXCLUDED.sealed_names,agent_sessions.sealed_names),
        state=EXCLUDED.state,
        started_at=CASE WHEN EXCLUDED.last_event='start' AND agent_sessions.state IN ('ended','lost')
          THEN EXCLUDED.last_event_at ELSE agent_sessions.started_at END,
@@ -83,7 +84,7 @@ export async function recordAgentSessionEvent(
      RETURNING state`,
     [principalId,input.session,input.harness,input.at ?? null,input.computer ?? null,input.account ?? null,
       input.project ?? null,STATE_AFTER_EVENT[input.event],input.event,input.cardKey ?? null,
-      SESSION_FUTURE_SKEW_SECONDS],
+      SESSION_FUTURE_SKEW_SECONDS,input.sealedNames === undefined ? null : JSON.stringify(input.sealedNames)],
   );
   if (result.rows[0]) return result.rows[0].state;
   // An older or non-reviving event: report what is stored.
@@ -99,7 +100,7 @@ export async function recordAgentSessionEvent(
  */
 export function agentSessionRowsSql(principal: string): string {
   return `(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.ord),'[]'::jsonb) FROM (
-    SELECT s.id,s.harness,s.computer,s.account,s.project,s.started_at,s.last_event_at,
+    SELECT s.id,s.harness,s.computer,s.account,s.project,s.started_at,s.last_event_at,s.sealed_names,
       CASE WHEN s.state IN ('active','idle') AND s.last_event_at<=now()-interval '${SESSION_LOST_AFTER_SECONDS} seconds'
         THEN 'lost' ELSE s.state END AS state,
       card.id AS card_id,card.state AS card_state,
@@ -119,7 +120,8 @@ export function agentSessionRowsSql(principal: string): string {
     ORDER BY ord LIMIT ${SESSION_LIST_MAX}) x)`;
 }
 
-export function mapAgentSessionRows(rows: any[]): AgentSessionSummary[] {
+/** `withSealedNames` only for phones: the Dashboard and the CLI never receive envelopes. */
+export function mapAgentSessionRows(rows: any[],{ withSealedNames = false } = {}): AgentSessionSummary[] {
   return rows.map((row): AgentSessionSummary => {
     const state = row.state as AgentSessionState;
     const live = state === "active" || state === "idle";
@@ -139,6 +141,7 @@ export function mapAgentSessionRows(rows: any[]): AgentSessionSummary[] {
       } : null,
       presence: state === "ended" ? "ended" : state === "lost" ? "lost"
         : !live || !row.card_id ? "no_card" : row.card_past_stale ? "quiet" : "working",
+      ...(withSealedNames && row.sealed_names ? { sealedNames: row.sealed_names } : {}),
     };
   });
 }

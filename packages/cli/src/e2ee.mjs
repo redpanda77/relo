@@ -10,7 +10,7 @@ import {
 } from "node:crypto";
 
 export const E2EE_VERSION = "relo.e2e.v1";
-export const ENVELOPE_KINDS = Object.freeze(["notice", "question", "card", "card-update", "reply", "grouping-key"]);
+export const ENVELOPE_KINDS = Object.freeze(["notice", "question", "card", "card-update", "reply", "grouping-key", "names"]);
 const PAD_BLOCK = 256;
 const MAX_PLAINTEXT = 64 * 1024;
 

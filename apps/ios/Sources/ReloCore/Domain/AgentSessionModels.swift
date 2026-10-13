@@ -37,9 +37,11 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     public let lastEventAt: Date
     public let card: Card?
     public let presence: Presence
+    /// The names behind this session's handles, sealed for this phone (kind "names").
+    public var sealedNames: ReloEnvelope? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, harness, state, startedAt, lastEventAt, card, presence
+        case id, harness, state, startedAt, lastEventAt, card, presence, sealedNames
         case storedComputer = "computer", storedAccount = "account", storedProject = "project"
     }
 

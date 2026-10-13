@@ -7,7 +7,7 @@ import Foundation
 /// is pinned to it by the shared vectors in `e2ee-v1.json`.
 public enum ReloE2EE {
     public static let version = "relo.e2e.v1"
-    public static let kinds: Set<String> = ["notice", "question", "card", "card-update", "reply", "grouping-key"]
+    public static let kinds: Set<String> = ["notice", "question", "card", "card-update", "reply", "grouping-key", "names"]
     public static let ciphersuite = HPKE.Ciphersuite.P256_SHA256_AES_GCM_256
     static let wrapInfo = Data("relo.e2e.v1 content-key".utf8)
     static let padBlock = 256
