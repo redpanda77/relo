@@ -1,7 +1,7 @@
 import { ReloError, UsageError } from "../errors.mjs";
 import { fromB64u, safetyNumber, verifyPrekey } from "../e2ee.mjs";
 import { ensureIdentity, keyStorePath, saveKeyStore, trustKey, trustState } from "../keystore.mjs";
-import { ensureTrust } from "../trust.mjs";
+import { ensureTrust, trustedPhones } from "../trust.mjs";
 import { assertAllowedOptions, assertNoExtra, result, validateDeviceId } from "../support.mjs";
 
 const USAGE = "Usage: relo keys status | relo keys verify DEVICE_ID | relo keys forget DEVICE_ID | relo keys rotate"
@@ -95,6 +95,9 @@ export async function runKeysCommand(command) {
     const deviceId = deviceArgument(rest[0]);
     const { store } = await ensureIdentity(storePath(dependencies), { now: dependencies.now() });
     const removed = delete store.trusted[trustKey(apiUrl, deviceId)];
+    // A person who forgets the last trusted phone starts over: the next phone is trusted on first use
+    // again. Without a person at the terminal the computer stays committed (review H2).
+    if (dependencies.stdinIsTTY && trustedPhones(store, apiUrl).length === 0 && store.committed) delete store.committed[apiUrl];
     await saveKeyStore(storePath(dependencies), store);
     return result("keys.forget", { deviceId, removed });
   }

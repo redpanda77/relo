@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { TerminalInteractionError } from "./errors.mjs";
 import { answerSigningInput, fromB64u, keyId, questionAnswerSigningInput, verifyBytes } from "./e2ee.mjs";
 import { keyStorePath, loadKeyStore, trustKey } from "./keystore.mjs";
+import { isPhoneId } from "./trust.mjs";
 import { sealedCardDirectory } from "./seal-card.mjs";
 
 const SIGNED_ACTION = { approved: "approve", yes: "yes", replied: "answer", completed: "answer" };
@@ -64,6 +65,8 @@ export function answerProblem(interaction, store, apiUrl, expected = {}, now = D
   const deviceId = interaction?.respondingDevice?.id;
   if (!deviceId) return "no answering phone";
   const pinned = store.trusted[trustKey(apiUrl, deviceId)];
+  // A linked browser reads; it never answers (its code comes from the server).
+  if (!isPhoneId(deviceId) || pinned?.kind === "browser") return "answered on a device that is not a phone";
   if (!pinned || pinned.level === "pending") return "answered on a phone this computer does not trust";
   const response = interaction.response ?? {};
   const { e2eeKeyId, e2eeSignedAt, e2eeSignature, e2eeQuestion, e2eeQuestionSignature } = response;

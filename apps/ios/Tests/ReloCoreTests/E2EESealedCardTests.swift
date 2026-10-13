@@ -74,6 +74,21 @@ final class E2EESealedCardTests: XCTestCase {
         XCTAssertEqual(decoded.presentation.status, "Shipping")
         XCTAssertEqual(decoded.sealed, envelope)
 
+        // The app applies the same command itself (Activity.request/update): it must open the text too,
+        // and keep the envelope so the widget opens it again when it decodes the state.
+        let applied = ReloActivityAttributes.ContentState(generation: 1, updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+                                                          sequence: 3, interaction: nil, presentation: placeholderCard(), sealed: envelope)
+        XCTAssertEqual(applied.presentation.title, "Deploy 0.12")
+        XCTAssertEqual(applied.sealed, envelope)
+        let reread = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONEncoder().encode(applied))
+        XCTAssertEqual(reread.presentation.status, "Shipping")
+        // The server's command carries the envelope to the app.
+        var command = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(LiveActivityCommand(
+            operation: .update, activityId: "act_1", generation: 1, targetDeviceId: "dev_1", style: "standard",
+            sourceName: "Claude Code", headline: "Encrypted card", status: "Updating…"))) as? [String: Any])
+        command["sealed"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(envelope))
+        XCTAssertEqual(try JSONDecoder().decode(LiveActivityCommand.self, from: JSONSerialization.data(withJSONObject: command)).sealed, envelope)
+
         // From an unverified computer the placeholders stay.
         let stranger = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
         json["sealed"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(try ReloE2EE.seal(

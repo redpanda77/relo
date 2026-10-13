@@ -73,3 +73,35 @@ test("no link, a forged link, a link by an unknown phone or over another key: th
     assert.equal((await loadKeyStore(h.env.RELO_KEY_STORE_PATH)).trusted[trustKey(apiUrl, browser.device.deviceId)], undefined);
   } finally { h.cleanup(); }
 });
+
+test("review H1: a linked browser can never answer, even with a valid signature by its own key", async () => {
+  const { answerProblem } = await import("../src/answer-verify.mjs");
+  const store = { identity: {}, trusted: { [trustKey(apiUrl, browser.device.deviceId)]: { deviceId: browser.device.deviceId, kind: "browser",
+    level: "auto", publicKey: browser.device.identityKey.publicKey } } };
+  const problem = answerProblem({ id: "int_1", state: "approved", respondingDevice: { id: browser.device.deviceId }, response: {} },
+    store, apiUrl, { interactionId: "int_1" });
+  assert.equal(problem, "answered on a device that is not a phone");
+});
+
+test("review H2: the server cannot relabel the trusted phone as a browser and reopen first contact", async () => {
+  const h = harness();
+  try {
+    await ensureTrust({ client: h.client([phone.device]), config: { apiUrl }, dependencies: h.dependencies });
+    const evil = endpoint("dev_00000000-0000-4000-8000-0000000000ee", "phone");
+    // The trusted phone's own id listed as an unlinked browser: ignored, the pin stays.
+    await ensureTrust({ client: h.client([{ ...phone.device, kind: "browser", link: null }]), config: { apiUrl }, dependencies: h.dependencies });
+    let store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, phone.device.deviceId)].level, "auto");
+    // Even with every pin gone, a later phone is pending: first contact happened once.
+    store.trusted = {};
+    await (await import("../src/keystore.mjs")).saveKeyStore(h.env.RELO_KEY_STORE_PATH, store);
+    await ensureTrust({ client: h.client([phone.device, evil.device]), config: { apiUrl }, dependencies: h.dependencies });
+    store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, evil.device.deviceId)].level, "pending");
+    assert.equal(store.trusted[trustKey(apiUrl, phone.device.deviceId)].level, "pending");
+    // And a brw_ id without kind is never pinned as a phone.
+    await ensureTrust({ client: h.client([{ ...browser.device, kind: undefined }]), config: { apiUrl }, dependencies: h.dependencies });
+    store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, browser.device.deviceId)], undefined);
+  } finally { h.cleanup(); }
+});

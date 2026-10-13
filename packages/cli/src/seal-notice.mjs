@@ -38,12 +38,14 @@ export async function trustFor({ client, config, dependencies, notes }) {
   } catch (error) {
     if (!STORE_ERRORS.has(error?.code)) throw error;
   }
-  const committed = known?.identity && trustedPhones(known, config.apiUrl).length > 0;
+  // Once this computer has trusted a phone on this server it stays committed, even if pins vanish.
+  const committed = known?.identity && (known.committed?.[config.apiUrl] === true || trustedPhones(known, config.apiUrl).length > 0);
   try {
     const trust = await ensureTrust({ client, config, dependencies });
     notes?.push(...await approvePendingPhones({ client, apiUrl: config.apiUrl, store: trust.store, devices: trust.devices, dependencies }));
     notes?.push(...trustNotices(trust.store, config.apiUrl, dependencies.now?.() ?? Date.now()));
-    return { ...trust, committed: committed || trustedPhones(trust.store, config.apiUrl).length > 0 };
+    return { ...trust, committed: committed || trust.store.committed?.[config.apiUrl] === true
+      || trustedPhones(trust.store, config.apiUrl).length > 0 };
   } catch (error) {
     if (committed) throw sealingUnavailable(error?.message);
     // Never sealed for this server: a server without key routes or a test double stays readable.

@@ -270,6 +270,8 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
     public let dismissAfterSeconds: Int?
     public let interaction: LiveActivityInteractionCommand?
     public let presentation: LiveActivityPresentation
+    /// This phone's sealed card or question text (E5); the Live Activity opens it like a push.
+    public var sealed: ReloEnvelope? = nil
 
     public init(
         operation: Operation,
@@ -361,12 +363,13 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         case operation, activityId, generation, targetDeviceId, style, sourceName, headline, detail, status
         case progress, symbol, privacy, privacyMode, accentColor, expiresAt, staleAt
         case primaryLabel, secondaryLabel, alertOwner, sequence, dismissAfterSeconds, interaction
-        case relevanceScore, presentationState, otherActiveCount
+        case relevanceScore, presentationState, otherActiveCount, sealed
     }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let decodedPresentation = try LiveActivityPresentation(from: decoder)
+        sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
         let rawInteraction = try values.decodeIfPresent(
             LiveActivityInteractionCommand.self, forKey: .interaction
         )
@@ -443,6 +446,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         try values.encode(alertOwner, forKey: .alertOwner)
         try values.encodeIfPresent(sequence, forKey: .sequence)
         try values.encode(relevanceScore, forKey: .relevanceScore)
+        try values.encodeIfPresent(sealed, forKey: .sealed)
         try values.encode(presentationState, forKey: .presentationState)
         try values.encode(otherActiveCount, forKey: .otherActiveCount)
         try values.encodeIfPresent(dismissAfterSeconds, forKey: .dismissAfterSeconds)

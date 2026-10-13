@@ -9,10 +9,15 @@ import { ensureIdentity, keyStorePath, saveKeyStore, trustKey } from "./keystore
 
 const NOTICE_DAYS = 7;
 
+/** Phones are dev_ ids and browsers brw_ ids; a server cannot relabel one as the other. */
+export const isPhoneId = (id) => typeof id === "string" && id.startsWith("dev_");
+export const isBrowserId = (id) => typeof id === "string" && id.startsWith("brw_");
+
 /** Phones pinned for this server, excluding ones waiting for a person (and linked browsers). */
 export function trustedPhones(store, apiUrl) {
   return Object.entries(store.trusted)
-    .filter(([key, entry]) => key.startsWith(`${apiUrl}|`) && entry.level !== "pending" && entry.kind !== "browser")
+    .filter(([key, entry]) => key.startsWith(`${apiUrl}|`) && entry.level !== "pending" && entry.kind !== "browser"
+      && isPhoneId(entry.deviceId))
     .map(([, entry]) => entry);
 }
 
@@ -51,9 +56,15 @@ export async function ensureTrust({ client, config, dependencies }) {
   const { devices } = await client.listDeviceKeys();
   if (!Array.isArray(devices)) throw Object.assign(new Error("the key directory returned no device list"), { code: "E2EE_UNAVAILABLE" });
   const now = new Date(dependencies.now?.() ?? Date.now()).toISOString();
-  // Trust on first use applies to the account's FIRST phone(s) only; browsers never get it.
-  const firstContact = trustedPhones(store, config.apiUrl).length === 0;
-  const phones = devices.filter((device) => device?.kind !== "browser");
+  // Trust on first use applies to the account's FIRST phone(s) only, once per server: a server that
+  // makes this computer drop its pins never gets a second first contact. Browsers never get it.
+  store.committed ??= {};
+  if (trustedPhones(store, config.apiUrl).length > 0 && !store.committed[config.apiUrl]) {
+    store.committed[config.apiUrl] = true;
+    changed = true;
+  }
+  const firstContact = !store.committed[config.apiUrl];
+  const phones = devices.filter((device) => isPhoneId(device?.deviceId) && device?.kind !== "browser");
   for (const device of phones) {
     if (!device?.identityKey?.publicKey) continue;
     const key = trustKey(config.apiUrl, device.deviceId);
@@ -74,8 +85,12 @@ export async function ensureTrust({ client, config, dependencies }) {
     changed = true;
   }
   // After the phones: a browser is trusted only with a link signed by a phone trusted above.
-  for (const device of devices.filter((entry) => entry?.kind === "browser")) {
+  for (const device of devices.filter((entry) => isBrowserId(entry?.deviceId) && entry?.kind === "browser")) {
     if (browserTrust(store, config.apiUrl, device, now)) changed = true;
+  }
+  if (!store.committed[config.apiUrl] && trustedPhones(store, config.apiUrl).length > 0) {
+    store.committed[config.apiUrl] = true;
+    changed = true;
   }
   if (changed) await saveKeyStore(path, store);
   return { store, devices };
