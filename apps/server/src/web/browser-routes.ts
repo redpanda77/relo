@@ -9,6 +9,7 @@ import {
   unlinkBrowser,
 } from "../linked-browsers.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
+import { pendingDevices } from "../device-approvals.js";
 import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
 
@@ -45,6 +46,15 @@ export function registerBrowserRoutes(app: Hono, shared: WebRouteContext): void 
     const removed = await unlinkBrowser(db,account.principalId,context.req.param("browserId") ?? "");
     if (removed) await purgeUnreadableContent(db,account.principalId,apnsMode);
     return removed ? context.body(null,204) : context.json({ error: "browser_not_found" },404);
+  });
+
+  // Read-only: phones waiting for approval; only a trusted phone can approve them.
+  app.get("/api/dashboard/pending-devices", async (context) => {
+    const account = await getOwnerAccount(db,accountAuth,context.req.raw.headers);
+    if (!account) return context.json({ error: "unauthorized" },401);
+    context.header("cache-control","private, no-store");
+    return context.json({ devices: (await pendingDevices(db,account.principalId))
+      .map(({ deviceId,name,model,registeredAt,keyId }) => ({ deviceId,name,model,registeredAt,keyId })) });
   });
 
   app.get("/api/dashboard/client-keys", async (context) => {

@@ -105,12 +105,8 @@ Sealing and signed approvals start at once.
   keeps working. It leaves a visible, non-blocking notice: "security code changed" in
   `relo keys status` and on the phone's Settings → Security.
 - **A new phone is approved on a phone you already have.** The first phone is trusted on first use.
-  A phone that appears later (an iPad, a replacement iPhone) stays *pending*, so a server cannot add
-  its own "phone" to read everything. Each computer sends your trusted phones an end-to-end
-  encrypted question: "“iPad” signed in to your Relo account. Allow it to read your encrypted
-  messages?". One tap on Approve, signed by the trusted phone and bound to that question, makes the
-  new phone trusted; Deny keeps it out for good. The new phone cannot approve itself. Without any
-  trusted phone left, `relo keys verify` (a person) is the fallback.
+  A phone that appears later stays *pending* until a trusted phone approves it in Settings → Security
+  (see "New devices are approved on a trusted phone" below); the server cannot add a phone of its own.
 - **A phone set up again is trusted again, like WhatsApp after a reinstall.** Signing out keeps the
   phone's own keys, so the same phone signing in again is recognised by its key with no notice.
   When every phone a computer trusted has left the account, the account's new phone is trusted
@@ -223,6 +219,46 @@ A new phone starts with empty history. That is intended: content was disposable 
 The new phone is trusted through cross-signing from another verified device or through
 safety-number verification on each CLI. Revoking the old device removes it from every recipient
 list immediately.
+
+### New devices are approved on a trusted phone
+
+A phone (or iPad) that signs in after the account's first phone is *pending*: computers seal nothing
+to it and refuse its answers. It is approved on a phone the computers already trust, never by
+comparing keys, and the request is always visible until it is answered.
+
+**Signing.** The trusted phone's identity key signs
+
+```
+relo.e2e.v1 approve-device
+<deviceId of the new phone>
+<its identity public key, b64u X9.63>
+<approving phone deviceId>
+<signedAt, ISO 8601>
+```
+
+**Server.**
+- `GET /api/devices/self/pending-devices` (phone credential) → `{ devices: [{ deviceId, name, model?,
+  registeredAt, keyId, identityKey }] }`: the account's other active phones with published keys that
+  have no approval for their current identity key. It never lists the calling phone.
+- `POST /api/devices/self/approvals` `{ deviceId, identityKey, signedAt, signature }` stores the
+  approval (only for a device of the same account whose current identity key matches).
+- `POST /api/devices/self/approvals/:deviceId/decline` revokes that device (signs it out).
+- `GET /api/devices/keys` adds `approval: { deviceId, signedAt, signature } | null` to each phone.
+- When a phone first publishes keys and the account already has another phone with keys, the server
+  sends the other phones a plain notification "New device wants access" (device name and time only),
+  deep-linking to `relo://settings/security`.
+- `GET /api/dashboard/pending-devices` (Dashboard session) lists the same, read-only.
+
+**CLI.** A pending phone becomes trusted ("auto", notice `new_phone_approved`) when its `approval`
+verifies against a phone this computer trusts and covers its current identity key. No question is
+sent any more. `relo keys status` and every command's note say: "approve it in Relo on your trusted
+iPhone → Settings → Security".
+
+**iPhone.** Settings → Security shows "New device wants access" with each pending device (name,
+when it signed in, key id) and Approve / Decline. Approve signs as above; Decline signs the device
+out. The list refreshes on foreground and when the notification is opened.
+
+**Dashboard.** The Account page lists pending devices read-only: "Approve it in Relo on your iPhone".
 
 ### Linked browsers (like WhatsApp Web)
 

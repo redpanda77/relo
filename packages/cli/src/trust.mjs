@@ -3,8 +3,8 @@
 // sealing at once. A changed key for a phone it already trusts is trusted again with a visible
 // notice. A phone that appears LATER is not trusted automatically: a server could add its own
 // "phone" to read everything, so a new phone waits ("pending") until a trusted phone approves it
-// (phone-approval.mjs) or a person runs `relo keys verify`. Strict mode (`relo keys strict on`) also holds key changes until verified.
-import { fromB64u, linkSigningInput, verifyBytes } from "./e2ee.mjs";
+// in Relo → Settings → Security (a signed approval) or a person runs `relo keys verify`. Strict mode (`relo keys strict on`) also holds key changes until verified.
+import { approveDeviceSigningInput, fromB64u, linkSigningInput, verifyBytes } from "./e2ee.mjs";
 import { ensureIdentity, keyStorePath, saveKeyStore, trustKey } from "./keystore.mjs";
 
 const NOTICE_DAYS = 7;
@@ -29,9 +29,9 @@ export function trustNotices(store, apiUrl, now = Date.now()) {
   for (const [key, entry] of Object.entries(store.trusted)) {
     if (!key.startsWith(`${apiUrl}|`)) continue;
     if (entry.level === "pending") {
-      notes.push(entry.approval?.declined
-        ? `${entry.name ?? entry.deviceId} was declined on your trusted phone and stays untrusted`
-        : `a new phone (${entry.name ?? entry.deviceId}) waits for approval on your trusted phone`);
+      notes.push(`a new phone (${entry.name ?? entry.deviceId}) waits for approval: approve or decline it in Relo on your trusted iPhone → Settings → Security`);
+    } else if (entry.notice?.kind === "new_phone_approved" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
+      notes.push(`${entry.name ?? entry.deviceId} was approved on your trusted phone: messages are now encrypted for it too`);
     } else if (entry.notice?.kind === "phone_replaced" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
       notes.push(`your phone ${entry.name ?? entry.deviceId} was set up again and is trusted; if you did not sign a phone in, run relo keys status`);
     } else if (entry.notice?.kind === "browser_linked" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
@@ -82,10 +82,11 @@ export async function ensureTrust({ client, config, dependencies }) {
     const key = trustKey(config.apiUrl, device.deviceId);
     const pinned = store.trusted[key];
     const sameKey = knownKeys.has(device.identityKey.publicKey);
+    const approved = approvedByTrustedPhone(store, config.apiUrl, device);
     if (pinned && pinned.level === "pending") {
       store.trusted[key] = { ...pinned, keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
-        ...(sameKey || replaced ? { level: "auto", trustedAt: now,
-          notice: sameKey ? undefined : { kind: "phone_replaced", at: now } } : {}) };
+        ...(sameKey || replaced || approved ? { level: "auto", trustedAt: now,
+          notice: sameKey ? undefined : approved ? { kind: "new_phone_approved", at: now } : { kind: "phone_replaced", at: now } } : {}) };
       changed = true;
       continue;
     }
@@ -93,9 +94,10 @@ export async function ensureTrust({ client, config, dependencies }) {
     if (pinned && store.strict) continue;
     store.trusted[key] = {
       deviceId: device.deviceId, name: device.name, keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
-      level: pinned || firstContact || sameKey || replaced ? "auto" : "pending", trustedAt: now,
+      level: pinned || firstContact || sameKey || replaced || approved ? "auto" : "pending", trustedAt: now,
       ...(pinned ? { notice: { kind: "security_code_changed", at: now, previousKeyId: pinned.keyId } }
-        : firstContact || sameKey ? {} : replaced ? { notice: { kind: "phone_replaced", at: now } } : { notice: { kind: "new_phone", at: now } }),
+        : firstContact || sameKey ? {} : approved ? { notice: { kind: "new_phone_approved", at: now } }
+        : replaced ? { notice: { kind: "phone_replaced", at: now } } : { notice: { kind: "new_phone", at: now } }),
     };
     changed = true;
   }
@@ -144,4 +146,22 @@ function browserTrust(store, apiUrl, device, now) {
     publicKey: device.identityKey.publicKey, level: "auto", linkedBy: link.deviceId, trustedAt: now,
     notice: { kind: "browser_linked", at: now } };
   return true;
+}
+
+/**
+ * A pending phone is approved when a phone this computer trusts signed its id and current identity key
+ * in Relo → Settings → Security (the server only relays the signature).
+ */
+function approvedByTrustedPhone(store, apiUrl, device) {
+  const approval = device.approval;
+  if (!approval?.deviceId || !isPhoneId(approval.deviceId) || approval.deviceId === device.deviceId) return false;
+  const approver = store.trusted[trustKey(apiUrl, approval.deviceId)];
+  if (!approver || approver.level === "pending" || approver.kind === "browser" || !approver.publicKey) return false;
+  try {
+    return verifyBytes(fromB64u(approver.publicKey, { length: 65 }), approveDeviceSigningInput({ deviceId: device.deviceId,
+      identityKey: device.identityKey.publicKey, approverDeviceId: approval.deviceId, signedAt: approval.signedAt }),
+    fromB64u(approval.signature, { length: 64 }));
+  } catch {
+    return false;
+  }
 }

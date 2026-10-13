@@ -12,6 +12,7 @@ import { AgentsSection } from "@/features/inbox/agents-section"
 import { quietSessionsByCard } from "@/features/inbox/sessions-model"
 import { ActivityCardRow } from "@/features/inbox/activity-card"
 import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
+import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
 import {
   agentSecondsToday,
   agentTimeLabel,
@@ -252,6 +253,8 @@ export function InboxView({
           now={clockNow}
         />
       ) : null}
+
+      {overview ? <PendingDevicesNotice /> : null}
 
       {overview ? <LinkBrowserBanner accountId={overview.shell.account.id} /> : null}
 

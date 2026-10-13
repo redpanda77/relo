@@ -27,6 +27,12 @@ final class EncryptionSecurityModel {
     private(set) var browsersProblem: String?
     private(set) var linking = false
     var linkResult: LinkResult?
+    /// Phones of this account waiting for this phone's approval.
+    private(set) var pendingDevices: [ReloPendingDevice] = []
+    /// Why loading, approving or declining a pending device failed, shown in its section.
+    private(set) var pendingProblem: String?
+    /// The pending device being approved or declined now.
+    private(set) var answeringDevice: String?
 
     struct LinkResult: Identifiable, Equatable {
         let id = UUID()
@@ -175,8 +181,62 @@ final class EncryptionSecurityModel {
         }
     }
 
+    // MARK: Pending devices
+
+    func loadPending(credential: DeviceCredential?, approver: (any DeviceApproving)?) async {
+        guard let credential, let approver else { pendingDevices = []; return }
+        do {
+            pendingDevices = try await approver.pendingDevices(credential: credential)
+            pendingProblem = nil
+        } catch {
+            pendingProblem = Self.message(for: error, doing: "check for new devices")
+        }
+    }
+
+    /// Signs the device's identity key with this phone's identity key: computers then trust it.
+    func approve(_ device: ReloPendingDevice, credential: DeviceCredential?, approver: (any DeviceApproving)?,
+                 signer: (any ReloIdentitySigning)?) async {
+        guard let credential, let approver else {
+            pendingProblem = "Sign in to Relo on this iPhone first."
+            return
+        }
+        guard let signer else {
+            pendingProblem = "This iPhone's encryption keys are not ready yet. Wait a moment and try again."
+            return
+        }
+        answeringDevice = device.deviceId
+        defer { answeringDevice = nil }
+        do {
+            let request = try ReloDeviceApproval.request(for: device, phoneDeviceID: credential.deviceId, signer: signer)
+            try await approver.approveDevice(credential: credential, request: request)
+            pendingDevices.removeAll { $0.deviceId == device.deviceId }
+            pendingProblem = nil
+        } catch {
+            pendingProblem = Self.message(for: error, doing: "approve \(device.displayName)")
+            if error as? DeviceApprovalError != nil { await loadPending(credential: credential, approver: approver) }
+        }
+    }
+
+    /// Signs the device out.
+    func decline(_ device: ReloPendingDevice, credential: DeviceCredential?, approver: (any DeviceApproving)?) async {
+        guard let credential, let approver else {
+            pendingProblem = "Sign in to Relo on this iPhone first."
+            return
+        }
+        answeringDevice = device.deviceId
+        defer { answeringDevice = nil }
+        do {
+            try await approver.declineDevice(credential: credential, deviceID: device.deviceId)
+            pendingDevices.removeAll { $0.deviceId == device.deviceId }
+            pendingProblem = nil
+        } catch {
+            pendingProblem = Self.message(for: error, doing: "decline \(device.displayName)")
+        }
+    }
+
     static func message(for error: Error, doing action: String) -> String {
-        if let error = error as? LocalizedError, let description = error.errorDescription, error is BrowserLinkError {
+        if let error = error as? LocalizedError, let description = error.errorDescription,
+           error is BrowserLinkError || error is DeviceApprovalError {
             return description
         }
         switch error as? MobileAPIError {
@@ -199,11 +259,35 @@ struct EncryptionSettingsView: View {
     @State private var scanning = false
     @State private var pendingCode: ReloBrowserLink.Code?
     @State private var pendingUnlink: EncryptionSecurityModel.UnlinkTarget?
+    @State private var pendingApproval: ReloPendingDevice?
+    @State private var pendingDecline: ReloPendingDevice?
+    @Environment(\.scenePhase) private var scenePhase
 
     private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
+    private var approver: (any DeviceApproving)? { model.apiClient as? any DeviceApproving }
+
+    private func refreshPending() async {
+        await security.loadPending(credential: model.credential, approver: approver)
+    }
 
     var body: some View {
+        pendingDialogs(list)
+            .task {
+                await refreshPending()
+                await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory)
+            }
+            .refreshable {
+                await refreshPending()
+                await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory)
+            }
+            // The list refreshes on foreground and when the "New device wants access" notification opens it.
+            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await refreshPending() } } }
+            .onChange(of: model.securitySettingsRequests) { _, _ in Task { await refreshPending() } }
+    }
+
+    private var list: some View {
         List {
+            pendingDevicesSection
             switch security.phase {
             case .loading:
                 ProgressView().frame(maxWidth: .infinity)
@@ -253,8 +337,6 @@ struct EncryptionSettingsView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Security")
-        .task { await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory) }
-        .refreshable { await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory) }
         .sheet(isPresented: $scanning) {
             BrowserLinkScannerView { code in
                 scanning = false
@@ -288,6 +370,86 @@ struct EncryptionSettingsView: View {
         .alert(item: Binding(get: { security.linkResult }, set: { security.linkResult = $0 })) { result in
             Alert(title: Text(result.title), message: Text(result.message))
         }
+    }
+
+    /// Approve / Decline confirmations for a device waiting for access.
+    private func pendingDialogs<Content: View>(_ content: Content) -> some View {
+        content
+        .confirmationDialog(pendingApproval.map { "Approve \($0.displayName)?" } ?? "", isPresented: Binding(
+            get: { pendingApproval != nil }, set: { if !$0 { pendingApproval = nil } }
+        ), titleVisibility: .visible, presenting: pendingApproval) { device in
+            Button("Approve") {
+                pendingApproval = nil
+                Task {
+                    await security.approve(device, credential: model.credential, approver: approver, signer: model.answerSigner?())
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingApproval = nil }
+        } message: { _ in
+            Text("It will be able to read your encrypted Relo messages.")
+        }
+        .confirmationDialog(pendingDecline.map { "Decline \($0.displayName)?" } ?? "", isPresented: Binding(
+            get: { pendingDecline != nil }, set: { if !$0 { pendingDecline = nil } }
+        ), titleVisibility: .visible, presenting: pendingDecline) { device in
+            Button("Decline", role: .destructive) {
+                pendingDecline = nil
+                Task { await security.decline(device, credential: model.credential, approver: approver) }
+            }
+            Button("Cancel", role: .cancel) { pendingDecline = nil }
+        } message: { _ in
+            Text("It will be signed out.")
+        }
+    }
+
+    /// "New device wants access": phones of this account that signed in after this one and wait
+    /// for this trusted phone to vouch for their keys.
+    @ViewBuilder private var pendingDevicesSection: some View {
+        if !security.pendingDevices.isEmpty {
+            Section {
+                ForEach(security.pendingDevices) { device in
+                    VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.displayName).font(.body.weight(.semibold))
+                            if let deviceModel = device.model, !deviceModel.isEmpty, deviceModel != device.displayName {
+                                Text(deviceModel).font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                            }
+                            Text(signedInLine(device)).font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                            Text("Key \(device.shortKeyID)").font(.footnote.monospaced()).foregroundStyle(Color.reloSecondaryText)
+                        }
+                        if security.answeringDevice == device.deviceId {
+                            ProgressView().frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            HStack(spacing: 12) {
+                                Button("Approve") { pendingApproval = device }
+                                    .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("approve-device")
+                                Button("Decline", role: .destructive) { pendingDecline = device }
+                                    .buttonStyle(.bordered)
+                                    .accessibilityIdentifier("decline-device")
+                            }
+                            .disabled(security.answeringDevice != nil || model.credential == nil)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                if let problem = security.pendingProblem {
+                    Text(problem).font(.footnote).foregroundStyle(Color.reloErrorText)
+                }
+            } header: { Text("New device wants access") } footer: {
+                Text("Approve only a device you just signed in to yourself. Computers send it your encrypted messages once this iPhone approves it.")
+            }
+            .listRowBackground(ReloListRowBackground())
+        } else if let problem = security.pendingProblem {
+            Section {
+                Text(problem).font(.footnote).foregroundStyle(Color.reloErrorText)
+            } header: { Text("New devices") }
+            .listRowBackground(ReloListRowBackground())
+        }
+    }
+
+    private func signedInLine(_ device: ReloPendingDevice) -> String {
+        guard let date = device.registeredDate else { return "Signed in recently" }
+        return "Signed in \(date.formatted(.relative(presentation: .named)))"
     }
 
     @ViewBuilder private var browsersSection: some View {

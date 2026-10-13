@@ -44,6 +44,7 @@
 		1C5EFEE41B126823CB485061 /* ReloSealedContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0E9E468EEE34F65487FDFE /* ReloSealedContent.swift */; };
 		1C8A39A6C0CB44E361AA5270 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
 		1CDBF94660B4D4A988AEFFDF /* ReloKeyRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB48CE5BE80886D9F9ACF35C /* ReloKeyRing.swift */; };
+		1DAD14BE38E5F7EC6E4BA6AF /* ReloDeviceApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5448D49A39B47C6B294BDF /* ReloDeviceApproval.swift */; };
 		1E78E3D5B262E4EE66013688 /* ReloWireJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBAE29D817CE665C90348296 /* ReloWireJSON.swift */; };
 		1E923E685DB764962BD2C7A2 /* ReloConnectionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17154AF6D83D220015B4162D /* ReloConnectionStatus.swift */; };
 		1FDA8AB307B04B8AC61D3AF0 /* CurrentPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA886F6D2C5D4333BA3275E /* CurrentPresentation.swift */; };
@@ -90,6 +91,7 @@
 		36D23CAA04336EBEEC66F4DC /* SecureEnclaveKeyFactoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582EA07CD13491FFC99F2790 /* SecureEnclaveKeyFactoryTests.swift */; };
 		36D6A927858C044859B28076 /* HTTPBrowserLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61870D8158D5F0894950E32 /* HTTPBrowserLinks.swift */; };
 		375BD1F4D1027E328052A1AD /* NotificationReceiptFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2BA40614C01B81767C670C9 /* NotificationReceiptFile.swift */; };
+		384923A259D814612571D85A /* AgentSessionsRunningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A822BB03CE6E98C2DDB13B80 /* AgentSessionsRunningTests.swift */; };
 		38A17316DDDA30E4AFA69FD7 /* ReloCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		39370188671FC086B5AAF193 /* RelevancePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0551453D0E9384BC71F02550 /* RelevancePolicyTests.swift */; };
 		3A3BEFB060AA04020D29DA94 /* ReloNotificationSupport.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 409D7B8018796792CEE8A426 /* ReloNotificationSupport.framework */; };
@@ -155,6 +157,7 @@
 		6A831872DDFC3F45A7200681 /* LiveActivityReinstallationRecoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68B9C91BAD10062F1C7822F /* LiveActivityReinstallationRecoveryPolicy.swift */; };
 		6AA0B095CB68E7F7A58F4873 /* ReloNotificationSupport.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 409D7B8018796792CEE8A426 /* ReloNotificationSupport.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		6B7B70A73D73FDB676259883 /* DeviceRegistrationFailureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA0A16F4BCAF223B4EF33465 /* DeviceRegistrationFailureTests.swift */; };
+		6BD32048702F974660853AE6 /* HTTPDeviceApprovals.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEDF5B6E2BAADA1CCCC8D212 /* HTTPDeviceApprovals.swift */; };
 		6C15C7B0BAB8E0F757BFD395 /* PreviewData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A936B72CD8718CEFFC2D116 /* PreviewData.swift */; };
 		6D92436C5679F96AE4D96B3E /* TodayActivityBuckets.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3FE86B33A6FB947415F0B09 /* TodayActivityBuckets.swift */; };
 		6DDAD3DB4512AC5FFB79DA0E /* InboxSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5DBE05D73690B38D39A4C10 /* InboxSyncEngineTests.swift */; };
@@ -293,6 +296,7 @@
 		B8DFB423F5D17DDAEE4A131A /* receipt-scope-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = C2A633D3C60EECC0E6232E61 /* receipt-scope-v1.json */; };
 		B960C888DCD98FCBB41D90CF /* ResponseOutboxModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01599BED6D172655E5F1FAC8 /* ResponseOutboxModels.swift */; };
 		BAAD10E0BF4DE2172E2277B7 /* KeychainLinkedBrowserStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5AC3885E0D34225C3D1D19F /* KeychainLinkedBrowserStore.swift */; };
+		BABD17505987D61A2A8114BD /* E2EEDeviceApprovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C7D2FFB54934F085979AF30 /* E2EEDeviceApprovalTests.swift */; };
 		BB15961F1FEFFCC0875461A5 /* ReadRemotePorts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423FBA6173F68C52D7395493 /* ReadRemotePorts.swift */; };
 		BB9A3FA6239E93ED4C765F9B /* DiagnosticStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB2E0D389A3885DA438C4F2 /* DiagnosticStoreTests.swift */; };
 		BC294322E547E85E6AC3396D /* E2EETrustedClientsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D745893B054F6C7B6295B8F1 /* E2EETrustedClientsTests.swift */; };
@@ -876,6 +880,7 @@
 		4D2EC46F47F0AC943FDC8217 /* ReloNotificationEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloNotificationEnvelope.swift; sourceTree = "<group>"; };
 		4D4DEECEC3B855D5082039D8 /* ReloHoloTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloHoloTheme.swift; sourceTree = "<group>"; };
 		4E4F4DA50DE8F17D66E45FC4 /* LiveActivitySurfaceProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivitySurfaceProjectionTests.swift; sourceTree = "<group>"; };
+		4E5448D49A39B47C6B294BDF /* ReloDeviceApproval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloDeviceApproval.swift; sourceTree = "<group>"; };
 		4E93D9166FDE77DE33E42E7D /* ReloNotificationSupportTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ReloNotificationSupportTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F3321D3FE4A1C2AF27AE81B /* CrossProcessResponseStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossProcessResponseStore.swift; sourceTree = "<group>"; };
 		4FA12309CC7231C6BA13A060 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
@@ -904,6 +909,7 @@
 		690518E6C2DAC0D851596842 /* InboxCardDigest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxCardDigest.swift; sourceTree = "<group>"; };
 		6920DCD28955F96EBA7D1281 /* ReloStatusChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloStatusChip.swift; sourceTree = "<group>"; };
 		6A8B39F5DAFD54370A32B111 /* CrossProcessResponseConfirmations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossProcessResponseConfirmations.swift; sourceTree = "<group>"; };
+		6C7D2FFB54934F085979AF30 /* E2EEDeviceApprovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EEDeviceApprovalTests.swift; sourceTree = "<group>"; };
 		6DA886F6D2C5D4333BA3275E /* CurrentPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentPresentation.swift; sourceTree = "<group>"; };
 		6DCDB0D8D4E0E37CF23DEBF3 /* DeviceIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentity.swift; sourceTree = "<group>"; };
 		6E0C6D76AB76C6A8899E288E /* HistoryRetentionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRetentionTests.swift; sourceTree = "<group>"; };
@@ -973,6 +979,7 @@
 		A732252D32832518563141AE /* PendingReadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingReadStore.swift; sourceTree = "<group>"; };
 		A75C64D92E43B777C25EC3C2 /* ReceiptCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptCoordinator.swift; sourceTree = "<group>"; };
 		A7DB57094723A859E6905016 /* E2EEAnswerSigningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EEAnswerSigningTests.swift; sourceTree = "<group>"; };
+		A822BB03CE6E98C2DDB13B80 /* AgentSessionsRunningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionsRunningTests.swift; sourceTree = "<group>"; };
 		AA215490AAF0A633C778324C /* CurrentRecoveryHintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentRecoveryHintTests.swift; sourceTree = "<group>"; };
 		AA3A705FC46FB6921A8B8620 /* ReloActivityVisual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloActivityVisual.swift; sourceTree = "<group>"; };
 		AB0A6923ACAE05CFFB7F9C17 /* ReceiptPorts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptPorts.swift; sourceTree = "<group>"; };
@@ -1061,6 +1068,7 @@
 		EC75117F9650DBCFF9A54A93 /* E2EECurrentRowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EECurrentRowTests.swift; sourceTree = "<group>"; };
 		ED5A4613CFDA2C0AFE2AADD5 /* ReadPorts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadPorts.swift; sourceTree = "<group>"; };
 		EE2A159D39A191E0F5F40836 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		EEDF5B6E2BAADA1CCCC8D212 /* HTTPDeviceApprovals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPDeviceApprovals.swift; sourceTree = "<group>"; };
 		EEF4EC1C8A1B7E11BD10AD95 /* ResponseConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseConfirmation.swift; sourceTree = "<group>"; };
 		EF55E09703CDBEC0BE1A1775 /* InboxStorageIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxStorageIO.swift; sourceTree = "<group>"; };
 		EFCFC1B6074A0B38E3DD4DB0 /* ReloLiveActivities.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ReloLiveActivities.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1299,6 +1307,7 @@
 				34C74879E5A9ECF321EEAE4D /* InboxSealedNotice.swift */,
 				AFD735918B0D0B776F036E60 /* ReloAnswerSigning.swift */,
 				2FBB5642D513137F640A346C /* ReloBrowserLink.swift */,
+				4E5448D49A39B47C6B294BDF /* ReloDeviceApproval.swift */,
 				B5E25CBA4C73F96499D35D86 /* ReloE2EE.swift */,
 				FB48CE5BE80886D9F9ACF35C /* ReloKeyRing.swift */,
 				0A838AFEE5453E6710AD4B4E /* ReloLinkedBrowsers.swift */,
@@ -1379,6 +1388,7 @@
 				8BA0885893602F28202A35BE /* AccountScopedInboxCacheTests.swift */,
 				D4E4BD9BB9FFDAC7E5C603FE /* ActivityContextCodingTests.swift */,
 				520F5473584A93440484A533 /* ActivityOutcomeTests.swift */,
+				A822BB03CE6E98C2DDB13B80 /* AgentSessionsRunningTests.swift */,
 				399E9C5B433A31DAC2A0AA17 /* AgentSessionsTests.swift */,
 				A1B766DA3ACD38C969311A1D /* BrowserSignInTests.swift */,
 				AE7949738CA04B42B7332502 /* BundleModule.swift */,
@@ -1396,6 +1406,7 @@
 				A7DB57094723A859E6905016 /* E2EEAnswerSigningTests.swift */,
 				BEDBFB1A45D330850F38C49B /* E2EEBrowserLinkTests.swift */,
 				EC75117F9650DBCFF9A54A93 /* E2EECurrentRowTests.swift */,
+				6C7D2FFB54934F085979AF30 /* E2EEDeviceApprovalTests.swift */,
 				DA5DAC61D343AD07526CF0D2 /* E2EEInteropTests.swift */,
 				596A95F8F66E0091819BA2A8 /* E2EEKeyRingTests.swift */,
 				AF48495BD1627852D2EB59DE /* E2EELinkedBrowserRenewalTests.swift */,
@@ -1595,6 +1606,7 @@
 				6E1EEB72A9722A8E57FD50CC /* AuthorizedRequest.swift */,
 				A61870D8158D5F0894950E32 /* HTTPBrowserLinks.swift */,
 				6E987F235F49FDFCBC2B9880 /* HTTPCurrentStateSource.swift */,
+				EEDF5B6E2BAADA1CCCC8D212 /* HTTPDeviceApprovals.swift */,
 				409A76A26CF95C51498BC5B2 /* HTTPDeviceKeyPublisher.swift */,
 				CC0E074D8B29DE3EB891E5BB /* HTTPInboxDataSource.swift */,
 				DB1AF3F8A678671E2065CA79 /* HTTPMobileAPIClient.swift */,
@@ -2152,6 +2164,7 @@
 				6A22BD0D80E224E0FBE137E1 /* AuthorizedRequest.swift in Sources */,
 				36D6A927858C044859B28076 /* HTTPBrowserLinks.swift in Sources */,
 				7DC124303CDC0F2A7D078C6C /* HTTPCurrentStateSource.swift in Sources */,
+				6BD32048702F974660853AE6 /* HTTPDeviceApprovals.swift in Sources */,
 				41B6F987561BF93B53C507DD /* HTTPDeviceKeyPublisher.swift in Sources */,
 				BD39C4BE583A107E0BC9EB17 /* HTTPInboxDataSource.swift in Sources */,
 				BE2D390186DA6BD79D68CA2A /* HTTPMobileAPIClient.swift in Sources */,
@@ -2263,6 +2276,7 @@
 				B2BF740EE1D19E6E8B52B2AB /* AccountScopedInboxCacheTests.swift in Sources */,
 				9594B0CC9E28AB9D2E2E6CFC /* ActivityContextCodingTests.swift in Sources */,
 				12A7DAB19A7FE0500B1FEE23 /* ActivityOutcomeTests.swift in Sources */,
+				384923A259D814612571D85A /* AgentSessionsRunningTests.swift in Sources */,
 				B3B5196E26D2761B66C43DF9 /* AgentSessionsTests.swift in Sources */,
 				D342D84B3A28AF61CC813C72 /* BrowserSignInTests.swift in Sources */,
 				C6A5225EE2FF9C6102B4E4DF /* BundleModule.swift in Sources */,
@@ -2280,6 +2294,7 @@
 				7CD4EC4900DB9B4A96A2CC7A /* E2EEAnswerSigningTests.swift in Sources */,
 				747D341E837DA862561E226B /* E2EEBrowserLinkTests.swift in Sources */,
 				7AF24CCF50E842504BCF1F68 /* E2EECurrentRowTests.swift in Sources */,
+				BABD17505987D61A2A8114BD /* E2EEDeviceApprovalTests.swift in Sources */,
 				C050528905785E10D5ACEE39 /* E2EEInteropTests.swift in Sources */,
 				3B56E542E56D4E13D245B1A6 /* E2EEKeyRingTests.swift in Sources */,
 				E5A72F7359F5136812C60AAC /* E2EELinkedBrowserRenewalTests.swift in Sources */,
@@ -2474,6 +2489,7 @@
 				B0C6A469C31212B8F0F3793B /* ReloAnswerSigning.swift in Sources */,
 				B6CDA18541D32627D59E88B3 /* ReloBrowserLink.swift in Sources */,
 				C7E91B1EF4E0102145CD4353 /* ReloDeepLink.swift in Sources */,
+				1DAD14BE38E5F7EC6E4BA6AF /* ReloDeviceApproval.swift in Sources */,
 				D632EF115D87F1F1870DD3D0 /* ReloE2EE.swift in Sources */,
 				78634AF2D926EB5B83B7ED2F /* ReloIdentifier.swift in Sources */,
 				1CDBF94660B4D4A988AEFFDF /* ReloKeyRing.swift in Sources */,
@@ -3132,7 +3148,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3146,7 +3162,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.9.41;
+				MARKETING_VERSION = 0.9.42;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3305,7 +3321,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -3325,7 +3341,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.9.41;
+				MARKETING_VERSION = 0.9.42;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

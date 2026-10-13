@@ -8,7 +8,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { b64u, fromB64u, sealEnvelope, verifyPrekey } from "./e2ee.mjs";
 import { identityKeys, subkey, trustKey } from "./keystore.mjs";
-import { approvePendingPhones } from "./phone-approval.mjs";
 import { ensureTrust, trustNotices, trustedPhones } from "./trust.mjs";
 import { keyStorePath, loadKeyStore } from "./keystore.mjs";
 import { EXIT, ReloError } from "./errors.mjs";
@@ -42,7 +41,6 @@ export async function trustFor({ client, config, dependencies, notes }) {
   const committed = known?.identity && (known.committed?.[config.apiUrl] === true || trustedPhones(known, config.apiUrl).length > 0);
   try {
     const trust = await ensureTrust({ client, config, dependencies });
-    notes?.push(...await approvePendingPhones({ client, apiUrl: config.apiUrl, store: trust.store, devices: trust.devices, dependencies }));
     notes?.push(...trustNotices(trust.store, config.apiUrl, dependencies.now?.() ?? Date.now()));
     return { ...trust, committed: committed || trust.store.committed?.[config.apiUrl] === true
       || trustedPhones(trust.store, config.apiUrl).length > 0 };

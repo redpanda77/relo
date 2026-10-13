@@ -118,6 +118,9 @@ export const inboxLiveActivitySchema = z.object({
     credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.iso.datetime(),
   }).strict().nullable().default(null),
   ...presentationActivityKitContentStateSchema.shape,
+  // This phone's sealed card or question envelope (E5). Without it every sealed card's command
+  // failed this strict parse, so the app never saw the envelope and kept placeholders on the card.
+  sealed: z.unknown().optional(),
 }).strict();
 
 export function inboxLiveActivity(payload: unknown): z.infer<typeof inboxLiveActivitySchema> | null {

@@ -49,6 +49,7 @@ struct NowView: View {
             summary: shown.summary,
             needsYou: shown.needsYou,
             tasks: shown.tasks,
+            agents: shown.agents,
             mix: shown.mix,
             satellites: shown.satellites,
             agentTime: agentTimeToday,
@@ -163,12 +164,11 @@ struct NowView: View {
             summary: InboxTodaySummary.make(items: visibleHistory + model.items, attention: model.attention,
                                             now: model.attentionDate),
             needsYou: screen.actionableCount,
-            // The same live cards as the Live now section, plus agents the hooks report running
-            // without a card, so the ring and RUNNING agree with Live now and Agents together.
-            // A card has progress; a hook-only agent reports none and draws as a travelling arc.
-            tasks: live.map { ReloHoloTask(id: $0.id, progress: $0.progress) } + cardlessAgents,
-            mix: todayMix(running: live.count + cardlessAgents.count,
-                          needsYou: screen.actionableCount ?? screen.needsMe.count),
+            // RUNNING is the live cards only (the Live now section); the agents running now are
+            // their own count (AGENTS, the Agents section), never added to it.
+            tasks: live.map { ReloHoloTask(id: $0.id, progress: $0.progress) },
+            agents: runningAgents,
+            mix: todayMix(running: live.count, needsYou: screen.actionableCount ?? screen.needsMe.count),
             satellites: screen.needsMe.map { request in
                 let window = request.interaction.expiresAt.timeIntervalSince(request.createdAt)
                 let left = request.interaction.expiresAt.timeIntervalSince(model.attentionDate)
@@ -176,14 +176,13 @@ struct NowView: View {
             })
     }
 
-    /// Agent sessions running now that no live card already stands for (the hooks see them;
-    /// the agent never started a Relo card). Offline, the Agents list hides them, so does the HUD.
-    private var cardlessAgents: [ReloHoloTask] {
+    /// Agent sessions in the middle of a turn (idle ones wait for the owner and do not count).
+    /// They report no progress, so the ring draws them as travelling arcs when no card is live.
+    /// Offline, the Agents list hides them, so does the HUD.
+    private var runningAgents: [ReloHoloTask] {
         guard model.currentState?.connection != .offline else { return [] }
-        let cards = Set(liveNow.map(\.id))
         return model.agentSessions
-            .filter { [.working, .quiet, .noCard].contains($0.presence) }
-            .filter { session in session.card.map { !cards.contains($0.id) } ?? true }
+            .filter(AgentSessionsProjection.isRunning)
             .map { ReloHoloTask(id: "agent-\($0.id)", progress: nil) }
     }
 
@@ -326,7 +325,10 @@ private struct ReloDeckBottomKey: PreferenceKey {
     struct Snapshot: Equatable {
         var summary: InboxTodaySummary
         var needsYou: Int?
+        /// The live cards.
         var tasks: [ReloHoloTask]
+        /// The coding agents running now, a count of their own.
+        var agents: [ReloHoloTask] = []
         var mix: NowMix
         var satellites: [ReloOrbitSatellite]
     }
@@ -487,6 +489,7 @@ private struct ReloDeckBottomKey: PreferenceKey {
         let newRequest = (next.needsYou ?? 0) > (old.needsYou ?? 0)
         let news = newRequest || next.summary.total > old.summary.total
             || next.summary.finished > old.summary.finished || next.tasks.count != old.tasks.count
+            || next.agents.count != old.agents.count
         if news { emitWave(1.0) }
         if newRequest, Date.now.timeIntervalSince(lastHapticAt) > timing.hapticCooldown {
             lastHapticAt = .now; newsTicks += 1

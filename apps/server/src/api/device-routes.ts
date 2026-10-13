@@ -1,4 +1,5 @@
 import { registerActivityUpdateToken } from "../activity-token-registration.js";
+import { approveDevice,approveDeviceSchema,declineDevice,pendingDevices,requestDeviceApproval } from "../device-approvals.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
 import { browserKeys,linkBrowser,linkBrowserSchema,listLinkedBrowsers,unlinkBrowser } from "../linked-browsers.js";
 import { Hono } from "hono";
@@ -16,7 +17,7 @@ import { endToEndPolicy,setEndToEndRequired } from "../end-to-end-policy.js";
 
 /** Phone inventory, self-registration updates, Live Activity tokens and dismissals, and revocation. */
 export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
-  const { db,encryptedTransportToken,apnsMode } = shared;
+  const { db,encryptedTransportToken,apnsMode,notificationContentCipher } = shared;
   app.get("/api/devices", requireScope("devices:read"), async (context) => {
     const auth = context.get("auth");
     const searchParams = new URL(context.req.url).searchParams;
@@ -77,6 +78,32 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
     return context.json({ devices: [...phones,...browsers] });
   });
 
+  // New devices: this phone approves (signs) or declines the account's newer phones.
+  app.get("/api/devices/self/pending-devices", requireScope("device:self"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
+    context.header("cache-control","private, no-store");
+    return context.json({ devices: (await pendingDevices(db,auth.principalId,auth.deviceId))
+      .map(({ identityKey,...device }) => ({ ...device,identityKey })) });
+  });
+
+  app.post("/api/devices/self/approvals", requireScope("device:self"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
+    const parsed = approveDeviceSchema.safeParse(await context.req.json().catch(() => null));
+    if (!parsed.success) return context.json({ error: "invalid_approval" }, 400);
+    const result = await approveDevice(db,auth.principalId,auth.deviceId,parsed.data);
+    if (!result.ok) return context.json({ error: result.error }, result.error === "device_not_found" ? 404 : 409);
+    return context.json({ deviceId: parsed.data.deviceId,approved: true });
+  });
+
+  app.post("/api/devices/self/approvals/:deviceId/decline", requireScope("device:self"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
+    const declined = await declineDevice(db,auth.principalId,auth.deviceId,context.req.param("deviceId") ?? "",apnsMode);
+    return declined ? context.body(null,204) : context.json({ error: "device_not_found" },404);
+  });
+
   // Linked browsers: this phone signs a browser's identity key scanned from its QR code.
   app.post("/api/devices/self/links", requireScope("device:self"), async (context) => {
     const auth = context.get("auth");
@@ -110,6 +137,10 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
     }
     // A new identity: what was sealed only to the old one can never be opened again (E1, purge).
     if (result.identityChanged) await purgeUnreadableContent(db,auth.principalId,apnsMode);
+    // A phone after the account's first waits for approval on the others: tell them once.
+    await requestDeviceApproval(db,auth.principalId,auth.deviceId,apnsMode,notificationContentCipher).catch((error) => {
+      console.warn(JSON.stringify({ event: "device_approval_request_failed",message: error instanceof Error ? error.message : String(error) }));
+    });
     return context.json({ keyId: result.keyId,identityChanged: result.identityChanged });
   });
 

@@ -90,6 +90,7 @@ suite("device key directory (E2.2)",() => {
       deviceId: device.publicId,kind: "phone",name: "Phone",
       identityKey: { keyId: published.body.keyId,publicKey: device.identity.publicKey,changedAt: expect.any(String) },
       prekey: { ...prekey,stale: false },
+      approval: null,
     }]);
     expect(JSON.stringify(listed.body)).not.toMatch(/privateKey|"d":/);
   });

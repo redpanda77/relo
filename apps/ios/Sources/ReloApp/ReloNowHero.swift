@@ -10,8 +10,11 @@ struct ReloNowHero: View {
     let summary: InboxTodaySummary
     /// Requests awaiting a response; `nil` while they are being checked.
     let needsYou: Int?
-    /// The running tasks, with their reported progress.
+    /// The live cards, with their reported progress.
     let tasks: [ReloHoloTask]
+    /// The coding agents running now (mid-turn). A count of their own, never added to RUNNING;
+    /// with no live card they take the centre and the ring.
+    var agents: [ReloHoloTask] = []
     /// Today's work by meaning (colors the sphere, the dust and the legend).
     var mix = NowMix(counts: [:])
     /// Requests waiting for the owner, orbiting as satellites toward their deadlines.
@@ -53,13 +56,20 @@ struct ReloNowHero: View {
     /// Which live state the centre is showing when both are live; it alternates.
     @State private var focus = 0
 
+    /// Live cards.
     private var running: Int { tasks.count }
+    /// Agents running now.
+    private var agentCount: Int { agents.count }
+    /// No card is live but agents are running: the centre and the ring show the agents.
+    private var agentsLead: Bool { running == 0 && agentCount > 0 }
+    /// The ring's arcs: the live cards, or the running agents when no card is live.
+    private var ringTasks: [ReloHoloTask] { agentsLead ? agents : tasks }
 
     /// Everything live right now, most urgent first. The centre walks through these.
     private var live: [ReloSignalState] {
         var states: [ReloSignalState] = []
         if let needsYou, needsYou > 0 { states.append(.needsYou) }
-        if running > 0 { states.append(.running) }
+        if running > 0 || agentCount > 0 { states.append(.running) }
         return states
     }
 
@@ -75,7 +85,7 @@ struct ReloNowHero: View {
         guard let needsYou else { return ("–", "CHECKING") }
         switch state {
         case .needsYou: return (needsYou.formatted(), "NEEDS YOU")
-        case .running: return (running.formatted(), "RUNNING")
+        case .running: return agentsLead ? (agentCount.formatted(), "AGENTS") : (running.formatted(), "RUNNING")
         case .clear: return (summary.total.formatted(), "TODAY")
         }
     }
@@ -110,7 +120,7 @@ struct ReloNowHero: View {
                                deckOffset: CGPoint(x: -bleed, y: stageTop))
                     // Drawn wider than the deck, laid out at the deck's width: only the drawing bleeds.
                     .frame(width: width + bleed * 2).frame(width: max(width, 1))
-                ReloHoloRing(state: state, tasks: tasks, pulse: summary.total, finished: summary.finished, framesPerSecond: fps)
+                ReloHoloRing(state: state, tasks: ringTasks, pulse: summary.total, finished: summary.finished, framesPerSecond: fps)
                     .frame(width: 286, height: 286)
                     // Booting, the ring draws itself around the sphere over a faint outline of itself.
                     .mask { if trace < 1 { ReloRingTrace(progress: trace) } else { Rectangle() } }
@@ -168,7 +178,7 @@ struct ReloNowHero: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Today")
-        .accessibilityValue("\(headline). \(summary.total) today, \(summary.finished) done, \(running) running, "
+        .accessibilityValue("\(headline). \(summary.total) today, \(running) running, \(agentsPhrase(agentCount)), "
             + "\(needsYou.map { "\($0) need you" } ?? "requests still being checked"). \(detail)")
     }
 
@@ -218,21 +228,21 @@ struct ReloNowHero: View {
     /// Four fixed corner readouts, so a number never moves; the one the centre shows lights up.
     private var corners: some View {
         let asks = needsYou.map { $0.formatted() } ?? "–"
-        let doneShare = summary.total > 0 ? Double(summary.finished) / Double(summary.total) : 0
         return VStack {
             HStack(alignment: .top) {
                 ReloHUDModule(corner: .topLeading, index: "01", label: "TODAY", value: summary.total.formatted(),
                               color: .white, lit: false, focused: state == .clear, gauge: .mix(mix), buildStart: director?.moduleBuilds[2])
                     .modifier(ReloBootIn(on: level >= 2, corner: CGPoint(x: 1, y: 1)))
                 Spacer(minLength: 0)
-                ReloHUDModule(corner: .topTrailing, index: "02", label: "DONE", value: summary.finished.formatted(),
-                              color: ReloHoloTheme.color(.done), lit: summary.finished > 0, gauge: .share(doneShare), buildStart: director?.moduleBuilds[3])
+                ReloHUDModule(corner: .topTrailing, index: "02", label: "AGENTS", value: agentCount.formatted(),
+                              color: ReloHoloTheme.agents, lit: agentCount > 0, focused: state == .running && agentsLead,
+                              gauge: .items(agentCount), buildStart: director?.moduleBuilds[3])
                     .modifier(ReloBootIn(on: level >= 3, corner: CGPoint(x: -1, y: 1)))
             }
             Spacer(minLength: 0)
             HStack(alignment: .bottom) {
                 ReloHUDModule(corner: .bottomLeading, index: "03", label: "RUNNING", value: running.formatted(),
-                              color: ReloHoloTheme.color(.running), lit: running > 0, focused: state == .running,
+                              color: ReloHoloTheme.color(.running), lit: running > 0, focused: state == .running && !agentsLead,
                               gauge: .items(running), buildStart: director?.moduleBuilds[5])
                     .modifier(ReloBootIn(on: level >= 5, corner: CGPoint(x: 1, y: -1)))
                 Spacer(minLength: 0)
@@ -252,7 +262,7 @@ struct ReloNowHero: View {
         let topY: CGFloat = 66, bottomY = stageHeight - 12
         return ReloHUDLeaders(center: stageCenter, ringRadius: 141, anchors: [
             (.topLeading, CGPoint(x: near, y: topY), Color.white, false, summary.total),
-            (.topTrailing, CGPoint(x: far, y: topY), ReloHoloTheme.color(.done), summary.finished > 0, summary.finished),
+            (.topTrailing, CGPoint(x: far, y: topY), ReloHoloTheme.agents, agentCount > 0, agentCount),
             (.bottomLeading, CGPoint(x: near, y: bottomY), ReloHoloTheme.color(.running), running > 0, running),
             (.bottomTrailing, CGPoint(x: far, y: bottomY), ReloHoloTheme.color(.needsYou), (needsYou ?? 0) > 0, needsYou ?? 0),
         ])
@@ -260,7 +270,8 @@ struct ReloNowHero: View {
 
     /// The count over the sphere's dark lens, with a status line whose dot breathes while live.
     private var centre: some View {
-        let accent = needsYou == nil ? Color.reloSecondaryText : ReloHoloTheme.accent(for: state)
+        let accent = needsYou == nil ? Color.reloSecondaryText
+            : state == .running && agentsLead ? ReloHoloTheme.agents : ReloHoloTheme.accent(for: state)
         let isLive = state != .clear && needsYou != nil
         let colors = ReloHoloTheme.colors(for: state)
         return VStack(spacing: 2) {
@@ -297,7 +308,13 @@ struct ReloNowHero: View {
         guard let needsYou else { return "Checking requests…" }
         if needsYou > 0 { return needsYou == 1 ? "1 request needs you" : "\(needsYou) requests need you" }
         if running > 0 { return running == 1 ? "1 task running" : "\(running) tasks running" }
+        if agentCount > 0 { return agentsPhrase(agentCount) }
         return "All clear"
+    }
+
+    /// "1 agent running", "3 agents running", "no agents running".
+    private func agentsPhrase(_ count: Int) -> String {
+        count == 0 ? "no agents running" : count == 1 ? "1 agent running" : "\(count) agents running"
     }
 
     /// One calm sentence that says what the numbers mean, never repeating them.
@@ -305,9 +322,13 @@ struct ReloNowHero: View {
         guard let needsYou else { return "Checking for requests…" }
         if needsYou > 0 {
             let waiting = needsYou == 1 ? "A request is waiting for your answer below" : "Requests are waiting for your answer below"
-            return running > 0 ? "\(waiting), and work is still running." : "\(waiting)."
+            return running > 0 || agentCount > 0 ? "\(waiting), and work is still running." : "\(waiting)."
         }
         if running > 0 { return running == 1 ? "One task is running. Its progress is on the ring." : "\(running) tasks are running. Their progress is on the ring." }
+        if agentCount > 0 {
+            return agentCount == 1 ? "An agent is working without a live card. It circles the ring."
+                : "\(agentCount) agents are working without a live card. They circle the ring."
+        }
         if summary.total == 0 { return "New requests from your agents arrive here." }
         return "All clear. Nothing needs you right now."
     }

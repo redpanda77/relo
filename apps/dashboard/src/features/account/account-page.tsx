@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
 import { ServerAdminCard } from "@/features/account/server-admin"
 import { LinkBrowserSection } from "@/features/linked-browser/link-browser-card"
+import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
 import {
   createHttpAccountService,
@@ -214,6 +215,8 @@ export function AccountPage({
               </dl>
             </CardContent>
           </Card>
+
+          <PendingDevicesNotice variant="card" />
 
           <LinkBrowserSection accountId={initial.shell.account.id} />
 

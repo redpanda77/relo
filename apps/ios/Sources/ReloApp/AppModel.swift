@@ -83,6 +83,11 @@ final class AppModel {
     private(set) var deliveryTransportStatus: DeliveryTransportStatus?
     private(set) var deliveryTransportStatusError: String?
     private(set) var protectedRegistrationResetAvailable = false
+    /// Ticks each time something asks for Settings → Security (relo://settings/security, or the
+    /// "New device wants access" notification): the root view goes there and the list refreshes.
+    private(set) var securitySettingsRequests = 0
+    /// Settings → Security was asked for and the Settings screen has not opened it yet.
+    var securitySettingsNavigationPending = false
     private(set) var selectedNotificationID: String? {
         didSet { if oldValue != selectedNotificationID { selectedNotificationDetail = nil } }
     }
@@ -1420,6 +1425,11 @@ final class AppModel {
         selectedCachedDetail = false
         selectedItemSnapshot.dismiss()
         interactionError = nil
+    }
+
+    func openSecuritySettings() {
+        securitySettingsRequests += 1
+        securitySettingsNavigationPending = true
     }
 
     func openActivity(identity: LiveActivityIdentity) async {

@@ -206,8 +206,9 @@ struct CurrentAttentionView: View {
         let now = model.attentionDate
         let groups = isOffline ? [] : AgentSessionsProjection.groups(model.agentSessions, now: now)
         if !groups.isEmpty {
-            let count = groups.reduce(0) { $0 + $1.sessions.count }
-            section("Agents", count: count, color: ReloHoloTheme.color(.running)) {
+            // Counts the agents running now; idle ones (waiting for you), ended and lost still list.
+            let count = AgentSessionsProjection.runningCount(groups.flatMap(\.sessions))
+            section("Agents", count: count, color: ReloHoloTheme.agents) {
                 ForEach(groups) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.title).font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.0)
@@ -227,7 +228,7 @@ struct CurrentAttentionView: View {
 
     @ViewBuilder
     private func agentRow(_ session: AgentSession, now: Date, cards: [LiveNowProjection.Card]) -> some View {
-        let live = session.presence == .working || session.presence == .quiet || session.presence == .noCard
+        let live = AgentSessionsProjection.isRunning(session)
         let notificationID = (session.presence == .working || session.presence == .quiet)
             ? cards.first(where: { $0.id == session.card?.id })?.notificationID : nil
         let row = HStack(alignment: .center, spacing: 12) {
@@ -263,12 +264,13 @@ struct CurrentAttentionView: View {
     }
 
     private func agentChip(_ session: AgentSession, now: Date) -> some View {
-        let (text, color): (String, Color) = switch session.presence {
-        case .working: ("working", ReloHoloTheme.color(.running))
-        case .quiet: (AgentSessionsProjection.quietPhrase(session, fetchedAt: model.agentSessionsFetchedAt, now: now), ReloHoloTheme.color(.attention))
-        case .noCard: ("running, no card", Color.reloSecondaryText)
-        case .ended: ("ended", Color.reloSecondaryText)
-        case .lost: ("lost contact", ReloHoloTheme.color(.failed))
+        let text = AgentSessionsProjection.statusPhrase(session, fetchedAt: model.agentSessionsFetchedAt, now: now)
+        let color: Color = switch session.presence {
+        case _ where AgentSessionsProjection.isIdle(session): Color.reloSecondaryText
+        case .working: ReloHoloTheme.color(.running)
+        case .quiet: ReloHoloTheme.color(.attention)
+        case .noCard, .ended: Color.reloSecondaryText
+        case .lost: ReloHoloTheme.color(.failed)
         }
         return HStack(spacing: 6) {
             Circle().fill(color).frame(width: 6, height: 6).accessibilityHidden(true)

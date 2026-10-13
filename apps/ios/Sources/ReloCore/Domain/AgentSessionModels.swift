@@ -86,16 +86,44 @@ public enum AgentSessionsProjection {
         }
     }
 
-    /// Live sessions first (working, quiet, no card), then ended or lost within the last hour.
+    /// The session's process is alive (working, quiet or without a card); it may be idle.
+    public static func isLive(_ session: AgentSession) -> Bool {
+        switch session.presence {
+        case .working, .quiet, .noCard: true
+        case .ended, .lost: false
+        }
+    }
+
+    /// Live and in the middle of a turn. After the agent's turn ends (Stop) the server sets the
+    /// state to "idle": the agent is waiting for the owner, so it is not running.
+    public static func isRunning(_ session: AgentSession) -> Bool {
+        isLive(session) && session.state == "active"
+    }
+
+    /// Live but between turns, waiting for the owner.
+    public static func isIdle(_ session: AgentSession) -> Bool {
+        isLive(session) && session.state == "idle"
+    }
+
+    /// How many agents are running now (the HUD's AGENTS and the Agents section's count).
+    public static func runningCount(_ sessions: [AgentSession]) -> Int {
+        sessions.filter(isRunning).count
+    }
+
+    /// Running first (working, quiet, no card), then idle, then ended, then lost.
+    static func order(_ session: AgentSession) -> Int {
+        if isLive(session) && !isRunning(session) { return 3 }
+        let base = rank(session.presence)
+        return base >= 3 ? base + 1 : base
+    }
+
+    /// Live sessions first (running, then idle), then ended or lost within the last hour.
     public static func visible(_ sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.filter { session in
-            switch session.presence {
-            case .working, .quiet, .noCard: true
-            case .ended, .lost: now.timeIntervalSince(session.lastEventAt) <= recentWindow
-            }
+            isLive(session) || now.timeIntervalSince(session.lastEventAt) <= recentWindow
         }
         .sorted {
-            let (a, b) = (rank($0.presence), rank($1.presence))
+            let (a, b) = (order($0), order($1))
             if a != b { return a < b }
             if $0.lastEventAt != $1.lastEventAt { return $0.lastEventAt > $1.lastEventAt }
             return $0.id < $1.id
@@ -139,5 +167,18 @@ public enum AgentSessionsProjection {
     /// "no update for 14 min".
     public static func quietPhrase(_ session: AgentSession, fetchedAt: Date, now: Date) -> String {
         "no update for \(durationPhrase(quietFor(session, fetchedAt: fetchedAt, now: now)))"
+    }
+
+    /// The row's status line: "working", "no update for 14 min", "running, no card",
+    /// "idle, waiting for you", "ended", "lost contact".
+    public static func statusPhrase(_ session: AgentSession, fetchedAt: Date, now: Date) -> String {
+        if isIdle(session) { return "idle, waiting for you" }
+        switch session.presence {
+        case .working: return "working"
+        case .quiet: return quietPhrase(session, fetchedAt: fetchedAt, now: now)
+        case .noCard: return "running, no card"
+        case .ended: return "ended"
+        case .lost: return "lost contact"
+        }
     }
 }

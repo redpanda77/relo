@@ -153,3 +153,31 @@ test("the same phone under a new device id (signed in again, same key) is truste
     assert.equal(entry.notice, undefined);
   } finally { h.cleanup(); }
 });
+
+test("a new phone approved in Settings → Security on the trusted phone is trusted; any other approval is not", async () => {
+  const { approveDeviceSigningInput } = await import("../src/e2ee.mjs");
+  assert.equal(approveDeviceSigningInput({ deviceId: "dev_00000000-0000-4000-8000-0000000000bb", identityKey: "BAAA",
+    approverDeviceId: "dev_00000000-0000-4000-8000-00000000000a", signedAt: "2026-10-14T00:00:00.000Z" }).toString(),
+  "relo.e2e.v1 approve-device\ndev_00000000-0000-4000-8000-0000000000bb\nBAAA\ndev_00000000-0000-4000-8000-00000000000a\n2026-10-14T00:00:00.000Z",
+  "the same bytes the iPhone signs");
+  const h = harness();
+  try {
+    await ensureTrust({ client: h.client([phone.device]), config: { apiUrl }, dependencies: h.dependencies });
+    const ipad = endpoint("dev_00000000-0000-4000-8000-0000000000d1", "phone");
+    const approval = (signer, identityKey = ipad.device.identityKey.publicKey) => {
+      const signedAt = new Date().toISOString();
+      return { deviceId: signer.device.deviceId, signedAt, signature: b64u(signBytes(signer.identity.privateKey,
+        approveDeviceSigningInput({ deviceId: ipad.device.deviceId, identityKey, approverDeviceId: signer.device.deviceId, signedAt }))) };
+    };
+    const level = async () => (await loadKeyStore(h.env.RELO_KEY_STORE_PATH)).trusted[trustKey(apiUrl, ipad.device.deviceId)]?.level;
+    for (const bad of [null, approval(ipad), approval(phone, b64u(generateKeyPair().publicKey)),
+      { ...approval(phone), signature: b64u(Buffer.alloc(64, 3)) }]) {
+      await ensureTrust({ client: h.client([phone.device, { ...ipad.device, approval: bad }]), config: { apiUrl }, dependencies: h.dependencies });
+      assert.equal(await level(), "pending");
+    }
+    await ensureTrust({ client: h.client([phone.device, { ...ipad.device, approval: approval(phone) }]), config: { apiUrl }, dependencies: h.dependencies });
+    assert.equal(await level(), "auto");
+    const sealed = await h.send([phone.device, ipad.device]);
+    assert.ok(sealed.alerts.some((alert) => alert.recipients[0].device === ipad.device.deviceId));
+  } finally { h.cleanup(); }
+});

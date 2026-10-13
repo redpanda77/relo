@@ -45,8 +45,14 @@ struct ReloApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: .reloDeviceTokenChanged)) { _ in
                     Task { await model.pushRegistrationChanged() }
                 }
+                .onReceive(notificationNavigation.$securitySettingsPending.filter { $0 }) { _ in
+                    notificationNavigation.consumeSecuritySettings()
+                    model.openSecuritySettings()
+                }
                 .onOpenURL { url in
-                    if let identity = ReloDeepLink.activityIdentity(from: url) {
+                    if ReloDeepLink.isSecuritySettings(url) {
+                        model.openSecuritySettings()
+                    } else if let identity = ReloDeepLink.activityIdentity(from: url) {
                         Task { await model.openActivity(identity: identity) }
                     }
                 }
@@ -119,6 +125,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) async {
         // Copy native callback input before crossing to the UI-owned coordinators.
         // The async delegate bridge completes exactly when handling finishes.
+        // "New device wants access" opens Settings → Security, where the device is approved.
+        if response.actionIdentifier != UNNotificationDismissActionIdentifier,
+           let relo = response.notification.request.content.userInfo["relo"] as? [String: Any],
+           ReloDeepLink.opensSecuritySettings(relo: relo) {
+            await NotificationNavigationCoordinator.shared.openSecuritySettings()
+            return
+        }
         if let notificationID = Self.reloNotificationID(from: response.notification.request.content.userInfo) {
             let request = Self.actionRequest(from: response, notificationID: notificationID)
             let shouldNavigate = response.actionIdentifier != UNNotificationDismissActionIdentifier
@@ -241,6 +254,18 @@ final class NotificationNavigationCoordinator: ObservableObject {
     func consume(_ notificationID: String) {
         guard self.notificationID == notificationID else { return }
         self.notificationID = nil
+    }
+
+    /// A tapped notification asked for Settings → Security (held until the app consumes it,
+    /// so a tap that launches Relo still lands there).
+    @Published private(set) var securitySettingsPending = false
+
+    func openSecuritySettings() {
+        securitySettingsPending = true
+    }
+
+    func consumeSecuritySettings() {
+        securitySettingsPending = false
     }
 
 

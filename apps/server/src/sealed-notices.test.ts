@@ -212,10 +212,15 @@ suite("sealed notices through the API (E3.1)",() => {
     expect(cardEvents.length).toBeGreaterThan(0);
     for (const item of cardEvents) expect(item.sealed).toEqual({ alert: alerts[0],content: sealed.content });
 
+    // The app applies the same command a push carries: it must reach the phone with its envelope
+    // (a strict schema used to drop sealed commands, leaving the Lock Screen on placeholders).
     // The detail page of a card event opens the card's own envelope too (it was placeholders only).
     const detail = await request("GET",`/api/inbox/${cardEvents[0].id}`,undefined,shown.credential);
     expect(detail.status).toBe(200);
     expect((detail.body.item ?? detail.body).sealed).toEqual({ alert: alerts[0],content: sealed.content });
+    // The app applies the same command a push carries: it reaches the phone with its envelope
+    // (a strict schema used to drop sealed commands, leaving the Lock Screen on placeholders).
+    expect((detail.body.item ?? detail.body).liveActivity?.sealed).toEqual(alerts[0]);
 
     const wrongKind = { alerts: [envelope([shown.publicId])],content: envelope([shown.publicId]) };
     expect((await request("POST","/api/live-activities",{ key: "bad-card",title: "Encrypted card",status: "Updating…",

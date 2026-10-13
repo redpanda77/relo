@@ -72,6 +72,7 @@ import { notifyUnseenQuestionCards } from "./activity-commands/question-fallback
 import { createNotificationContentCipher } from "./notification-content.js";
 import { runScheduledContentRetention } from "./notification-retention.js";
 import { purgeAllUnreadableContent } from "./unreadable-content.js";
+import { requestAllPendingApprovals } from "./device-approvals.js";
 
 function projectLiveActivityInteraction(
   job: ClaimedDeliveryJob,
@@ -151,6 +152,8 @@ async function purgeUnreadable(mode: "disabled" | "sandbox" | "production"): Pro
   try {
     const result = await purgeAllUnreadableContent(db,mode);
     if (result.cardsEnded || result.eventsPurged) console.info(JSON.stringify({ event: "unreadable_content_purged",...result }));
+    const asked = await requestAllPendingApprovals(db,mode,notificationContentCipher);
+    if (asked) console.info(JSON.stringify({ event: "device_approval_requested",devices: asked }));
   } catch (error) {
     console.warn(JSON.stringify({ event: "unreadable_content_purge_failed",
       message: error instanceof Error ? error.message : String(error) }));

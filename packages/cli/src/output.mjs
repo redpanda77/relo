@@ -8,7 +8,7 @@ const present = (fields) => Object.fromEntries(
 
 /** "2/5": the step a card is on, from the steps component the server returns. */
 /** Short words for `relo keys status` notices. */
-const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "new phone waiting for approval",
+const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "waiting for approval in Relo on your trusted iPhone → Settings → Security",
   new_phone_approved: "approved on your phone", browser_linked: "linked from your phone", phone_replaced: "phone set up again" };
 
 export function stepPosition(activity) {

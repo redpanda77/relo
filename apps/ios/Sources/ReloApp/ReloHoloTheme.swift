@@ -34,6 +34,10 @@ enum ReloHoloTheme {
         }
     }
 
+    /// Coding agents running now (the HUD's AGENTS module and the Agents section): its own hue,
+    /// apart from the cards' cyan, so agents and live cards never read as one count.
+    static let agents = violet
+
     /// A second shade per meaning for gradients that stay inside the meaning.
     static func deep(_ signal: NowSignal) -> Color {
         switch signal {

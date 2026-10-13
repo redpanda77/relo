@@ -24,8 +24,10 @@ struct ReloRootView: View {
         .onAppear {
             navigation.transition(to: model.presentationScopeIdentity)
             if let id = model.selectedNotificationID { navigation.open(id) }
+            if model.securitySettingsNavigationPending { navigation.tab = .settings }
             model.updateAttentionClock()
         }
+        .onChange(of: model.securitySettingsRequests) { _, _ in navigation.tab = .settings }
         .onChange(of: model.presentationScopeIdentity) { _, scope in
             navigation.transition(to: scope)
             if let id = model.selectedNotificationID { navigation.open(id) }

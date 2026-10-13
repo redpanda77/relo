@@ -285,6 +285,11 @@ export const inboxLiveActivitySchema = z.object({
   otherActiveCount: z.number().int().min(0).default(0),
   dismissAfterSeconds: z.number().int().min(0).max(14_400).nullable().default(null),
   interaction: inboxLiveActivityInteractionSchema.nullable().default(null),
+  /**
+   * This phone's sealed card or question envelope (E5). Without it the strict schema dropped every
+   * sealed card's command, so the app kept the Lock Screen card on placeholders.
+   */
+  sealed: z.unknown().optional(),
 }).strict();
 
 export const inboxItemSchema = z

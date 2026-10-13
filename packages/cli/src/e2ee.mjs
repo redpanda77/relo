@@ -222,6 +222,14 @@ export function linkSigningInput({ browserId, identityKey, phoneDeviceId, signed
   return Buffer.from([`${E2EE_VERSION} link`, browserId, identityKey, phoneDeviceId, signedAt].join("\n"));
 }
 
+/**
+ * Bytes a trusted phone's identity key signs to approve a newer phone of the account (docs/
+ * END-TO-END-ENCRYPTION.md, "New devices are approved on a trusted phone").
+ */
+export function approveDeviceSigningInput({ deviceId, identityKey, approverDeviceId, signedAt }) {
+  return Buffer.from([`${E2EE_VERSION} approve-device`, deviceId, identityKey, approverDeviceId, signedAt].join("\n"));
+}
+
 export function verifyPrekey({ identityPublicKey, prekey }) {
   return verifyBytes(identityPublicKey, prekeySigningInput({
     deviceId: prekey.deviceId, prekeyId: prekey.prekeyId,

@@ -6,6 +6,7 @@ struct SettingsView: View {
     @AppStorage(ReloHistoryPreferences.retentionKey) private var retentionRaw = HistoryRetention.standard.rawValue
     @AppStorage(ReloHistoryPreferences.clearedAtKey) private var clearedAt: Double = 0
     @State private var confirmsClear = false
+    @State private var showsSecurity = false
     var body: some View {
         List {
             Section {
@@ -27,9 +28,17 @@ struct SettingsView: View {
                         ReloSettingLabel(title: "Notifications", symbol: "bell.badge.fill", color: .reloCoral)
                     }
                 }
-                NavigationLink { EncryptionSettingsView(model: model) } label: {
-                    ReloSettingLabel(title: "Security", symbol: "lock.shield.fill", color: .reloIndigo)
+                // A button rather than a link, so relo://settings/security can open it too.
+                Button { showsSecurity = true } label: {
+                    HStack {
+                        ReloSettingLabel(title: "Security", symbol: "lock.shield.fill", color: .reloIndigo)
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .foregroundStyle(.primary)
             }
             .listRowBackground(ReloListRowBackground())
             Section {
@@ -75,10 +84,20 @@ struct SettingsView: View {
             Text("Past notifications and finished activities disappear from Now, History and Notification Center. Requests waiting for you stay, and the dashboard keeps everything.")
         }
         .reloGroupedScreen().navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $showsSecurity) { EncryptionSettingsView(model: model) }
+        .onAppear { openSecurityIfAsked() }
+        .onChange(of: model.securitySettingsRequests) { _, _ in openSecurityIfAsked() }
     }
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+    }
+
+    /// relo://settings/security, or the "New device wants access" notification.
+    private func openSecurityIfAsked() {
+        guard model.securitySettingsNavigationPending else { return }
+        model.securitySettingsNavigationPending = false
+        showsSecurity = true
     }
 
     private var notificationsSummary: String {
