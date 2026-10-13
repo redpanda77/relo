@@ -32,9 +32,11 @@ function describeDevice(store, apiUrl, device) {
   });
   return {
     deviceId: device.deviceId,
+    ...(device.kind === "browser" ? { kind: "browser" } : {}),
     name: device.name,
     keyId: device.identityKey.keyId,
-    trust: trustState(store, apiUrl, device),
+    // A browser is never verified here: it reads only while a trusted phone's link signature holds.
+    trust: device.kind === "browser" ? (pinned ? "linked" : "not linked") : trustState(store, apiUrl, device),
     prekey: !device.prekey ? "missing" : !prekeyOk ? "invalid" : device.prekey.stale ? "stale" : "fresh",
     ...(pinned?.notice ? { notice: pinned.notice } : {}),
   };
@@ -69,6 +71,9 @@ export async function runKeysCommand(command) {
     const deviceId = deviceArgument(rest[0]);
     const { store, devices } = await ensureTrust({ client, config, dependencies });
     const device = devices.find((entry) => entry.deviceId === deviceId);
+    if (device?.kind === "browser") {
+      throw new UsageError("A browser is linked from Relo on the iPhone (Settings → Security → Link a browser), not verified here.");
+    }
     if (!device) throw new UsageError(`No phone ${deviceId} has published encryption keys.`, { hint: "Open Relo on the iPhone, then run relo keys status" });
     const number = safetyNumber(fromB64u(store.identity.publicKey, { length: 65 }), fromB64u(device.identityKey.publicKey, { length: 65 }));
     const state = trustState(store, apiUrl, device);

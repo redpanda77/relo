@@ -20,6 +20,17 @@ final class EncryptionSecurityModel {
     private(set) var phase: Phase = .loading
     private(set) var phoneKeyID: String?
     private(set) var computers: [Computer] = []
+    /// Web Dashboard browsers this phone linked; nil until the server answers.
+    private(set) var browsers: [ReloLinkedBrowser]?
+    private(set) var browsersProblem: String?
+    private(set) var linking = false
+    var linkResult: LinkResult?
+
+    struct LinkResult: Identifiable, Equatable {
+        let id = UUID()
+        let title: String
+        let message: String
+    }
     private let ring: ReloKeyRing
     private let trust: ReloTrustedClients
 
@@ -61,6 +72,65 @@ final class EncryptionSecurityModel {
         } catch {
             phase = .unavailable("Relo could not load encryption keys. Check the connection and try again.")
         }
+        await loadBrowsers(credential: credential, linker: directory as? any BrowserLinking)
+    }
+
+    func loadBrowsers(credential: DeviceCredential?, linker: (any BrowserLinking)?) async {
+        guard let credential, let linker else { return }
+        do {
+            browsers = try await linker.linkedBrowsers(credential: credential)
+            browsersProblem = nil
+        } catch {
+            browsersProblem = Self.message(for: error, doing: "load linked browsers")
+        }
+    }
+
+    /// Signs the scanned code with this phone's identity key and asks the server to link it.
+    func link(_ code: ReloBrowserLink.Code, credential: DeviceCredential?, linker: (any BrowserLinking)?,
+              signer: (any ReloIdentitySigning)?) async {
+        guard let credential, let linker else {
+            linkResult = LinkResult(title: "Not linked", message: "Sign in to Relo on this iPhone first.")
+            return
+        }
+        guard let signer else {
+            linkResult = LinkResult(title: "Not linked",
+                                    message: "This iPhone's encryption keys are not ready yet. Wait a moment and try again.")
+            return
+        }
+        linking = true
+        defer { linking = false }
+        do {
+            let request = try ReloBrowserLink.request(for: code, phoneDeviceID: credential.deviceId, signer: signer)
+            let linked = try await linker.linkBrowser(credential: credential, request: request)
+            var list = (browsers ?? []).filter { $0.browserId != linked.browserId }
+            list.insert(linked, at: 0)
+            browsers = list
+            linkResult = LinkResult(title: "Browser linked",
+                                    message: "\(linked.name) can now read your encrypted Relo messages.")
+        } catch {
+            linkResult = LinkResult(title: "Not linked", message: Self.message(for: error, doing: "link the browser"))
+        }
+    }
+
+    func unlink(_ browser: ReloLinkedBrowser, credential: DeviceCredential?, linker: (any BrowserLinking)?) async {
+        guard let credential, let linker else { return }
+        do {
+            try await linker.unlinkBrowser(credential: credential, browserID: browser.browserId)
+            browsers?.removeAll { $0.browserId == browser.browserId }
+        } catch {
+            linkResult = LinkResult(title: "Not unlinked", message: Self.message(for: error, doing: "unlink \(browser.name)"))
+        }
+    }
+
+    static func message(for error: Error, doing action: String) -> String {
+        if let error = error as? LocalizedError, let description = error.errorDescription, error is BrowserLinkError {
+            return description
+        }
+        switch error as? MobileAPIError {
+        case .reauthenticationRequired?: return "Relo needs you to sign in again before it can \(action)."
+        case .forbidden?: return "The server refused to \(action)."
+        default: return "Relo could not \(action). Check the connection and try again."
+        }
     }
 
     func markVerified(_ computer: Computer) {
@@ -73,6 +143,11 @@ final class EncryptionSecurityModel {
 struct EncryptionSettingsView: View {
     let model: AppModel
     @State private var security = EncryptionSecurityModel()
+    @State private var scanning = false
+    @State private var pendingCode: ReloBrowserLink.Code?
+    @State private var pendingUnlink: ReloLinkedBrowser?
+
+    private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
 
     var body: some View {
         List {
@@ -106,6 +181,7 @@ struct EncryptionSettingsView: View {
                     } header: { Text("Computers") }
                     .listRowBackground(ReloListRowBackground())
                 }
+                browsersSection
                 if let problem = model.encryptionKeysProblem {
                     Section {
                         Text(problem).foregroundStyle(Color.reloErrorText)
@@ -126,6 +202,76 @@ struct EncryptionSettingsView: View {
         .navigationTitle("Security")
         .task { await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory) }
         .refreshable { await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory) }
+        .sheet(isPresented: $scanning) {
+            BrowserLinkScannerView { code in
+                scanning = false
+                pendingCode = code
+            }
+        }
+        .confirmationDialog("Link this browser?", isPresented: Binding(
+            get: { pendingCode != nil }, set: { if !$0 { pendingCode = nil } }
+        ), titleVisibility: .visible, presenting: pendingCode) { code in
+            Button("Link Browser") {
+                pendingCode = nil
+                Task {
+                    await security.link(code, credential: model.credential, linker: linker, signer: model.answerSigner?())
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingCode = nil }
+        } message: { _ in
+            Text("It will be able to read your encrypted Relo messages.")
+        }
+        .confirmationDialog("Unlink this browser?", isPresented: Binding(
+            get: { pendingUnlink != nil }, set: { if !$0 { pendingUnlink = nil } }
+        ), titleVisibility: .visible, presenting: pendingUnlink) { browser in
+            Button("Unlink \(browser.name)", role: .destructive) {
+                pendingUnlink = nil
+                Task { await security.unlink(browser, credential: model.credential, linker: linker) }
+            }
+            Button("Cancel", role: .cancel) { pendingUnlink = nil }
+        } message: { _ in
+            Text("It will no longer be able to read your encrypted Relo messages.")
+        }
+        .alert(item: Binding(get: { security.linkResult }, set: { security.linkResult = $0 })) { result in
+            Alert(title: Text(result.title), message: Text(result.message))
+        }
+    }
+
+    @ViewBuilder private var browsersSection: some View {
+        Section {
+            ForEach(security.browsers ?? []) { browser in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(browser.name)
+                    if let linked = browser.linkedDate {
+                        Text("Linked \(linked.formatted(.relative(presentation: .named)))")
+                            .font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                    }
+                }
+                .swipeActions {
+                    Button("Unlink", role: .destructive) { pendingUnlink = browser }
+                }
+                .contextMenu {
+                    Button("Unlink", systemImage: "xmark.circle", role: .destructive) { pendingUnlink = browser }
+                }
+            }
+            if let problem = security.browsersProblem {
+                Text(problem).font(.footnote).foregroundStyle(Color.reloErrorText)
+            }
+            Button {
+                scanning = true
+            } label: {
+                if security.linking {
+                    HStack { ProgressView(); Text("Linking…") }
+                } else {
+                    Label("Link a browser", systemImage: "qrcode.viewfinder")
+                }
+            }
+            .disabled(security.linking || model.credential == nil)
+            .accessibilityIdentifier("link-browser")
+        } header: { Text("Linked browsers") } footer: {
+            Text("Scan the QR code on Relo's web Dashboard. A linked browser can read your encrypted messages until you unlink it.")
+        }
+        .listRowBackground(ReloListRowBackground())
     }
 }
 

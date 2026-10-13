@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
 import { ServerAdminCard } from "@/features/account/server-admin"
+import { LinkBrowserSection } from "@/features/linked-browser/link-browser-card"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
 import {
   createHttpAccountService,
@@ -213,6 +214,8 @@ export function AccountPage({
               </dl>
             </CardContent>
           </Card>
+
+          <LinkBrowserSection accountId={initial.shell.account.id} />
 
           <Card id="connect-cli" className="rounded-2xl">
             <CardHeader>

@@ -1,3 +1,4 @@
+import { forgetBrowserKeys } from "@/lib/e2ee/keys"
 import {
   BookOpen,
   Cable,
@@ -123,6 +124,7 @@ function ProfileMenu({ shell }: { shell: Shell }) {
         body: "{}",
       })
       if (!response.ok) throw new Error("Sign out failed")
+      await forgetBrowserKeys()
       window.location.assign("/")
     } finally {
       setPending(false)

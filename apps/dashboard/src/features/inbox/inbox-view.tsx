@@ -11,6 +11,7 @@ import { LiveNowList, NowAllClear, NowSection } from "@/features/inbox/now-all-c
 import { AgentsSection } from "@/features/inbox/agents-section"
 import { quietSessionsByCard } from "@/features/inbox/sessions-model"
 import { ActivityCardRow } from "@/features/inbox/activity-card"
+import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
 import {
   agentSecondsToday,
   agentTimeLabel,
@@ -251,6 +252,8 @@ export function InboxView({
           now={clockNow}
         />
       ) : null}
+
+      {overview ? <LinkBrowserBanner accountId={overview.shell.account.id} /> : null}
 
       {overview && needsList > 0 ? (
         <NowSection title="Needs you" count={needsYou} color={SIGNAL_CSS.needsYou}>

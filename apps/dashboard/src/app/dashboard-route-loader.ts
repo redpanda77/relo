@@ -2,6 +2,7 @@ import {
   readDashboardBootstrap,
   type DashboardBootstrap,
 } from "@/app/bootstrap"
+import { openSealedBootstrap } from "@/app/sealed-bootstrap"
 
 export type DashboardRouteResult =
   | { kind: "dashboard"; bootstrap: DashboardBootstrap; url: string }
@@ -41,7 +42,7 @@ export async function fetchDashboardRoute(
   )
   return {
     kind: "dashboard",
-    bootstrap: readDashboardBootstrap(documentRoot),
+    bootstrap: await openSealedBootstrap(readDashboardBootstrap(documentRoot)),
     url: resolved.href,
   }
 }

@@ -219,6 +219,56 @@ The new phone is trusted through cross-signing from another verified device or t
 safety-number verification on each CLI. Revoking the old device removes it from every recipient
 list immediately.
 
+### Linked browsers (like WhatsApp Web)
+
+The web Dashboard reads sealed content only as a *linked browser*. Signing in alone never gives a
+browser keys. The accepted cost, the same as WhatsApp Web's, is that the server delivers the
+Dashboard's code; pinned builds reduce it.
+
+**Browser keys.** On first sign-in the Dashboard creates, with WebCrypto, an ECDSA P-256 identity key
+and an ECDH P-256 prekey, both non-extractable, kept in IndexedDB. Key ids, prekey ids and the prekey
+signature are the same as a phone's: `keyId = "k_" + b64u(SHA-256(X9.63 public key)[0..16))`,
+`prekeyId = "pk_" + b64u(12 random bytes)`, and the identity signs
+`prekeySigningInput(browserId, prekeyId, prekeyPublicKey, createdAt)` (raw r||s). The prekey
+rotates every 10 hours; old private prekeys are kept for retention + 2 hours, then deleted.
+
+**Registering.** The browser picks its own id, `brw_<random uuid>`, and signs its prekey for it.
+`POST /api/dashboard/browser` (Dashboard session) with
+`{ browserId, name, identityKey, prekey: { prekeyId, publicKey, createdAt, signature } }` returns
+`{ browserId, linked }`; the same id and identity key again publishes a new prekey, and an id that
+is already used answers 409 so the browser picks another. The Dashboard keeps the id in IndexedDB.
+
+**Linking (QR).** The unlinked Dashboard shows a QR code with the text
+`relo-link:1:<browserId>:<identityPublicKey b64u>`. Relo on a trusted iPhone scans it (Settings →
+Security → Link a browser), and its identity key signs
+
+```
+relo.e2e.v1 link
+<browserId>
+<browser identity public key, b64u X9.63>
+<phone deviceId>
+<signedAt, ISO 8601>
+```
+
+The phone sends `POST /api/devices/self/links { browserId, identityKey, signedAt, signature }`. The
+server accepts it only for a browser of the same account with that identity key and stores the
+link. `GET /api/devices/self/links` lists linked browsers; `DELETE /api/devices/self/links/:id`
+unlinks one (the browser is revoked).
+
+**Sealing to browsers.** `GET /api/devices/keys` lists browsers next to phones as
+`{ deviceId: "brw_…", kind: "browser", name, identityKey, prekey, link: { deviceId, signedAt,
+signature } | null }`. A computer seals to a browser only when the link signature verifies against
+the identity key of a phone it trusts (not pending) and covers the browser's current identity key.
+Browsers get the content envelope only (no push alert).
+
+**Reading.** The Dashboard JSON carries no envelopes, only `encrypted: true`. A linked browser asks
+for them by id: `GET /api/dashboard/sealed?id=…` (notification, card and agent-session ids, at most
+100) with the header `x-relo-browser: <browserId>` returns `{ envelopes: { id: envelope } }`, or 403
+when that browser is not linked to the signed-in account. The Dashboard trusts the account's
+computers on first use from `GET /api/dashboard/client-keys`, opens each envelope with its own
+prekey, replaces the placeholder fields with the opened text, and resolves handles with the names
+the envelopes carry.
+
 ## Current state (13 October 2026)
 
 Built and tested in source, **not yet in a release**:
@@ -248,6 +298,7 @@ Built and tested in source, **not yet in a release**:
 | Locked phone | Fixed in source (P0): CryptoKit's default made Secure Enclave keys usable only while unlocked, so the Lock Screen and notifications stayed on placeholders. Prekeys are now Secure Enclave keys usable after the first unlock since boot (like WhatsApp's and Signal's message keys), and an older unlock-only prekey is replaced at once. The identity key still needs the phone unlocked, so approving still needs an unlocked phone. |
 | Names on stored rows | Fixed in source (P0): rows the app stored before a name arrived kept showing handles; handles are now swapped for names when a row is shown, and only the handle is stored. |
 | Agent session names | Fixed in source (P0): agent sessions come from hooks, which carried only handles, so the Agents section showed `p-…`/`c-…`. The hook now sends the names once per session sealed for the phones (envelope kind `names`, migration `0085`); the server stores it as is and gives it only to phones in the snapshot, never to the Dashboard or the CLI list. |
+| Linked browsers | Done in source (13 October 2026), verified end to end against a local server: the Dashboard made its own WebCrypto keys, a phone with real keys signed its QR link, a fresh `relo` trusted the browser only through that signature, and the Dashboard opened the sealed notice, card and agent-session names itself. Items sealed before linking stay locked. Signing out deletes the browser's keys. |
 | Everything else | Open, in the order below. |
 
 ## Delivery plan

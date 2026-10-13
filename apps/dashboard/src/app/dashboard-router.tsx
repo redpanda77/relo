@@ -9,6 +9,7 @@ import {
   type DashboardRouteResult,
 } from "@/app/dashboard-route-loader"
 import { RouteLoadingIndicator } from "@/app/route-loading-fallback"
+import { openSealedBootstrap, startBrowserLink } from "@/app/sealed-bootstrap"
 import { navigateDashboard } from "@/state/use-dashboard-route"
 
 const CACHE_TTL_MS = 15_000
@@ -85,6 +86,20 @@ export function DashboardRouter({
   const cache = React.useRef(new Map<string, CachedRoute>())
   const activeRequest = React.useRef<AbortController | null>(null)
   const navigationId = React.useRef(0)
+
+  // A linked browser opens the sealed items of the first page once its keys are ready.
+  React.useEffect(() => {
+    if (!startBrowserLink(initialBootstrap)) return
+    let active = true
+    void openSealedBootstrap(initialBootstrap).then((opened) => {
+      if (active && opened !== initialBootstrap) {
+        setBootstrap((current) => (current === initialBootstrap ? opened : current))
+      }
+    })
+    return () => {
+      active = false
+    }
+  }, [initialBootstrap])
 
   React.useEffect(() => {
     bootstrapRef.current = bootstrap

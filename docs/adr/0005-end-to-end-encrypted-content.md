@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (13 October 2026). It becomes Accepted when the owner signs off on the threat model in
+Accepted (13 October 2026) by the owner: WhatsApp/Signal-style end-to-end encryption, on by
+default, with linked devices. The threat model is in
 [END-TO-END-ENCRYPTION.md](../END-TO-END-ENCRYPTION.md).
 
 ## Context
@@ -29,23 +30,28 @@ it by hand.
   each other's keys on first use. A later key change is accepted and shown as a "security code
   changed" notice. Comparing the security code, and a strict mode that blocks on change, are
   optional.
+- **New devices are linked from a trusted phone.** The account's first phone is trusted on first
+  use. A later phone, or a web browser, receives sealed content only after a trusted phone approves
+  it (one tap, or a QR scan for a browser), so the server cannot add a device of its own.
 - **Answers are signed by the device.** The CLI acts on an approval only when the answering
   device's signature verifies against a trusted key.
 - **Content is short-lived.** The server deletes content after a configurable window, with 10
   hours recommended. Phones rotate their receiving keys on the same cadence and delete old private
   keys. Deleted content cannot be recovered, and neither can sealed copies made before deletion.
-- **Producers without keys are labelled.** Webhooks, server-generated notices and the web
-  Dashboard cannot be end-to-end. Their content stays server-sealed and the phone labels it as not
-  end-to-end encrypted. The Dashboard shows sealed items as metadata only.
+- **Producers without keys are labelled.** Webhooks and server-generated notices cannot be
+  end-to-end. Their content stays server-sealed and the phone labels it as not end-to-end
+  encrypted.
+- **The web Dashboard reads only as a linked browser.** Without a link it shows sealed items as
+  locked. A linked browser holds its own non-extractable WebCrypto keys, like WhatsApp Web; the
+  accepted cost is that the server delivers the Dashboard's code.
 
 ## Consequences
 
-- Reading content in a web browser is no longer possible for sealed items. The iPhone is where you
-  read.
+- Reading sealed content in a web browser needs that browser to be linked from the iPhone.
 - The server no longer derives tone, grouping, previews or status phrases from text. The CLI and
   phone take over that logic, using shared code in `packages/contracts`.
-- Losing every trusted device means losing history. Adding a new device needs cross-signing or
-  safety-number verification.
+- Losing every trusted device means losing history. Adding a new device needs approval from a
+  trusted phone, or `relo keys verify` when no trusted phone is left.
 - Recovering from a single compromised device means revoking that device. Every CLI drops it from
   its recipients.
 - The server still learns metadata, and can delay or drop messages. Those risks are accepted and

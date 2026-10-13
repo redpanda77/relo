@@ -45,6 +45,7 @@ import { getOwnerAccount,type OwnerAccount } from "./web/owner-account.js";
 import { registerAccountRoutes } from "./web/account-routes.js";
 import { registerAdminRoutes } from "./web/admin-routes.js";
 import { registerInboxActionRoutes } from "./web/inbox-routes.js";
+import { registerBrowserRoutes } from "./web/browser-routes.js";
 import { dashboardBuilderPresetPresentation,liveActivityGallery,registerTestLabRoutes } from "./web/test-lab-routes.js";
 import type { WebRouteContext } from "./web/route-context.js";
 
@@ -167,6 +168,7 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
   registerServerAdminRoutes(app,routeContext);
   registerTestLabRoutes(app,routeContext);
   registerInboxActionRoutes(app,routeContext);
+  registerBrowserRoutes(app,routeContext);
 
   app.get("/", createDashboardAuthHandler({
     db,

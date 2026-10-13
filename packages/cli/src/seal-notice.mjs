@@ -62,10 +62,10 @@ export async function sealSessionNames({ names, session, client, config, depende
   if (!names || Object.keys(names).length === 0) return null;
   const trust = await trustFor({ client, config, dependencies, notes: [] });
   if (!trust) return null;
-  const { eligible } = sealablePhones(trust.store, config.apiUrl, trust.devices);
+  const { eligible, readers } = sealablePhones(trust.store, config.apiUrl, trust.devices);
   if (eligible.length === 0) return null;
   return sealEnvelope({ kind: "names", context: `ses:${String(session).slice(0, 32)}`, sender: identityKeys(trust.store),
-    recipients: eligible, content: { names } });
+    recipients: [...eligible, ...readers], content: { names } });
 }
 
 export function sealingUnavailable(reason) {
@@ -86,20 +86,27 @@ function derive(seed, label, length) {
   return createHmac("sha256", seed).update(label).digest().subarray(0, length);
 }
 
-/** Phones trusted on this computer whose current prekey is signed by the pinned identity key. */
+/**
+ * Phones trusted on this computer whose current prekey is signed by the pinned identity key, and the
+ * linked browsers (`readers`) that get the content envelope too. Targeting phones never drops readers.
+ */
 export function sealablePhones(store, apiUrl, devices, requestedDeviceIds) {
   const eligible = [];
+  const readers = [];
   const skipped = [];
   for (const device of devices) {
-    if (requestedDeviceIds && !requestedDeviceIds.includes(device.deviceId)) continue;
+    const browser = device.kind === "browser";
+    if (!browser && requestedDeviceIds && !requestedDeviceIds.includes(device.deviceId)) continue;
     const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
     const fresh = device.prekey && Date.now() - Date.parse(device.prekey.createdAt) < MAX_PREKEY_AGE_MS;
     const usable = pinned && pinned.level !== "pending" && pinned.publicKey === device.identityKey.publicKey && fresh
       && verifyPrekey({ identityPublicKey: fromB64u(pinned.publicKey, { length: 65 }), prekey: { ...device.prekey, deviceId: device.deviceId } });
-    if (usable) eligible.push({ deviceId: device.deviceId, prekeyId: device.prekey.prekeyId, publicKey: fromB64u(device.prekey.publicKey, { length: 65 }) });
-    else skipped.push(device.deviceId);
+    const recipient = usable && { deviceId: device.deviceId, prekeyId: device.prekey.prekeyId, publicKey: fromB64u(device.prekey.publicKey, { length: 65 }) };
+    if (recipient && browser) readers.push(recipient);
+    else if (recipient) eligible.push(recipient);
+    else if (!browser) skipped.push(device.deviceId);
   }
-  return { eligible, skipped };
+  return { eligible, readers: readers.slice(0, Math.max(0, 16 - eligible.length)), skipped };
 }
 
 /** Shortens the summary until the alert fits in one push alongside the rest of the payload. */
@@ -113,9 +120,12 @@ export function fitAlert({ title, summary }) {
   return alert;
 }
 
-export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, kind = "notice", alert, names }) {
+export function sealNotice({ sender, idempotencyKey, phones, readers = [], content, sentAt, kind = "notice", alert, names }) {
   const plaintext = withNames(sentAt === undefined ? { ...content } : { ...content, sentAt }, names);
-  const recipients = [...phones].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
+  const byDevice = (a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0);
+  // Phones get a push alert each; linked browsers (readers) only the shared content envelope.
+  const alerted = [...phones].sort(byDevice);
+  const recipients = [...phones, ...readers].sort(byDevice);
   const seed = createHmac("sha256", subkey(sender.privateKey, "seal-seed")).update([
     `relo.e2e.v1 seal-${kind}`, idempotencyKey,
     ...recipients.map((phone) => `${phone.deviceId} ${phone.prekeyId} ${b64u(phone.publicKey)}`),
@@ -125,7 +135,7 @@ export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, ki
   // A card's per-phone envelope is what the Lock Screen renders, so it carries the whole card text.
   const alertContent = withNames(alert ?? { ...fitAlert({ title: content.title, summary: content.summary }),
     ...(sentAt === undefined ? {} : { sentAt }) }, names, MAX_ALERT_PLAINTEXT);
-  const alerts = recipients.map((phone, index) => sealEnvelope({
+  const alerts = alerted.map((phone, index) => sealEnvelope({
     kind, context, sender, recipients: [phone], content: alertContent,
     contentKey: derive(seed, `alert-key ${index}`, 32), nonce: derive(seed, `alert-nonce ${index}`, 12),
     ephemeralKeys: [derive(seed, `alert-ephemeral ${index}`, 32)],
@@ -147,14 +157,14 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return body;
   const { store, devices } = trust;
-  const { eligible, skipped } = sealablePhones(store, config.apiUrl, devices, body.deviceIds);
+  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, body.deviceIds);
   if (eligible.length === 0) {
     if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
     return body;
   }
   const identity = await opaqueIdentity(store, body.context, dependencies);
   const sealed = sealNotice({
-    sender: identityKeys(store), idempotencyKey: key, phones: eligible, names: identity.names,
+    sender: identityKeys(store), idempotencyKey: key, phones: eligible, readers, names: identity.names,
     // The captured command time, not now: an exact retry must seal the same plaintext.
     sentAt: body.relevance?.occurredAt ?? new Date(dependencies.now()).toISOString(),
     content: Object.fromEntries(Object.entries({
@@ -176,14 +186,14 @@ export async function sealQuestion({ title, prompt, key, client, config, depende
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return null;
   const { store, devices } = trust;
-  const { eligible, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
+  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
   if (eligible.length === 0) {
     if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
     return null;
   }
   if (skipped.length) notes.push(`question end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys see a placeholder`);
   const identity = await opaqueIdentity(store, context, dependencies);
-  const sealed = sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible,
+  const sealed = sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible, readers,
     content: { title: title ?? "Question", summary: prompt, body: prompt }, names: identity.names });
   return { sealed, context: identity.context };
 }

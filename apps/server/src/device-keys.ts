@@ -142,9 +142,12 @@ export async function publishDeviceKeys(
 
 export type DeviceKeyResource = {
   deviceId: string;
+  kind: "phone" | "browser";
   name: string;
   identityKey: { keyId: string; publicKey: string; changedAt: string };
   prekey: { prekeyId: string; publicKey: string; createdAt: string; signature: string; stale: boolean } | null;
+  /** A browser's link: a phone's signature over its identity key (linked-browsers.ts). */
+  link?: { deviceId: string; signedAt: string; signature: string } | null;
 };
 
 /** Every active phone of the account that has published keys, newest prekey first. */
@@ -169,6 +172,7 @@ export async function listDeviceKeys(
   );
   return result.rows.map((row) => ({
     deviceId: publicId("dev",row.id),
+    kind: "phone" as const,
     name: row.name,
     identityKey: { keyId: row.key_id,publicKey: row.identity_key,changedAt: new Date(row.changed_at).toISOString() },
     prekey: row.prekey_id ? {

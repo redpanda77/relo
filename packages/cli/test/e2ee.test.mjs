@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  answerSigningInput, b64u, fromB64u, generateKeyPair, hpkeOpen, hpkeSeal, keyId, openEnvelope,
-  prekeySigningInput, safetyNumber, sealEnvelope, validateEnvelopeShape, verifyAnswer, verifyBytes, verifyPrekey,
-} from "../src/e2ee.mjs";
+import { answerSigningInput, b64u, fromB64u, generateKeyPair, hpkeOpen, hpkeSeal, keyId, openEnvelope, prekeySigningInput, safetyNumber, sealEnvelope, validateEnvelopeShape, verifyAnswer, verifyBytes, verifyPrekey, linkSigningInput } from "../src/e2ee.mjs";
 
 const fixtureText = readFileSync(new URL("../../contracts/fixtures/e2ee-v1.json", import.meta.url), "utf8");
 const fixture = JSON.parse(fixtureText);
@@ -114,4 +111,11 @@ test("shape validation is strict and padding hides length within 256-byte bucket
   assert.throws(() => sealEnvelope({
     kind: "notice", context: "acct:a/idem:b", sender: cli, recipients: [{ deviceId: "d", prekeyId: "p", publicKey: prekey.publicKey }], content: { text: "x".repeat(70_000) },
   }), /plaintext_too_large/);
+});
+
+test("the browser-link vector: this CLI builds the same bytes the iPhone signs and verifies its signature", () => {
+  const { link, keys } = JSON.parse(fixtureText);
+  const input = linkSigningInput(link);
+  assert.equal(b64u(input), link.input);
+  assert.equal(verifyBytes(fromB64u(keys.deviceIdentity.publicKey, { length: 65 }), input, fromB64u(link.signature, { length: 64 })), true);
 });

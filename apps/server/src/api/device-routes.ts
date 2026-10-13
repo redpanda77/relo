@@ -1,4 +1,5 @@
 import { registerActivityUpdateToken } from "../activity-token-registration.js";
+import { browserKeys,linkBrowser,linkBrowserSchema,listLinkedBrowsers,unlinkBrowser } from "../linked-browsers.js";
 import { Hono } from "hono";
 import {  requireScope } from "../auth.js";
 import { internalId, publicId } from "../ids.js";
@@ -70,7 +71,29 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
 
   // End-to-end encryption key directory: public halves only (docs/END-TO-END-ENCRYPTION.md).
   app.get("/api/devices/keys", requireScope("devices:read"), async (context) => {
-    return context.json({ devices: await listDeviceKeys(db,context.get("auth").principalId) });
+    const principalId = context.get("auth").principalId;
+    const [phones,browsers] = await Promise.all([listDeviceKeys(db,principalId),browserKeys(db,principalId)]);
+    return context.json({ devices: [...phones,...browsers] });
+  });
+
+  // Linked browsers: this phone signs a browser's identity key scanned from its QR code.
+  app.post("/api/devices/self/links", requireScope("device:self"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
+    const parsed = linkBrowserSchema.safeParse(await context.req.json().catch(() => null));
+    if (!parsed.success) return context.json({ error: "invalid_link" }, 400);
+    const result = await linkBrowser(db,auth.principalId,auth.deviceId,parsed.data);
+    if (!result.ok) return context.json({ error: result.error }, result.error === "browser_not_found" ? 404 : 409);
+    return context.json({ browserId: result.browserId,name: result.name,linkedAt: result.linkedAt });
+  });
+
+  app.get("/api/devices/self/links", requireScope("device:self"), async (context) => {
+    return context.json({ browsers: await listLinkedBrowsers(db,context.get("auth").principalId) });
+  });
+
+  app.delete("/api/devices/self/links/:browserId", requireScope("device:self"), async (context) => {
+    const removed = await unlinkBrowser(db,context.get("auth").principalId,context.req.param("browserId") ?? "");
+    return removed ? context.body(null,204) : context.json({ error: "browser_not_found" },404);
   });
 
   app.put("/api/devices/self/keys", requireScope("device:self"), async (context) => {

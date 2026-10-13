@@ -1,0 +1,7 @@
+export const LINK_TITLE = "Read encrypted items in this browser"
+export const LINK_STEPS = "Open Relo on your iPhone → Settings → Security → Link a browser"
+
+/** The text a trusted iPhone scans to link this browser (docs/END-TO-END-ENCRYPTION.md). */
+export function linkPayload(browserId: string, identityKey: string) {
+  return `relo-link:1:${browserId}:${identityKey}`
+}

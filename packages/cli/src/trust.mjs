@@ -4,14 +4,15 @@
 // notice. A phone that appears LATER is not trusted automatically: a server could add its own
 // "phone" to read everything, so a new phone waits ("pending") until a trusted phone approves it
 // (phone-approval.mjs) or a person runs `relo keys verify`. Strict mode (`relo keys strict on`) also holds key changes until verified.
+import { fromB64u, linkSigningInput, verifyBytes } from "./e2ee.mjs";
 import { ensureIdentity, keyStorePath, saveKeyStore, trustKey } from "./keystore.mjs";
 
 const NOTICE_DAYS = 7;
 
-/** Phones pinned for this server, excluding ones waiting for a person. */
+/** Phones pinned for this server, excluding ones waiting for a person (and linked browsers). */
 export function trustedPhones(store, apiUrl) {
   return Object.entries(store.trusted)
-    .filter(([key, entry]) => key.startsWith(`${apiUrl}|`) && entry.level !== "pending")
+    .filter(([key, entry]) => key.startsWith(`${apiUrl}|`) && entry.level !== "pending" && entry.kind !== "browser")
     .map(([, entry]) => entry);
 }
 
@@ -24,6 +25,8 @@ export function trustNotices(store, apiUrl, now = Date.now()) {
       notes.push(entry.approval?.declined
         ? `${entry.name ?? entry.deviceId} was declined on your trusted phone and stays untrusted`
         : `a new phone (${entry.name ?? entry.deviceId}) waits for approval on your trusted phone`);
+    } else if (entry.notice?.kind === "browser_linked" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
+      notes.push(`browser ${entry.name ?? entry.deviceId} was linked from your phone and can read encrypted messages`);
     } else if (entry.notice?.kind === "security_code_changed" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
       notes.push(`security code changed for ${entry.name ?? entry.deviceId} (relo keys status)`);
     }
@@ -48,9 +51,10 @@ export async function ensureTrust({ client, config, dependencies }) {
   const { devices } = await client.listDeviceKeys();
   if (!Array.isArray(devices)) throw Object.assign(new Error("the key directory returned no device list"), { code: "E2EE_UNAVAILABLE" });
   const now = new Date(dependencies.now?.() ?? Date.now()).toISOString();
-  // Trust on first use applies to the account's FIRST phone(s) only.
+  // Trust on first use applies to the account's FIRST phone(s) only; browsers never get it.
   const firstContact = trustedPhones(store, config.apiUrl).length === 0;
-  for (const device of devices) {
+  const phones = devices.filter((device) => device?.kind !== "browser");
+  for (const device of phones) {
     if (!device?.identityKey?.publicKey) continue;
     const key = trustKey(config.apiUrl, device.deviceId);
     const pinned = store.trusted[key];
@@ -69,6 +73,41 @@ export async function ensureTrust({ client, config, dependencies }) {
     };
     changed = true;
   }
+  // After the phones: a browser is trusted only with a link signed by a phone trusted above.
+  for (const device of devices.filter((entry) => entry?.kind === "browser")) {
+    if (browserTrust(store, config.apiUrl, device, now)) changed = true;
+  }
   if (changed) await saveKeyStore(path, store);
   return { store, devices };
+}
+
+/**
+ * A linked browser (docs/END-TO-END-ENCRYPTION.md, "Linked browsers") is trusted only while a phone
+ * this computer trusts has signed its current identity key. Returns true when the store changed.
+ */
+function browserTrust(store, apiUrl, device, now) {
+  const key = trustKey(apiUrl, device.deviceId);
+  const pinned = store.trusted[key];
+  const link = device.link;
+  const phone = link?.deviceId ? store.trusted[trustKey(apiUrl, link.deviceId)] : undefined;
+  let valid = false;
+  try {
+    valid = Boolean(phone && phone.kind !== "browser" && phone.level !== "pending" && phone.publicKey
+      && device.identityKey?.publicKey && typeof link.signedAt === "string"
+      && verifyBytes(fromB64u(phone.publicKey, { length: 65 }), linkSigningInput({ browserId: device.deviceId,
+        identityKey: device.identityKey.publicKey, phoneDeviceId: link.deviceId, signedAt: link.signedAt }),
+      fromB64u(link.signature, { length: 64 })));
+  } catch {
+    valid = false;
+  }
+  if (!valid) {
+    if (!pinned) return false;
+    delete store.trusted[key];
+    return true;
+  }
+  if (pinned?.publicKey === device.identityKey.publicKey) return false;
+  store.trusted[key] = { deviceId: device.deviceId, kind: "browser", name: device.name, keyId: device.identityKey.keyId,
+    publicKey: device.identityKey.publicKey, level: "auto", linkedBy: link.deviceId, trustedAt: now,
+    notice: { kind: "browser_linked", at: now } };
+  return true;
 }

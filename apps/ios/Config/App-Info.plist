@@ -38,6 +38,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan the QR code on Relo's web Dashboard to link that browser.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Relo connects to your notification server on the local network.</string>
 	<key>NSSupportsLiveActivities</key>

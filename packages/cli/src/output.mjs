@@ -7,6 +7,10 @@ const present = (fields) => Object.fromEntries(
 );
 
 /** "2/5": the step a card is on, from the steps component the server returns. */
+/** Short words for `relo keys status` notices. */
+const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "new phone waiting for approval",
+  new_phone_approved: "approved on your phone", browser_linked: "linked from your phone" };
+
 export function stepPosition(activity) {
   const steps = activity?.presentation?.components?.find((component) => component?.type === "steps");
   const items = Array.isArray(steps?.items) ? steps.items : [];
@@ -152,7 +156,7 @@ export function compactData(command, data) {
         strict: data?.strict === true ? true : undefined,
         devices: (Array.isArray(data?.devices) ? data.devices : []).map((device) =>
           present({ id: device.deviceId, name: device.name, trust: device.trust, prekey: device.prekey,
-            notice: device.notice ? "security code changed" : undefined })),
+            notice: device.notice ? NOTICE_LABELS[device.notice.kind] ?? "security code changed" : undefined })),
       });
     case "keys.verify":
       return present({ id: data?.deviceId, trust: data?.trust, safetyNumber: data?.safetyNumber });

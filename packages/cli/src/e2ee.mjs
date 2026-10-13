@@ -214,6 +214,14 @@ export function prekeySigningInput({ deviceId, prekeyId, publicKey, createdAt })
   return Buffer.from([`${E2EE_VERSION} prekey`, deviceId, prekeyId, b64u(assertPublicKey(publicKey)), createdAt].join("\n"));
 }
 
+/**
+ * Bytes a phone's identity key signs to link a browser (docs/END-TO-END-ENCRYPTION.md, "Linked
+ * browsers"): the browser's id and identity key, scanned from its QR code, and the signing phone.
+ */
+export function linkSigningInput({ browserId, identityKey, phoneDeviceId, signedAt }) {
+  return Buffer.from([`${E2EE_VERSION} link`, browserId, identityKey, phoneDeviceId, signedAt].join("\n"));
+}
+
 export function verifyPrekey({ identityPublicKey, prekey }) {
   return verifyBytes(identityPublicKey, prekeySigningInput({
     deviceId: prekey.deviceId, prekeyId: prekey.prekeyId,

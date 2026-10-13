@@ -87,7 +87,7 @@ suite("device key directory (E2.2)",() => {
     const listed = await request("GET","/api/devices/keys",undefined,await cliKey());
     expect(listed.status).toBe(200);
     expect(listed.body.devices).toEqual([{
-      deviceId: device.publicId,name: "Phone",
+      deviceId: device.publicId,kind: "phone",name: "Phone",
       identityKey: { keyId: published.body.keyId,publicKey: device.identity.publicKey,changedAt: expect.any(String) },
       prekey: { ...prekey,stale: false },
     }]);

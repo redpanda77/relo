@@ -94,7 +94,7 @@ export async function sealCardRequest({ body, cardId, key, client, config, depen
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return { body, text: null };
   const { store, devices } = trust;
-  const { eligible } = sealablePhones(store, config.apiUrl, devices, deviceIds);
+  const { eligible, readers } = sealablePhones(store, config.apiUrl, devices, deviceIds);
   if (eligible.length === 0) {
     if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
     return { body, text: null };
@@ -106,7 +106,7 @@ export async function sealCardRequest({ body, cardId, key, client, config, depen
   let names = { ...(previous?.names ?? {}), ...identity.names };
   if (Object.keys(names).length === 0 && cardId) names = await namesForCard(client, cardId, dependencies);
   const text = { ...mergedCardText(previous, body, Buffer.byteLength(JSON.stringify(names))), ...(Object.keys(names).length ? { names } : {}) };
-  const sealed = sealNotice({ kind: "card", sender: identityKeys(store), idempotencyKey: key, phones: eligible,
+  const sealed = sealNotice({ kind: "card", sender: identityKeys(store), idempotencyKey: key, phones: eligible, readers,
     content: text, alert: text });
   const placeholder = placeholderCardBody(body);
   if (identity.context) placeholder.context = identity.context;

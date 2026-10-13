@@ -1,7 +1,7 @@
 /**
- * End-to-end encrypted content (docs/END-TO-END-ENCRYPTION.md, ADR 0005). The Dashboard holds no
- * key by design: it never opens sealed text, it only says that the item is encrypted and where to
- * read it. These helpers are display-only.
+ * End-to-end encrypted content (docs/END-TO-END-ENCRYPTION.md, ADR 0005). A Dashboard that is not a
+ * linked browser holds no key: it only says that the item is encrypted and where to read it. A
+ * linked browser opens what it can in lib/e2ee and teaches these helpers the names it learned.
  */
 
 /** What the Dashboard shows in place of a sealed title, body, status or prompt. */
@@ -18,15 +18,28 @@ const HANDLE_NAMES: Record<string, string> = {
   a: "Encrypted account",
 }
 
+/** Handle → name, learned from envelopes this browser opened (lib/e2ee/open-sealed.ts). */
+const learnedNames = new Map<string, string>()
+
+export function rememberNames(names: ReadonlyMap<string, string>) {
+  for (const [handle, name] of names) learnedNames.set(handle, name)
+}
+
+/** Tests only. */
+export function forgetNames() {
+  learnedNames.clear()
+}
+
 /** True for an opaque handle such as "p-abcdefghijklmnop". */
 export function isOpaqueHandle(value: string | null | undefined): boolean {
   return typeof value === "string" && HANDLE_PATTERN.test(value.trim())
 }
 
-/** "p-abcdefghijklmnop" -> "Encrypted project"; anything else unchanged. */
+/** "p-abcdefghijklmnop" -> its learned name, else "Encrypted project"; anything else unchanged. */
 export function displayName(value: string): string {
   const trimmed = value.trim()
-  return HANDLE_PATTERN.test(trimmed) ? HANDLE_NAMES[trimmed[0]!]! : value
+  if (!HANDLE_PATTERN.test(trimmed)) return value
+  return learnedNames.get(trimmed) ?? HANDLE_NAMES[trimmed[0]!]!
 }
 
 /** displayName for optional names: null and empty stay null. */

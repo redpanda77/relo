@@ -221,5 +221,14 @@
       "ciphertext": "lMcvKLnoCdm8CgON1pqI0qRDvYvjDrQpFJV8dD4IZyRDxI39dXWrNF2NGiM",
       "enc": "BLKV8n4z_5yenKbV80TB7hn7I94tLn8xhu0flJYKtrxiNXgZMT3hWGYuXqbpqIufmzGs1ivITps8jTWGozI-d4c"
     }
+  },
+  "link": {
+    "browserId": "brw_3f0b7a52-8e1c-4d2a-9b6e-0c4f5a1d2e3b",
+    "identityKey": "BFV32pwHkLcs00HQDdkLrWkFBUA10OjZjx6dgY0kgZA9tSMYEk8XqEgyt9_38aN7MbU9qjUifKpCeuc-kjtwjNw",
+    "phoneDeviceId": "dev_00000000-0000-4000-8000-00000000000a",
+    "signedAt": "2026-10-13T19:30:00.000Z",
+    "input": "cmVsby5lMmUudjEgbGluawpicndfM2YwYjdhNTItOGUxYy00ZDJhLTliNmUtMGM0ZjVhMWQyZTNiCkJGVjMycHdIa0xjczAwSFFEZGtMcldrRkJVQTEwT2paang2ZGdZMGtnWkE5dFNNWUVrOFhxRWd5dDlfMzhhTjdNYlU5cWpVaWZLcENldWMta2p0d2pOdwpkZXZfMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDBhCjIwMjYtMTAtMTNUMTk6MzA6MDAuMDAwWg",
+    "signature": "gBBo5I-ZFT8-nE3GeJFDJnlLj2BSMoxtynOSS0a1WMPVCwXenVtAAD5fMwETGYo-i-vKIyqcIhfNyQ_Dr6O94w",
+    "note": "A phone (keys.deviceIdentity) links a browser: both implementations must build input byte for byte and verify signature."
   }
 }
