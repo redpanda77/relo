@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
+import { ServerAdminCard } from "@/features/account/server-admin"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
 import {
   createHttpAccountService,
@@ -116,15 +117,6 @@ export function AccountPage({
           cause instanceof Error ? cause.message : "Password change failed",
       })
     }
-  }
-
-  async function createUser(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = event.currentTarget; const values = new FormData(form)
-    setUserState({ status: "pending" })
-    try {
-      await service.createUser({ name: String(values.get("newUserName") ?? ""), email: String(values.get("newUserEmail") ?? ""), password: String(values.get("newUserPassword") ?? "") })
-      form.reset(); setUserState({ status: "success", message: "User created. Refreshing…" }); window.location.reload()
-    } catch (cause) { setUserState({ status: "error", message: cause instanceof Error ? cause.message : "User creation failed" }) }
   }
 
   async function userAction(id: string, action: "toggle" | "revoke" | "reset", password?: string) {
@@ -266,17 +258,15 @@ export function AccountPage({
             </CardContent>
           </Card>
 
+          {initial.server ? <ServerAdminCard initial={initial.server} service={service} /> : null}
+
+          {users.some(user => user.role === "member") ? (
           <Card className="rounded-2xl">
-            <CardHeader><CardTitle>Users</CardTitle><CardDescription>
-              Create access, disable a member, revoke their sessions and phones, or set a replacement password without the old password.
+            <CardHeader><CardTitle>Shared access</CardTitle><CardDescription>
+              These people were added to your account before accounts became separate, so they see your data.
+              Disable them, revoke their sessions and phones, or set a replacement password. New people get their own account.
             </CardDescription></CardHeader>
             <CardContent className="grid gap-6">
-              <form onSubmit={createUser} className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
-                <Field label="Name" name="newUserName" required maxLength={120} />
-                <Field label="Email" name="newUserEmail" type="email" required autoComplete="off" />
-                <Field label="Temporary password" name="newUserPassword" type="password" minLength={8} maxLength={128} required autoComplete="new-password" />
-                <div className="flex items-end"><Button className="min-h-11" disabled={userState.status === "pending"}>Create user</Button></div>
-              </form>
               <div className="grid gap-3">{users.map(user => <div key={user.id} className="grid gap-3 rounded-xl border p-4 lg:grid-cols-[1fr_auto] lg:items-center">
                 <div><div className="flex flex-wrap items-center gap-2"><strong>{user.name}</strong><span className="rounded-full bg-muted px-2 py-0.5 text-xs">{user.role}</span>{user.disabled && <span className="text-xs text-destructive">disabled</span>}</div>
                   <p className="text-sm text-muted-foreground">{user.email} · {user.sessions} session{user.sessions === 1 ? "" : "s"} · {user.devices} phone{user.devices === 1 ? "" : "s"}</p></div>
@@ -292,6 +282,7 @@ export function AccountPage({
               <OperationMessage state={userState} />
             </CardContent>
           </Card>
+          ) : null}
 
           <Card className="rounded-2xl">
             <CardHeader>

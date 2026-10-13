@@ -1,15 +1,17 @@
 import {
-  BellRing,
   BookOpen,
   Cable,
   ChevronsUpDown,
   FlaskConical,
   FolderKanban,
-  Inbox,
+  History,
+  Radio,
   LogOut,
   UserRound,
 } from "lucide-react"
 import * as React from "react"
+
+import { cn } from "@/lib/utils"
 
 import type { AuthenticatedDashboardBootstrap } from "@/app/bootstrap"
 import {
@@ -35,10 +37,16 @@ import {
 
 const navigation = [
   {
-    label: "Inbox",
+    label: "Now",
     href: "/dashboard",
-    icon: Inbox,
-    sections: ["inbox", "inbox-notifications", "inbox-delivery"],
+    icon: Radio,
+    sections: ["inbox"],
+  },
+  {
+    label: "History",
+    href: "/dashboard/inbox/notifications",
+    icon: History,
+    sections: ["inbox-notifications", "inbox-delivery"],
   },
   {
     label: "Projects",
@@ -65,6 +73,22 @@ const navigation = [
 ]
 
 type Shell = AuthenticatedDashboardBootstrap["shell"]
+
+/** A hairline ring with a luminous core: the same instrument as the Now header, small. */
+function BrandMark({ small = false }: { small?: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "relative grid shrink-0 place-items-center rounded-full border border-white/20",
+        small ? "size-7" : "size-8"
+      )}
+      style={{ background: "radial-gradient(circle at 50% 50%, rgb(139 124 255 / 0.55), rgb(9 11 16 / 0) 70%)" }}
+    >
+      <span className="size-2 rounded-full bg-white shadow-[0_0_12px_3px_var(--neon-violet)]" />
+    </span>
+  )
+}
 
 function MobileSidebarTrigger() {
   const { openMobile } = useSidebar()
@@ -167,6 +191,7 @@ export function DashboardShell({
   shell: Shell
   children: React.ReactNode
 }) {
+  const needsYou = "counts" in shell && shell.counts ? shell.counts.pending : 0
   return (
     <SidebarProvider>
       <a
@@ -182,10 +207,8 @@ export function DashboardShell({
           aria-label="Dashboard navigation"
         >
           <SidebarHeader className="h-16 flex-row items-center gap-2.5 px-5 py-0">
-            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
-              <BellRing className="size-4" aria-hidden="true" />
-            </span>
-            <span className="font-semibold tracking-tight text-foreground">
+            <BrandMark />
+            <span className="font-light tracking-[0.22em] text-foreground uppercase">
               Relo
             </span>
             <SidebarTrigger
@@ -205,14 +228,23 @@ export function DashboardShell({
                       <SidebarMenuButton
                         asChild
                         isActive={active}
-                        className="min-h-10 gap-3 rounded-xl px-3 text-muted-foreground hover:text-foreground data-active:bg-accent data-active:text-foreground [&[data-active=true]>svg]:text-primary"
+                        className="relative min-h-10 gap-3 rounded-xl px-3 text-muted-foreground hover:text-foreground data-active:bg-white/[0.05] data-active:text-foreground data-active:before:absolute data-active:before:inset-y-2 data-active:before:left-0 data-active:before:w-px data-active:before:bg-[linear-gradient(180deg,var(--neon-cyan),var(--neon-magenta))] data-active:before:shadow-[0_0_8px_var(--neon-violet)] [&[data-active=true]>svg]:text-[var(--neon-cyan)]"
                       >
                         <a
                           href={item.href}
                           aria-current={active ? "page" : undefined}
                         >
                           <Icon aria-hidden="true" />
-                          <span>{item.label}</span>
+                          <span className="flex-1">{item.label}</span>
+                          {item.href === "/dashboard" && needsYou > 0 ? (
+                            <span
+                              className="micro rounded-full px-1.5 py-0.5 text-[10px]"
+                              style={{ color: "var(--neon-coral)", background: "color-mix(in srgb, var(--neon-coral) 14%, transparent)" }}
+                              aria-label={`${needsYou} need you`}
+                            >
+                              {needsYou}
+                            </span>
+                          ) : null}
                         </a>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -234,10 +266,8 @@ export function DashboardShell({
           className="glass-strong sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 md:hidden"
         >
           <MobileSidebarTrigger />
-          <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
-            <BellRing className="size-3.5" aria-hidden="true" />
-          </span>
-          <span className="font-semibold tracking-tight">Relo</span>
+          <BrandMark small />
+          <span className="font-light tracking-[0.22em] uppercase">Relo</span>
         </header>
         {children}
       </div>

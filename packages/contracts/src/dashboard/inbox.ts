@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { deliveryEvidenceItemSchema } from "../delivery-evidence.js"
+import { agentSessionListSchema } from "../agent-sessions.js"
 
 const nullableDate = z.string().nullable()
 
@@ -34,6 +35,7 @@ const activityContextSchema = z.object({
   providerName: z.string().nullable(),
   producerKind: z.string().nullable(),
   computer: z.string().nullable(),
+  account: z.string().nullable(),
   project: z.string().nullable(),
   providerThreadId: z.string().nullable(),
   providerWorkItemId: z.string().nullable(),
@@ -71,6 +73,21 @@ const activitySummarySchema = z.object({
   presentationPresetId: z.string().nullable(),
   presentationPresetRevision: z.number().nullable(),
   presentationPolicySource: z.string().nullable(),
+  // Card digest, additive: matches what the iPhone History row shows.
+  outcome: z.enum(["completed", "failed"]).nullable().optional(),
+  steps: z
+    .object({ done: z.number(), total: z.number(), current: z.string().nullable() })
+    .nullable()
+    .optional(),
+  updates: z.number().nullable().optional(),
+})
+
+const questionSchema = z.object({
+  kind: z.string(),
+  prompt: z.string(),
+  state: z.string(),
+  respondedAt: nullableDate,
+  expiresAt: nullableDate,
 })
 
 const notificationSummarySchema = z.object({
@@ -95,6 +112,7 @@ const notificationSummarySchema = z.object({
   context: activityContextSchema,
   originThreadId: z.string().nullable(),
   activity: activitySummarySchema.nullable(),
+  question: questionSchema.nullable().optional(),
   resources: z.object({
     source: z.object({
       id: z.string(),
@@ -177,6 +195,8 @@ export const inboxOverviewSchema = z.object({
   ),
   approvalPagination: paginationSchema,
   recentNotifications: z.array(notificationSummarySchema),
+  runningActivities: z.array(notificationSummarySchema).optional(),
+  sessions: agentSessionListSchema.optional(),
 })
 
 export const notificationHistorySchema = z.object({
@@ -253,6 +273,7 @@ export const notificationDetailSchema = z.object({
   }),
   activity: activitySummarySchema
     .extend({
+      stepItems: z.array(z.object({ label: z.string(), state: z.string() })).optional(),
       threadHistory: z.array(
         z.object({
           id: z.string(),

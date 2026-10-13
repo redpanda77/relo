@@ -80,7 +80,7 @@ struct SignInView: View {
         }
         .reloGroupedScreen().navigationTitle("Sign in").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(model.isAuthenticating) } }
-        .onAppear { origin = model.serverOrigin }
+        .onAppear { origin = model.chosenServerOrigin ?? "" }
     }
     private func signIn() {
         guard !model.isAuthenticating, !editsOrigin else { return }

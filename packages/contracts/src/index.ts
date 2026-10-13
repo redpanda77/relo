@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { agentSessionListSchema } from "./agent-sessions.js";
 
 export * from "./presentation.js";
 export * from "./delivery-evidence.js";
 export * from "./relevance.js";
 export * from "./current-inbox.js";
+export * from "./agent-sessions.js";
 
 export function isPublicHttpsUrl(value: string): boolean {
   try {
@@ -68,6 +70,7 @@ export const API_TOKEN_SCOPES = [
   "interactions:read",
   "activities:write",
   "activities:read",
+  "sessions:write",
   "devices:read",
   "services:read",
   "services:write",
@@ -86,6 +89,7 @@ export const safeContextSchema = z
     providerName: z.string().trim().min(1).max(80).optional(),
     producerKind: z.enum(["agent", "service", "webhook", "manual"]).optional(),
     computer: z.string().trim().min(1).max(120).optional(),
+    account: z.string().trim().min(1).max(40).optional(),
     project: z.string().trim().min(1).max(120).optional(),
     providerThreadId: z.string().trim().min(1).max(200).optional(),
     providerWorkItemId: z.string().trim().min(1).max(200).optional(),
@@ -632,6 +636,8 @@ export const inboxSnapshotResponseSchema = z.object({
   total: z.number().int().nonnegative(), serverTime: isoTimestampSchema,
   readWatermark: z.string().max(512).nullable(),
   unread: z.object({ account: z.number().int().nonnegative(), projects: z.record(z.string(), z.number().int().nonnegative()) }).strict(),
+  // Live and recent agent sessions (last 24 hours, at most 20); absent from servers that predate them.
+  sessions: agentSessionListSchema.optional(),
 }).strict().refine(value => value.total >= value.items.length && new Set(value.items.map(item => item.id)).size === value.items.length);
 export type InboxHistorySummary = z.infer<typeof inboxHistorySummarySchema>;
 export type InboxSnapshotResponse = z.infer<typeof inboxSnapshotResponseSchema>;

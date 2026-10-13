@@ -5,6 +5,7 @@ export const dashboardAuthSchema = z.object({
   kind: z.literal("auth"),
   route: z.object({ path: z.literal("/"), nextPath: z.string() }),
   mode: z.enum(["sign-in", "sign-up"]),
+  registration: z.enum(["closed", "approval", "open"]),
   title: z.string(),
   description: z.string(),
 })

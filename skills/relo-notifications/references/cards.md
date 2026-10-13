@@ -7,7 +7,7 @@ flags; [security.md](security.md) covers what may appear on the card.
 
 - [What the card is for](#what-the-card-is-for)
 - [Plan it before you start](#plan-it-before-you-start)
-- [Progress: measured or absent](#progress-measured-or-absent)
+- [Steps or progress: pick one](#steps-or-progress-pick-one)
 - [Statuses that read well on a Lock Screen](#statuses-that-read-well-on-a-lock-screen)
 - [Questions on the card](#questions-on-the-card)
 - [Ending](#ending)
@@ -25,17 +25,30 @@ Skip the card only for work that finishes in under a minute or two with nothing 
 ## Plan it before you start
 
 - **Title**: the work, stable for its whole life ("Deploying 0.7.57", "Homepage redesign").
-- **Status**: the current phase, short (≤ 60 characters), present tense ("Running tests").
+- **Status**: the current phase, short (≤ 60 characters), present tense ("Running tests"). Longer
+  title, status or detail text is shortened for you and the reply says so in `note`; write it short anyway.
 - **Detail** (optional): one secondary line with useful specifics ("214 of 380 tests").
-- **Steps** when the work has a known sequence of named phases: `--step Build --step Test
-  --step Deploy --step-current 2`. Steps and progress answer different questions: steps say *which
-  phase*, progress says *how far through it*. Use either or both.
+- **Steps** when the work has a known sequence of named phases: `--steps "Build,Test,Deploy"` at
+  start, then `--next-step` (or `--step-current Test`) as each begins.
+  A card with steps draws its progress from them (completed steps / total), so `--progress` on it
+  changes nothing: the line says `"note":"progress follows this card's steps; use --next-step or
+  --step-current"`, and `--steps` with `--progress` in one start is refused (exit 2). Use steps
+  *or* `--progress`, not both.
 
-## Progress: measured or absent
+## Steps or progress: pick one
 
-Report completed outer phases / total outer phases, or real units done / total (files, tests,
-records). Never estimate a percent from elapsed time, tool calls, or confidence. For exploratory
-work with no known total, omit `--progress` and let the status carry the phase.
+Progress is measured or absent. The rule: **an agent doing judgment work uses `--steps`; a script or any
+job with a known count uses `--progress DONE/TOTAL`.** Never both on one card.
+
+- **Judgment work** (refactor a module, investigate a bug, ship a release): 3-6 named phases the owner would
+  recognize, `--steps "Plan,Build,Verify,Ship"`, advanced with `--next-step` as each begins. The card shows where
+  you are in the work, not a number you cannot know.
+- **A known count** (generate 10 images, polish 20 chapters, migrate 400 rows): `--progress 3/20`, updated as each
+  unit finishes (real units done / total, or completed outer phases / total outer phases). With `N/TOTAL` and no `--progress-label` the label is "3 of 20" automatically; add a label
+  such as `--progress-label "Chapters"` only when it reads better. Percent (`40%`) and fractions (`0.4`) also work.
+- **Neither** fits (exploratory, no known total): omit both and let the status carry the phase.
+- Never estimate a percent from elapsed time, tool calls, or confidence. A 12-minute image batch is
+  `--progress 7/10`, not "70% because it has run a while".
 
 ## Statuses that read well on a Lock Screen
 
@@ -47,18 +60,15 @@ Update on real milestones only. Updates are silent on the phone; only the start 
 
 ## Questions on the card
 
-`relo ask "…" --approval` or `--yes-no` puts the question on this work's card with answer buttons,
-a countdown and an alert, and waits up to 5 minutes for the answer. Answered: the card returns to
-the work showing the answer ("Approved · Running tests"). Not answered within 5 minutes: the
-question expires and the card ends ("No answer"). Rules:
+`relo ask` puts the question on this work's card (details in [cli.md](cli.md#questions)). Rules:
 
-- One question at a time per card; wait for the answer before asking another.
+- One question at a time; wait for the answer before asking another.
 - Self-contained and under 240 characters: the owner may answer from the Lock Screen without context.
 - Tappable answers only. There is no typed reply; phrase it as approve/deny or yes/no.
-- Exit `4` means no answer within 5 minutes: treat it as no and do not act. The card has ended; if
-  you continue working, `relo activity start` opens a new one. Do not re-ask just to extend the wait.
-- Updates sent while a question waits succeed and appear on the card once it is answered.
-- If the phone cannot show the card, the owner gets one notification saying to answer in Relo.
+- In an agent session `ask` waits about 100s. Exit `4` with state `timeout` means the question is
+  still open: run `relo interaction wait ID` again. Exit `4` with any other state (expired, canceled)
+  means no: do not act. The card has ended; if you continue working, `relo activity start` opens a
+  new one. Do not re-ask just to extend the wait.
 
 ## Ending
 
@@ -66,10 +76,8 @@ End exactly once with the outcome as the status: "Live on production", "Failed: 
 "Stopped by owner". Without `--status` the card reads "Complete" with a success icon, so pass one
 when the work did not succeed (`--symbol warning`). A successful end completes all steps and fills
 progress, so do not send them yourself; ending with a warning or failed symbol keeps where the work
-stopped. In History the owner sees one row per card (source, project, topic, outcome, steps, answer,
-duration), and a session has one card. End exactly once; a finished card is never
-reopened. Send a notification as well only when the outcome deserves interrupting the owner
-(a failure, or something they are waiting for).
+stopped. A finished card is never reopened, and History keeps one row per card. Send a notification
+as well only when the outcome deserves interrupting the owner (a failure, or something they await).
 
 ## Appearance
 

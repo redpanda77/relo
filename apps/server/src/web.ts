@@ -1,4 +1,6 @@
 import { RUN_PHONE_EVIDENCE_SQL } from "./web/run-evidence.js";
+import { isServerAdmin } from "./server-accounts.js";
+import { registerServerAdminRoutes } from "./web/server-admin-routes.js";
 import { LIVE_ACTIVITY_PRESET_IDS } from "@relo/notification-contracts";
 import type { Hono } from "hono";
 import type { AccountAuth } from "./account-auth.js";
@@ -149,12 +151,20 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
     return account;
   }
 
+  async function serverAdminAccount(context: any): Promise<OwnerAccount | Response> {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    if (!await isServerAdmin(db,account.user.id)) return context.json({ error: "server_admin_required" },403);
+    return account;
+  }
+
   const routeContext: WebRouteContext = {
     db,accountAuth,bootstrapOwnerHandle,appOrigin,appUrl,apnsMode,releaseIdentity,notificationContentCipher,
-    dashboardMutationAccount,accountMutationAccount,ownerAdminAccount,
+    dashboardMutationAccount,accountMutationAccount,ownerAdminAccount,serverAdminAccount,
   };
   registerAccountRoutes(app,routeContext);
   registerAdminRoutes(app,routeContext);
+  registerServerAdminRoutes(app,routeContext);
   registerTestLabRoutes(app,routeContext);
   registerInboxActionRoutes(app,routeContext);
 

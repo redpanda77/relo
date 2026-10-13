@@ -1,5 +1,8 @@
 import type { Handler } from "hono";
+import { unclaimedLoginsVisible } from "../server-accounts.js";
+import { decisionGroupRepresentative } from "../pending-inventory.js";
 import type { Database } from "../db.js";
+import { listAgentSessions } from "../agent-sessions.js";
 import { loadDeliveryEvidence } from "../delivery-evidence.js";
 import { allowedDeliveryReconciliationActions } from "../delivery-reconciliation.js";
 import { internalId, publicId } from "../ids.js";
@@ -58,6 +61,7 @@ export type DashboardNotificationSummary = {
   context: DashboardActivityContext;
   originThreadId: string | null;
   activity: DashboardActivitySummary | null;
+  question?: DashboardQuestion | null;
   resources: {
     source: { id: string; kind: string; name: string };
     project: {
@@ -77,6 +81,7 @@ export type DashboardActivityContext = {
   providerName: string | null;
   producerKind: string | null;
   computer: string | null;
+  account: string | null;
   project: string | null;
   providerThreadId: string | null;
   providerWorkItemId: string | null;
@@ -114,6 +119,19 @@ export type DashboardActivitySummary = {
   presentationPresetId: string | null;
   presentationPresetRevision: number | null;
   presentationPolicySource: string | null;
+  /** Card digest (additive): how the work ended, step progress and update count. */
+  outcome?: "completed" | "failed" | null;
+  steps?: { done: number; total: number; current: string | null } | null;
+  updates?: number | null;
+  stepItems?: Array<{ label: string; state: string }>;
+};
+
+export type DashboardQuestion = {
+  kind: string;
+  prompt: string;
+  state: string;
+  respondedAt: string | null;
+  expiresAt: string | null;
 };
 
 export type DashboardDeliverySummary = {
@@ -235,6 +253,7 @@ function activityContext(value: unknown): DashboardActivityContext {
     providerName: optionalString(context.providerName),
     producerKind: optionalString(context.producerKind),
     computer: optionalString(context.computer),
+    account: optionalString(context.account),
     project: optionalString(context.project),
     providerThreadId: optionalString(context.providerThreadId),
     providerWorkItemId: optionalString(context.providerWorkItemId),
@@ -288,6 +307,40 @@ function activitySummary(row: Record<string, any>): DashboardActivitySummary | n
     presentationPresetRevision: row.activity_presentation_preset_revision == null
       ? null : number(row.activity_presentation_preset_revision),
     presentationPolicySource: optionalString(row.activity_presentation_policy_source),
+    outcome: row.activity_outcome === "completed" || row.activity_outcome === "failed"
+      ? row.activity_outcome : null,
+    updates: row.activity_updates == null ? null : number(row.activity_updates),
+    steps: stepDigest(row.activity_steps),
+  };
+}
+
+function stepDigest(value: unknown): { done: number; total: number; current: string | null } | null {
+  const steps = record(value);
+  const total = number(steps.total);
+  if (total <= 0) return null;
+  return { done: number(steps.done), total, current: optionalString(steps.current) };
+}
+
+function stepItems(value: unknown, isPrivate: boolean): Array<{ label: string; state: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 40).map((item, index) => {
+    const step = record(item);
+    return {
+      label: isPrivate ? `Step ${index + 1}` : String(step.label ?? `Step ${index + 1}`).slice(0, 120),
+      state: String(step.state ?? "pending"),
+    };
+  });
+}
+
+function questionDigest(value: unknown): DashboardQuestion | null {
+  const question = record(value);
+  if (!question.prompt || !question.state) return null;
+  return {
+    kind: String(question.kind ?? "approval"),
+    prompt: String(question.prompt),
+    state: String(question.state),
+    respondedAt: isoDate(question.respondedAt),
+    expiresAt: isoDate(question.expiresAt),
   };
 }
 
@@ -356,6 +409,7 @@ function notificationSummary(
     context,
     originThreadId: activity?.originThreadId ?? optionalString(row.event_origin_hash),
     activity,
+    question: questionDigest(row.question),
     resources,
   };
 }
@@ -460,8 +514,10 @@ async function loadCounts(
 ): Promise<DashboardCounts> {
   const result = await db.query<DashboardCounts>(
     `SELECT
-    (SELECT count(*)::int FROM device_authorizations WHERE status='pending' AND expires_at>now()) AS approvals,
-    (SELECT count(*)::int FROM interaction_requests WHERE principal_id=$1 AND state='pending' AND expires_at>now()) AS pending_responses,
+    (SELECT count(*)::int FROM device_authorizations WHERE status='pending' AND expires_at>now()
+      AND ${unclaimedLoginsVisible}) AS approvals,
+    (SELECT count(*)::int FROM interaction_requests r WHERE r.principal_id=$1 AND r.state='pending' AND r.expires_at>now()
+      AND ${decisionGroupRepresentative("r","now()")}) AS pending_responses,
     (SELECT count(DISTINCT COALESCE(
        payload#>>'{liveActivity,activityId}',
        'ntf_'||id::text
@@ -495,7 +551,18 @@ const activityProjectionSql = `a.id AS live_activity_id,
     a.terminal_policy AS activity_terminal_policy,a.terminal_transition_at AS activity_terminal_transition_at,
     a.presentation_preset_id AS activity_presentation_preset_id,
     a.presentation_preset_revision AS activity_presentation_preset_revision,
-    a.presentation_policy_source AS activity_presentation_policy_source`;
+    a.presentation_policy_source AS activity_presentation_policy_source,
+    CASE WHEN a.state<>'active' AND a.presentation#>>'{state,kind}' IN ('completed','failed')
+      THEN a.presentation#>>'{state,kind}' END AS activity_outcome,
+    GREATEST(a.sequence,0)+1 AS activity_updates,
+    (SELECT CASE WHEN count(*)>0 THEN jsonb_build_object('done',count(*) FILTER (WHERE step->>'state'='complete'),
+        'total',count(*),
+        'current',CASE WHEN (e.payload->>'privacy'='private' OR e.payload#>>'{liveActivity,privacy}'='private') THEN NULL
+          ELSE NULLIF(left((array_agg(step->>'label') FILTER (WHERE step->>'state'='current'))[1],80),'') END) END
+      FROM jsonb_array_elements(COALESCE((SELECT component->'items' FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(a.presentation->'components')='array' THEN a.presentation->'components' ELSE '[]'::jsonb END) component
+        WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1),'[]'::jsonb)) step
+    ) AS activity_steps`;
 
 const activityJoinSql = `LEFT JOIN live_activities a
     ON a.principal_id=e.principal_id
@@ -531,6 +598,13 @@ const notificationListSql = `SELECT e.id,e.source,e.kind,e.title,e.body,e.deep_l
     COALESCE(a.conversation_id,e.conversation_id) AS resource_conversation_id,
     COALESCE(a.work_item_id,e.work_item_id) AS resource_work_item_id,
     targets.device_names,response.action AS response_action,response.responded_at,
+    (SELECT jsonb_build_object('kind',q.kind,'state',q.state,'respondedAt',q.responded_at,'expiresAt',q.expires_at,
+        'prompt',CASE WHEN (qe.payload->>'privacy'='private' OR qe.payload#>>'{liveActivity,privacy}'='private')
+          THEN 'Private notification' ELSE left(q.prompt,240) END)
+      FROM interaction_requests q JOIN notification_events qe ON qe.id=q.notification_event_id
+      WHERE q.principal_id=e.principal_id AND (qe.id=e.id OR (a.id IS NOT NULL
+        AND qe.payload#>>'{liveActivity,activityId}'=('act_'||a.id::text)))
+      ORDER BY q.created_at DESC,q.id DESC LIMIT 1) AS question,
     ROW_NUMBER() OVER (
       PARTITION BY ${logicalNotificationKeySql}
       ORDER BY e.created_at DESC,e.id DESC
@@ -580,10 +654,10 @@ export function createDashboardInboxHandlers(
       requestedPage,
       counts.approvals,
     );
-    const [approvals, pendingResponses, notifications] = await Promise.all([
+    const [approvals, pendingResponses, notifications, running, sessions] = await Promise.all([
       db.query<any>(
         `SELECT user_code,client_name,requested_scopes,expires_at,credential_expires_at
-        FROM device_authorizations WHERE status='pending' AND expires_at>now()
+        FROM device_authorizations WHERE status='pending' AND expires_at>now() AND ${unclaimedLoginsVisible}
         ORDER BY created_at DESC,id DESC LIMIT $1 OFFSET $2`,
         [pageSize, (approvalPages.page - 1) * pageSize],
       ),
@@ -597,6 +671,7 @@ export function createDashboardInboxHandlers(
           WHERE t.notification_event_id=e.id AND d.principal_id=e.principal_id
         ) targets ON true
         WHERE r.principal_id=$1 AND r.state='pending' AND r.expires_at>now()
+          AND ${decisionGroupRepresentative("r","now()")}
         ORDER BY r.created_at DESC,r.id DESC LIMIT $2`,
         [account.principalId, pageSize],
       ),
@@ -607,6 +682,15 @@ export function createDashboardInboxHandlers(
         ORDER BY created_at DESC,id DESC LIMIT $2`,
         [account.principalId, pageSize],
       ),
+      db.query<any>(
+        `SELECT * FROM (${notificationListSql}
+        WHERE e.principal_id=$1 AND a.state='active'
+          AND (a.expires_at IS NULL OR a.expires_at>now())) logical_notifications
+        WHERE logical_rank=1
+        ORDER BY created_at DESC,id DESC LIMIT 50`,
+        [account.principalId],
+      ),
+      listAgentSessions(db, account.principalId),
     ]);
     const bootstrap: InboxOverviewBootstrap = {
       version: 1,
@@ -648,6 +732,8 @@ export function createDashboardInboxHandlers(
       })),
       approvalPagination: approvalPages,
       recentNotifications: notifications.rows.map(notificationSummary),
+      runningActivities: running.rows.map(notificationSummary),
+      sessions,
     };
     return secureHtml(context, await renderDocument(bootstrap));
   };
@@ -804,6 +890,9 @@ export function createDashboardInboxHandlers(
         e.created_at,e.updated_at,e.target_mode,s.title AS service_title,
         content.body_ciphertext,content.body_format,
         COALESCE(e.payload->>'privacy',e.payload#>>'{liveActivity,privacy}','standard') AS privacy,
+        (SELECT component->'items' FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(a.presentation->'components')='array' THEN a.presentation->'components' ELSE '[]'::jsonb END) component
+          WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1) AS activity_step_items,
         ${activityProjectionSql}
       FROM notification_events e
       ${activityJoinSql}
@@ -959,6 +1048,7 @@ export function createDashboardInboxHandlers(
       activity: row.live_activity_id
         ? {
             ...activitySummary(row)!,
+            stepItems: stepItems(row.activity_step_items, row.privacy === "private"),
             threadHistory: threadHistory.rows.map((related) => ({
               id: publicId("act", String(related.id)),
               generation: Math.max(1, number(related.generation)),

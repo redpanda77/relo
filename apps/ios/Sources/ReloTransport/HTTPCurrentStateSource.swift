@@ -8,7 +8,7 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
     private let session: URLSession
     private let retry: @Sendable (Int) async throws -> Void
 
-    public init(baseURL: URL, token: String, session: URLSession = .shared) {
+    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared) {
         self.init(baseURL: baseURL, token: token, session: session) { failure in
             let ceiling = min(5_000, 250 * (1 << min(failure, 5)))
             try await Task.sleep(for: .milliseconds(Int.random(in: max(1, ceiling / 2)...ceiling)))

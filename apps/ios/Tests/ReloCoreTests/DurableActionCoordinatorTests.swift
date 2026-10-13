@@ -1534,38 +1534,21 @@ final class DurableActionCoordinatorTests: XCTestCase {
         }
     }
 
-    func testRegistrationPrerequisitesNeverLeaveMissingTokenRegistering() {
+    func testRegistrationNeedsOnlyASignedInAccount() {
         XCTAssertEqual(DeviceRegistrationPolicy.prerequisitePhase(
             hasAuthenticatedAccount: false,
-            permissionAllowed: false,
-            apnsTokenAvailable: false,
-            pushRegistrationFailed: false
-        ), .idle)
-        XCTAssertEqual(DeviceRegistrationPolicy.prerequisitePhase(
-            hasAuthenticatedAccount: true,
-            permissionAllowed: false,
-            apnsTokenAvailable: false,
-            pushRegistrationFailed: false
-        ), .waitingForPermission)
-        XCTAssertEqual(DeviceRegistrationPolicy.prerequisitePhase(
-            hasAuthenticatedAccount: true,
-            permissionAllowed: true,
-            apnsTokenAvailable: false,
-            pushRegistrationFailed: false
-        ), .waitingForAPNSToken)
-        XCTAssertNil(DeviceRegistrationPolicy.prerequisitePhase(
-            hasAuthenticatedAccount: true,
             permissionAllowed: true,
             apnsTokenAvailable: true,
             pushRegistrationFailed: false
-        ))
-        guard case .failed = DeviceRegistrationPolicy.prerequisitePhase(
-            hasAuthenticatedAccount: true,
-            permissionAllowed: true,
-            apnsTokenAvailable: false,
-            pushRegistrationFailed: true
-        ) else {
-            return XCTFail("An APNs registration error must be explicit and retryable")
+        ), .idle)
+        // Notifications never block linking: no permission, no token, or a push error all register.
+        for (permission, token, failed) in [(false, false, false), (true, false, false), (true, false, true), (true, true, false)] {
+            XCTAssertNil(DeviceRegistrationPolicy.prerequisitePhase(
+                hasAuthenticatedAccount: true,
+                permissionAllowed: permission,
+                apnsTokenAvailable: token,
+                pushRegistrationFailed: failed
+            ))
         }
     }
 

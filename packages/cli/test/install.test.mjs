@@ -35,6 +35,11 @@ async function versionedFixture(temp, version) {
       `const VERSION = ${JSON.stringify(version)};`,
     ),
   );
+  const skillPath = join(root, "skill", "package.json");
+  const skill = JSON.parse(await readFile(skillPath, "utf8"));
+  skill.version = version;
+  skill.reviewedToolingVersions = { "@relo/cli": version };
+  await writeFile(skillPath, `${JSON.stringify(skill, null, 2)}\n`);
   const [packed] = JSON.parse(
     npm(temp, ["pack", "--json", "--pack-destination", temp], { cwd: root }),
   );
@@ -59,6 +64,8 @@ test("uses distinct artifacts for install, update, exact rollback, and removal w
     assert.notEqual(oldArtifact.tarball, newArtifact.tarball);
     assert.equal(oldArtifact.packed.files.some((file) => file.path.startsWith("test/")), false);
     assert.equal(oldArtifact.packed.files.some((file) => file.path === "README.md"), true);
+    assert.equal(oldArtifact.packed.files.some((file) => file.path === "skill/SKILL.md"), true, "the skill ships inside the package");
+    assert.equal(oldArtifact.packed.files.some((file) => /skill\/(tests|node_modules)\//u.test(file.path)), false);
 
     const install = (tarball) => npm(temp, [
       "install", "--global", "--ignore-scripts", "--prefix", prefix, tarball,

@@ -41,7 +41,7 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
   for (const document of [cliReadme, skillReference]) {
     assert.match(document, /\| `1` \| Server or other failure/u);
     assert.match(document, /\| `3` \| Missing, invalid, or insufficient credential/u);
-    assert.match(document, /\| `4` \| No answer within 5 minutes, canceled, or expired: the card has ended/u);
+    assert.match(document, /\| `4` \| No answer\. State `timeout`: still open[^|]*do not act/u);
     assert.match(document, /\| `5` \| The owner denied or said no/u);
     assert.match(document, /\| `6` \| Network unreachable/u);
     assert.match(document, /\| `7` \| No phone could receive it/u);
@@ -129,6 +129,6 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
     assert.equal(exitCode, entry.expectedExit, entry.name);
     assert.equal(stdout.length, 1, entry.name);
     assert.equal(JSON.parse(stdout[0]).error.code, entry.expectedError, entry.name);
-    assert.equal(stderr.length, 1, entry.name);
+    assert.equal(stderr.length, 0, entry.name);
   }
 });

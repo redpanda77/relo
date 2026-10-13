@@ -9,7 +9,19 @@ export type DeleteAccountInput = {
   confirmation: string
 }
 
+export type RegistrationMode = "closed" | "approval" | "open"
+export type ServerAccountAction = "approve" | "disable" | "enable" | "sign-out"
+export type ServerAccountSummary = {
+  id: string; name: string; email: string; status: "active" | "pending" | "disabled"
+  admin: boolean; createdAt: string; devices: number; sessions: number
+}
+
 export interface AccountService {
+  setRegistrationMode(mode: RegistrationMode): Promise<void>
+  createServerAccount(input: { name: string; email: string; password: string }): Promise<{ id: string }>
+  changeServerAccountAccess(id: string, action: ServerAccountAction): Promise<void>
+  deleteServerAccount(id: string): Promise<void>
+  loadServer(): Promise<{ registrationMode: RegistrationMode; accounts: ServerAccountSummary[] }>
   createUser(input: { name: string; email: string; password: string }): Promise<void>
   resetUserPassword(id: string, password: string): Promise<void>
   setUserEnabled(id: string, enabled: boolean): Promise<void>
@@ -52,6 +64,23 @@ async function jsonMutation(
 
 export function createHttpAccountService(): AccountService {
   return {
+    async setRegistrationMode(mode) {
+      await jsonMutation("/api/dashboard/server/registration", { mode }, "PUT")
+    },
+    async createServerAccount(input) {
+      return (await jsonMutation("/api/dashboard/server/accounts", input)) as { id: string }
+    },
+    async changeServerAccountAccess(id, action) {
+      await jsonMutation(`/api/dashboard/server/accounts/${encodeURIComponent(id)}/${action}`, {})
+    },
+    async loadServer() {
+      const response = await fetch("/api/dashboard/server", { headers: { accept: "application/json" } })
+      if (!response.ok) throw new Error(`Request failed (${response.status}).`)
+      return (await response.json()) as { registrationMode: RegistrationMode; accounts: ServerAccountSummary[] }
+    },
+    async deleteServerAccount(id) {
+      await jsonMutation(`/api/dashboard/server/accounts/${encodeURIComponent(id)}/delete`, { confirmation: "DELETE" })
+    },
     async createUser(input) { await jsonMutation("/api/dashboard/users", input) },
     async resetUserPassword(id, password) {
       await jsonMutation(`/api/dashboard/users/${encodeURIComponent(id)}/reset-password`, { password })

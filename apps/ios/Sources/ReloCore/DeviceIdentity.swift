@@ -303,8 +303,10 @@ public struct RegistrationAttempt: Codable, Equatable, Sendable {
         self.request = request
     }
 
-    public func idempotencyKey(installationId: UUID) -> String {
-        "ios-register:\(installationId.uuidString.lowercased()):\(revision)"
+    /// Scoped to the sign-in: sign-out resets the revision to 1, and a key an earlier sign-in
+    /// already used with a different request is refused by the server as a conflict (409).
+    public func idempotencyKey(installationId: UUID, sessionId: String) -> String {
+        "ios-register:\(installationId.uuidString.lowercased()):\(sessionId):\(revision)"
     }
 }
 
@@ -369,10 +371,18 @@ public protocol RegistrationAttemptStore: Sendable {
     @discardableResult
     func recordTransientFailure(now: Date, retryAfter: TimeInterval?) throws -> RegistrationRecoveryState
     func recordRegistrationSuccess() throws
+    /// Records that the server registered the current attempt and issued `credentialVersion`.
+    func recordRegistrationSuccess(credentialVersion: Int) throws
+    /// True when the server already registered exactly this request and issued the credential
+    /// version this iPhone holds: registering again would only rotate the credential.
+    func isRegistered(for request: DeviceRegistrationRequest, credentialVersion: Int) -> Bool
     func delete() throws
 }
 
 public extension RegistrationAttemptStore {
+    func recordRegistrationSuccess(credentialVersion: Int) throws { try recordRegistrationSuccess() }
+    func isRegistered(for request: DeviceRegistrationRequest, credentialVersion: Int) -> Bool { false }
+
     func recoveryState() throws -> RegistrationRecoveryState? { nil }
 
     @discardableResult

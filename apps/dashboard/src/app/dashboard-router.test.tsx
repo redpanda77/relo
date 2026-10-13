@@ -111,7 +111,7 @@ describe("dashboard client navigation", () => {
       name: "Dashboard navigation",
     })
 
-    fireEvent.click(screen.getByRole("link", { name: "Inbox" }))
+    fireEvent.click(screen.getByRole("link", { name: "Now" }))
     expect(screen.getByRole("heading", { name: "Documentation" })).toBeInTheDocument()
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument()
 
@@ -122,7 +122,7 @@ describe("dashboard client navigation", () => {
       })
     )
 
-    expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: "Now" })).toBeInTheDocument()
     expect(
       screen.getByRole("complementary", { name: "Dashboard navigation" })
     ).toBe(shell)

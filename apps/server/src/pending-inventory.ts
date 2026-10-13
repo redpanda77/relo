@@ -46,6 +46,18 @@ export function pendingRequestValidity(now: string, deviceVisibility: string): s
     AND (${deviceVisibility})`;
 }
 
+/** One decision shown in several places counts once: as the member that waits longest. */
+export function decisionGroupRepresentative(request: string, now: string): string {
+  return `(${request}.decision_group_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM interaction_requests sibling
+      JOIN notification_events sibling_event ON sibling_event.id=sibling.notification_event_id
+      WHERE sibling.decision_group_id=${request}.decision_group_id AND sibling.id<>${request}.id
+        AND sibling.state='pending' AND sibling.expires_at>${now}
+        AND sibling_event.state='active' AND sibling_event.withdrawn_at IS NULL
+        AND (sibling.expires_at,sibling.id)>(${request}.expires_at,${request}.id)
+    ))`;
+}
+
 export function pendingDecisionPredicate(now: string, deviceVisibility: string): string {
   return `${pendingRequestValidity(now,deviceVisibility)}
     AND (nr.notification_event_id IS NULL OR (
@@ -59,7 +71,8 @@ export function pendingDecisionPredicate(now: string, deviceVisibility: string):
       AND activity.generation::text=COALESCE(e.payload#>>'{liveActivity,generation}','1')
       AND (activity.expires_at IS NULL OR activity.expires_at>${now})
       AND (activity.lifecycle_provider IS NULL OR activity.stale_at IS NULL OR activity.stale_at>${now})
-    ))`;
+    ))
+    AND ${decisionGroupRepresentative("r",now)}`;
 }
 
 export const pendingDeviceVisibility = `e.target_mode='broadcast' OR EXISTS (
@@ -69,7 +82,7 @@ export const pendingDeviceVisibility = `e.target_mode='broadcast' OR EXISTS (
 // Materialize the small decision set before optional relevance/parent joins.
 // Otherwise their selective estimates can make the planner scan all history.
 export function pendingRequestCandidates(principal: string, now: string): string {
-  return `SELECT id,principal_id,notification_event_id,kind,state,expires_at
+  return `SELECT id,principal_id,notification_event_id,kind,state,expires_at,decision_group_id
     FROM interaction_requests WHERE principal_id=${principal} AND state='pending' AND expires_at>${now}`;
 }
 

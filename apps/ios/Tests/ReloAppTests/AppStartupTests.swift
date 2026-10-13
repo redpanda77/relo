@@ -809,3 +809,184 @@ private actor IntegratedCurrentSource: CurrentStateSource {
     }
     nonisolated func changes() -> AsyncThrowingStream<CurrentChangeHint, Error> { stream }
 }
+
+/// The Now deck's presentation rules, run on a fast clock.
+@MainActor
+final class ReloDeckDirectorTests: XCTestCase {
+    private func director() -> ReloDeckDirector {
+        ReloDeckDirector(timing: .init(offlineHold: .milliseconds(200), returnHold: .milliseconds(100),
+                                       coalesce: .milliseconds(40), armAfter: .milliseconds(100),
+                                       hapticCooldown: 2, ceremonyScale: 0.05,
+                                       powerOnAfterAway: 0.15, powerOnAtLaunch: false))
+    }
+
+    private func snapshot(total: Int = 3, needsYou: Int? = 0, running: Int = 0) -> ReloDeckDirector.Snapshot {
+        .init(summary: InboxTodaySummary(notifications: total, liveActivities: 0, active: 0, finished: 0),
+              needsYou: needsYou,
+              tasks: (0..<running).map { ReloHoloTask(id: "task-\($0)", progress: nil) },
+              mix: NowMix(counts: [:]), satellites: [])
+    }
+
+    private func input(_ snapshot: ReloDeckDirector.Snapshot, trusted: Bool = true, reachable: Bool = true,
+                       linkPending: Bool = false, visible: Bool = true) -> ReloDeckDirector.Input {
+        .init(snapshot: snapshot, trusted: trusted, reachable: reachable, linkPending: linkPending,
+              visible: visible, working: !trusted, reduceMotion: false)
+    }
+
+    private func settle(_ milliseconds: Int = 180) async { try? await Task.sleep(for: .milliseconds(milliseconds)) }
+
+    func testFirstObservationIsBaselineNotNews() async {
+        let deck = director()
+        deck.ingest(input(snapshot(total: 2), trusted: false))
+        XCTAssertEqual(deck.shown?.summary.total, 2)
+        deck.ingest(input(snapshot(total: 5, needsYou: 1)))
+        await settle()
+        XCTAssertEqual(deck.shown?.summary.total, 5)
+        XCTAssertEqual(deck.waves, 0, "data arriving on open is not news")
+        XCTAssertEqual(deck.newsTicks, 0)
+        XCTAssertTrue(deck.armed)
+    }
+
+    func testOnlyRealChangesWhileWatchingRipple_andHapticsAreRateLimited() async {
+        let deck = director()
+        deck.ingest(input(snapshot(needsYou: 0)))
+        await settle()
+        deck.ingest(input(snapshot(needsYou: 1)))
+        await settle(80)
+        XCTAssertEqual(deck.waves, 1)
+        XCTAssertEqual(deck.newsTicks, 1)
+        deck.ingest(input(snapshot(needsYou: 2)))
+        await settle(80)
+        XCTAssertEqual(deck.waves, 2)
+        XCTAssertEqual(deck.newsTicks, 1, "a second request inside the cooldown does not buzz again")
+    }
+
+    func testBurstsCoalesceIntoOneChange() async {
+        let deck = director()
+        deck.ingest(input(snapshot(total: 1)))
+        await settle()
+        for total in 2...6 { deck.ingest(input(snapshot(total: total))) }
+        await settle(100)
+        XCTAssertEqual(deck.shown?.summary.total, 6)
+        XCTAssertEqual(deck.waves, 1)
+    }
+
+    func testUntrustedDipsAreHeld() async {
+        let deck = director()
+        deck.ingest(input(snapshot(total: 4, needsYou: 1, running: 2)))
+        await settle()
+        deck.ingest(input(snapshot(total: 0, needsYou: nil, running: 0), trusted: false))
+        await settle()
+        XCTAssertEqual(deck.shown?.summary.total, 4)
+        XCTAssertEqual(deck.shown?.tasks.count, 2, "running work never drops to zero and back while reconnecting")
+        XCTAssertEqual(deck.waves, 0)
+    }
+
+    func testWakingWithABriefReconnectNeverGoesDormantOrReboots() async {
+        let deck = director()
+        deck.ingest(input(snapshot()))
+        await settle()
+        deck.ingest(input(snapshot(), trusted: false, visible: false))     // asleep
+        deck.ingest(input(snapshot(), trusted: false, reachable: false))   // waking, briefly out of reach
+        await settle(60)
+        deck.ingest(input(snapshot()))                                     // back within the hold
+        await settle(300)
+        XCTAssertEqual(deck.phase, .live)
+        XCTAssertEqual(deck.successTicks, 0)
+        XCTAssertEqual(deck.waves, 0)
+    }
+
+    func testSustainedOutageGoesDormantThenFadesBackQuietly() async {
+        let deck = director()
+        deck.ingest(input(snapshot()))
+        await settle()
+        deck.ingest(input(snapshot(), trusted: false, reachable: false))
+        await settle(300)
+        XCTAssertEqual(deck.phase, .dormant)
+        XCTAssertFalse(deck.linking)
+        deck.ingest(input(snapshot(total: 7)))
+        await settle(150)                                                  // return hold 100 ms; plate lasts 110 ms
+        XCTAssertEqual(deck.phase, .live)
+        XCTAssertEqual(deck.shown?.summary.total, 7)
+        XCTAssertEqual(deck.badge?.word, "ONLINE")
+        XCTAssertEqual(deck.successTicks, 0, "a reconnect is not a celebration")
+        await settle(800)
+        XCTAssertEqual(deck.revealed, 6)
+    }
+
+    func testCeremonyRunsOnceAndJumpsToTheEndWhenInterrupted() async {
+        let deck = director()
+        deck.ingest(input(snapshot(), trusted: false, linkPending: true))
+        XCTAssertEqual(deck.phase, .dormant)
+        XCTAssertTrue(deck.linking)
+        deck.ingest(input(snapshot(), linkPending: true))
+        XCTAssertEqual(deck.phase, .booting)
+        XCTAssertEqual(deck.successTicks, 1)
+        deck.ingest(input(snapshot(), linkPending: true, visible: false))  // switched away mid-boot
+        XCTAssertEqual(deck.phase, .live)
+        XCTAssertEqual(deck.revealed, 6)
+        XCTAssertNil(deck.greeting)
+        XCTAssertEqual(deck.ceremonyFinishes, 1)
+        deck.ingest(input(snapshot(), linkPending: true))                  // back, flag not cleared yet
+        await settle(300)
+        XCTAssertEqual(deck.successTicks, 1, "the ceremony never replays")
+        XCTAssertEqual(deck.phase, .live)
+    }
+
+    func testCeremonyStartsOnceLinkedEvenBeforeLiveCountsArrive() {
+        let deck = director()
+        var linked = input(snapshot(needsYou: nil), trusted: false, linkPending: true)
+        deck.ingest(linked)
+        XCTAssertEqual(deck.phase, .dormant)
+        linked.linked = true
+        deck.ingest(linked)
+        XCTAssertEqual(deck.phase, .booting, "a slow live connection never leaves the deck stuck on LINKING")
+    }
+
+    func testComingBackAfterAWhilePowersTheHUDOnQuietly() async {
+        let deck = director()
+        deck.ingest(input(snapshot()))
+        await settle()
+        deck.ingest(input(snapshot(), visible: false))
+        await settle(200)                                                  // away longer than the threshold
+        deck.ingest(input(snapshot()))
+        XCTAssertEqual(deck.badge?.word, "ACTIVE")
+        XCTAssertEqual(deck.revealed, 0, "the HUD builds up again")
+        XCTAssertFalse(deck.armed)
+        await settle(800)
+        XCTAssertEqual(deck.revealed, 6)
+        XCTAssertEqual(deck.moduleBuilds.count, 4, "every module built")
+        XCTAssertEqual(deck.successTicks, 0, "no haptic for coming back")
+        XCTAssertEqual(deck.waves, 0)
+    }
+
+    func testABriefLookAwayDoesNotPowerOnAgain() async {
+        let deck = director()
+        deck.ingest(input(snapshot()))
+        await settle()
+        deck.ingest(input(snapshot(), visible: false))
+        deck.ingest(input(snapshot()))
+        XCTAssertNil(deck.badge)
+        XCTAssertEqual(deck.revealed, 6)
+    }
+
+    func testLosingTheServerShowsOffline() async {
+        let deck = director()
+        deck.ingest(input(snapshot()))
+        await settle()
+        deck.ingest(input(snapshot(), trusted: false, reachable: false))
+        await settle(300)
+        XCTAssertEqual(deck.phase, .dormant)
+        XCTAssertEqual(deck.badge?.word, "OFFLINE")
+        XCTAssertEqual(deck.badge?.warning, true)
+    }
+
+    func testCeremonyCompletesOnItsTimeline() async {
+        let deck = director()
+        deck.ingest(input(snapshot(), linkPending: true))
+        await settle(900)                                                  // ~10.8 s × 0.05
+        XCTAssertEqual(deck.phase, .live)
+        XCTAssertEqual(deck.revealed, 6)
+        XCTAssertEqual(deck.ceremonyFinishes, 1)
+    }
+}

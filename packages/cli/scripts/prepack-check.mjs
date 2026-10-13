@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { assertSkillVersion } from "./bundle-skill.mjs";
 
 const root = new URL("../", import.meta.url);
 const manifest = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
@@ -24,3 +26,7 @@ for (const required of [
 ]) {
   if (!readme.includes(required)) throw new Error(`reloctl README is missing ${required}`);
 }
+// The skill ships inside the package at the CLI's exact version (scripts/bundle-skill.mjs makes it).
+if (!manifest.files.includes("skill")) throw new Error("reloctl package files must include the bundled skill");
+await readFile(new URL("skill/SKILL.md", root), "utf8").catch(() => { throw new Error("reloctl is missing the bundled skill (run scripts/bundle-skill.mjs)"); });
+await assertSkillVersion(fileURLToPath(new URL("skill/", root)), manifest.version);

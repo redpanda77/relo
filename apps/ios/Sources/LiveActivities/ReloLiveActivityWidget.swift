@@ -64,7 +64,7 @@ struct ReloLiveActivityWidget: Widget {
                 )
             }
             .keylineTint(
-                presentation.privacy == .private ? palette.primaryText.opacity(0.5) : palette.cyan
+                presentation.privacy == .private ? palette.primaryText.opacity(0.5) : palette.state
             )
             .widgetURL(ReloDeepLink.activityURL(identity: context.attributes.identity))
         }
@@ -126,12 +126,28 @@ struct PresentationCardView: View {
             Spacer(minLength: 0)
             if let deadline = questionDeadline {
                 PresentationCountdown(deadline: deadline, palette: palette)
-            } else if surface == .expanded {
-                PresentationIslandStatusMark(
+            } else {
+                if let startedAt = elapsedStart {
+                    // The system ticks this for free; nothing in the widget redraws it.
+                    Text(timerInterval: startedAt...Date.distantFuture, countsDown: false)
+                        .font(.caption.monospacedDigit()).foregroundStyle(palette.secondaryText)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 72, alignment: .trailing)
+                        .accessibilityLabel("Running for")
+                }
+                if surface == .expanded {
+                    PresentationIslandStatusMark(
                     presentation: presentation, palette: palette,
-                    interaction: context.state.displayInteraction, isStale: context.isStale)
+                        interaction: context.state.displayInteraction, isStale: context.isStale)
+                }
             }
         }
+    }
+
+    /// When the work began, only while it is still running; ended or stale cards show no timer.
+    private var elapsedStart: Date? {
+        guard presentation.state.kind == "active", !context.isStale else { return nil }
+        return context.state.startedAt
     }
 
     /// The answer deadline while a question can still be answered on the card.
@@ -253,7 +269,7 @@ struct PresentationCardView: View {
             HStack(spacing: 6) {
                 Text(value, format: .percent.precision(.fractionLength(0)))
                     .fontWeight(.semibold).monospacedDigit()
-                    .foregroundStyle(palette.cyan)
+                    .foregroundStyle(palette.state)
                 Text(projection.status)
             }
             .accessibilityElement(children: .combine)
@@ -312,7 +328,7 @@ struct PresentationComponentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var componentColor: Color {
-        palette.cyan
+        palette.state
     }
 
     var body: some View {
@@ -356,11 +372,7 @@ struct PresentationComponentView: View {
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
         case .steps(_, _, let items):
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
-                    ForEach(items) { item in
-                        stepSegment(item.state)
-                    }
-                }
+                stepRow(items)
                 let phase = LiveActivitySurfaceProjection.Phase(items: items)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(phase.label)
@@ -397,21 +409,25 @@ struct PresentationComponentView: View {
         }
     }
 
-    /// Completed work is the cyan to violet ramp, the step in progress is the brightest
-    /// segment (static: Live Activities cannot loop animation), pending steps are faint glass.
-    @ViewBuilder
-    private func stepSegment(_ state: LiveActivityDisplayPresentation.Step.State) -> some View {
-        switch state {
-        case .complete:
-            Capsule().fill(palette.rampGradient).frame(height: 5)
-        case .current:
-            Capsule()
-                .fill(LinearGradient(colors: [palette.violet, palette.magenta], startPoint: .leading, endPoint: .trailing))
-                .frame(height: 5)
-                .shadow(color: palette.magenta.opacity(0.75), radius: 4)
-        case .pending:
-            Capsule().fill(Color.white.opacity(0.15)).frame(height: 5)
+    /// One gradient runs across the whole row and shows through the finished and current steps,
+    /// so the color flows continuously instead of restarting in every segment. The step in
+    /// progress is a touch brighter; pending steps are faint glass.
+    private func stepRow(_ items: [LiveActivityDisplayPresentation.Step]) -> some View {
+        func segments(_ fill: @escaping (LiveActivityDisplayPresentation.Step.State) -> Color) -> some View {
+            HStack(spacing: 5) {
+                ForEach(items) { item in Capsule().fill(fill(item.state)).frame(height: 5) }
+            }
         }
+        return segments { _ in Color.white.opacity(0.13) }
+            .overlay {
+                Rectangle().fill(palette.rampGradient)
+                    .mask(segments { $0 == .pending ? .clear : .black })
+            }
+            .overlay {
+                Rectangle().fill(Color.white.opacity(0.28))
+                    .mask(segments { $0 == .current ? .black : .clear })
+            }
+            .frame(height: 5)
     }
 }
 
@@ -421,7 +437,7 @@ struct PresentationNeonBar: View {
     let palette: PresentationPalette
 
     var body: some View {
-        Capsule().fill(Color.white.opacity(0.15)).frame(height: 5)
+        Capsule().fill(Color.white.opacity(0.13)).frame(height: 5)
             .overlay(alignment: .leading) {
                 GeometryReader { proxy in
                     Capsule().fill(palette.rampGradient)
@@ -557,7 +573,7 @@ struct PresentationCompactSurface: View {
     private var factColor: Color {
         if presentation.privacy == .private { return palette.primaryText }
         if case .percentage(_, let role) = projection.fact {
-            return palette.cyan
+            return palette.state
         }
         return palette.state
     }
@@ -709,13 +725,11 @@ struct PresentationBehaviorModule: View {
             Text(label)
                 .font(.caption.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
-                .foregroundStyle(emphasized ? Color.white : palette.primaryText)
+                .foregroundStyle(emphasized ? PresentationBackdrop.base : palette.primaryText)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(
                     emphasized
-                        ? AnyShapeStyle(LinearGradient(
-                            colors: [Color(neonHex: 0x4F5BEA), Color(neonHex: 0x9A45DD)],
-                            startPoint: .leading, endPoint: .trailing))
+                        ? AnyShapeStyle(palette.rampGradient)
                         : AnyShapeStyle(palette.primaryText.opacity(0.11)),
                     in: Capsule())
         }
@@ -764,9 +778,15 @@ struct PresentationPalette: Sendable {
     static let coral = Color(neonHex: 0xFF6B57)
     static let amber = Color(neonHex: 0xFBBF24)
 
+    static let teal = Color(neonHex: 0x2DD4BF)
+    static let blue = Color(neonHex: 0x4D8DFF)
+
     let accent: Color
     let secondary: Color
+    /// Lead colour of the state ramp: glyphs, rings, percentages and the progress fill start.
     let state: Color
+    /// Far end of the state ramp: bar/segment fill end, glow and the backdrop's lit corner.
+    let rampEnd: Color
     let primaryText = Color.white
     let secondaryText = Color.white.opacity(0.72)
     let canvas = Color(neonHex: 0x0B0E1A)
@@ -774,7 +794,7 @@ struct PresentationPalette: Sendable {
     let isLight = false
 
     var rampGradient: LinearGradient {
-        LinearGradient(colors: [cyan, violet], startPoint: .leading, endPoint: .trailing)
+        LinearGradient(colors: [state, rampEnd], startPoint: .leading, endPoint: .trailing)
     }
 
     init(
@@ -785,20 +805,28 @@ struct PresentationPalette: Sendable {
             ?? .init(red: 0.37, green: 0.85, blue: 0.72)).readable(onLight: false)
         accent = Color(red: project.red, green: project.green, blue: project.blue)
         secondary = Color(neonHex: 0x8B7CFF)
-        state = switch presentation.state.tone {
-        case "success": Self.mint
-        case "failure", "attention": Self.coral
-        case "waiting", "stopped", "warning": Self.amber
-        default: Color(neonHex: 0x5CE1FF)
+        // Tone picks the ramp: running cyan>violet, done mint>teal, needs-you coral>magenta,
+        // failed/stopped amber>coral, waiting amber>amber, neutral cyan>blue.
+        let ramp: (Color, Color) = switch presentation.state.tone {
+        case "success": (Self.mint, Self.teal)
+        case "attention": (Self.coral, Color(neonHex: 0xD65CF0))
+        case "failure", "stopped", "warning": (Self.amber, Self.coral)
+        case "waiting": (Self.amber, Color(neonHex: 0xF59E0B))
+        case "live": (Color(neonHex: 0x5CE1FF), Color(neonHex: 0x8B7CFF))
+        default: (Color(neonHex: 0x5CE1FF), Self.blue)
         }
+        state = ramp.0
+        rampEnd = ramp.1
     }
     func identityColor(_ hex: String) -> Color { cyan }
 }
 
-/// The Lock Screen surface: deep near-black glass with a faint cyan and violet edge glow.
-/// Always On dims to plain black so the glow never burns in.
+/// The Lock Screen surface: near-black glass that rises diagonally into the state colour.
+/// Dark holds the first ~60%; the lit corner reaches ~42% of the ramp end. No drawn border:
+/// the system rounds and clips the card, and a square stroke would be cut at the corners.
+/// Always On dims to plain black.
 struct PresentationBackdrop: View {
-    static let base = Color(neonHex: 0x0B0E1A)
+    static let base = Color(neonHex: 0x05060B)
     let palette: PresentationPalette
     var isLuminanceReduced = false
 
@@ -808,17 +836,17 @@ struct PresentationBackdrop: View {
         } else {
             ZStack {
                 Self.base
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .clear, location: 0.58),
+                        .init(color: palette.state.opacity(0.20), location: 0.82),
+                        .init(color: palette.rampEnd.opacity(0.42), location: 1),
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing)
                 RadialGradient(
-                    colors: [palette.cyan.opacity(0.10), .clear],
-                    center: .topLeading, startRadius: 0, endRadius: 200)
-                RadialGradient(
-                    colors: [palette.violet.opacity(0.12), .clear],
-                    center: .bottomTrailing, startRadius: 0, endRadius: 220)
-                Rectangle().strokeBorder(
-                    LinearGradient(
-                        colors: [palette.cyan.opacity(0.22), palette.violet.opacity(0.10), palette.magenta.opacity(0.18)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1)
+                    colors: [palette.state.opacity(0.10), .clear],
+                    center: .topLeading, startRadius: 0, endRadius: 90)
             }
         }
     }

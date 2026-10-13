@@ -20,11 +20,13 @@ service, idempotency, or callback field:
 - raw prompts, user messages, full assistant output, transcripts, patches, diffs, or file contents;
 - secrets, access tokens, webhook URLs, authorization headers, environment variables, or config;
 - absolute paths, hostnames, usernames, or device identifiers not explicitly selected through the
-  CLI's device targeting;
+  CLI's device targeting (the CLI attaches the computer name and account nickname itself; never
+  repeat them, or any hostname, in card text);
 - unredacted failure output, stack traces, or log excerpts.
 
 Safe context is categorical and nonverbatim: an agent such as `Codex`, a project name, and a task
-described the way the owner would ("Build validation"). Do not hash secrets or sensitive text merely
+described the way the owner would ("Build validation"). Account nicknames (`relo account NAME`)
+are labels you choose: use "work", never an email address or username. Do not hash secrets or sensitive text merely
 to make it sendable. Keep wording limited to the status or decision the owner needs.
 
 ## Credentials and URLs

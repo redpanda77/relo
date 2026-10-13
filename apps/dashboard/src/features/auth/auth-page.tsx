@@ -13,6 +13,10 @@ function friendlyAuthError(cause: unknown): string {
   if (raw.includes("invalid") && (raw.includes("password") || raw.includes("credential") || raw.includes("email")))
     return "That email and password don't match."
   if (raw.includes("owner not bootstrapped")) return "This server isn't ready for its first account yet."
+  if (raw.includes("approval pending")) return "Your account is waiting for the server admin's approval."
+  if (raw.includes("account disabled")) return "The server admin has turned off access for this account."
+  if (raw.includes("registration closed")) return "This server isn't taking new accounts. Ask its admin to create one for you."
+  if (raw.includes("already exists") || raw.includes("user exists")) return "An account with that email already exists."
   if (raw.includes("rate") || raw.includes("too many")) return "Too many attempts. Wait a minute and try again."
   return "Couldn't sign in. Check your connection and try again."
 }
@@ -26,6 +30,17 @@ export function AuthPage({
 }) {
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState("")
+  const [mode, setMode] = React.useState(bootstrap.mode)
+  const [awaitingApproval, setAwaitingApproval] = React.useState(false)
+  // The first account claims the server; afterwards registration follows the admin's setting.
+  const claimed = bootstrap.mode === "sign-in"
+  const canRegister = claimed && bootstrap.registration !== "closed"
+  const title = !claimed || mode === "sign-in" ? bootstrap.title : "Create your account"
+  const description = !claimed || mode === "sign-in"
+    ? bootstrap.description
+    : bootstrap.registration === "approval"
+      ? "The server admin approves new accounts before they can sign in. Your data stays private to you."
+      : "Your account and everything in it are private to you."
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -34,14 +49,19 @@ export function AuthPage({
     setPending(true)
     setError("")
     try {
-      await authenticateOwner(bootstrap.mode, {
+      const outcome = await authenticateOwner(mode, {
         name:
-          bootstrap.mode === "sign-up"
+          mode === "sign-up"
             ? String(values.get("name") ?? "")
             : undefined,
         email: String(values.get("email") ?? ""),
         password: String(values.get("password") ?? ""),
       })
+      if (outcome === "pending") {
+        setAwaitingApproval(true)
+        setPending(false)
+        return
+      }
       onAuthenticated(bootstrap.route.nextPath)
     } catch (cause) {
       setError(friendlyAuthError(cause))
@@ -49,7 +69,11 @@ export function AuthPage({
     }
   }
 
-  const signingIn = bootstrap.mode === "sign-in"
+  const signingIn = mode === "sign-in"
+  function switchMode() {
+    setMode(signingIn ? "sign-up" : "sign-in")
+    setError("")
+  }
   return (
     <main
       id="main-content"
@@ -65,16 +89,31 @@ export function AuthPage({
         <Card className="glass-strong">
           <CardHeader className="space-y-1.5 p-6 sm:p-8">
             <CardTitle className="text-2xl font-semibold tracking-tight">
-              {bootstrap.title}
+              {awaitingApproval ? "Waiting for approval" : title}
             </CardTitle>
             <p className="text-sm text-muted-foreground">
-              {bootstrap.description}
+              {awaitingApproval
+                ? "Your account is created. You can sign in once the server admin approves it."
+                : description}
             </p>
           </CardHeader>
           <CardContent className="px-6 pb-6 sm:px-8 sm:pb-8">
+            {awaitingApproval ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 w-full"
+                onClick={() => {
+                  setAwaitingApproval(false)
+                  setMode("sign-in")
+                }}
+              >
+                Back to sign in
+              </Button>
+            ) : (
             <form
               id="auth-form"
-              data-mode={bootstrap.mode}
+              data-mode={mode}
               data-next={bootstrap.route.nextPath}
               className="space-y-5"
               onSubmit={(event) => void submit(event)}
@@ -135,7 +174,19 @@ export function AuthPage({
                     ? "Sign in"
                     : "Create account"}
               </Button>
+              {canRegister ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="min-h-11 w-full"
+                  disabled={pending}
+                  onClick={switchMode}
+                >
+                  {signingIn ? "New here? Create an account" : "Already have an account? Sign in"}
+                </Button>
+              ) : null}
             </form>
+            )}
           </CardContent>
         </Card>
       </div>

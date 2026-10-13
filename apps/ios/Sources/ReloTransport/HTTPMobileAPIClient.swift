@@ -4,11 +4,24 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// The one session for Relo's API: token-authenticated only, so it never stores or sends
+/// cookies. A cookie left by an old email sign-in made Better Auth treat requests as
+/// browser requests and refuse sign-out without an Origin header (403).
+public enum ReloAPISession {
+    public static let shared: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.httpCookieStorage = nil
+        return URLSession(configuration: configuration)
+    }()
+}
+
 public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
     private let baseURL: URL
     private let session: URLSession
 
-    public init(baseURL: URL, session: URLSession = .shared) {
+    public init(baseURL: URL, session: URLSession = ReloAPISession.shared) {
         self.baseURL = baseURL
         self.session = session
     }
@@ -322,7 +335,8 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
         let (_, response) = try await data(for: request)
 
         switch response.statusCode {
-        case 200, 204, 401:
+        case 200, 204, 401, 404:
+            // 401/404: the credential or device is already gone, which is what revoking wants.
             return
         case 403:
             throw MobileAPIError.forbidden
@@ -334,10 +348,12 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
     public func signOutAccount(sessionToken: String) async throws {
         var request = request(path: "api/auth/sign-out", method: "POST")
         request.authorize(bearer: sessionToken)
+        // The auth endpoint rejects a JSON request without a body (400), which paused every sign-out.
+        request.httpBody = Data("{}".utf8)
         let (_, response) = try await data(for: request)
 
         switch response.statusCode {
-        case 200, 204, 401:
+        case 200, 204, 401, 404:
             return
         default:
             throw MobileAPIError.unavailable

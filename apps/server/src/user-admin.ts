@@ -31,8 +31,8 @@ export async function createAccountUser(input: {
        VALUES ($1,$2,'credential',$3,$4)`,[randomUUID(),accountId,id,password],
     );
     await client.query(
-      `INSERT INTO account_identities(principal_id,provider,subject,role)
-       VALUES ($1,'better-auth',$2,'member')`,[input.principalId,id],
+      `INSERT INTO account_identities(principal_id,provider,subject,role,approved_at)
+       VALUES ($1,'better-auth',$2,'member',now())`,[input.principalId,id],
     );
     await client.query("COMMIT");
     return { id };

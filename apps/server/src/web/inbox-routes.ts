@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { unclaimedLoginsVisible } from "../server-accounts.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -6,6 +7,7 @@ deliveryReconciliationActions,
 DeliveryReconciliationError,
 reconcileDeliveryJob,
 } from "../delivery-reconciliation.js";
+import { listAgentSessions } from "../agent-sessions.js";
 import { internalId,publicId } from "../ids.js";
 import { withdrawNotification } from "../notifications/commands.js";
 import { getOwnerAccount } from "./owner-account.js";
@@ -48,12 +50,13 @@ export function registerInboxActionRoutes(app: Hono, shared: WebRouteContext): v
     const deviceIds = requestedIds("deviceId","dev");
     const clientIds = requestedIds("clientId","key");
     if (!deviceIds || !clientIds) return context.json({ error: "invalid_snapshot_selection" },400);
-    const [counts,devices,clients] = await Promise.all([
+    const [counts,devices,clients,sessions] = await Promise.all([
       db.query<any>(`SELECT
         (SELECT count(*)::int FROM notification_events WHERE principal_id=$1) AS notifications,
         (SELECT count(*)::int FROM delivery_jobs j JOIN notification_events e ON e.id=j.notification_event_id
           WHERE e.principal_id=$1) AS deliveries,
-        (SELECT count(*)::int FROM device_authorizations WHERE status='pending' AND expires_at>now()) AS approvals,
+        (SELECT count(*)::int FROM device_authorizations WHERE status='pending' AND expires_at>now()
+          AND ${unclaimedLoginsVisible}) AS approvals,
         (SELECT count(*)::int FROM devices WHERE principal_id=$1 AND revoked_at IS NULL) AS devices`,
       [account.principalId]),
       deviceIds.length ? db.query<any>(
@@ -65,12 +68,14 @@ export function registerInboxActionRoutes(app: Hono, shared: WebRouteContext): v
          AND (expires_at IS NULL OR expires_at>now()) AND id=ANY($2::uuid[])`,
         [account.principalId,clientIds],
       ) : Promise.resolve({ rows: [] }),
+      listAgentSessions(db,account.principalId),
     ]);
     context.header("cache-control","private, no-store");
     return context.json({
       revision: Date.now(), counts: counts.rows[0] ?? { notifications: 0,deliveries: 0,approvals: 0,devices: 0 },
       devices: devices.rows.map((row: any) => ({ id: publicId("dev",row.id),lastSeenAt: row.last_seen_at })),
       clients: clients.rows.map((row: any) => ({ id: publicId("key",row.id),lastUsedAt: row.last_used_at })),
+      sessions,
     });
   });
 

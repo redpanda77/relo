@@ -31,7 +31,7 @@ struct HistoryRowView: View {
             } else if let progress = row.progress {
                 HistoryProgressMeter(value: progress, color: color, showsValue: false).padding(.top, 2)
             }
-            if typePlacement == .meta { meta }
+            if typePlacement == .meta || row.origin != nil { meta }
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -73,18 +73,23 @@ struct HistoryRowView: View {
         Label(row.type, systemImage: typeSymbol).labelStyle(HistoryInlineLabelStyle()).fixedSize()
     }
 
-    /// What the work amounted to on the left; what kind of item it is on the right.
+    /// What the work amounted to and where it ran on the left; what kind of item it is on the right.
     private var meta: some View {
         let measure = metaFacts.joined(separator: " · ")
+        let showsType = typePlacement == .meta
         let type = Label(row.type, systemImage: typeSymbol).labelStyle(HistoryInlineLabelStyle())
+        let origin = row.origin.map { Label($0, systemImage: "laptopcomputer").labelStyle(HistoryInlineLabelStyle()) }
         return ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
-                if !measure.isEmpty { Text(measure).fixedSize(); Spacer(minLength: 8) }
-                type.fixedSize()
+                if !measure.isEmpty { Text(measure).fixedSize() }
+                if let origin { origin.fixedSize() }
+                Spacer(minLength: 8)
+                if showsType { type.fixedSize() }
             }
             VStack(alignment: .leading, spacing: 2) {
                 if !measure.isEmpty { Text(measure).fixedSize(horizontal: false, vertical: true) }
-                type
+                if let origin { origin.fixedSize(horizontal: false, vertical: true) }
+                if showsType { type }
             }
         }
         .font(.caption).foregroundStyle(Color.reloSecondaryText)

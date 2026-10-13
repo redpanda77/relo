@@ -9,10 +9,11 @@ function fixture(options: { authenticated?: boolean; identity?: boolean } = {}) 
   const renderDocument = vi.fn(async (bootstrap: SystemDashboardBootstrap) =>
     JSON.stringify(bootstrap),
   );
-  const query = vi.fn(async () => ({
+  // This owner is not the server admin, so the account page carries no server section.
+  const query = vi.fn(async (sql: string) => sql.includes("server_admin") ? { rows: [],rowCount: 0 } : {
     rows: options.identity === false ? [] : [{ provider: "better-auth" }],
     rowCount: options.identity === false ? 0 : 1,
-  }));
+  });
   const handlers = createDashboardSystemHandlers({
     db: { query } as any,
     releaseIdentity: "test-release",
@@ -68,6 +69,7 @@ describe("dashboard system handlers", () => {
       ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "owner-user"],
     );
     expect(await response.json()).toMatchObject({
+      server: null,
       kind: "account",
       route: { path: "/dashboard/account" },
       shell: { active: "account", releaseIdentity: "test-release" },

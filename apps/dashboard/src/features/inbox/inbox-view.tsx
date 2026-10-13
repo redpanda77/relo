@@ -1,15 +1,25 @@
-import { Check, X } from "lucide-react"
-import { useState } from "react"
+import { ArrowRight, Check, X } from "lucide-react"
+import { useEffect, useState } from "react"
 
 import { fetchDashboardRoute } from "@/app/dashboard-route-loader"
+import { NowHud } from "@/components/organisms/now-hud"
+import { Empty, Page, Section } from "@/components/page"
+import { SIGNAL_CSS } from "@/lib/signal"
+import { LiveNowList, NowAllClear, NowSection } from "@/features/inbox/now-all-clear"
+import { AgentsSection } from "@/features/inbox/agents-section"
+import { quietSessionsByCard } from "@/features/inbox/sessions-model"
+import { ActivityCardRow } from "@/features/inbox/activity-card"
 import {
-  Empty,
-  List,
-  Page,
-  Row,
-  Section,
-  Status,
-} from "@/components/page"
+  agentSecondsToday,
+  agentTimeLabel,
+  cardFor,
+  daySummary,
+  groupByDay,
+  nowMetrics,
+  nowMix,
+  nowSentence,
+  todayActivity,
+} from "@/features/inbox/activity-model"
 import { relativeTime } from "@/lib/format"
 import { navigateDashboard } from "@/state/use-dashboard-route"
 import { Button } from "@/components/ui/button"
@@ -92,40 +102,195 @@ export function InboxView({
     }
   }
 
-  const needsYou =
-    (overview?.pendingResponses.length ?? 0) + (overview?.approvalRequests.length ?? 0)
+  const [now] = useState(() => Date.now())
+  const [syncedAt] = useState(() => Date.now())
+  const [clockNow, setClockNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const allCards = shown.map((notification) => ({ notification, card: cardFor(notification, now) }))
+  const runningCards = (overview?.runningActivities ?? notifications)
+    .map((notification) => ({ notification, card: cardFor(notification, now) }))
+    .filter(({ card }) => card.outcome.kind === "running")
+  // On Now, running tasks already have their own section above.
+  const runningIds = new Set(overview ? runningCards.map(({ card }) => card.id) : [])
+  const cards = allCards.filter(({ card }) => !runningIds.has(card.id))
+  const needsList = overview ? overview.pendingResponses.length + overview.approvalRequests.length : 0
+  const needsYou = overview
+    ? Math.max(
+        overview.pendingResponses.length + overview.approvalRequests.length,
+        overview.summary.pendingResponses + overview.summary.pendingApprovals
+      )
+    : 0
+  const metrics = nowMetrics({
+    cards: [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
+    running: runningCards.length,
+    needsYou,
+  })
+
+  const mix = nowMix({
+    cards: [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
+    running: runningCards.length,
+    needsYou,
+    now: new Date(clockNow),
+  })
+
+  const agentSeconds = agentSecondsToday(
+    [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
+    new Date(clockNow)
+  )
+  const agentTime = agentSeconds > 0 ? agentTimeLabel(agentSeconds) : null
+
+  const filters = history?.route.filters
+  const chooseFilter = (name: "kind" | "state", value: string) => {
+    if (!history || !filters) return
+    const query = new URLSearchParams()
+    if (filters.project) query.set("project", filters.project)
+    const next = { kind: filters.kind, state: filters.state, [name]: value || null }
+    if (next.kind) query.set("kind", next.kind)
+    if (next.state) query.set("state", next.state)
+    const search = query.toString()
+    navigateDashboard(`/dashboard/inbox/notifications${search ? `?${search}` : ""}`)
+  }
+
+  const activityList = cards.length ? (
+    <ul aria-label="Activity" className="space-y-2.5">
+      {groupByDay(cards.map(({ card }) => card)).flatMap((group) => {
+        const byId = new Map(cards.map(({ notification, card }) => [card.id, notification]))
+        return [
+          <li key={`day-${group.key}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-4 first:pt-0">
+            <h3 className="text-sm font-medium text-foreground">{group.label}</h3>
+            <span className="micro">{daySummary(group.cards)}</span>
+          </li>,
+          ...group.cards.map((card) => {
+            const notification = byId.get(card.id)!
+            return (
+              <ActivityCardRow
+                key={card.id}
+                card={card}
+                now={now}
+                onOpen={() => void open(card.id, notificationContext(notification))}
+              />
+            )
+          }),
+        ]
+      })}
+    </ul>
+  ) : (
+    <Empty title="Nothing yet" description="Notifications from your CLI, agents, and webhooks appear here." />
+  )
+
+  const projectSelect =
+    projectOptions.length > 1 ? (
+      <select
+        aria-label="Project"
+        value={selectedProject}
+        onChange={(event) => chooseProject(event.target.value)}
+        className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
+      >
+        <option value="">All projects</option>
+        {projectOptions.map((option) => (
+          <option key={option.key} value={option.key}>{option.name}</option>
+        ))}
+      </select>
+    ) : null
+
+  const historyFilters = history ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {projectSelect}
+      <select
+        aria-label="Kind"
+        value={filters?.kind ?? ""}
+        onChange={(event) => chooseFilter("kind", event.target.value)}
+        className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
+      >
+        <option value="">All kinds</option>
+        <option value="live_activity">Live Activities</option>
+        <option value="approval">Approvals</option>
+        <option value="question">Questions</option>
+        <option value="notification">Messages</option>
+      </select>
+      <select
+        aria-label="State"
+        value={filters?.state ?? ""}
+        onChange={(event) => chooseFilter("state", event.target.value)}
+        className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
+      >
+        <option value="">Any state</option>
+        <option value="active">Running</option>
+        <option value="ended">Ended</option>
+        <option value="responded">Answered</option>
+        <option value="expired">Expired</option>
+        <option value="recorded">Recorded</option>
+        <option value="canceled">Canceled</option>
+        <option value="replaced">Replaced</option>
+      </select>
+    </div>
+  ) : (
+    projectSelect
+  )
 
   return (
-    <Page title="Inbox">
-      {overview && needsYou > 0 ? (
-        <Section title="Needs you">
-          <List label="Needs you">
+    <Page title={history ? "History" : "Now"} eyebrow={history ? "Every card, newest first" : "Live"}>
+      {overview ? (
+        <NowHud
+          today={metrics.today}
+          done={metrics.done}
+          running={metrics.running}
+          needsYou={metrics.needsYou}
+          arcs={runningCards.map(({ card }) => ({
+            progress: card.steps ? card.steps.done / card.steps.total : card.progress,
+          }))}
+          sentence={nowSentence(metrics)}
+          mix={mix}
+          agentTime={agentTime}
+          syncedAt={syncedAt}
+          now={clockNow}
+        />
+      ) : null}
+
+      {overview && needsList > 0 ? (
+        <NowSection title="Needs you" count={needsYou} color={SIGNAL_CSS.needsYou}>
+          <ul aria-label="Needs you" className="space-y-2.5">
             {overview.pendingResponses.map((response) => (
-              <Row
-                key={response.notificationId}
-                onClick={() => void open(response.notificationId, response.source)}
-                label={`Open ${response.title}`}
-                leading={<span className="brand-gradient block size-2 rounded-full" aria-hidden="true" />}
-                title={response.title}
-                meta={`${response.source} · ${response.prompt}`}
-                trailing={response.expiresAt ? (
-                  <time className="hidden sm:inline" dateTime={response.expiresAt} title={formatDashboardDate(response.expiresAt)}>
-                    Respond {relativeTime(response.expiresAt)}
-                  </time>
-                ) : null}
-              />
+              <li key={response.notificationId}>
+                <div className="holo-card tone-orange p-4" data-live="true">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="micro tone-orange truncate" style={{ color: SIGNAL_CSS.needsYou }}>{response.source}</span>
+                    {response.expiresAt ? (
+                      <time className="micro shrink-0" dateTime={response.expiresAt} title={formatDashboardDate(response.expiresAt)}>
+                        Respond {relativeTime(response.expiresAt)}
+                      </time>
+                    ) : null}
+                  </div>
+                  <h3 className="mt-2 text-[15px] font-medium text-foreground">{response.title}</h3>
+                  <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{response.prompt}</p>
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      size="sm"
+                      className="min-h-11 sm:min-h-8"
+                      aria-label={`Open ${response.title}`}
+                      onClick={() => void open(response.notificationId, response.source)}
+                    >
+                      Open <ArrowRight aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+              </li>
             ))}
             {overview.approvalRequests.map((request) => {
               const pending = actions.pendingCodes.has(request.userCode)
               const error = actions.errorFor(request.userCode)
               return (
-                <Row
-                  key={request.userCode}
-                  leading={<span className="brand-gradient block size-2 rounded-full" aria-hidden="true" />}
-                  title={`Connect ${request.clientName}`}
-                  meta={`Code ${request.userCode} · ${request.requestedScopes.join(", ") || "no permissions"} · access until ${formatDashboardDate(request.credentialExpiresAt)}`}
-                  trailing={
-                    <>
+                <li key={request.userCode}>
+                  <div className="holo-card tone-orange p-4" data-live="true">
+                    <span className="micro" style={{ color: SIGNAL_CSS.needsYou }}>Connection request</span>
+                    <h3 className="mt-2 text-[15px] font-medium text-foreground">{`Connect ${request.clientName}`}</h3>
+                    <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+                      {`Code ${request.userCode} · ${request.requestedScopes.join(", ") || "no permissions"} · access until ${formatDashboardDate(request.credentialExpiresAt)}`}
+                    </p>
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
                       <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-8" data-action="deny-approval" data-code={request.userCode}
                         disabled={pending} onClick={() => void actions.decide(request.userCode, "deny")}>
                         <X aria-hidden="true" /> Deny
@@ -134,63 +299,61 @@ export function InboxView({
                         disabled={pending} onClick={() => void actions.decide(request.userCode, "approve")}>
                         <Check aria-hidden="true" /> Approve
                       </Button>
-                    </>
-                  }
-                >
-                  {error ? <p role="alert" className="px-4 pb-3 text-xs text-destructive">{error}</p> : null}
-                </Row>
+                    </div>
+                    {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
+                  </div>
+                </li>
               )
             })}
-          </List>
-        </Section>
+          </ul>
+        </NowSection>
       ) : null}
 
-      <Section
-        title="Activity"
-        action={
-          projectOptions.length > 1 ? (
-            <select
-              aria-label="Project"
-              value={selectedProject}
-              onChange={(event) => chooseProject(event.target.value)}
-              className="glass h-9 rounded-xl px-3 text-sm text-foreground outline-none"
-            >
-              <option value="">All projects</option>
-              {projectOptions.map((option) => (
-                <option key={option.key} value={option.key}>{option.name}</option>
-              ))}
-            </select>
-          ) : null
-        }
-      >
-        {shown.length ? (
-          <List label="Activity">
-            {shown.map((notification) => {
-              const context = notificationContext(notification)
-              const title =
-                (notification.activity?.context ?? notification.context).taskTitle ?? notification.title
-              return (
-                <Row
-                  key={notification.id}
-                  onClick={() => void open(notification.id, context)}
-                  label={`Open ${title}`}
-                  title={title}
-                  meta={context}
-                  trailing={
-                    <>
-                      <span className="hidden sm:inline"><Status value={notification.state} /></span>
-                      <time dateTime={notification.createdAt ?? undefined} title={formatDashboardDate(notification.createdAt)}>
-                        {relativeTime(notification.createdAt)}
-                      </time>
-                    </>
-                  }
-                />
-              )
-            })}
-          </List>
-        ) : (
-          <Empty title="Nothing yet" description="Notifications from your CLI, agents, and webhooks appear here." />
-        )}
+      {overview ? (
+        <AgentsSection
+          sessions={overview.sessions}
+          syncedAt={syncedAt}
+          cards={
+            new Map(
+              [...allCards, ...runningCards].map(({ notification, card }) => [
+                card.id,
+                { title: card.title, open: () => void open(card.id, notificationContext(notification)) },
+              ])
+            )
+          }
+        />
+      ) : null}
+
+      {overview && runningCards.length > 0 ? (
+        <NowSection title="Live now" count={runningCards.length} color={SIGNAL_CSS.running}>
+          <LiveNowList
+            now={clockNow}
+            syncedAt={syncedAt}
+            quietSessions={quietSessionsByCard(overview.sessions)}
+            items={runningCards.map(({ notification, card }) => ({
+              card,
+              open: () => void open(card.id, notificationContext(notification)),
+            }))}
+          />
+        </NowSection>
+      ) : null}
+
+      {overview ? (
+        <NowAllClear
+          allClear={needsYou === 0 && runningCards.length === 0}
+          activity={todayActivity(
+            [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
+            new Date(clockNow)
+          )}
+          onOpen={(id) => {
+            const found = notifications.find((item) => item.id === id)
+            void open(id, found ? notificationContext(found) : "")
+          }}
+        />
+      ) : null}
+
+      <Section title="Activity" action={historyFilters}>
+        {activityList}
         {history ? (
           <InboxPager value={history.pagination} />
         ) : overview && overview.summary.notifications > notifications.length ? (

@@ -29,6 +29,25 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml --profile test rm -
 
 Maintainer-specific operations remain outside this portable interface and the public source export.
 
+## Accounts and the server admin
+
+The first account created in the Dashboard owns the server and is its admin. Every other person
+gets a separate, private account; the admin never sees their notifications, cards or phones
+([ADR 0004](adr/0004-isolated-multi-user-accounts.md)). Under **Account → Server accounts** the
+admin chooses how people join:
+
+- **Closed** (the default): only the admin adds accounts, with a temporary password.
+- **Approval**: anyone who can reach the server can register; they can sign in once approved.
+  Each request reaches the admin from "Relo accounts" as a notification with Approve and Deny
+  and, when the iPhone allows Live Activities, a card on the Lock Screen. Answering either one, or
+  deciding in the Dashboard, settles both.
+- **Open**: anyone who can reach the server can register and sign in at once. Keep this for
+  private networks, since there are no per-account quotas yet.
+
+The admin can also sign an account out everywhere, revoke its access (every session, CLI key,
+service and phone stops working, and its data is kept), restore it, or delete it with all its
+data. The iPhone signs in through the same web page, so registration and approval apply there too.
+
 ## Completion links and artifacts
 
 An ordinary notification can carry one HTTPS link to a report, artifact, file, or page:

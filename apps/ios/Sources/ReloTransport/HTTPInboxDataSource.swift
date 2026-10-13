@@ -9,7 +9,7 @@ public struct HTTPInboxDataSource: InboxDataSource {
     private let token: String
     private let session: URLSession
 
-    public init(baseURL: URL, token: String, session: URLSession = .shared) {
+    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared) {
         self.baseURL = baseURL
         self.token = token
         self.session = session

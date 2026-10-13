@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronDown, RotateCcw, Smartphone } from "lucide-react"
+import { ArrowUpRight, Check, ChevronDown, Copy, Laptop, RotateCcw, Smartphone } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import {
@@ -7,9 +7,17 @@ import {
 } from "@/components/molecules/delivery-chain"
 import { Button } from "@/components/ui/button"
 import { ConfirmationAction } from "@/features/connections/components"
+import { OutcomeBadge } from "@/features/inbox/activity-card"
+import {
+  activityOutcome,
+  clockLabel,
+  originLabel,
+  typeLabel,
+} from "@/features/inbox/activity-model"
 import type { NotificationDetail } from "@/features/inbox/types"
 import { formatDashboardDate } from "@/features/inbox/utils"
 import { relativeTime } from "@/lib/format"
+import { useTicker } from "@/lib/ticker"
 import { semanticStatusTone } from "@/lib/status-tone"
 import { cn } from "@/lib/utils"
 import type { InboxService } from "@/services/inbox-service"
@@ -143,6 +151,69 @@ function headline(
   return { tone: "neutral", text: text.charAt(0).toUpperCase() + text.slice(1) }
 }
 
+const stepWord = {
+  done: "Done",
+  current: "In progress",
+  pending: "Pending",
+  stopped: "Stopped",
+} as const
+
+type MissionState = keyof typeof stepWord
+
+function missionState(
+  state: string,
+  index: number,
+  all: Array<{ state: string }>,
+  failed: boolean
+): MissionState {
+  if (state === "complete") return "done"
+  if (state === "current") return failed ? "stopped" : "current"
+  // A stopped task leaves its first unfinished step marked in amber.
+  if (failed && !all.some((step) => step.state === "current")) {
+    const first = all.findIndex((step) => step.state !== "complete")
+    if (first === index) return "stopped"
+  }
+  return "pending"
+}
+
+function durationSeconds(from: string | null, to: string | null) {
+  if (!from || !to) return null
+  const value = (new Date(to).valueOf() - new Date(from).valueOf()) / 1000
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function StepMarker({ state, index }: { state: MissionState; index: number }) {
+  const base = "relative z-10 grid size-6 shrink-0 place-items-center rounded-full text-[11px]"
+  if (state === "done")
+    return (
+      <span className={base} style={{ backgroundImage: "linear-gradient(135deg,var(--neon-cyan),var(--neon-violet))", color: "#07090e" }}>
+        <Check className="size-3.5" aria-hidden="true" />
+      </span>
+    )
+  if (state === "current")
+    return (
+      <span className={cn(base, "mission-pulse border border-[var(--neon-violet)] bg-[color-mix(in_srgb,var(--neon-violet)_20%,transparent)] font-mono text-white")}>
+        {index}
+      </span>
+    )
+  if (state === "stopped")
+    return (
+      <span className={cn(base, "border border-[var(--neon-amber)] bg-[color-mix(in_srgb,var(--neon-amber)_16%,transparent)] font-mono text-[var(--neon-amber)]")}>
+        {index}
+      </span>
+    )
+  return <span className={cn(base, "border border-white/20 font-mono text-muted-foreground")}>{index}</span>
+}
+
+function Telemetry({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="micro">{label}</dt>
+      <dd className="numeral mt-1.5 truncate text-2xl">{value}</dd>
+    </div>
+  )
+}
+
 export function NotificationDetailBody({
   detail,
   context,
@@ -165,6 +236,7 @@ export function NotificationDetailBody({
   )
   const [reactivation, setReactivation] = useState<"idle" | "pending" | "done" | "failed">("idle")
   const [reconciling, setReconciling] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     if (!event.readAt) void service.markNotificationRead?.(event.id).catch(() => undefined)
@@ -176,6 +248,33 @@ export function NotificationDetailBody({
     activity.presentationLeases.some((lease) => lease.state === "not_presented")
   const title = activity?.context.taskTitle ?? event.title
   const status = headline(detail, withdrawal === "done")
+  const cardOutcome =
+    activity && !interaction && withdrawal !== "done"
+      ? activityOutcome(activity.state, activity.outcome)
+      : null
+  const stepItems = (activity?.stepItems ?? []).map((step, index, all) => ({
+    label: step.label,
+    state: missionState(step.state, index, all, activity?.outcome === "failed"),
+  }))
+  const tickNow = useTicker(Boolean(activity && !activity.endedAt))
+  const elapsedSeconds = activity
+    ? durationSeconds(
+        activity.createdAt,
+        activity.endedAt ?? new Date(tickNow).toISOString()
+      )
+    : null
+  const elapsed = elapsedSeconds == null ? null : clockLabel(elapsedSeconds)
+  const origin = activity ? originLabel(activity.context) : null
+  const identity = context
+    ? context.split(" › ")
+    : [event.source, activity?.context.project, activity?.context.threadName]
+  const chips = [
+    ...identity.filter((part): part is string => Boolean(part)).map((text, index) => ({
+      key: `id-${index}`, text, label: ["Source", "Project", "Topic"][index] ?? "Context",
+    })),
+    { key: "type", text: typeLabel(event.kind, interaction?.kind ?? null), label: "Type" },
+    { key: "created", text: formatDashboardDate(event.createdAt), label: "Created" },
+  ]
   const body = event.body.trim()
   const showBody = Boolean(body) && body !== interaction?.prompt.trim() && body !== title
   const showPrompt =
@@ -191,42 +290,87 @@ export function NotificationDetailBody({
 
   return (
     <div className={cn(panel ? "flex min-h-full flex-col" : "space-y-8")}>
-      <header className={cn(panel && "border-b border-border pt-6 pb-5", pad, "space-y-2")}>
-        <span
-          className={cn(
-            "inline-flex w-fit items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium",
-            toneClass[status.tone]
-          )}
-          data-detail-status
-        >
-          <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
-          {status.text}
-        </span>
+      <header className={cn(panel && "border-b border-border pt-6 pb-5", pad, "space-y-3")}>
+        <div className="flex flex-wrap gap-1.5" data-identity-chips>
+          {chips.map((chip) => (
+            <span key={chip.key} className="hairline-chip" title={chip.label}>
+              <span className="truncate">{chip.text}</span>
+            </span>
+          ))}
+          {origin ? (
+            <span className="hairline-chip gap-1" title="Computer and agent account" data-part="origin">
+              <Laptop className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{origin}</span>
+            </span>
+          ) : null}
+        </div>
         {heading ? (
           heading(title)
         ) : (
-          <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-2xl font-light tracking-tight sm:text-3xl [overflow-wrap:anywhere]">{title}</h2>
         )}
-        <p className="text-sm text-muted-foreground">
-          {context || event.source}
-          {" · "}
-          <time dateTime={event.createdAt ?? undefined} title={formatDashboardDate(event.createdAt)}>
-            {relativeTime(event.createdAt)}
-          </time>
-        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {cardOutcome ? (
+            <span data-detail-status className="inline-flex">
+              <OutcomeBadge outcome={cardOutcome} />
+            </span>
+          ) : (
+            <span
+              className={cn(
+                "inline-flex w-fit items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium",
+                toneClass[status.tone]
+              )}
+              data-detail-status
+            >
+              <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+              {status.text}
+            </span>
+          )}
+          {activity?.status ? (
+            <span className="text-sm text-muted-foreground">{activity.status}</span>
+          ) : null}
+        </div>
       </header>
 
       <div className={cn("space-y-8", panel && "flex-1 py-6", pad)}>
         {activity ? (
-          <section className="space-y-2">
-            <p className="text-sm font-medium">{activity.status}</p>
+          <>
             {activity.detail ? (
               <p className="text-sm leading-6 text-muted-foreground">{activity.detail}</p>
             ) : null}
-            {typeof activity.progress === "number" ? (
-              <div className="flex items-center gap-3 pt-1">
+            {stepItems.length ? (
+              <section aria-labelledby="mission-heading" className="space-y-4">
+                <h3 id="mission-heading" className="micro">Mission</h3>
+                <ol className="space-y-0">
+                  {stepItems.map((step, index) => (
+                    <li key={index} className="relative flex gap-3 pb-4 last:pb-0" data-step-state={step.state}>
+                      {index < stepItems.length - 1 ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute top-7 bottom-0 left-[11px] w-px"
+                          style={{ background: step.state === "done" ? "linear-gradient(180deg,var(--neon-cyan),var(--neon-violet))" : "var(--hairline)" }}
+                        />
+                      ) : null}
+                      <StepMarker state={step.state} index={index + 1} />
+                      <span className="min-w-0 pt-0.5">
+                        <span
+                          className={cn(
+                            "block text-sm [overflow-wrap:anywhere]",
+                            step.state === "pending" ? "text-muted-foreground" : "text-foreground"
+                          )}
+                        >
+                          {step.label}
+                        </span>
+                        <span className="micro">{stepWord[step.state]}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ) : typeof activity.progress === "number" ? (
+              <div className="flex items-center gap-3">
                 <div
-                  className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10"
+                  className="h-1 flex-1 overflow-hidden rounded-full bg-white/10"
                   role="progressbar"
                   aria-label="Progress"
                   aria-valuemin={0}
@@ -234,8 +378,8 @@ export function NotificationDetailBody({
                   aria-valuenow={Math.round(activity.progress * 100)}
                 >
                   <div
-                    className="h-full rounded-full bg-foreground"
-                    style={{ width: `${Math.round(activity.progress * 100)}%` }}
+                    className="h-full rounded-full"
+                    style={{ width: `${Math.round(activity.progress * 100)}%`, backgroundImage: "var(--ramp)" }}
                   />
                 </div>
                 <span className="w-10 text-right text-xs text-muted-foreground tabular-nums">
@@ -243,14 +387,19 @@ export function NotificationDetailBody({
                 </span>
               </div>
             ) : null}
-          </section>
+            <dl className="grid grid-cols-3 gap-4 border-t border-white/[0.07] pt-5" aria-label="Telemetry">
+              <Telemetry label="Elapsed" value={elapsed ?? "—"} />
+              <Telemetry label="Updates" value={String(activity.updates ?? activity.sequence + 1)} />
+              <Telemetry label="Started" value={clock(activity.createdAt) || "—"} />
+            </dl>
+          </>
         ) : showBody ? (
           <p className="text-[15px] leading-7 whitespace-pre-wrap [overflow-wrap:anywhere]">{body}</p>
         ) : null}
 
         {interaction ? (
           <section aria-labelledby="answer-heading" className="space-y-3">
-            <h3 id="answer-heading" className="text-sm font-semibold">
+            <h3 id="answer-heading" className="micro">
               Your answer
             </h3>
             {showPrompt ? (
@@ -302,12 +451,14 @@ export function NotificationDetailBody({
           </section>
         ) : null}
 
-        <section aria-labelledby="delivery-heading" className="space-y-4">
-          <h3 id="delivery-heading" className="text-sm font-semibold">
-            Delivery
-          </h3>
-          <DeliveryChain stages={deliveryFacts(detail)} orientation="vertical" />
-        </section>
+        {activity ? null : (
+          <section aria-labelledby="delivery-heading" className="space-y-4">
+            <h3 id="delivery-heading" className="micro">
+              Delivery
+            </h3>
+            <DeliveryChain stages={deliveryFacts(detail)} orientation="vertical" />
+          </section>
+        )}
 
         <details className="group rounded-2xl border border-border bg-white/[0.02] text-sm">
           <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -319,8 +470,23 @@ export function NotificationDetailBody({
           </summary>
           <div className="space-y-4 border-t border-border p-4">
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 text-xs">
-              <dt className="text-muted-foreground">Event</dt>
-              <dd className="font-mono break-all">{event.id}</dd>
+              <dt className="text-muted-foreground">{activity ? "ID" : "Event"}</dt>
+              <dd>
+                {activity ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(activity.id).then(() => setCopied(true)).catch(() => undefined)
+                    }}
+                    className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-border px-2 text-xs hover:bg-accent"
+                  >
+                    {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+                    {copied ? "Copied" : "Copy ID"}
+                  </button>
+                ) : (
+                  <span className="font-mono break-all">{event.id}</span>
+                )}
+              </dd>
               <dt className="text-muted-foreground">Kind</dt>
               <dd className="capitalize">{words(event.kind)}</dd>
               <dt className="text-muted-foreground">Privacy</dt>
@@ -334,6 +500,9 @@ export function NotificationDetailBody({
                 </>
               ) : null}
             </dl>
+            {activity ? (
+              <DeliveryChain stages={deliveryFacts(detail)} orientation="vertical" />
+            ) : null}
             {detail.deliveries.length ? (
               <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
                 {detail.deliveries.map((delivery) => (

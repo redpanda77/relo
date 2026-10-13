@@ -161,6 +161,31 @@ final class KeychainRegistrationAttemptStoreTests: XCTestCase {
         XCTAssertEqual(persisted, advanced)
     }
 
+    func testAnUnchangedRegisteredRequestIsNotRegisteredAgain() throws {
+        let service = "com.example.relo.notifications.tests.\(UUID().uuidString)"
+        let account = "registration-attempt"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        defer { SecItemDelete(query as CFDictionary) }
+        let request = registrationRequest()
+        let store = KeychainRegistrationAttemptStore(service: service, account: account)
+
+        XCTAssertFalse(store.isRegistered(for: request, credentialVersion: 3))
+        _ = try store.attempt(for: request, minimumRevision: 3)
+        XCTAssertFalse(store.isRegistered(for: request, credentialVersion: 3), "an attempt is not a registration")
+        try store.recordRegistrationSuccess(credentialVersion: 3)
+        XCTAssertTrue(store.isRegistered(for: request, credentialVersion: 3))
+        XCTAssertFalse(store.isRegistered(for: request, credentialVersion: 4), "a newer credential means something changed")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        object["apnsToken"] = String(repeating: "b", count: 64)
+        let changed = try JSONDecoder().decode(DeviceRegistrationRequest.self,
+                                               from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertFalse(store.isRegistered(for: changed, credentialVersion: 3), "a changed request registers again")
+    }
+
     func testRegistrationRecoveryBackoffIsBoundedAndHonorsServerRetryAfter() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var state = RegistrationRecoveryState()

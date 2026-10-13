@@ -1,4 +1,5 @@
 import { UsageError } from "./errors.mjs";
+import { optionHint } from "./suggest.mjs";
 
 const BOOLEAN_OPTIONS = new Set([
   "help",
@@ -16,6 +17,18 @@ const BOOLEAN_OPTIONS = new Set([
   "smoke",
   "markdown",
   "no-wait",
+  "full",
+  "clear",
+  "next-step",
+  "global",
+  "dry-run",
+  "remove",
+  "move",
+  "again",
+  "check",
+  "rollback",
+  "hooks",
+  "mcp",
 ]);
 const VALUE_OPTIONS = new Set([
   "client-name",
@@ -39,6 +52,7 @@ const VALUE_OPTIONS = new Set([
   "progress",
   "progress-label",
   "step",
+  "steps",
   "step-current",
   "style",
   "preset",
@@ -49,6 +63,7 @@ const VALUE_OPTIONS = new Set([
   "if-sequence",
   "dismiss-after",
   "computer",
+  "account",
   "source",
   "project",
   "topic",
@@ -65,8 +80,13 @@ const VALUE_OPTIONS = new Set([
   "secret-file",
   "notification",
   "cursor",
+  "file",
+  "agent",
+  "dir",
+  "profile",
+  "version",
 ]);
-const REPEATABLE_OPTIONS = new Set(["device", "scope", "step"]);
+const REPEATABLE_OPTIONS = new Set(["device", "scope", "step", "file"]);
 const FORBIDDEN_SECRET_OPTIONS = new Set(["token", "api-token", "secret", "authorization"]);
 
 export function parseArgs(argv) {
@@ -93,12 +113,18 @@ export function parseArgs(argv) {
     if (FORBIDDEN_SECRET_OPTIONS.has(name)) {
       throw new UsageError(`--${name} is forbidden; credentials come from relo auth login (mode-0600 config file) or the RELO_TOKEN environment variable`);
     }
-    if (BOOLEAN_OPTIONS.has(name)) {
+    // `relo setup --project` is a flag; everywhere else --project names the work's project.
+    // `relo update --version X` names a release; everywhere else --version is the flag that prints this CLI's version.
+    const valued = name === "version" && positionals[0] === "update";
+    if ((BOOLEAN_OPTIONS.has(name) && !valued) || (name === "project" && positionals[0] === "setup")) {
       if (inlineValue !== undefined) throw new UsageError(`--${name} does not accept a value`);
       options[name] = true;
       continue;
     }
-    if (!VALUE_OPTIONS.has(name)) throw new UsageError(`Unknown option: --${name}`);
+    if (!VALUE_OPTIONS.has(name)) {
+      const known = [...BOOLEAN_OPTIONS, ...VALUE_OPTIONS];
+      throw new UsageError(`Unknown option: --${name}`, { hint: optionHint(name, positionals, known) });
+    }
     const value = inlineValue ?? argv[++index];
     if (value === undefined || value === "" || value.startsWith("--")) {
       throw new UsageError(`--${name} requires a value`);
@@ -140,6 +166,46 @@ export function numberOption(value, name, { minimum, maximum, integer = false } 
   if (minimum !== undefined && parsed < minimum) throw new UsageError(`--${name} must be at least ${minimum}`);
   if (maximum !== undefined && parsed > maximum) throw new UsageError(`--${name} must be at most ${maximum}`);
   return parsed;
+}
+
+const PROGRESS_HINT = "Use 0.4, 40% or 2/5";
+
+/** A progress fraction from 0.4, "40%" or "2/5". A bare number from 1 to 100 is ambiguous and rejected. */
+export function progressFraction(value, name = "progress") {
+  if (value === undefined || value === null) return value;
+  const flag = `--${name}`;
+  const text = String(value).trim();
+  const round = (fraction) => Math.round(fraction * 1_000_000) / 1_000_000;
+  let match = text.match(/^(\d+(?:\.\d+)?)\s*%$/u);
+  if (match) {
+    const percent = Number(match[1]);
+    if (percent > 100) throw new UsageError(`${flag} ${text} is more than 100%`, { hint: PROGRESS_HINT });
+    return round(percent / 100);
+  }
+  match = text.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/u);
+  if (match) {
+    const done = Number(match[1]);
+    const total = Number(match[2]);
+    if (total <= 0 || done > total) {
+      throw new UsageError(`${flag} ${text} must be done/total with 0 <= done <= total`, { hint: PROGRESS_HINT });
+    }
+    return round(done / total);
+  }
+  const number = Number(text);
+  if (text === "" || !Number.isFinite(number)) {
+    throw new UsageError(`${flag} must be a number from 0 to 1, a percent like 40%, or a fraction like 2/5`, { hint: PROGRESS_HINT });
+  }
+  if (number >= 0 && number <= 1) return number;
+  throw new UsageError(
+    number > 1 && number <= 100 ? `${flag} ${text} is ambiguous` : `${flag} ${text} is out of range`,
+    { hint: PROGRESS_HINT },
+  );
+}
+
+/** "3/20" becomes "3 of 20" when the caller gave no label of their own; any other form has no automatic label. */
+export function progressCountLabel(value) {
+  const match = String(value ?? "").trim().match(/^(\d+)\s*\/\s*(\d+)$/u);
+  return match ? `${Number(match[1])} of ${Number(match[2])}` : undefined;
 }
 
 export function requireText(value, label, maximum = 2_000) {

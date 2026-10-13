@@ -12,7 +12,7 @@ export async function getOwnerAccount(db: Database, accountAuth: AccountAuth, he
     `SELECT i.principal_id FROM account_identities i
      JOIN owner_principals p ON p.id=i.principal_id
      WHERE i.provider='better-auth' AND i.subject=$1 AND p.disabled_at IS NULL
-       AND i.disabled_at IS NULL`,
+       AND i.disabled_at IS NULL AND i.approved_at IS NOT NULL`,
     [session.user.id],
   );
   if (!mapped.rowCount) return null;

@@ -65,6 +65,8 @@ public struct InboxRepairResponse: Decodable, Equatable, Sendable {
     public let serverTime: Date
     public let readWatermark: String?
     public let unread: InboxUnreadSummary
+    /// Agent sessions; absent from older servers.
+    public var sessions: [AgentSession]? = nil
 
     public var isValid: Bool {
         items.count <= 250 && total >= items.count && unread.account >= 0
@@ -77,6 +79,7 @@ public struct InboxRepairResponse: Decodable, Equatable, Sendable {
         var result = InboxSnapshot(items: items.map(\.item), lastSuccessfulSyncAt: syncedAt,
             readWatermark: readWatermark, unread: unread)
         result.total = total
+        result.sessions = sessions
         result.historyMetadata = Dictionary(uniqueKeysWithValues: items.map { ($0.item.id, $0.metadata) })
         return result
     }

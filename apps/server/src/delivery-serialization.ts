@@ -134,6 +134,12 @@ export function ordinaryDeliveryPayloadSize(input: OrdinaryDeliveryIntent): numb
   return Buffer.byteLength(JSON.stringify({ ...projection.customData,aps }));
 }
 
+/** startedAt uses the same epoch-seconds encoding as updatedAt; omitted when the command predates it. */
+function startedAtState(command: Record<string, unknown>): { startedAt?: number } {
+  const value = command.startedAt;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? { startedAt: value } : {};
+}
+
 export function activityContentState(
   command: Record<string, unknown>,
   privacy: "private" | "standard",
@@ -147,6 +153,7 @@ export function activityContentState(
       generation,
       ...presentation,
       updatedAt: timestamp,
+      ...startedAtState(command),
       sequence: finiteInteger(command.sequence, 0, Number.MAX_SAFE_INTEGER, 0),
       expiresAt: nullableEpochSeconds(command.expiresAt),
       staleAt: nullableEpochSeconds(command.staleAt),
@@ -160,6 +167,7 @@ export function activityContentState(
     progress: privacy === "private" ? null : finiteNumber(command.progress),
     status: privacy === "private" ? "Open Relo to view" : stringValue(command.status, "In progress"),
     updatedAt: timestamp,
+    ...startedAtState(command),
     sequence: finiteInteger(command.sequence, 0, Number.MAX_SAFE_INTEGER, 0),
     style: privacy === "private" ? "standard" : stringValue(command.style, "standard"),
     symbol: privacy === "private" ? "terminal" : stringValue(command.symbol, "terminal"),
@@ -331,7 +339,7 @@ function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unkno
   if (privacy === "standard") {
     const context = plainObject(input.payload.context);
     if (context) {
-      const safeContext = Object.fromEntries(["providerName", "computer", "project", "threadName", "taskTitle"]
+      const safeContext = Object.fromEntries(["providerName", "computer", "account", "project", "threadName", "taskTitle"]
         .filter((key) => typeof context[key] === "string")
         .map((key) => [key, context[key]]));
       if (Object.keys(safeContext).length > 0) data.context = safeContext;

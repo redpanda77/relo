@@ -5,13 +5,13 @@ roadmap describes the current product contract and the next adopter-facing outco
 release evidence and environment-specific operations are intentionally not part of this document.
 
 <!-- current-truth:start -->
-Current baseline: server, worker, and Dashboard `0.9.11`, CLI/notifier/skill `0.9.2`, and iOS
-`0.9.19` build `31` source-only.
+Current baseline: server, worker, and Dashboard `0.10.0`, CLI/notifier/skill `0.9.9`, and iOS
+`0.9.30` build `42` source-only.
 <!-- current-truth:end -->
 
 ## Product contract
 
-Run one server, connect an iPhone by QR, authenticate the CLI through a browser approval link, and
+Run one server, sign the iPhone app in through the browser, authenticate the CLI through a browser approval link, and
 send durable notifications, decisions, and Live Activity progress to that phone.
 
 - PostgreSQL is the source of canonical state.
@@ -25,7 +25,7 @@ send durable notifications, decisions, and Live Activity progress to that phone.
 ## Available now
 
 - Docker Compose self-hosting with a restricted runtime database role.
-- First-owner setup, account management, and QR-based iPhone connection.
+- First-owner setup, account management, and browser sign-in for the iPhone app.
 - Browser-link-first CLI authorization with page-and-code fallback.
 - Notifications, approval/yes-no/text decisions, and Live Activities.
 - Delivery diagnosis across server, worker, APNs, and exact phone receipt boundaries.

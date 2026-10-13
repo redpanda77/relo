@@ -219,8 +219,26 @@ public struct KeychainRegistrationAttemptStore: RegistrationAttemptStore, Sendab
             revision: existing.revision,
             requestFingerprint: existing.requestFingerprint,
             transientFailureCount: nil,
-            nextRetryAt: nil
+            nextRetryAt: nil,
+            registeredCredentialVersion: existing.registeredCredentialVersion
         ))
+    }
+
+    public func recordRegistrationSuccess(credentialVersion: Int) throws {
+        guard let existing = try store.load() else { return }
+        try store.save(PersistedRegistrationAttempt(
+            revision: existing.revision,
+            requestFingerprint: existing.requestFingerprint,
+            transientFailureCount: nil,
+            nextRetryAt: nil,
+            registeredCredentialVersion: credentialVersion
+        ))
+    }
+
+    public func isRegistered(for request: DeviceRegistrationRequest, credentialVersion: Int) -> Bool {
+        guard let existing = try? store.load(), let registered = existing.registeredCredentialVersion,
+              let fingerprint = try? Self.fingerprint(request) else { return false }
+        return existing.requestFingerprint == fingerprint && registered == credentialVersion
     }
 
     public func delete() throws {
@@ -393,6 +411,8 @@ private struct PersistedRegistrationAttempt: Codable {
     let requestFingerprint: String
     let transientFailureCount: Int?
     let nextRetryAt: Date?
+    /// The credential version the server issued for this attempt, once it succeeded.
+    var registeredCredentialVersion: Int? = nil
 }
 
 private struct KeychainLocalStorageSchemaMarker: LocalStorageSchemaMarker {

@@ -20,4 +20,6 @@ export type WebRouteContext = {
   accountMutationAccount(context: any): Promise<OwnerAccount | Response>;
   /** A Dashboard mutation by a user with the owner role. */
   ownerAdminAccount(context: any): Promise<OwnerAccount | Response>;
+  /** A Dashboard mutation by the server admin (ADR 0004): manages accounts, never their data. */
+  serverAdminAccount(context: any): Promise<OwnerAccount | Response>;
 };

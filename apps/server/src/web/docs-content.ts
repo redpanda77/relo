@@ -92,7 +92,7 @@ A scoped client can list active devices with \`GET /api/devices\` (\`devices:rea
   "imageUrl": "https://images.example.com/result.png",
   "destinationUrl": "https://example.com/builds/42",
   "deviceIds": ["dev_opaque"],
-  "context": { "computer": "Mac", "project": "Relo", "threadName": "Releases", "taskTitle": "Verify release" }
+  "context": { "computer": "Mac", "account": "work", "project": "Relo", "threadName": "Releases", "taskTitle": "Verify release" }
 }
 \`\`\`
 

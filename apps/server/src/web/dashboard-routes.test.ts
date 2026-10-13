@@ -108,7 +108,9 @@ function authenticatedRouteApp(options: { empty?: boolean } = {}): Hono {
   const rows = (values: any[]) => ({ rows: values, rowCount: values.length });
   const db = {
     query: async (sql: string) => {
-      if (sql.includes("FROM account_identities")) {
+      if (sql.includes("FROM agent_sessions")) return rows([]);
+      // Pending CLI logins also check how many accounts exist; answer them as such.
+      if (sql.includes("FROM account_identities") && !sql.includes("FROM device_authorizations")) {
         return rows([{ principal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }]);
       }
       if (sql.includes("AS notification_history") && sql.includes("AS activities")) {

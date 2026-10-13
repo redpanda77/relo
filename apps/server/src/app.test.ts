@@ -1487,7 +1487,8 @@ suite("Relo API persistence boundaries", () => {
 
   test("live activity start, update, read, list, and end persist a monotonic lifecycle", async () => {
     const phone = await pair(ownerOneToken, "99999999-9999-4999-8999-999999999999");
-    const startBody = JSON.stringify({ key: "build-42", title: "Building", status: "Starting", progress: 0.1 });
+    const startBody = JSON.stringify({ key: "build-42", title: "Building", status: "Starting", progress: 0.1,
+      context: { computer: "MacBook", account: "work", project: "Relo", threadName: "Build", taskTitle: "Build 42" } });
     const started = await request("/api/live-activities", ownerOneToken, {
       method: "POST", headers: { "idempotency-key": "activity-start-12345678" },
       body: startBody,
@@ -1496,6 +1497,9 @@ suite("Relo API persistence boundaries", () => {
     const startedBody = await started.json() as any;
     const activityId = startedBody.activity.id;
     expect(startedBody.queued).toBe(1);
+    expect(startedBody.activity.context).toMatchObject({ computer: "MacBook", account: "work" });
+    const snapshotBody = await (await request("/api/inbox/snapshot", phone.credential)).json() as any;
+    expect(snapshotBody.items.some((item: any) => item.context?.computer === "MacBook" && item.context?.account === "work")).toBe(true);
     expect(startedBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     const startReplay = await request("/api/live-activities", ownerOneToken, {
       method: "POST", headers: { "idempotency-key": "activity-start-12345678" }, body: startBody,
@@ -1598,6 +1602,8 @@ suite("Relo API persistence boundaries", () => {
     )).rows.map((row) => row.command);
     expect(commands.map((command) => command.operation)).toEqual(["start", "update", "update", "end"]);
     expect(commands.map((command) => command.sequence)).toEqual([0, 1, 2, 3]);
+    expect(new Set(commands.map((command) => command.startedAt)).size).toBe(1);
+    expect(Number.isSafeInteger(commands[0].startedAt)).toBe(true);
     expect(commands.map((command) => command.alertOwner)).toEqual(["apns","none","none","none"]);
     expect(new Set(commands.map((command) => command.activityId))).toEqual(new Set([activityId]));
     expect(commands.every((command) => command.targetDeviceId === phone.deviceId)).toBe(true);

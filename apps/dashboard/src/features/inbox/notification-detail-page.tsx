@@ -239,6 +239,7 @@ export function NotificationDetailPage({
                   )}
                 </Detail>
                 <Detail term="Computer">{context?.computer ?? "Unavailable"}</Detail>
+                {context?.account ? <Detail term="Account">{context.account}</Detail> : null}
                 <Detail term="Generation">{activity.generation}</Detail>
                 <Detail term="Current sequence">{activity.sequence}</Detail>
                 <Detail term="Lifecycle state">

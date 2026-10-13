@@ -13,10 +13,11 @@ function message(value: unknown): string {
   return "Authentication failed."
 }
 
+/** "pending" when the account exists but waits for the server admin's approval. */
 export async function authenticateOwner(
   mode: "sign-in" | "sign-up",
   input: AuthInput
-): Promise<void> {
+): Promise<"signed-in" | "pending"> {
   const response = await fetch(
     mode === "sign-in"
       ? "/api/auth/sign-in/email"
@@ -32,6 +33,7 @@ export async function authenticateOwner(
       }),
     }
   )
-  if (response.ok) return
+  if (response.status === 202) return "pending"
+  if (response.ok) return "signed-in"
   throw new Error(message(await response.json().catch(() => null)))
 }

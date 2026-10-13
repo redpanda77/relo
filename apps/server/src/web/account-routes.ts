@@ -1,13 +1,19 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import { lockAccountLifecycle } from "../account-lifecycle.js";
+import { authAttemptLimited } from "../auth-throttle.js";
 import { apnsTransportTruth } from "../delivery-observability.js";
+import {
+  createAccountPrincipal,isServerAdmin,registrationMode,requestAccountApproval,signInRefusal,
+} from "../server-accounts.js";
 import type { WebRouteContext } from "./route-context.js";
 
 /** Owner sign-up and sign-in, the session, delivery status and account deletion. */
 export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void {
-  const { db,accountAuth,bootstrapOwnerHandle,apnsMode,accountMutationAccount } = shared;
+  const { db,accountAuth,bootstrapOwnerHandle,apnsMode,accountMutationAccount,notificationContentCipher } = shared;
   app.post("/api/auth/sign-up/email", async (context) => {
+    const throttled = authAttemptLimited(context,"sign-up");
+    if (throttled) return throttled;
     const client = await db.connect();
     let createdUserId: string | undefined;
     // The database clock writes auth.users.created_at; compare against the same clock.
@@ -28,16 +34,25 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
     try {
       await client.query("BEGIN");
       await lockAccountLifecycle(client);
-      const claimed = await client.query("SELECT 1 FROM account_identities LIMIT 1");
-      if (claimed.rowCount) {
+      const claimed = Boolean((await client.query("SELECT 1 FROM account_identities LIMIT 1")).rowCount);
+      const mode = claimed ? await registrationMode(client) : null;
+      if (mode === "closed") {
         await client.query("ROLLBACK");
-        return context.json({ error: "account_already_configured" },403);
+        return context.json({ error: "registration_closed" },403);
       }
 
       const authResponse = await accountAuth.handler(context.req.raw);
       if (!authResponse.ok) {
         await client.query("ROLLBACK");
         await compensateUnmappedIdentity();
+        // Never say whether an email already has an account: with approval the reply is the same as
+        // for a new request, and open registration gives the same generic failure for any refusal.
+        const failure = await authResponse.clone().json().catch(() => null) as { code?: unknown } | null;
+        if (claimed && typeof failure?.code === "string" && /ALREADY_EXISTS/u.test(failure.code)) {
+          return mode === "approval"
+            ? context.json({ status: "approval_pending" },202)
+            : context.json({ error: "sign_up_failed",message: "Couldn't create this account. If you already have one, sign in." },400);
+        }
         return authResponse;
       }
       const payload = await authResponse.clone().json() as { user?: { id?: string } };
@@ -48,16 +63,35 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
       }
       createdUserId = payload.user.id;
 
-      const mapping = await client.query(
-        `INSERT INTO account_identities(principal_id,provider,subject)
-         SELECT id,'better-auth',$2 FROM owner_principals WHERE handle=$1 AND disabled_at IS NULL
-         ON CONFLICT DO NOTHING RETURNING principal_id`,
-        [bootstrapOwnerHandle,payload.user.id],
-      );
-      if (!mapping.rowCount) {
-        await client.query("DELETE FROM auth.users WHERE id=$1",[payload.user.id]);
+      if (claimed) {
+        // ADR 0004: everyone after the first person gets an empty account of their own.
+        await createAccountPrincipal(client,payload.user.id,{ approved: mode === "open" });
+      } else {
+        // The first person claims the bootstrapped account and administers the server.
+        const mapping = await client.query(
+          `INSERT INTO account_identities(principal_id,provider,subject,server_admin,approved_at)
+           SELECT id,'better-auth',$2,true,now() FROM owner_principals WHERE handle=$1 AND disabled_at IS NULL
+           ON CONFLICT DO NOTHING RETURNING principal_id`,
+          [bootstrapOwnerHandle,payload.user.id],
+        );
+        if (!mapping.rowCount) {
+          await client.query("DELETE FROM auth.users WHERE id=$1",[payload.user.id]);
+          await client.query("COMMIT");
+          return context.json({ error: "owner_not_bootstrapped" },503);
+        }
+      }
+      if (mode === "approval") {
+        await client.query("DELETE FROM auth.sessions WHERE user_id=$1",[payload.user.id]);
         await client.query("COMMIT");
-        return context.json({ error: "owner_not_bootstrapped" },503);
+        const person = payload as { user: { id: string; name?: string; email?: string } };
+        try {
+          await requestAccountApproval(db,{ subject: person.user.id,name: person.user.name ?? "Someone",
+            email: person.user.email ?? "" },{ apnsMode,contentCipher: notificationContentCipher,appUrl: shared.appUrl });
+        } catch (error) {
+          // The request stays pending in the Dashboard even when the phone cannot be asked.
+          console.error("account request approval failed",{ message: error instanceof Error ? error.message : "unknown" });
+        }
+        return context.json({ status: "approval_pending" },202);
       }
       await client.query("COMMIT");
       return authResponse;
@@ -75,9 +109,17 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
   });
 
   app.post("/api/auth/sign-in/email", async (context) => {
+    const throttled = authAttemptLimited(context,"sign-in");
+    if (throttled) return throttled;
     const input = await context.req.raw.clone().json().catch(() => null) as { rememberMe?: unknown } | null;
     if (!input || input.rememberMe !== true) return context.json({ error: "invalid_request" }, 400);
-    return accountAuth.handler(context.req.raw);
+    const response = await accountAuth.handler(context.req.raw);
+    if (!response.ok) return response;
+    const payload = await response.clone().json().catch(() => null) as { user?: { id?: string } } | null;
+    const refusal = payload?.user?.id ? await signInRefusal(db,payload.user.id) : "account_disabled";
+    if (!refusal) return response;
+    if (payload?.user?.id) await db.query("DELETE FROM auth.sessions WHERE user_id=$1",[payload.user.id]);
+    return context.json({ error: refusal },403);
   });
 
   app.get("/api/auth/get-session", async (context) => {
@@ -123,25 +165,14 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
         await client.query("ROLLBACK");
         return context.json({ error: "account_not_found" },404);
       }
-      await client.query(
-        `DELETE FROM request_rate_limits WHERE
-          (scope_kind='account' AND scope_id=$1)
-          OR (scope_kind='client' AND scope_id IN (SELECT id FROM principal_api_keys WHERE principal_id=$1))
-          OR (scope_kind='device' AND scope_id IN (SELECT id FROM devices WHERE principal_id=$1))
-          OR (scope_kind='service' AND scope_id IN (SELECT id FROM webhook_services WHERE principal_id=$1))`,
-        [account.principalId],
-      );
-      await client.query("DELETE FROM device_authorizations WHERE approved_owner_id=$1 OR approved_owner_id IS NULL",[account.principalId]);
-      await client.query("DELETE FROM auth.verifications");
-      await client.query("DELETE FROM auth.users WHERE id=$1",[account.user.id]);
-      // Deleting the account revokes the phone, which ends its cards; allow their rows to go.
-      await client.query("SET LOCAL relo.allow_active_activity_delete = 'on'");
-      await client.query("DELETE FROM owner_principals WHERE id=$1",[account.principalId]);
-      await client.query(
-        `INSERT INTO owner_principals(handle) VALUES ($1)
-         ON CONFLICT (handle) DO UPDATE SET disabled_at=NULL RETURNING id`,
-        [bootstrapOwnerHandle],
-      );
+      if (await isServerAdmin(client,account.user.id)) {
+        const others = await client.query("SELECT 1 FROM account_identities WHERE principal_id<>$1 LIMIT 1",[account.principalId]);
+        if (others.rowCount) {
+          await client.query("ROLLBACK");
+          return context.json({ error: "admin_has_other_accounts" },409);
+        }
+      }
+      await deleteAccountRecords(client,account.principalId,bootstrapOwnerHandle);
       await client.query("COMMIT");
       return context.json({ ok: true });
     } catch (error) {
@@ -152,4 +183,34 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
 
   app.on(["GET", "POST"], "/api/auth/*", (context) => accountAuth.handler(context.req.raw));
 
+}
+
+/** Removes an account and everything it owns; only the bootstrapped account comes back, unclaimed. */
+export async function deleteAccountRecords(
+  client: { query: (sql: string,values?: unknown[]) => Promise<unknown> },
+  principalId: string,
+  bootstrapOwnerHandle: string,
+): Promise<void> {
+  await client.query(
+    `DELETE FROM request_rate_limits WHERE
+      (scope_kind='account' AND scope_id=$1)
+      OR (scope_kind='client' AND scope_id IN (SELECT id FROM principal_api_keys WHERE principal_id=$1))
+      OR (scope_kind='device' AND scope_id IN (SELECT id FROM devices WHERE principal_id=$1))
+      OR (scope_kind='service' AND scope_id IN (SELECT id FROM webhook_services WHERE principal_id=$1))`,
+    [principalId],
+  );
+  await client.query("DELETE FROM device_authorizations WHERE approved_owner_id=$1",[principalId]);
+  await client.query(
+    "DELETE FROM auth.users WHERE id IN (SELECT subject FROM account_identities WHERE principal_id=$1)",[principalId]);
+  const handle = await client.query("SELECT handle FROM owner_principals WHERE id=$1",[principalId]) as { rows: { handle: string }[] };
+  // Deleting the account revokes the phone, which ends its cards; allow their rows to go.
+  await client.query("SET LOCAL relo.allow_active_activity_delete = 'on'");
+  await client.query("DELETE FROM owner_principals WHERE id=$1",[principalId]);
+  if (handle.rows[0]?.handle === bootstrapOwnerHandle) {
+    await client.query(
+      `INSERT INTO owner_principals(handle) VALUES ($1)
+       ON CONFLICT (handle) DO UPDATE SET disabled_at=NULL`,
+      [bootstrapOwnerHandle],
+    );
+  }
 }

@@ -23,6 +23,73 @@ export async function expireInteractionInTransaction(tx: SubjectTransaction,acto
   return {kind:"expired"};
 }
 
+/** Cancels a pending decision whose activity lock the caller holds; its notification and card settle as canceled. */
+export async function cancelLockedInteraction(tx: SubjectTransaction,input: {
+  principalId: string; interactionId: string; notificationEventId: string; apnsMode: ApnsMode;
+}): Promise<void> {
+  await tx.query("UPDATE interaction_requests SET state='canceled',responded_at=now() WHERE id=$1",[input.interactionId]);
+  await tx.query("UPDATE notification_events SET state='canceled',updated_at=now() WHERE id=$1",[input.notificationEventId]);
+  await settleInteractiveLiveActivity(tx,{principalId:input.principalId,notificationEventId:input.notificationEventId,
+    responseState:"canceled",apnsMode:input.apnsMode});
+}
+
+/**
+ * Serializes every answer to one decision group. Taken before any decision lock, so two surfaces
+ * of the same decision answered at once wait for each other instead of deadlocking.
+ */
+export async function lockDecisionGroupOfEvent(tx: SubjectTransaction,eventId: string): Promise<string | null> {
+  const group=(await tx.query<{decision_group_id:string}>(
+    "SELECT decision_group_id FROM interaction_requests WHERE notification_event_id=$1 AND decision_group_id IS NOT NULL LIMIT 1",
+    [eventId])).rows[0]?.decision_group_id??null;
+  if(group) await lockDecisionGroup(tx,group);
+  return group;
+}
+
+export async function lockDecisionGroup(tx: SubjectTransaction,groupId: string): Promise<void> {
+  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))",[`decision-group:${groupId}`]);
+}
+
+export type DecisionGroupOutcome = {
+  state: "approved" | "denied" | "yes" | "no" | "replied" | "canceled"; response?: Record<string,unknown> | null;
+};
+
+/**
+ * Settles the group's other pending members; the caller holds the group lock. Like one question's
+ * copies on several phones, every member takes the decision, so each surface shows the real
+ * outcome. "canceled" settles members when no decision was made.
+ */
+export async function settleDecisionGroup(tx: SubjectTransaction,input: {
+  groupId: string; exceptInteractionId?: string | undefined; outcome: DecisionGroupOutcome; apnsMode: ApnsMode;
+}): Promise<number> {
+  const members=(await tx.query<{id:string;principal_id:string;notification_event_id:string}>(
+    `SELECT id,principal_id,notification_event_id FROM interaction_requests
+     WHERE decision_group_id=$1 AND state='pending' AND id IS DISTINCT FROM $2 ORDER BY id`,
+    [input.groupId,input.exceptInteractionId??null])).rows;
+  let settled=0;
+  for(const member of members) {
+    await lockDecisionActivity(tx,member.principal_id,member.notification_event_id);
+    const locked=await tx.query("SELECT 1 FROM interaction_requests WHERE id=$1 AND state='pending' FOR UPDATE",[member.id]);
+    if(!locked.rowCount) continue;
+    if(input.outcome.state==="canceled") {
+      await cancelLockedInteraction(tx,{principalId:member.principal_id,interactionId:member.id,
+        notificationEventId:member.notification_event_id,apnsMode:input.apnsMode});
+    } else {
+      await tx.query(`UPDATE interaction_requests SET state=$2::interaction_request_state,response=$3::jsonb,
+        responded_at=clock_timestamp() WHERE id=$1 AND state='pending'`,[member.id,input.outcome.state,input.outcome.response??null]);
+      await tx.query("UPDATE notification_events SET state='responded',updated_at=clock_timestamp() WHERE id=$1",
+        [member.notification_event_id]);
+      await tx.query(`UPDATE delivery_jobs SET state='canceled',last_error_code='interaction_settled',
+        last_error_message='The decision was made elsewhere',claim_token=NULL,claim_started_at=NULL,
+        claim_phase=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        WHERE notification_event_id=$1 AND state IN ('pending','retry')`,[member.notification_event_id]);
+      await settleInteractiveLiveActivity(tx,{principalId:member.principal_id,notificationEventId:member.notification_event_id,
+        responseState:input.outcome.state,apnsMode:input.apnsMode});
+    }
+    settled++;
+  }
+  return settled;
+}
+
 export async function expireInteraction(db: Database,actor: InteractionActor,command: ExpireCommand,apnsMode: ApnsMode): Promise<ExpiryResult> {
   const tx=await db.connect();
   try {
@@ -45,6 +112,7 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
   const reject=(error:Extract<ResponseResult,{kind:"rejected"}>["error"],state?:InteractionRow["state"]):ResponseResult=>({kind:"rejected",error,...(state===undefined?{}:{state})});
   try {
     await tx.query("BEGIN");
+    const group=await lockDecisionGroupOfEvent(tx,command.eventId);
     if(actor.kind==="device"&&!await selectVisibleDecisionEvent(tx,actor.principalId,actor.deviceId,command.eventId)) return await finish(reject("not_found"));
     let row:ResponseRequestRow|null=null;
     const validCapability=(request:ResponseRequestRow)=>actor.kind!=="live_activity"||Boolean(dependencies.credentialDerivationSecret
@@ -91,6 +159,9 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
     }
     await markRespondedEvent(tx,row);
     await settleInteractiveLiveActivity(tx,{principalId:row.principal_id,notificationEventId:row.notification_event_id,responseState:nextState,apnsMode:dependencies.apnsMode});
+    // The same decision shown elsewhere stops asking: this answer is the decision.
+    if(group) await settleDecisionGroup(tx,{groupId:group,exceptInteractionId:row.id,
+      outcome:{state:nextState,response:command.value},apnsMode:dependencies.apnsMode});
     return await finish({kind:"accepted",evidenceId:evidence.id,interactionId:row.id,state:nextState,respondedAt:accepted.responded_at},true);
   }catch(error){await tx.query("ROLLBACK");throw error;}
   finally{tx.release();}

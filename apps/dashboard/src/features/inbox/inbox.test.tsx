@@ -33,6 +33,7 @@ const emptyContext = {
   providerName: null,
   producerKind: null,
   computer: null,
+  account: null,
   project: null,
   providerThreadId: null,
   providerWorkItemId: null,
@@ -93,6 +94,7 @@ const liveActivity = {
     providerName: "Codex",
     producerKind: "agent",
     computer: "developer-mac-codex",
+    account: "work",
     project: "Relo notifications",
     providerThreadId: "019fe2d8-9b96-7f03-8b2c-83101432f6a4",
     providerWorkItemId: "turn-dashboard-lifecycle",
@@ -535,6 +537,13 @@ describe("Inbox feature contracts", () => {
       activity: {
         ...liveActivity,
         state: "active",
+        steps: { done: 1, total: 3, current: "Build" },
+        updates: 7,
+        stepItems: [
+          { label: "Plan", state: "complete" },
+          { label: "Build", state: "current" },
+          { label: "Ship", state: "pending" },
+        ],
         threadHistory: [],
         timeline: [],
         presentationLeases: [
@@ -603,6 +612,12 @@ describe("Inbox feature contracts", () => {
     render(<InboxFeature bootstrap={detail} service={inboxService} />)
 
     // Apple acceptance is its own step; with no receipt the phone is never claimed.
+    // A Live Activity shows no delivery timeline up front; the evidence lives under Technical details.
+    expect(screen.getByRole("heading", { name: "Mission" })).toBeVisible()
+    expect(screen.queryByRole("heading", { name: "Delivery" })).toBeNull()
+    expect(screen.getByText("Copy ID")).toBeInTheDocument()
+    expect(screen.queryByText(liveActivity.id)).toBeNull()
+    fireEvent.click(screen.getByText("Technical details"))
     expect(screen.getByText("Accepted by Apple")).toBeVisible()
     expect(screen.queryByText(/^Received on/)).toBeNull()
     expect(screen.queryByRole("link", { name: /open link/i })).toBeNull()
@@ -701,7 +716,9 @@ describe("Inbox feature contracts", () => {
       />
     )
     const activity = within(screen.getByRole("list", { name: "Activity" }))
-    expect(activity.getByText("Codex › Relo › Releases")).toBeVisible()
+    expect(activity.getByLabelText("Codex › Relo › Releases")).toBeVisible()
+    expect(activity.getByText("Releases")).toBeVisible()
+    expect(activity.getByLabelText("Test Lab")).toBeVisible()
     expect(activity.getByText("Test Lab")).toBeVisible()
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull()
   })

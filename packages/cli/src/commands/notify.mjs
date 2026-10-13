@@ -3,8 +3,8 @@ import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
 import { notificationRelevance } from "../relevance.mjs";
 import { DEFAULT_ACTIVITY_EXPIRES_SECONDS, DEFAULT_ACTIVITY_STALE_SECONDS, activeCard, activityName, validateActivityWaitResponse } from "./activity.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
-import { agentSession, cardKey, creationContext, partialIdentity } from "../identity.mjs";
-import { assertAllowedOptions, assertAtMostOne, assertNoExtra, definedFields, deliveryGuard, enumOption, joinedText, optionalText, result, stdinDeviceIds, stdinObject, validateIdempotencyKey } from "../support.mjs";
+import { agentSession, cardKey, creationContext, inAgentContext, partialIdentity } from "../identity.mjs";
+import { assertAllowedOptions, assertAtMostOne, assertNoExtra, definedFields, dryRunResult, deliveryGuard, enumOption, fitRequiredText, fitText, joinedText, optionalText, result, stdinDeviceIds, stdinObject, validateIdempotencyKey } from "../support.mjs";
 
 export function notificationBody(value) {
   const body = requireText(value, "Notification body", 65_536).replace(/\r\n?/gu, "\n").trim();
@@ -14,13 +14,10 @@ export function notificationBody(value) {
   return body;
 }
 
-export function notificationSummary(value) {
+export function notificationSummary(value, notes) {
   if (value === undefined) return undefined;
-  const summary = requireText(value, "summary", 960).replace(/\s+/gu, " ").trim();
-  if (Array.from(summary).length > 240) {
-    throw new UsageError("Notification summary must be at most 240 characters.");
-  }
-  return summary;
+  const summary = requireText(value, "summary", 100_000).replace(/\s+/gu, " ").trim();
+  return fitText(summary, "summary", 240, notes);
 }
 
 export const SUCCESS_STATES = new Set(["approved", "yes", "replied", "completed"]);
@@ -88,7 +85,7 @@ export const ANSWER_LABELS = { approved: "Approved", denied: "Denied", yes: "Yes
  */
 export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
   command, idempotencyKey, context, title }) {
-  const identity = context ?? creationContext(options, stdin, undefined, dependencies.identityDefaults());
+  const identity = context ?? creationContext(options, stdin, undefined, dependencies.creationDefaults(), ASK_EXAMPLE);
   const created = deliveryGuard(await client.createInteraction(definedFields({
     prompt, type, expiresInSeconds, answerInApp: true, context: identity,
     title: requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80),
@@ -116,6 +113,16 @@ export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSe
 /** A question waits for the owner at most five minutes; unanswered, it expires and its card ends. */
 export const QUESTION_SECONDS = 300;
 
+/**
+ * An agent's shell tool gives up on a command after about two minutes, so inside an agent session
+ * a wait defaults to 100s. The question itself stays open; `relo interaction wait ID` resumes it.
+ */
+export const AGENT_WAIT_SECONDS = 100;
+
+const ASK_EXAMPLE = 'relo ask "Deploy?" --approval';
+
+export const agentWaitSeconds = (dependencies) => (inAgentContext(dependencies.env) ? AGENT_WAIT_SECONDS : undefined);
+
 export function questionSeconds(value, flag, { defaultSeconds, minimumSeconds }) {
   try {
     return parseDuration(value, { defaultSeconds, minimumSeconds, maximumSeconds: QUESTION_SECONDS });
@@ -137,7 +144,8 @@ export async function askCommand(words, options, client, config, dependencies, c
     { defaultSeconds: QUESTION_SECONDS, minimumSeconds: 30 });
   const wait = !options["no-wait"];
   const timeoutSeconds = wait
-    ? questionSeconds(options.timeout, "--timeout", { defaultSeconds: expiresInSeconds, minimumSeconds: 1 })
+    ? questionSeconds(options.timeout, "--timeout", {
+      defaultSeconds: Math.min(expiresInSeconds, agentWaitSeconds(dependencies) ?? expiresInSeconds), minimumSeconds: 1 })
     : undefined;
   return askOnCard({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin,
     client, config, dependencies, command,
@@ -150,17 +158,20 @@ export async function askCommand(words, options, client, config, dependencies, c
  */
 export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, timeoutSeconds,
   options, stdin, client, config, dependencies, command }) {
-  const defaults = dependencies.identityDefaults();
+  if (dependencies.dryRun) {
+    return dryAsk({ prompt, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies });
+  }
+  const defaults = dependencies.creationDefaults();
   const idempotencyKey = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
   let createdByAsk = false;
   const named = activityName(options, stdin);
   // Outside an agent session the identity names the card, so validate it before any request.
   const known = named === undefined && !agentSession(dependencies.env)
-    ? creationContext(options, stdin, undefined, defaults) : undefined;
+    ? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) : undefined;
   const key = cardKey({ name: named, env: dependencies.env, context: known ?? partialIdentity(options, stdin, defaults) });
   let card = key === undefined ? null : await activeCard(client, key);
   if (!card) {
-    const context = known ?? creationContext(options, stdin, undefined, defaults);
+    const context = known ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE);
     const started = await client.startActivity(definedFields({
       key: key ?? cardKey({ env: {}, context }),
       acquireMode: "ensure",
@@ -222,6 +233,36 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   }
 }
 
+/** `relo ask --dry-run`: every local check of the real ask, then what it would send. No request. */
+async function dryAsk({ prompt, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies }) {
+  const notes = [];
+  validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
+  const defaults = dependencies.creationDefaults();
+  const named = activityName(options, stdin);
+  let context;
+  try {
+    context = creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE);
+  } catch (error) {
+    // With a card name or an agent session the identity may come from the running card.
+    if (!(error instanceof UsageError) || (named === undefined && !agentSession(dependencies.env))) throw error;
+    notes.push("source, project and topic are read from the session's card when it is running; starting one needs them");
+  }
+  const key = cardKey({ name: named, env: dependencies.env, context: context ?? partialIdentity(options, stdin, defaults) });
+  const callback = await callbackOption(options, stdin, dependencies);
+  if (options.device.length > 0) notes.push("device IDs are not checked against the server in a dry run");
+  return dryRunResult("ask", definedFields({
+    type, prompt, expiresInSeconds, wait,
+    ...(wait ? { timeoutSeconds } : {}),
+    primaryLabel: actionLabel(labels.primary, "primary-label"),
+    secondaryLabel: actionLabel(labels.secondary, "secondary-label"),
+    correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
+    callback: callback ? { url: callback.url } : undefined,
+    card: key,
+    ...(context ? { context } : {}),
+    deviceIds: await resolveTargetDevices(undefined, options.device, { verify: false }),
+  }), notes);
+}
+
 export function actionLabel(value, name) {
   if (value === undefined) return undefined;
   const label = requireText(value, name, 24);
@@ -241,8 +282,10 @@ export function interactionResult(payload) {
   const state = interactionState(payload);
   if (SUCCESS_STATES.has(state)) return payload;
   if (NEGATIVE_STATES.has(state) || CLOSED_STATES.has(state)) {
-    throw new TerminalInteractionError(`Interaction ended with state: ${state}`, {
-      state,
+    // A server-closed question is never the CLI's own "timeout" (the question is still open).
+    const closedState = state === "timeout" ? "timed_out" : state;
+    throw new TerminalInteractionError(`Interaction ended with state: ${closedState}`, {
+      state: closedState,
       details: {
         interactionId: interaction?.id,
         result: payload?.interaction === undefined ? { interaction } : payload,
@@ -287,6 +330,29 @@ export function mergeCreatedAndWaitedInteraction(created, waited) {
   };
 }
 
+/**
+ * Inside an agent session the session's card already names the work, so a notice inherits its
+ * source, project, topic, computer and account instead of asking the agent to repeat them.
+ */
+export async function sessionCardDefaults(options, stdin, client, dependencies, defaults) {
+  if (!agentSession(dependencies.env)) return defaults;
+  const known = partialIdentity(options, stdin, defaults);
+  if (known.providerName && known.project && known.threadName) return defaults;
+  const key = cardKey({ name: activityName(options, stdin), env: dependencies.env,
+    context: known });
+  const card = key === undefined ? null : await activeCard(client, key);
+  const inherited = definedFields({
+    providerName: card?.context?.providerName, project: card?.context?.project, threadName: card?.context?.threadName,
+    computer: card?.context?.computer, account: card?.context?.account,
+  });
+  return { ...defaults, ...inherited };
+}
+
+const partialIdentityContext = (options, stdin, defaults) => {
+  const known = partialIdentity(options, stdin, defaults);
+  return { providerName: known.providerName, project: known.project, threadName: known.threadName };
+};
+
 /** Runs this group's commands; returns undefined when the command is not one of them. */
 export async function runNotifyCommand(command) {
   const { options, group, action, rest, dependencies, config, client } = command;
@@ -301,24 +367,40 @@ export async function runNotifyCommand(command) {
       "device",
       "idempotency-key",
       "computer",
+      "account",
       "source",
       "topic",
       "project",
       "thread-name",
       "task-title",
       "stdin",
+      "dry-run",
     ]);
     const stdin = await stdinObject(options, dependencies);
-    const context = creationContext(options, stdin, undefined, dependencies.identityDefaults());
+    const notes = [];
+    const dryRun = Boolean(dependencies.dryRun);
+    // The body comes first: with nothing to send, the identity is not the problem to report.
+    const noticeBody = notificationBody(joinedText(rest) ?? stdin.body);
+    const baseDefaults = dryRun ? dependencies.creationDefaults()
+      : await sessionCardDefaults(options, stdin, client, dependencies, dependencies.creationDefaults());
+    let context;
+    try {
+      context = creationContext(options, stdin, undefined, baseDefaults, 'relo notify "Done"');
+    } catch (error) {
+      if (!dryRun || !(error instanceof UsageError) || !agentSession(dependencies.env)) throw error;
+      notes.push("source, project and topic are read from the session's card when it is running");
+      context = definedFields({ ...baseDefaults, ...partialIdentityContext(options, stdin, baseDefaults) });
+    }
     const deviceIds = await resolveTargetDevices(
       client,
       options.device.length > 0 ? options.device : stdinDeviceIds(stdin.deviceIds),
+      { verify: !dryRun },
     );
     const body = definedFields({
-      body: notificationBody(joinedText(rest) ?? stdin.body),
-      summary: notificationSummary(options.summary ?? stdin.summary),
+      body: noticeBody,
+      summary: notificationSummary(options.summary ?? stdin.summary, notes),
       bodyFormat: bodyFormatOption(options, stdin),
-      title: requireText(options.title ?? stdin.title ?? context.providerName, "Title", 80),
+      title: fitRequiredText(options.title ?? stdin.title ?? context.providerName, "Title", 80, notes),
       sourceName: context.providerName,
       imageUrl: validatePublicHttpsUrl(options.image ?? stdin.imageUrl, "image"),
       destinationUrl: validateDestinationUrl(
@@ -330,6 +412,10 @@ export async function runNotifyCommand(command) {
       relevance: notificationRelevance(stdin.relevance,"notice"),
     });
     const key=validateIdempotencyKey(options["idempotency-key"],dependencies.generateIdempotencyKey);
+    if (dryRun) {
+      if (deviceIds) notes.push("device IDs are not checked against the server in a dry run");
+      return dryRunResult("notify send", body, notes);
+    }
     const capturedBody=await dependencies.prepareNotificationCommand({config,key,body,kind:"notice",
       occurredAt:dependencies.commandOccurredAt},{root:dependencies.activityCaptureDirectory,environment:dependencies.env});
     const data = deliveryGuard(
@@ -337,7 +423,7 @@ export async function runNotifyCommand(command) {
         capturedBody,key,
       ),
     );
-    return result("notify.send", data);
+    return result("notify.send", data, { notes });
   }
 
   if (group === "notify" && action === "withdraw") {
@@ -353,8 +439,8 @@ export async function runNotifyCommand(command) {
 
   if (group === "ask") {
     assertAllowedOptions(options, ["type","approval","yes-no","expires-in","timeout","no-wait","primary-label","secondary-label",
-      "device","idempotency-key","stdin","name","source","project","topic","thread-name","task-title","computer",
-      "correlation-id","callback-url","callback-token-file"]);
+      "device","idempotency-key","stdin","name","source","project","topic","thread-name","task-title","computer","account",
+      "correlation-id","callback-url","callback-token-file","dry-run"]);
     return askCommand([action, ...rest].filter((value) => value !== undefined), options, client, config, dependencies, "ask");
   }
 
@@ -369,9 +455,10 @@ export async function runNotifyCommand(command) {
   }
 
   if (group === "interaction" && action === "wait") {
-    assertNoExtra(rest, 1, "Usage: relo interaction wait ID [--timeout 60s]");
+    assertNoExtra(rest, 1, "Usage: relo interaction wait ID [--timeout 100s]");
     assertAllowedOptions(options, ["timeout"]);
-    const timeoutSeconds = parseDuration(options.timeout, { defaultSeconds: 60, maximumSeconds: 3_600 });
+    const timeoutSeconds = parseDuration(options.timeout, {
+      defaultSeconds: agentWaitSeconds(dependencies) ?? 60, maximumSeconds: 3_600 });
     return result(
       "interaction.wait",
       await waitForInteraction(client, rest[0], timeoutSeconds, dependencies),

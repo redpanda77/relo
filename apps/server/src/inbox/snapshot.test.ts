@@ -142,3 +142,40 @@ suite("Bounded authoritative history repair", () => {
     } finally { await lock.query("ROLLBACK");lock.release(); }
   });
 });
+
+suite("Inbox origin labels", () => {
+  let db: Database, app: ReturnType<typeof createApp>, principal: string;
+  const owner = "origin-label-owner-abcdefghijklmnopqrstuvwxyz";
+  const phone = "origin-label-phone-abcdefghijklmnopqrstuvwxyz";
+  beforeAll(async () => { db=createDatabase(process.env.TEST_DATABASE_URL!);await migrate(db); });
+  afterAll(async () => { await db.end(); });
+  beforeEach(async () => {
+    await db.query("TRUNCATE owner_principals CASCADE");await bootstrapOwner(db,"origin-label",owner);
+    principal=(await db.query("SELECT id FROM owner_principals WHERE handle='origin-label'")).rows[0].id;
+    const id=(await db.query(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
+      app_version,app_build,os_version,apns_environment,notification_authorization)
+      VALUES ($1,$2,$3,'Fixture','com.example.relo.notifications','1','1','27','sandbox','authorized') RETURNING id`,
+      [principal,randomUUID(),randomUUID()])).rows[0].id;
+    await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[id,hashToken(phone)]);
+    app=createApp(db,{apnsMode:"disabled"});
+  });
+  async function eventFor(label: string, context: Record<string,string>) {
+    const key=(await db.query(`INSERT INTO principal_api_keys(principal_id,label,token_hash) VALUES ($1,$2,$3) RETURNING id`,
+      [principal,label,hashToken(randomUUID()+randomUUID())])).rows[0].id;
+    await db.query(`INSERT INTO notification_events(principal_id,requester_credential_id,source,title,body,idempotency_key,payload)
+      VALUES ($1,$2,'Fixture',$3,'b',gen_random_uuid()::text,$4)`,[principal,key,label,{ context }]);
+  }
+  test("computer and account come only from the card's context, never from the login name",async () => {
+    await eventFor("Studio Mac",{ project: "Relo" });
+    await eventFor("Relo CLI",{ project: "Relo" });
+    await eventFor("Laptop",{ project: "Relo",computer: "Explicit",account: "personal" });
+    const response=await app.request("/api/inbox/snapshot",{headers:{authorization:`Bearer ${phone}`}});
+    expect(response.status).toBe(200);
+    const items=inboxSnapshotResponseSchema.parse(await response.json()).items;
+    const byTitle=Object.fromEntries(items.map(item=>[item.title,item.context]));
+    // Login names are not machine names ("Codex CLI"), so they never stand in for one.
+    expect(byTitle["Studio Mac"]?.computer).toBeUndefined();
+    expect(byTitle["Relo CLI"]?.computer).toBeUndefined();
+    expect(byTitle["Laptop"]).toMatchObject({ computer: "Explicit",account: "personal" });
+  });
+});

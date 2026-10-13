@@ -14,7 +14,15 @@
     "public-export.json",
     "tsconfig.base.json"
   ],
-  "roots": [".github", "apps", "deploy", "docs", "packages", "scripts", "skills"],
+  "roots": [
+    ".github",
+    "apps",
+    "deploy",
+    "docs",
+    "packages",
+    "scripts",
+    "skills"
+  ],
   "allowedDotPaths": [
     ".dockerignore",
     ".github/",
@@ -26,9 +34,18 @@
     "apps/server/.dockerignore",
     "apps/server/.gitignore",
     "deploy/.env.example",
-    "deploy/.gitignore"
+    "deploy/.gitignore",
+    "packages/cli/.gitignore"
   ],
-  "excludedPrefixes": ["docs/internal/", "apps/dashboard/.impeccable/"],
-  "requiredFiles": ["LICENSE", "README.md", "SECURITY.md", "deploy/README.md"],
+  "excludedPrefixes": [
+    "docs/internal/",
+    "apps/dashboard/.impeccable/"
+  ],
+  "requiredFiles": [
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "deploy/README.md"
+  ],
   "forbiddenText": []
 }

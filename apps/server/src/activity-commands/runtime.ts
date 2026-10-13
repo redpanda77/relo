@@ -1,3 +1,4 @@
+import { SESSION_LOST_AFTER_SECONDS } from "../agent-sessions.js";
 import { createHash,randomUUID } from "node:crypto";
 import type { ActivityDeliverySummary,ApnsMode } from "../activities.js";
 import { retireUnsentActivityFrames } from "../activity-delivery-frame.js";
@@ -144,6 +145,13 @@ export async function cancelPendingActivityInteractions(
   return eventIds.length;
 }
 
+/** Epoch seconds the activity was created; lets the Lock Screen tick an elapsed timer. */
+export function activityStartedAt(activity: { created_at: Date | string }): number {
+  const created = Math.floor(new Date(activity.created_at).getTime()/1_000);
+  if (!Number.isSafeInteger(created) || created < 0) throw new Error("invalid durable Live Activity chronology");
+  return created;
+}
+
 export function activityProviderTimestamp(activity: {
   created_at: Date | string;
   updated_at?: Date | string | null;
@@ -250,6 +258,7 @@ export async function createActivityCommands(
             : input.alert && input.operation === "update" && canonical.privacy === "standard" ? "apns" : "none",
           sequence: Number(input.activity.sequence),
           providerTimestamp: activityProviderTimestamp(input.activity),
+          startedAt: activityStartedAt(input.activity),
           relevanceScore: lease.relevanceScore,
           presentationState: lease.state,
           otherActiveCount: lease.otherActiveCount,
@@ -470,11 +479,17 @@ export async function expireDueActivities(
     const due = await client.query<any>(
       `SELECT * FROM live_activities
        WHERE state='active'
-         AND (expires_at<=now() OR (lifecycle_provider IS NOT NULL AND stale_at<=now())
+         AND (expires_at<=now() OR (
+           (lifecycle_provider IS NOT NULL AND stale_at<=now())
            -- No zombie cards: work that stopped updating ends ten minutes after it went stale,
            -- unless a question on it is still waiting for the owner.
            OR (stale_at<=now()-interval '10 minutes' AND resume_presentation IS NULL
              AND (requester_credential_id IS NOT NULL OR requester_service_id IS NOT NULL)))
+           -- A card of a live agent session stays (shown quiet); the session rules end it later.
+           AND NOT EXISTS (SELECT 1 FROM agent_sessions s
+             WHERE s.principal_id=live_activities.principal_id AND s.card_key=live_activities.activity_key
+               AND s.state IN ('active','idle')
+               AND s.last_event_at>now()-make_interval(secs=>${SESSION_LOST_AFTER_SECONDS})))
          AND presentation IS NOT NULL
        ORDER BY LEAST(expires_at,stale_at) FOR UPDATE SKIP LOCKED LIMIT $1`,
       [limit],

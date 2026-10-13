@@ -29,6 +29,7 @@ export const notificationRequestSchema = z.object({
     providerName: z.string().trim().min(1).max(80).optional(),
     producerKind: z.enum(["agent","service","webhook","manual"]).optional(),
     computer: z.string().trim().min(1).max(120).optional(),
+    account: z.string().trim().min(1).max(40).optional(),
     project: z.string().trim().min(1).max(120).optional(),
     providerThreadId: z.string().trim().min(1).max(200).optional(),
     providerWorkItemId: z.string().trim().min(1).max(200).optional(),

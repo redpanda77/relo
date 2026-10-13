@@ -53,7 +53,8 @@ test("writes config atomically with private permissions and never exposes its to
     assert.equal(JSON.stringify(safe).includes(TOKEN), false);
     const stored = JSON.parse(await readFile(path, "utf8"));
     assert.equal(stored.version, 1);
-    assert.equal(stored.token, TOKEN);
+    assert.equal(stored.activeProfile, "default");
+    assert.equal(stored.profiles.default.token, TOKEN);
     assert.equal(await removeConfig(path), true);
     assert.equal(await removeConfig(path), false);
   } finally {

@@ -30,6 +30,15 @@ public enum RuntimeServerOrigin {
         )
     }
 
+    /// The server the owner entered or signed in to on this iPhone, ignoring the build-time origin:
+    /// a self-hosted install must never start pointed at someone else's server.
+    public static func chosen(bundle: Bundle = .main) -> URL? {
+        let appGroup = bundle.object(forInfoDictionaryKey: "RELOAppGroup") as? String
+        let shared = appGroup.flatMap(UserDefaults.init(suiteName:))
+        return resolve(sharedOrigin: shared?.string(forKey: defaultsKey),
+                       localOrigin: UserDefaults.standard.string(forKey: defaultsKey), bundledOrigin: nil)
+    }
+
     public static func persist(_ origin: URL, bundle: Bundle = .main) {
         guard let normalized = DashboardURLProvider(origin: origin)?.origin else { return }
         UserDefaults.standard.set(normalized.absoluteString, forKey: defaultsKey)

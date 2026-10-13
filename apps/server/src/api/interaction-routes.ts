@@ -1,10 +1,8 @@
-import { expireInteraction,respondToInteraction } from "../interactions/commands.js";
+import { cancelLockedInteraction,expireInteraction,respondToInteraction } from "../interactions/commands.js";
+import { createQuestionCardInTransaction } from "../interactions/question-card.js";
 import { createNotification,withdrawNotification } from "../notifications/commands.js";
 import { ChangeSubscription } from "../interaction-change-hub.js";
 import { boundedIntegerQuery } from "../request-bounds.js";
-import { independentSubjectKey,lockSubjectAdmission } from "../relevance/commands.js";
-import { admitOrdinaryEvent } from "../relevance/ordinary-admission.js";
-import { relevanceDeliveryGuard } from "../relevance/delivery.js";
 import {  randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -16,7 +14,6 @@ import {
   markActivityPresentationApplied } from "../activity-presentation-leases.js";
 
 import { lockDecisionActivity } from "../decision-lock.js";
-import { settleInteractiveLiveActivity } from "../interactive-activity-lifecycle.js";
 
 import {  registerInteractionCallback } from "../interaction-callbacks.js";
 
@@ -26,12 +23,6 @@ import {
   
   
   prepareNotificationContent } from "../notification-content.js";
-import {
-  terminalPresentationColumnsFromRow,canonicalPresentation,
-  persistedPresentationColumns,
-  presentationCommandProjection,
-} from "../presentation-runtime.js";
-import { resolveActivityPresentation, SYSTEM_PRESENTATION_POLICY, systemPresentationPolicySnapshot } from "../presentation-policy.js";
 import { requireWorkIdentity,workIdentityError } from "../work-identity.js";
 import { stableJson } from "../stable-json.js";
 
@@ -90,166 +81,20 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     const originHash = input.origin ? canonicalOriginHash(auth.principalId,input.origin) : null;
     const sourceName = input.context?.providerName ?? input.title;
     if (input.presentation === "live_activity") {
-      const primaryLabel = input.primaryLabel ?? (input.type === "approval" ? "Approve" : "Yes");
-      const secondaryLabel = input.secondaryLabel ?? (input.type === "approval" ? "Deny" : "No");
-      const interactivePresentation = canonicalPresentation({
-        content: {
-          header: input.title,title: input.title,subtitle: input.prompt,status: "Waiting for input",
-        },
-        identity: resolveActivityPresentation({ context: input.context },{
-          principalId: auth.principalId,effective: { policy: SYSTEM_PRESENTATION_POLICY,source: "system" },
-        }).stored.presentation.identity,
-        state: { kind: "needs_action",tone: "attention",icon: "needs_action" },
-        components: [],surfaces: {},
-        behavior: input.type === "approval"
-          ? { type: "approval",primary: { action: "approve",label: primaryLabel },
-              secondary: { action: "deny",label: secondaryLabel } }
-          : { type: "yes_no",primary: { action: "yes",label: primaryLabel },
-              secondary: { action: "no",label: secondaryLabel } },
-        appearance: { theme: "system",roles: {
-          cardIdentity: "project",componentIdentity: "thread",statusEmphasis: "state",
-        } },
-        privacy: input.privacy ?? "standard",
-      });
-      const interactiveStored = persistedPresentationColumns(interactivePresentation);
       const client = await db.connect();
       try {
         await client.query("BEGIN");
-      await lockSubjectAdmission(client,{ principalId: auth.principalId,sourceId: `credential:${auth.credentialId}` },
-        input.relevance?.subjectKey ?? independentSubjectKey(idempotencyKey));
-        const eligible = await client.query<any>(
-          `SELECT id,apns_environment,live_activity_push_to_start_token
-           FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
-             AND live_activity_authorization='authorized'
-             AND ($2::uuid[] IS NULL OR id=ANY($2::uuid[]))
-           ORDER BY last_seen_at DESC,id LIMIT 50`,
-          [auth.principalId,requestedDeviceIds],
-        );
-        if (!eligible.rowCount || (requestedDeviceIds && eligible.rowCount !== requestedDeviceIds.length)) {
-          await client.query("ROLLBACK");
-          return context.json({ error: requestedDeviceIds ? "invalid_device_selection" : "no_eligible_device" },400);
-        }
-        const device = eligible.rows[0]!;
-        const eligibleDeviceIds = eligible.rows.map((row: any) => row.id);
-        const event = await client.query<{ id: string; created_at: string }>(
-          `INSERT INTO notification_events(
-             principal_id,requester_credential_id,source,kind,title,body,payload,idempotency_key,expires_at,
-             request_hash,target_mode,origin_hash
-           ) VALUES ($1,$2,$3,'live_activity',$4,$5,$9::jsonb,$6,now()+($7*interval '1 second'),$8,'explicit',$10)
-           ON CONFLICT DO NOTHING RETURNING id,created_at`,
-          [auth.principalId,auth.credentialId,sourceName,input.title,input.prompt,idempotencyKey,
-            input.expiresInSeconds,requestHash,input.context ? { context: input.context } : {},originHash],
-        );
-        if (!event.rowCount) {
-          const existing = await client.query<any>(
-            `SELECT r.id,r.state,e.id AS event_id,e.request_hash,e.delivery_summary,
-               e.payload#>>'{liveActivity,activityId}' AS activity_id,
-               (SELECT relevance FROM notification_relevance nr WHERE nr.notification_event_id=e.id) AS relevance
-             FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id
-             WHERE e.principal_id=$1 AND e.requester_credential_id=$2 AND e.idempotency_key=$3`,
-            [auth.principalId,auth.credentialId,idempotencyKey],
-          );
-          if (!existing.rowCount || existing.rows[0].request_hash !== requestHash
-            || !existing.rows[0].activity_id) {
-            await client.query("ROLLBACK");
-            return context.json({ error: "idempotency_conflict" },409);
-          }
-          await client.query("COMMIT");
-          const delivery = existing.rows[0].delivery_summary
-            ?? { eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 };
-          return context.json({
-            interaction: { id: publicId("int",existing.rows[0].id), state: existing.rows[0].state },
-            eventId: publicId("ntf",existing.rows[0].event_id),
-            liveActivityId: existing.rows[0].activity_id,
-            delivery, queued: delivery.apnsJobs, replayed: true,relevance: existing.rows[0].relevance,
-          });
-        }
-        const admission = await admitOrdinaryEvent(client,{
+        const result = await createQuestionCardInTransaction(client,{
           principalId: auth.principalId,sourceId: `credential:${auth.credentialId}`,
-        },{
-          apnsMode,kind: "decision",eventId: event.rows[0]!.id,intentHash: requestHash,
-          relevance: input.relevance,idempotencyKey,createdAt: event.rows[0]!.created_at,
-          interaction: { kind: input.type,prompt: input.prompt,actionSeconds: input.expiresInSeconds },
+          credentialId: auth.credentialId,serviceId: null,
+        },input,{ idempotencyKey,requestHash,sourceName,originHash,requestedDeviceIds,
+          apnsMode,deliveryApnsMode: dependencies?.apnsMode });
+        if (result.kind === "created" && input.callback) await registerInteractionCallback(client,callbackEncryption(),{
+          principalId: auth.principalId,interactionRequestId: result.interactionRequestId,...input.callback,correlationId: input.correlationId,
         });
-        if (admission.kind === "duplicate") {
-          const receipt = (await client.query<any>(
-            `SELECT r.id,r.state,e.delivery_summary,e.payload#>>'{liveActivity,activityId}' AS activity_id
-             FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id WHERE e.id=$1`,
-            [admission.eventId],
-          )).rows[0]!;
-          await client.query("ROLLBACK");
-          const delivery = receipt.delivery_summary ?? { eligibleDevices: 0,durableCommands: 0,apnsJobs: 0 };
-          return context.json({ interaction: { id: publicId("int",receipt.id),state: receipt.state },
-            eventId: publicId("ntf",admission.eventId),liveActivityId: receipt.activity_id,
-            delivery,queued: delivery.apnsJobs,replayed: true,relevance: admission.relevance });
-        }
-        const request = admission.request!;
-        const expired = request.state === "expired";
-        const display = expired ? terminalPresentationColumnsFromRow({ presentation: interactivePresentation },"Expired","warning")
-          : interactiveStored;
-        const style = expired ? display.style : input.style ?? "approval";
-        const activity = await client.query<any>(
-          `INSERT INTO live_activities(
-             principal_id,requester_credential_id,activity_key,title,status,detail,progress,symbol,style,
-             privacy,accent_color,target_device_ids,start_idempotency_key,expires_at,stale_at,
-             presentation,presentation_sha256,presentation_policy,presentation_policy_source,
-             presentation_preset_id,presentation_preset_revision,state,ended_at,context,origin_hash
-           ) VALUES ($1,$2,NULL,$3,$13,$4,NULL,$14,$5,$18,'#5ED8B7',
-             $6::uuid[],$7,$8::timestamptz,$8::timestamptz,$9::jsonb,$10,
-             $11::jsonb,'system',$12,1,$15::live_activity_state,CASE WHEN $15='expired' THEN clock_timestamp() ELSE NULL END,$16::jsonb,$17) RETURNING *`,
-          [auth.principalId,auth.credentialId,input.title,input.prompt,style,eligibleDeviceIds,
-            `interaction:${idempotencyKey}`,request.expires_at,
-            display.presentation,display.presentationHash,
-            systemPresentationPolicySnapshot(`system.interactive.${input.style ?? "approval"}`),`system.interactive.${input.style ?? "approval"}`,
-            display.status,display.symbol,expired ? "expired" : "active",input.context ?? {},originHash,
-            display.privacy],
-        );
-        await client.query(
-          `INSERT INTO notification_event_targets(notification_event_id,device_id)
-           SELECT $1,unnest($2::uuid[]) ON CONFLICT DO NOTHING`,
-          [event.rows[0]!.id,eligibleDeviceIds],
-        );
-        const liveActivityId = publicId("act",activity.rows[0].id);
-        const command = {
-          operation: expired ? "end" : "start", activityId: liveActivityId, targetDeviceId: publicId("dev",device.id),
-          generation: Number(activity.rows[0].generation),
-          ...presentationCommandProjection(display.presentation),
-          style, sourceName, privacy: display.privacy,
-          expiresAt: new Date(activity.rows[0].expires_at).toISOString(),
-          staleAt: new Date(activity.rows[0].stale_at).toISOString(),
-          alertOwner: expired ? "none" : "app",
-          sequence: 0, dismissAfterSeconds: null, interaction: null,
-        };
-        await client.query(
-          "UPDATE notification_events SET payload=$2::jsonb WHERE id=$1",
-          [event.rows[0]!.id,{ ...(input.context ? { context: input.context } : {}),liveActivity: command, interactionId: publicId("int",request.id),
-            interactionType: input.type }],
-        );
-        const remote = dependencies?.apnsMode === "disabled" ? { rowCount: 0 } : await client.query(
-          `INSERT INTO delivery_jobs(notification_event_id,device_id,transport,live_activity_id)
-           SELECT $1,d.id,'live_activity_start',$3 FROM devices d JOIN notification_events e ON e.id=$1
-           WHERE d.id=ANY($2::uuid[]) AND d.principal_id=$4
-             AND d.apns_environment=$5::apns_environment
-             AND d.live_activity_push_to_start_token IS NOT NULL
-             AND e.state='active' AND ${relevanceDeliveryGuard("e")}
-           ON CONFLICT DO NOTHING`,
-          [event.rows[0]!.id,eligibleDeviceIds,activity.rows[0].id,auth.principalId,dependencies?.apnsMode],
-        );
-        const delivery = { eligibleDevices: eligible.rows.length, durableCommands: expired ? 0 : eligible.rows.length,
-          apnsJobs: remote.rowCount ?? 0 };
-        await client.query(
-          "UPDATE notification_events SET delivery_summary=$2::jsonb WHERE id=$1",
-          [event.rows[0]!.id,delivery],
-        );
-        if (input.callback) await registerInteractionCallback(client,callbackEncryption(),{
-          principalId: auth.principalId,interactionRequestId: request.id,...input.callback,correlationId: input.correlationId,
-        });
-        await client.query("COMMIT");
-        return context.json({
-          interaction: { id: publicId("int",request.id), state: request.state },
-          eventId: publicId("ntf",event.rows[0]!.id), liveActivityId,
-          delivery, queued: delivery.apnsJobs, replayed: false,relevance: admission.relevance,
-        },201);
+        await client.query(result.commit ? "COMMIT" : "ROLLBACK");
+        return result.kind === "rejected" ? context.json(result.body,result.status)
+          : context.json(result.body,result.kind === "created" ? 201 : 200);
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;
@@ -329,18 +174,9 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
         return context.json({ error: "interaction_not_pending", state: row.state },409);
       }
       if (row.state === "pending") {
-        await client.query(
-          `UPDATE interaction_requests SET state='canceled',responded_at=now()
-           WHERE id=$1`,
-          [interactionId],
-        );
-        await client.query(
-          "UPDATE notification_events SET state='canceled',updated_at=now() WHERE id=$1",
-          [row.notification_event_id],
-        );
-        await settleInteractiveLiveActivity(client,{
-          principalId: auth.principalId, notificationEventId: row.notification_event_id,
-          responseState: "canceled", apnsMode: dependencies?.apnsMode ?? "disabled",
+        await cancelLockedInteraction(client,{
+          principalId: auth.principalId,interactionId,notificationEventId: row.notification_event_id,
+          apnsMode: dependencies?.apnsMode ?? "disabled",
         });
         row = (await client.query<any>(
           `${interactionResultSelection} WHERE r.id=$1 AND r.principal_id=$2 AND e.requester_credential_id=$3`,

@@ -10,7 +10,7 @@ public struct HTTPNotificationReceiptSource: NotificationReceiptRemoteSource {
     private let origin: URL
     private let token: String
     private let session: URLSession
-    public init(scope: StorageScope, credential: DeviceCredential, session: URLSession = .shared) throws {
+    public init(scope: StorageScope, credential: DeviceCredential, session: URLSession = ReloAPISession.shared) throws {
         guard scope.accountID == credential.accountId, scope.deviceID == credential.deviceId
         else { throw NotificationReceiptRemoteError.scopeMismatch }
         self.scope = try ReceiptScope(serverOrigin: scope.serverOrigin, accountId: scope.accountID, deviceId: scope.deviceID)

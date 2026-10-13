@@ -55,6 +55,7 @@ import { publicId } from "./ids.js";
 import { eventConversationId } from "./communication.js";
 import { cleanupTerminalDeviceAuthorizations } from "./device-authorization.js";
 import { expireDueActivities } from "./activities.js";
+import { reconcileAgentSessions } from "./agent-sessions.js";
 import { projectLiveActivityCommand } from "./live-activity-interaction.js";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import {
@@ -107,6 +108,19 @@ const shutdown = new AbortController();
 process.on("SIGTERM", () => { stopping = true; shutdown.abort(); });
 process.on("SIGINT", () => { stopping = true; shutdown.abort(); });
 
+/** Session facts become card endings here, beside card expiry; one failure never stops the cycle. */
+async function reconcileSessions(mode: "disabled" | "sandbox" | "production"): Promise<void> {
+  try {
+    const result = await reconcileAgentSessions(db,mode);
+    if (result.lost || result.cardsEnded || result.pruned) {
+      console.info(JSON.stringify({ event: "agent_session_reconciled",...result }));
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "agent_session_reconcile_failed",
+      message: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
 // Answer callbacks run beside APNs delivery in every mode; a slow endpoint never holds a push.
 const CALLBACK_POLL_MS = 2_000;
 const callbackLoop = (async () => {
@@ -145,6 +159,7 @@ if (config.APNS_MODE === "disabled") {
     cycle.reconciliationRequired = swept.reconciliationRequired;
     cycle.expiredActivities = await expireDueActivities(db,"disabled");
     cycle.expiredInteractions = await expireDueInteractiveActivities(db,"disabled");
+    await reconcileSessions("disabled");
     cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
     if (Object.values(cycle).some((value) => value > 0)) {
       console.info(apnsOperationalLog("apns_worker_cycle",{ mode: "disabled",...cycle }));
@@ -199,6 +214,7 @@ if (config.APNS_MODE === "disabled") {
         cycle.reconciliationRequired = swept.reconciliationRequired;
         cycle.expiredActivities = await expireDueActivities(db,config.APNS_MODE);
         cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
+        await reconcileSessions(config.APNS_MODE);
         cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
         if (Object.values(cycle).some(value => value > 0)) {
           console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason: "maintenance",...cycle }));

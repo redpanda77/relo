@@ -1,4 +1,5 @@
 import type { Handler } from "hono";
+import { isServerAdmin,listServerAccounts,registrationMode } from "../server-accounts.js";
 import type { Database } from "../db.js";
 import {
   parsePresentationPolicy,
@@ -152,6 +153,9 @@ export function createDashboardSystemHandlers(
         liveActivityPolicySource: storedPolicy ? "account" : "system",
       },
       users: users.rows,
+      server: await isServerAdmin(db,owner.user.id)
+        ? { registrationMode: await registrationMode(db),accounts: await listServerAccounts(db) }
+        : null,
     };
     return secureHtml(context, await renderDocument(bootstrap));
   };

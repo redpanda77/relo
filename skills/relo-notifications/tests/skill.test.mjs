@@ -40,7 +40,7 @@ test("the card is the default and notifications are the exception", () => {
   assert.match(skill, /One card per agent/);
   const cards = read("references/cards.md");
   assert.match(cards, /completed outer phases \/ total outer phases/);
-  assert.match(cards, /Steps and progress answer different questions/);
+  assert.match(cards, /A card with steps draws its progress from them/);
   assert.match(cards, /End exactly once/);
   assert.match(cards, /Tappable answers only/);
 });
@@ -53,7 +53,7 @@ test("safety rules keep approval exact and fail closed", () => {
   assert.match(read("references/security.md"), /Never treat a yes\/no answer as\s+permission/);
 });
 
-test("every relo command in the skill is a valid command", { skip: !existsSync(cliSource) }, async () => {
+test("every relo command in the skill is a valid command", { skip: !existsSync(cliSource) }, async (t) => {
   const { execute } = await import(pathToFileURL(cliSource).href);
   const { UsageError } = await import(pathToFileURL(resolve(dirname(cliSource), "errors.mjs")).href);
   // A server where this session's card is already running, as it is after the first recipe.
@@ -61,6 +61,8 @@ test("every relo command in the skill is a valid command", { skip: !existsSync(c
     presentation: { components: [{ type: "steps", items: ["Build", "Test", "Deploy"].map((label) => ({ label })) }] } };
   const stub = new Proxy({}, { get: (_target, name) => name === "getActivity"
     ? async () => ({ activity: card }) : async () => ({}) });
+  const sandbox = mkdtempSync(join(tmpdir(), "relo-skill-recipes-"));
+  t.after(() => rmSync(sandbox, { recursive: true, force: true }));
   const commands = ["SKILL.md", "references/cli.md", "references/cards.md"].flatMap((file) =>
     [...read(file).matchAll(/```bash\n([\s\S]*?)```/gu)].flatMap((block) => block[1]
       .replace(/\\\n\s*/gu, " ").split("\n")
@@ -78,9 +80,46 @@ test("every relo command in the skill is a valid command", { skip: !existsSync(c
         captureActivityCommand: async ({ body }) => ({ target: null, ifSequence: body.ifSequence }),
         readStdinJson: async () => ({}), sleep: async () => {}, readTextFile: async () => "callback-token-0123456789",
         env: { CLAUDE_CODE_SESSION_ID: "skill-recipe-session" },
+        // A recipe line can never touch the real machine: config, pending sign-in, home and cwd are throwaway.
+        home: sandbox, cwd: sandbox, configPath: () => join(sandbox, "config.json"),
+        loadStoredConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), revision: "r" }),
+        writeConfig: async () => {}, configRevision: async () => null,
+        pendingLogin: { read: async () => null, write: async () => {}, clear: async () => {} },
       });
     } catch (error) {
       assert.ok(!(error instanceof UsageError), `${file}: ${line}\n  ${error.message}`);
     }
   }
+});
+
+test("SKILL.md stays small and carries the steps-vs-progress rule and the first-run flow", () => {
+  const skill = read("SKILL.md");
+  assert.ok(Buffer.byteLength(skill) <= 4_900, `SKILL.md is ${Buffer.byteLength(skill)} bytes`);
+  assert.match(skill, /`--steps`[^]*`--progress 3\/10`[^]*Never both/);
+  assert.match(skill, /--steps "Build,Test,Ship"/);
+  assert.match(skill, /--progress 3\/20/);
+  assert.match(skill, /## First run/);
+  assert.match(skill, /relo auth login --wait/);
+  assert.match(skill, /relo test/);
+  assert.match(skill, /RELO_SESSION/);
+  assert.match(skill, /relo skill install --agent <yours>/);
+  assert.ok(Buffer.byteLength(skill) <= 4_950);
+  assert.match(read("references/install.md"), /relo skill install --agent claude-code/);
+  assert.match(read("references/install.md"), /npx --yes skills@1\.5\.22 add redpanda77\/relo@relo-notifications/);
+  assert.doesNotMatch(skill, /warns\s+when that note/);
+  const install = read("references/install.md");
+  assert.match(install, /exactly one/i);
+  assert.match(install, /--move/);
+  assert.match(install, /--remove/);
+  assert.match(install, /never automatic/i);
+  const block = install.match(/<!-- relo:start -->[^]*?<!-- relo:end -->/)[0];
+  assert.ok(block.split("\n").length <= 12);
+  assert.match(read("references/cards.md"), /generate 10 images, polish 20 chapters/);
+});
+
+test("the skill version, its CLI dependency and the CLI agree", () => {
+  const skill = JSON.parse(read("package.json"));
+  const cli = JSON.parse(readFileSync(resolve(packageRoot, "..", "..", "packages", "cli", "package.json"), "utf8"));
+  assert.equal(skill.version, cli.version);
+  assert.equal(skill.reviewedToolingVersions["@relo/cli"], cli.version);
 });

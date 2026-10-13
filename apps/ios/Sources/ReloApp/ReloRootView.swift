@@ -14,11 +14,11 @@ struct ReloRootView: View {
     }
     var body: some View {
         TabView(selection: $navigation.tab) {
-            stack(.now) { NowView(model: model, tab: $navigation.tab) }
+            stack(.now) { NowView(model: model, tab: $navigation.tab).reloAttentionBanner(model: model) }
                 .tabItem { Label("Now", systemImage: "bolt.circle") }.tag(ReloTab.now)
-            stack(.history) { HistoryView(model: model) }
+            stack(.history) { HistoryView(model: model).reloAttentionBanner(model: model) }
                 .tabItem { Label("History", systemImage: "clock") }.tag(ReloTab.history)
-            stack(.settings) { SettingsView(model: model) }
+            stack(.settings) { SettingsView(model: model).reloAttentionBanner(model: model) }
                 .tabItem { Label("Settings", systemImage: "gearshape") }.tag(ReloTab.settings)
         }
         .onAppear {
@@ -65,6 +65,73 @@ struct ReloRootView: View {
                             description: Text("Refresh your connection and try opening it again."))
                     }
                 }
+        }
+    }
+}
+
+/// The one problem that stops Relo working, pinned above the tab bar where it cannot be missed,
+/// with the way out: the server is unreachable, or notifications are off.
+private struct ReloAttentionBanner: View {
+    @Bindable var model: AppModel
+
+    private enum Problem { case unreachable, notificationsOff }
+    private var problem: Problem? {
+        if model.serverUnreachable { return .unreachable }
+        if model.isRegistered && model.permission != .allowed { return .notificationsOff }
+        return nil
+    }
+
+    var body: some View {
+        if let problem {
+            let color = problem == .unreachable ? ReloHoloTheme.amber : ReloHoloTheme.orange
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: problem == .unreachable ? "wifi.exclamationmark" : "bell.slash.fill")
+                    .font(.title3).foregroundStyle(color).frame(width: 28)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(problem == .unreachable ? "Can't reach your Relo server" : "Notifications are off")
+                        .font(.subheadline.weight(.semibold))
+                    Text(problem == .unreachable
+                         ? "Check your connection. If your server is on Tailscale, make sure Tailscale is on."
+                         : "Relo can't alert you or show Live Activities, so requests from your agents will be missed.")
+                        .font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button(problem == .unreachable ? "Retry" : "Turn on") { act(problem) }
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 14).frame(minHeight: 36)
+                    .background(color.opacity(0.85), in: Capsule())
+                    .buttonStyle(ReloPressStyle())
+            }
+            .padding(14)
+            .reloCard(tint: color)
+            .padding(.horizontal, ReloLayout.screenInset).padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func act(_ problem: Problem) {
+        switch problem {
+        case .unreachable:
+            Task { await model.retryDeviceRegistration(); _ = await model.refresh() }
+        case .notificationsOff:
+            if model.permission == .denied, let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            } else {
+                Task { await model.requestNotifications() }
+            }
+        }
+    }
+}
+
+extension View {
+    func reloAttentionBanner(model: AppModel) -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            ReloAttentionBanner(model: model)
+                .animation(.smooth(duration: 0.4), value: model.serverUnreachable)
+                .animation(.smooth(duration: 0.4), value: model.permission)
         }
     }
 }

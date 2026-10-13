@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,15 +21,19 @@ const offline = {
 const positionals = {
   "notify send": ["Ready"],"notify withdraw": ["ntf_x"],"interaction get": ["int_x"],
   "interaction wait": ["int_x"],"interaction cancel": ["int_x"],"activity update": ["deploy"],"activity end": ["deploy"],
-  "activity get": ["deploy"],"activity diagnose": ["deploy"],"delivery reconcile": ["job","retry"],
+  "activity get": ["deploy"],"auth switch": ["work"],"activity diagnose": ["deploy"],"delivery reconcile": ["job","retry"],
 };
 const allOptions = Object.keys(OPTIONS);
 const scratchFile = join(tmpdir(),`relo-schema-test-${process.pid}`);
 const argument = (name) => OPTIONS[name].type === "boolean" ? [`--${name}`]
   : [`--${name}`,name.endsWith("-file") ? scratchFile : "x"];
 test.after(() => rmSync(scratchFile,{ force: true }));
+// `setup` writes files: its option sweep runs entirely inside a throwaway home and working folder.
+const sandbox = mkdtempSync(join(tmpdir(),"relo-schema-setup-"));
+test.after(() => rmSync(sandbox,{ recursive: true,force: true }));
 async function rejection(argv) {
-  try { await execute(argv,offline); return ""; } catch (error) { return String(error?.message ?? error); }
+  const isolated = ["setup","skill"].includes(argv[0]) ? { home: sandbox,cwd: sandbox,env: {} } : {};
+  try { await execute(argv,{ ...offline,...isolated }); return ""; } catch (error) { return String(error?.message ?? error); }
 }
 
 test("every documented option exists in the schema", () => {

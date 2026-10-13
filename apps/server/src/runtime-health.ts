@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { Database } from "./db.js";
 
-const CURRENT_SCHEMA = "0060_mobile_sign_in_codes.sql";
+const CURRENT_SCHEMA = "0062_agent_sessions.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";

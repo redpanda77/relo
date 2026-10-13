@@ -1,12 +1,14 @@
 # CLI reference
 
-`relo schema --json` is the exact grammar (every command, flag, enum, limit and exit code); this page
-explains behavior. Use the installed `relo` (or `reloctl`); do not install or upgrade it mid-task.
+`relo schema --json` is the exact grammar (every command, flag, enum, limit and exit code; it is long:
+`relo schema activity update`, or `activity.update`, prints just those commands plus the exit codes,
+and an unknown name gets a "Did you mean …?" hint); this page explains behavior. Use the installed `relo` (or `reloctl`); do not install or upgrade it mid-task.
 
 ## Contents
 
 - [Output and exit codes](#output-and-exit-codes)
 - [Which card a command addresses](#which-card-a-command-addresses)
+- [Origin: computer and account](#origin-computer-and-account)
 - [Cards](#cards)
 - [Questions](#questions)
 - [Notifications](#notifications)
@@ -15,17 +17,46 @@ explains behavior. Use the installed `relo` (or `reloctl`); do not install or up
 
 ## Output and exit codes
 
-Every command prints one JSON object on stdout: `{"ok":true,"command":"…","data":{…}}`, or
-`{"ok":false,"error":{"code","message","hint?","details?"}}` (errors print as JSON whenever stdout is
-piped, or with `--json`). Diagnostics go to stderr. Branch on the exit code, then read `data`.
+Success is one compact JSON line holding what you act on; omitted keys are absent or null:
+
+| Command | Line |
+| --- | --- |
+| `activity start/update/end/get` | `{"ok":true,"id":"act_…","state":"active","sequence":3,"step":"2/5","progress":0.4,"disposition":"reused"}` (`reused`/`held` only when true) |
+| `activity status`, `activity get` with no card | the line above with `"found":true`, or `{"ok":true,"found":false}` |
+| `activity list` | `{"ok":true,"cards":[{"id","state","title","status","step","progress","updatedAt"}…]}`, newest 10 (`--limit N`) |
+| `ask`, `interaction get/wait/cancel` | `{"ok":true,"id":"int_…","state":"approved"}`; `ask` adds `card`, and `fallback` when the owner answers in the app |
+| `notify` / `notify withdraw` | `{"ok":true,"id":"ntf_…","devices":1}` / `{"ok":true,"id":"ntf_…","state":"withdrawn"}` |
+| `doctor` | `{"ok":true,"ready":true}`, or `{"ok":true,"ready":false,"next":{"step":"login\|phone\|test\|skill","run","why"}}`; failures add `"checks":{"server":{"state","hint"}}` |
+| `auth login` | in an agent context or with `--no-wait`: `{"ok":true,"state":"pending","url","code","next":"relo auth login --wait"}`; `--wait` and a blocking login end with the signed-in line |
+| `test` | `{"ok":true,"verified":true}` (`"already":true` when the phone passed before); no/timeout explain the checks |
+| `auth status` | `{"ok":true,"signedIn":true,"server","client","expiresAt"}`; `missingScopes` only when one is missing |
+| `services list` | `{"ok":true,"services":[{"id","title","prefix","createdAt"}]}`, secrets never included; `--full` for everything |
+| `setup` | `{"ok":true,"file","action":"created\|appended\|updated\|unchanged\|kept\|moved\|removed","from?","skill":{…},"hint?"}`; owner's choice, see [install.md](install.md) |
+| `sessions` | `{"ok":true,"sessions":[{harness,computer,account,project,presence,lastEventAt,card}]}`; empty unless the owner installed the optional session hooks (`relo setup … --hooks`). Without hooks Relo works fully: cards go stale and end on their own. |
+| `--dry-run` | `activity start\|update\|end`, `ask`, `notify`: validate locally, print `{"ok":true,"dryRun":true,"would":{command,body}}`, send nothing |
+| profiles | `relo auth login --profile NAME`, `relo auth switch NAME`, `RELO_PROFILE=NAME`; `auth status` shows `profile` |
+| `skill install\|remove\|status` | `{"ok":true,"agent","dir","version","action":"installed\|updated\|unchanged\|removed\|absent","archived?"}`; status: `{"ok":true,"cli","copies":[{"dir","version","current"}]}`; see [install.md](install.md) |
+| `update` | `--check`: `{"ok":true,"current","latest","updateAvailable"}`; success `{"ok":true,"from","to","verified":true}`; already latest: `updateAvailable:false`; `--rollback` adds `"rollback":true`. Owner's choice, see [install.md](install.md) |
+| `devices list` | `{"ok":true,"devices":[{"id","name","liveActivities","lastSeenAt"}]}` |
+
+`--full` prints the whole server reply as `{"ok":true,"command":"…","data":{…}}`; `services create`
+(which returns the webhook URL), `account` and `activity diagnose` print their own full shapes. Use `sequence` for `--if-sequence`.
+
+When display text is longer than its limit (title 80, status 60, detail 240, progress label 32,
+notify title 80 and summary 240) it is shortened at a word boundary with `…`, and the line carries
+`"note":"status shortened to 60 characters"`. Questions, topics, button labels, URLs and IDs are never
+shortened; they fail with exit `2` instead.
+
+An error prints once: `{"ok":false,"error":{"code","message","hint?","details?"}}` on stdout when it is
+piped or with `--json`, otherwise plain text on stderr. Branch on the exit code, then read `error.hint`.
 
 | Exit | Meaning |
 | ---: | --- |
 | `0` | Success, or the owner approved / said yes |
 | `1` | Server or other failure |
-| `2` | Usage error: read `error.hint`, it is a corrected command |
+| `2` | Usage error: read `error.hint` (a corrected command, or "Did you mean …?" for a typo) |
 | `3` | Missing, invalid, or insufficient credential (`relo auth login`) |
-| `4` | No answer within 5 minutes, canceled, or expired: the card has ended |
+| `4` | No answer. State `timeout`: still open, run `relo interaction wait ID`. Otherwise (expired, canceled) closed: do not act |
 | `5` | The owner denied or said no |
 | `6` | Network unreachable: retry the same command with the same idempotency key |
 | `7` | No phone could receive it |
@@ -33,25 +64,50 @@ piped, or with `--json`). Diagnostics go to stderr. Branch on the exit code, the
 ## Which card a command addresses
 
 Leave out the card and the command uses this work's card:
-- inside Claude Code (`CLAUDE_CODE_SESSION_ID`) or Codex (`CODEX_THREAD_ID`): the session's card,
-  whatever the topic wording;
+- inside an agent session: the session's card, whatever the topic wording. Session ids are read from
+  `CLAUDE_CODE_SESSION_ID` (Claude Code), `CODEX_THREAD_ID` (Codex) or the generic `RELO_SESSION`, which any
+  harness or script can export as a stable id. OpenCode, Gemini CLI and Cursor are recognized as sources
+  (`OpenCode`, `Gemini CLI`, `Cursor`) but expose no session id, so set `RELO_SESSION` or reuse `--topic`.
+  For any other harness set `RELO_SOURCE="<harness>"` and `RELO_SESSION=<stable id>`;
 - elsewhere: the card for source › project › topic, so pass the same `--topic` every time.
 
 Pass a card ID (`act_…`) or `--name NAME` to address a specific card instead. `relo activity status`
-shows this work's running card, if any.
+(or `get` with no card) shows this work's running card, if any.
+
+## Origin: computer and account
+
+Cards say which computer and agent account they came from. Both are automatic and optional:
+- **Computer**: `--computer`, else `RELO_COMPUTER`, else the Mac's name (`scutil --get ComputerName`),
+  else the hostname without its domain.
+- **Account**: `--account`, else `RELO_ACCOUNT` (any harness), else the nickname set with `relo account NAME`
+  (stored per Claude Code `CLAUDE_CONFIG_DIR`/`~/.claude`, Codex `CODEX_HOME`/`~/.codex`, or the harness
+  name for any other), else the
+  folder name of a custom config directory (`~/.claude-work` is "work"), else omitted. Relo never reads
+  anything inside those folders. `relo account` shows the current one; `relo account --clear` removes it.
+- `relo auth login` names the credential after the computer unless `--client-name` is given; a login
+  with an existing name replaces that login, so keep names unique per machine.
 
 ## Cards
 
 ```bash
 relo activity start --title "Deploying 0.7.57" --status "Building image" --topic "Release 0.7.57" \
-  --step Build --step Test --step Deploy --step-current 1
-relo activity update --status "Running tests" --step-current 2 --detail "214 of 380"
-relo activity update --progress 0.6 --progress-label "Tests"
+  --steps "Build,Test,Deploy"
+relo activity update --status "Running tests" --next-step --detail "214 of 380"
+relo activity update --step-current Deploy
+relo activity update --progress 3/5      # a counted job; labelled "3 of 5" (add --progress-label to rename)
 relo activity end --status "Live on production"
 relo activity end --status "Failed: 3 tests" --symbol warning
 ```
 
 - `activity start` reuses this work's running card (updating it) instead of creating another.
+- Steps: `--steps "A,B,C"` (up to 8, 40 characters each; repeated `--step` works too). The first is
+  current unless `--step-current` says otherwise. `--step-current` takes a number from 1 or a step
+  name, `--next-step` advances one (it reads the card first; no steps or already last is an error).
+  On `update` the card's own steps are reused, so send only the change.
+- `--progress` takes `0.4`, `40%` or `3/5`. A bare number above 1 (`40`) is rejected as ambiguous.
+  A card with steps draws its progress from them: `--progress` there is ignored and the line says
+  `"note":"progress follows this card's steps; use --next-step or --step-current"`. `--steps` together
+  with `--progress` in one start is a usage error.
 - `update` sends only what changed; `--clear-detail` / `--clear-progress` remove a line.
 - `end` without `--status` reads "Complete" with a success icon and completes all steps and
   progress; with `--symbol warning` it keeps where the work stopped. `--dismiss-after 5m` keeps the
@@ -70,7 +126,11 @@ relo ask "Ship it?" --approval --no-wait          # returns the pending question
 
 - The question appears on this work's card with answer buttons, a countdown and an alert; the
   command waits for the answer. A question waits at most 5 minutes (`--expires-in`, default and
-  maximum 5m; `--timeout` up to 5m). Unanswered, it expires and the card ends; the command exits 4.
+  maximum 5m). Unanswered, it expires and the card ends. The command waits for `--timeout` (default
+  the question's lifetime; **100s inside an agent session**, because an agent's shell tool kills
+  longer commands). If that passes first, it exits 4 with
+  `{"error":{"message":"No answer yet; the question is still open.","hint":"relo interaction wait int_… --timeout 100s","details":{"state":"timeout","id":"int_…"}}}`:
+  run the hint. Exit 4 with another state (`expired`, `canceled`) means closed: do not act.
   No card running? `ask` starts one for the question and ends it after the answer (inside an agent
   session it stays as the session's card).
 - Up to 240 characters. Tappable answers only: `--approval` (Approve/Deny) or `--yes-no` (Yes/No);
@@ -90,7 +150,9 @@ relo notify "0.7.57 is live on production" --title "Deployed" --topic "Release 0
 relo notify "Nightly backup failed" --topic "Backups" --summary "Backup failed" --markdown --url "https://ci.example.com/runs/48"
 ```
 
-- One-shot outcomes only. `notify` cannot ask or show progress.
+- One-shot outcomes only. `notify` cannot ask or show progress. Inside an agent session `--topic`
+  is optional while the session's card is running: source, project, topic, computer and account come
+  from it.
 - `--url` accepts `https://` pages, an app's own scheme (`your-app://incidents/42`) or
   `shortcuts://run-shortcut?name=…`; the owner opens it from the message. `--image` is a public
   `https://` image shown with the message and as the sender's avatar. `--summary` is the banner for
@@ -98,9 +160,13 @@ relo notify "Nightly backup failed" --topic "Backups" --summary "Backup failed" 
 
 ## Readiness, devices and services
 
-- `relo doctor --json` checks the config, server, credential and phones; `relo auth status --json`
-  reports the credential and whether it came from the config file or `RELO_TOKEN`.
-- `relo devices list --json` lists phones; `--device ID` targets one.
+- `relo doctor` is cheap (no phone pings; its only write is the 24h update-check cache). It checks the config, server and credential, then
+  names the first unmet step in `next` (sign in, a phone with Live Activities, the one-time `relo test`);
+  a missing or outdated skill, or a newer CLI release (`"warnings":{"update":{"state":"behind","latest","hint":"relo update"}}`), is a warning only. The instruction-file block is never a step.
+  `relo auth login` in an agent context prints the link and returns; finish with `relo auth login --wait`;
+  `relo auth status` shows who is signed in (`"source":"RELO_TOKEN"` when it came from the
+  environment). `--full` prints every check and the scopes.
+- `relo devices list` lists phones; `--device ID` targets one.
 - `relo services create/list`: see [services.md](services.md).
 
 ## Retries and idempotency

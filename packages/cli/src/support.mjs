@@ -3,8 +3,13 @@ import { ApiError, EXIT, NoDeliveryError, UsageError } from "./errors.mjs";
 
 export const MAX_STDIN_INPUT_BYTES = 1024 * 1024;
 
-export function result(command, data, { message } = {}) {
-  return { exitCode: EXIT.OK, command, data, message };
+export function result(command, data, { message, notes } = {}) {
+  return { exitCode: EXIT.OK, command, data, message, ...(notes?.length ? { notes } : {}) };
+}
+
+/** `--dry-run` outcome: what would be sent, validated locally, with no request made. */
+export function dryRunResult(command, body, notes) {
+  return result("dry-run", { dryRun: true, would: { command, body } }, { notes });
 }
 
 export function assertNoExtra(positionals, expected, usage) {
@@ -16,7 +21,7 @@ export function assertAtMostOne(positionals, usage) {
 }
 
 export function assertAllowedOptions(options, allowed) {
-  const global = new Set(["help", "json"]);
+  const global = new Set(["help", "json", "full"]);
   for (const [name, value] of Object.entries(options)) {
     if (global.has(name) || allowed.includes(name)) continue;
     if (Array.isArray(value) && value.length === 0) continue;
@@ -49,6 +54,34 @@ export function definedFields(value) {
 export function optionalText(value, label, maximum) {
   if (value === undefined || value === null) return value;
   return requireText(value, label, maximum);
+}
+
+/** Cuts at the last word boundary that fits (hard cut when there is none) and ends with an ellipsis. */
+export function shortenText(text, maximum) {
+  const chars = Array.from(text);
+  if (chars.length <= maximum) return text;
+  const room = chars.slice(0, Math.max(1, maximum - 1));
+  const boundary = /\s/u.test(chars[room.length] ?? "") ? room.length
+    : room.findLastIndex((character) => /\s/u.test(character));
+  const kept = boundary > 0 ? room.slice(0, boundary) : room;
+  return `${kept.join("").replace(/[\s,;:.\-–—]+$/u, "")}…`;
+}
+
+/**
+ * Display text (title, status, detail, labels, summaries) that is too long is shortened, never
+ * refused: a failed round trip costs more than a trimmed line. `notes` collects what was shortened.
+ */
+export function fitText(value, label, maximum, notes) {
+  if (value === undefined || value === null) return value;
+  const text = requireText(value, label, 100_000);
+  if (Array.from(text).length <= maximum) return text;
+  notes?.push(`${label.replace(/^--/u, "").toLowerCase()} shortened to ${maximum} characters`);
+  return shortenText(text, maximum);
+}
+
+export function fitRequiredText(value, label, maximum, notes) {
+  requireText(value, label, 100_000);
+  return fitText(value, label, maximum, notes);
 }
 
 export function booleanStdin(value, label, defaultValue) {

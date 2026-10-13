@@ -32,6 +32,7 @@ import {
   createNotificationContentCipher } from "./notification-content.js";
 
 import { registerDeviceRoutes } from "./api/device-routes.js";
+import { registerAgentSessionRoutes } from "./api/agent-session-routes.js";
 import { registerInboxRoutes } from "./api/inbox-routes.js";
 import { registerNotificationRoutes } from "./api/interaction-routes.js";
 import type { ApiRouteContext } from "./api/route-context.js";
@@ -190,6 +191,7 @@ export function createApp(
   registerDeviceRoutes(app,routeContext);
   registerNotificationRoutes(app,routeContext);
   registerInboxRoutes(app,routeContext);
+  registerAgentSessionRoutes(app,routeContext);
 
   registerActivityRoutes(app, db, dependencies?.apnsMode ?? "disabled", { contentCipher: notificationContentCipher,
     callbackEncryption });

@@ -121,6 +121,9 @@ function selectedDeviceIds(values: string[] | undefined): string[] | null {
   return internal as string[];
 }
 
+/** A service sends for its account only while the account has access (ADR 0004: disabling stops it). */
+const activeServiceOwner = "JOIN owner_principals service_owner ON service_owner.id=s.principal_id AND service_owner.disabled_at IS NULL";
+
 function webhookHash(secret: string): string {
   return hashToken(`relo:webhook:v1\n${secret}`);
 }
@@ -138,7 +141,8 @@ function serviceActivityIdempotencyKey(value: string | undefined): string | unde
 async function serviceForSecret(query: Queryable, secret: string, forUpdate = false): Promise<any | undefined> {
   if (!/^hook_[A-Za-z0-9_-]{43}$/.test(secret)) return undefined;
   const result = await query.query(
-    `SELECT * FROM webhook_services WHERE secret_hash=$1 AND revoked_at IS NULL${forUpdate ? " FOR SHARE" : ""}`,
+    `SELECT s.* FROM webhook_services s ${activeServiceOwner}
+     WHERE s.secret_hash=$1 AND s.revoked_at IS NULL${forUpdate ? " FOR SHARE OF s" : ""}`,
     [webhookHash(secret)],
   );
   return result.rows[0];
@@ -496,7 +500,7 @@ export function registerWebhookRoutes(
     const secret = context.req.param("secret");
     if (!/^hook_[A-Za-z0-9_-]{43}$/.test(secret)) return context.json({ ok: false, error: "unknown_webhook" }, 404);
     const service = await db.query<NotificationWebhookServiceRow>(
-      `SELECT * FROM webhook_services WHERE secret_hash=$1 AND revoked_at IS NULL`,
+      `SELECT s.* FROM webhook_services s ${activeServiceOwner} WHERE s.secret_hash=$1 AND s.revoked_at IS NULL`,
       [webhookHash(secret)],
     );
     if (!service.rowCount) return context.json({ ok: false, error: "unknown_webhook" }, 404);
@@ -612,7 +616,7 @@ export function registerWebhookRoutes(
       return context.json({ ok: false,error: "event_not_found" },404);
     }
     const service = await db.query<NotificationWebhookServiceRow>(
-      `SELECT * FROM webhook_services WHERE secret_hash=$1 AND revoked_at IS NULL`,
+      `SELECT s.* FROM webhook_services s ${activeServiceOwner} WHERE s.secret_hash=$1 AND s.revoked_at IS NULL`,
       [webhookHash(secret)],
     );
     if (!service.rowCount) return context.json({ ok: false,error: "event_not_found" },404);

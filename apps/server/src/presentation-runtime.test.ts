@@ -81,6 +81,16 @@ describe("current presentation runtime",() => {
     expect(state).not.toHaveProperty("presentation");
   });
 
+  test("content state carries startedAt in epoch seconds beside updatedAt",() => {
+    const command = presentationCommandProjection(presentation);
+    const base = { ...command,generation: 1,sequence: 2,expiresAt: null,staleAt: null,interaction: null };
+    expect(activityContentState({ ...base,startedAt: 1_699_999_000 },"standard",1_700_000_000))
+      .toMatchObject({ updatedAt: 1_700_000_000,startedAt: 1_699_999_000 });
+    expect(activityContentState(base,"standard",1_700_000_000)).not.toHaveProperty("startedAt");
+    const legacy = activityContentState({ generation: 1,startedAt: 1_699_999_000 },"standard",1_700_000_000);
+    expect(legacy).toMatchObject({ updatedAt: 1_700_000_000,startedAt: 1_699_999_000 });
+  });
+
   test("terminal state remains a complete current presentation",() => {
     const approval = canonicalPresentation({
       ...presentation,components: [],surfaces: {},

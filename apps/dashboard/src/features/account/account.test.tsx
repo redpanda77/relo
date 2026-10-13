@@ -53,6 +53,20 @@ const initial: AccountDashboardBootstrap = {
     id: "owner-user", name: "Relo Owner", email: "owner@example.test",
     role: "owner", disabled: false, sessions: 1, devices: 1,
   }],
+  server: null,
+}
+
+const adminView: AccountDashboardBootstrap = {
+  ...initial,
+  server: {
+    registrationMode: "approval",
+    accounts: [
+      { id: "owner-user", name: "Relo Owner", email: "owner@example.test", status: "active",
+        admin: true, createdAt: "2026-10-01T00:00:00.000Z", devices: 1, sessions: 1 },
+      { id: "guest-user", name: "Guest", email: "guest@example.test", status: "pending",
+        admin: false, createdAt: "2026-10-12T00:00:00.000Z", devices: 0, sessions: 0 },
+    ],
+  },
 }
 
 function deferred() {
@@ -64,7 +78,25 @@ function deferred() {
 }
 
 function service(): AccountService {
+  // Behaves like the server: a restored account that was never approved is still waiting.
+  const accounts = (adminView.server?.accounts ?? []).map((account) => ({
+    ...account, approved: account.status !== "pending",
+  }))
+  const serverState = () => ({
+    registrationMode: "approval" as const,
+    accounts: accounts.map(({ approved: _approved, ...account }) => account),
+  })
   return {
+    setRegistrationMode: vi.fn().mockResolvedValue(undefined),
+    createServerAccount: vi.fn().mockResolvedValue({ id: "created-user" }),
+    changeServerAccountAccess: vi.fn().mockImplementation(async (id: string, action: string) => {
+      const account = accounts.find((item) => item.id === id)!
+      if (action === "approve") { account.approved = true; if (account.status !== "disabled") account.status = "active" }
+      if (action === "disable") account.status = "disabled"
+      if (action === "enable") account.status = account.approved ? "active" : "pending"
+    }),
+    deleteServerAccount: vi.fn().mockResolvedValue(undefined),
+    loadServer: vi.fn().mockImplementation(async () => serverState()),
     createUser: vi.fn().mockResolvedValue(undefined),
     resetUserPassword: vi.fn().mockResolvedValue(undefined),
     setUserEnabled: vi.fn().mockResolvedValue(undefined),
@@ -271,5 +303,49 @@ describe("Account feature contracts", () => {
         confirmation: "DELETE",
       }),
     })
+  })
+
+  it("shows server administration only to the server admin", () => {
+    render(<AccountPage initial={initial} service={service()} />)
+    expect(screen.queryByText("Server accounts")).toBeNull()
+  })
+
+  it("lets the admin approve, revoke and delete accounts and change registration", async () => {
+    const api = service()
+    render(<AccountPage initial={accountDashboardBootstrapSchema.parse(adminView)} service={api} />)
+    const list = screen.getByRole("list", { name: "Accounts on this server" })
+    const guest = within(list).getByText("Guest").closest("li")!
+    expect(within(guest).getByText("Waiting for approval")).toBeTruthy()
+    expect(within(list).getByText("Relo Owner").closest("li")!.querySelector("button")).toBeNull()
+
+    fireEvent.click(within(guest).getByRole("button", { name: "Approve" }))
+    await waitFor(() => expect(api.changeServerAccountAccess).toHaveBeenCalledWith("guest-user", "approve"))
+    await screen.findByText("Guest can now sign in.")
+    fireEvent.click(within(guest).getByRole("button", { name: "Revoke access" }))
+    await waitFor(() => expect(api.changeServerAccountAccess).toHaveBeenCalledWith("guest-user", "disable"))
+    await within(guest).findByText("Access off")
+
+    fireEvent.click(within(guest).getByRole("button", { name: "Restore access" }))
+    await screen.findByText("Guest's access is back on.")
+    expect(within(guest).queryByText("Access off")).toBeNull()
+
+    fireEvent.click(screen.getByRole("radio", { name: /Open/ }))
+    await waitFor(() => expect(api.setRegistrationMode).toHaveBeenCalledWith("open"))
+
+    fireEvent.click(within(guest).getByRole("button", { name: "Delete" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Delete account" , hidden: false }))
+    await waitFor(() => expect(api.deleteServerAccount).toHaveBeenCalledWith("guest-user"))
+    await waitFor(() => expect(within(list).queryByText("Guest")).toBeNull())
+  })
+
+  it("keeps a restored account waiting when it was never approved", async () => {
+    const api = service()
+    render(<AccountPage initial={accountDashboardBootstrapSchema.parse(adminView)} service={api} />)
+    const guest = within(screen.getByRole("list", { name: "Accounts on this server" })).getByText("Guest").closest("li")!
+    fireEvent.click(within(guest).getByRole("button", { name: "Decline" }))
+    await within(guest).findByText("Access off")
+    fireEvent.click(within(guest).getByRole("button", { name: "Restore access" }))
+    await screen.findByText("Guest's access is back on; they still need your approval.")
+    expect(within(guest).getByText("Waiting for approval")).toBeTruthy()
   })
 })

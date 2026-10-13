@@ -3,27 +3,38 @@ import { prepareNotificationCommand } from "./notification-command-store.mjs";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "./args.mjs";
 import { ReloApiClient } from "./api-client.mjs";
-import { configPath, configRevision, environmentConfig, loadConfig, removeConfig, writeConfig } from "./config.mjs";
-import { EXIT, UsageError, normalizeError } from "./errors.mjs";
+import { configPath, configRevision, environmentConfig, loadAccountsSync, loadComputerNameSync, loadConfig, removeConfig, switchProfile, writeConfig } from "./config.mjs";
+import { EXIT, ReloError, UsageError, normalizeError } from "./errors.mjs";
 import { runDoctor } from "./doctor.mjs";
 import { commandSchema } from "./schema.mjs";
+import { runAccountCommand } from "./commands/account.mjs";
 import { runActivityCommand } from "./commands/activity.mjs";
 import { runAdminCommand } from "./commands/admin.mjs";
 import { isReadyResponse, openBrowser, runAuthCommand, safeCredential } from "./commands/auth.mjs";
+import { runHookCommand } from "./commands/hook.mjs";
 import { runNotifyCommand } from "./commands/notify.mjs";
+import { runSessionsCommand } from "./commands/sessions.mjs";
+import { runTestCommand } from "./commands/test.mjs";
+import { clearPendingLogin, pendingLoginPath, readPendingLogin, writePendingLogin } from "./pending-login.mjs";
+import { runSetupCommand } from "./commands/setup.mjs";
+import { runSkillCommand } from "./commands/skill.mjs";
+import { runUpdateCommand } from "./commands/update.mjs";
 import { GUIDE, HELP, IDENTITY_HELP } from "./help.mjs";
-import { detectIdentityDefaults } from "./identity.mjs";
+import { detectComputerName, detectIdentityDefaults, detectOrigin } from "./identity.mjs";
+import { errorLine, errorText, successLine } from "./output.mjs";
+import { selectSchemaCommands, unknownCommandHint } from "./suggest.mjs";
 import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result } from "./support.mjs";
 
-const VERSION = "0.9.2";
+const VERSION = "0.10.0";
 
 async function executeCommand(parsed, dependencies) {
   const { positionals, options } = parsed;
-  if (options.version) {
-    if (positionals.length > 0) throw new UsageError("--version cannot be combined with a command");
+  if (options.version && positionals[0] !== "update") {
+    if (positionals.length > 0) throw new UsageError("--version is not valid for this command (relo --version prints the version on its own)");
     assertAllowedOptions(options, ["version"]);
     return result("version", { version: VERSION });
   }
@@ -37,13 +48,22 @@ async function executeCommand(parsed, dependencies) {
   }
   if (options.help || positionals.length === 0) return result("help", { help: GUIDE });
   if (positionals[0] === "schema") {
-    assertNoExtra(positionals.slice(1), 0, "Usage: relo schema [--json]");
     assertAllowedOptions(options, []);
-    return result("schema", commandSchema({ version: VERSION, exitCodes: {
+    let only;
+    if (positionals.length > 1) {
+      const selected = selectSchemaCommands(positionals.slice(1));
+      if (selected.error) throw new UsageError(selected.error, { hint: selected.hint });
+      only = selected.commands;
+    }
+    return result("schema", commandSchema({ version: VERSION, only, exitCodes: {
       0: "success, approved, yes, or replied", 1: "server or other failure", 2: "usage error",
       3: "authentication or scope", 4: "timed out, canceled, or expired", 5: "denied or no",
       6: "network", 7: "no phone accepted the push",
     } }));
+  }
+  if (positionals[0] === "mcp") {
+    assertAllowedOptions(options, []);
+    throw new UsageError("Usage: relo mcp", { hint: "A stdio MCP server for a harness to launch, taking no arguments. Add it with: relo setup --mcp --agent <name> --global" });
   }
   let [group, action, ...rest] = positionals;
   if (
@@ -54,38 +74,97 @@ async function executeCommand(parsed, dependencies) {
     action = "send";
   }
 
+  const unknownHint = unknownCommandHint(group, action);
+  if (unknownHint !== undefined) throw new UsageError(`Unknown command: ${positionals.join(" ")}`, { hint: unknownHint });
+
   if (group === "doctor") {
-    if (action !== undefined) throw new UsageError("Usage: relo doctor [--smoke]");
+    if (action !== undefined) throw new UsageError("Usage: relo doctor [--smoke] [--full]");
     assertAllowedOptions(options,["smoke"]);
     return runDoctor(options,dependencies,{ isReadyResponse,safeCredential });
   }
 
+  if (options.profile !== undefined && !(group === "auth" && action === "login")) {
+    throw new UsageError("--profile is not valid for this command", { hint: "Set RELO_PROFILE=NAME, or relo auth switch NAME" });
+  }
+  if (group === "auth" && action === "login" && options.profile !== undefined) dependencies.profile = options.profile;
   const command = { parsed, positionals, options, group, action, rest, dependencies };
+  const hookResult = await runHookCommand(command);
+  if (hookResult !== undefined) return hookResult;
+  const setupResult = await runSetupCommand(command);
+  if (setupResult !== undefined) return setupResult;
+  const skillResult = await runSkillCommand(command);
+  if (skillResult !== undefined) return skillResult;
+  const updateResult = await runUpdateCommand(command);
+  if (updateResult !== undefined) return updateResult;
+  const accountResult = await runAccountCommand(command);
+  if (accountResult !== undefined) return accountResult;
   const authResult = await runAuthCommand(command);
   if (authResult !== undefined) return authResult;
-  const { config, client } = await getAuthenticated(dependencies);
+  // --dry-run validates locally and never needs a login or a request: its client refuses every call.
+  const dryRun = Boolean(options["dry-run"]) && (group === "ask" || group === "notify" && action === "send"
+    || group === "activity" && ["start", "update", "end"].includes(action));
+  if (dryRun) dependencies.dryRun = true;
+  const { config, client } = dryRun ? { config: undefined, client: refusingClient() } : await getAuthenticated(dependencies);
   Object.assign(command, { config, client });
-  for (const runGroup of [runNotifyCommand, runActivityCommand, runAdminCommand]) {
+  for (const runGroup of [runNotifyCommand, runActivityCommand, runAdminCommand, runTestCommand, runSessionsCommand]) {
     const output = await runGroup(command);
     if (output !== undefined) return output;
   }
-  throw new UsageError(`Unknown command: ${positionals.join(" ")}`);
+  throw new UsageError(`Unknown command: ${positionals.join(" ")}`, { hint: "Commands: relo help all" });
+}
+
+function refusingClient() {
+  return new Proxy({}, { get: (_, method) => () => {
+    throw new ReloError(`--dry-run made a request (${String(method)}); this is a bug`, { code: "DRY_RUN_REQUEST" });
+  } });
 }
 
 function createDependencies(overrides = {}) {
-  return {
-    env: overrides.env ?? process.env,
-    identityDefaults: overrides.identityDefaults
-      ?? (() => detectIdentityDefaults(overrides.env ?? process.env, overrides.cwd ?? process.cwd())),
+  const env = overrides.env ?? process.env;
+  const configPathOf = overrides.configPath ?? (() => configPath({ env }));
+  const loadAccounts = overrides.loadAccounts ?? (() => loadAccountsSync(configPathOf()));
+  const probes = {
+    platform: overrides.platform, scutil: overrides.scutil, hostname: overrides.hostname, home: overrides.home,
+    accounts: loadAccounts,
+  };
+  const identityDefaults = overrides.identityDefaults
+    ?? (() => detectIdentityDefaults(env, overrides.cwd ?? process.cwd()));
+  // Stubbing the identity stubs out the machine too, so tests never depend on the computer they run on.
+  const originDefaults = overrides.originDefaults
+    ?? (overrides.identityDefaults ? () => ({}) : () => detectOrigin(env, probes));
+  let origin;
+  const dependencies = {
+    env,
+    // The profile this command runs as: `auth login --profile` (set in execute), else RELO_PROFILE, else the active one.
+    profile: env.RELO_PROFILE?.trim() || undefined,
+    home: overrides.home ?? homedir(),
+    cwd: overrides.cwd ?? process.cwd(),
+    version: overrides.version ?? VERSION,
+    identityDefaults,
+    creationDefaults: () => ({ ...identityDefaults(), ...(origin ??= originDefaults()) }),
+    computerName: overrides.computerName ?? (() => detectComputerName(env, probes)),
+    accountProbes: probes,
+    loadAccounts,
     commandOccurredAt: (overrides.now ?? Date.now)(),
     captureActivityCommand: overrides.captureActivityCommand ?? captureActivityCommand,
     prepareNotificationCommand: overrides.prepareNotificationCommand ?? prepareNotificationCommand,
     activityCaptureDirectory: overrides.activityCaptureDirectory,
-    configPath: overrides.configPath ?? (() => configPath({ env: overrides.env ?? process.env })),
-    loadConfig: overrides.loadConfig ?? ((path) => environmentConfig(overrides.env ?? process.env) ?? loadConfig(path)),
+    configPath: configPathOf,
+    loadConfig: overrides.loadConfig ?? ((path) => environmentConfig(env) ?? loadConfig(path, { profile: dependencies.profile })),
+    loadStoredConfig: overrides.loadStoredConfig ?? ((path) => loadConfig(path, { profile: dependencies.profile })),
+    loadComputerName: overrides.loadComputerName ?? (() => loadComputerNameSync(configPathOf())),
     writeConfig: overrides.writeConfig ?? writeConfig,
-    removeConfig: overrides.removeConfig ?? removeConfig,
+    switchProfile: overrides.switchProfile ?? switchProfile,
+    removeConfig: overrides.removeConfig ?? ((path, options) => removeConfig(path, { profile: dependencies.profile, ...options })),
+    stdinIsTTY: overrides.stdinIsTTY ?? Boolean(process.stdin.isTTY),
+    hookStateDirectory: overrides.hookStateDirectory
+      ?? join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state"), "relo", "hooks"),
     configRevision: overrides.configRevision ?? configRevision,
+    pendingLogin: overrides.pendingLogin ?? {
+      read: () => readPendingLogin(pendingLoginPath(configPathOf())),
+      write: (value) => writePendingLogin(pendingLoginPath(configPathOf()), value),
+      clear: () => clearPendingLogin(pendingLoginPath(configPathOf())),
+    },
     clientFactory:
       overrides.clientFactory ??
       ((config) =>
@@ -93,6 +172,7 @@ function createDependencies(overrides = {}) {
           ...config,
           version: VERSION,
           fetchImpl: overrides.fetchImpl ?? globalThis.fetch,
+          sleep: dependencies.sleep,
         })),
     now: overrides.now ?? (() => Date.now()),
     sleep:
@@ -119,8 +199,12 @@ function createDependencies(overrides = {}) {
     runPermissionCommand: overrides.runPermissionCommand,
     beforePermissionCommit: overrides.beforePermissionCommit,
     fetchImpl: overrides.fetchImpl ?? globalThis.fetch,
+    runNpm: overrides.runNpm,
+    // Doctor's update check goes to the network only in a real process; a test that injects its own client or fetch opts in with `releaseFetch`.
+    releaseFetch: overrides.releaseFetch ?? (overrides.clientFactory || overrides.fetchImpl ? undefined : globalThis.fetch),
     probeOpenCodeRuntime: overrides.probeOpenCodeRuntime,
   };
+  return dependencies;
 }
 
 export async function execute(argv, overrides = {}) {
@@ -129,33 +213,46 @@ export async function execute(argv, overrides = {}) {
   return executeCommand(parsed, dependencies);
 }
 
-function successEnvelope(output) {
-  return { ok: output.exitCode === EXIT.OK, command: output.command, data: output.data };
-}
-
-function errorEnvelope(error) {
-  return {
-    ok: false,
-    error: {
-      code: error.code,
-      message: error.message,
-      ...(error.details?.hint === undefined ? {} : { hint: error.details.hint }),
-      ...(() => {
-        if (error.details === undefined) return {};
-        const { hint: _hint, ...details } = error.details;
-        return Object.keys(details).length > 0 ? { details } : {};
-      })(),
-    },
-  };
+// Flags only count before a `--` separator; after it everything is the caller's text.
+function hasFlag(argv, flag) {
+  const end = argv.indexOf("--");
+  return (end === -1 ? argv : argv.slice(0, end)).includes(flag);
 }
 
 export async function run(argv, io = {}, overrides = {}) {
+  // Hooks are the one command that never speaks: no stdout (Claude Code injects it into the model's
+  // context), no failures, always exit 0. See commands/hook.mjs.
+  if (argv[0] === "hook") {
+    try {
+      const dependencies = createDependencies(overrides);
+      const parsed = parseArgs(argv);
+      await runHookCommand({ parsed, positionals: parsed.positionals, options: parsed.options, group: "hook",
+        action: parsed.positionals[1], rest: parsed.positionals.slice(2), dependencies });
+    } catch { /* a hook never fails the agent */ }
+    return 0;
+  }
+  // `relo mcp`: a stdio MCP server. stdout carries protocol messages only, so anything else that
+  // tries to print there goes to stderr instead.
+  if (argv.length === 1 && argv[0] === "mcp") {
+    const { serveMcp } = await import("./mcp.mjs");
+    const input = io.stdin ?? process.stdin;
+    const output = io.mcpOutput ?? (() => {
+      const write = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (...parts) => process.stderr.write(...parts);
+      console.log = console.info = console.debug = (...parts) => process.stderr.write(`${parts.join(" ")}\n`);
+      return { write };
+    })();
+    await serveMcp({ input, output, run, version: overrides.version ?? VERSION, env: overrides.env ?? process.env, overrides, progressIntervalMs: io.progressIntervalMs });
+    return 0;
+  }
   const stdout = io.stdout ?? ((line) => process.stdout.write(`${line}\n`));
   const stderr = io.stderr ?? ((line) => process.stderr.write(`${line}\n`));
-  const wantsJson = argv.includes("--json");
-  // Piped or captured output (agents, scripts) always gets the structured error envelope.
+  const wantsJson = hasFlag(argv, "--json");
+  const full = hasFlag(argv, "--full");
+  // Piped or captured output (agents, scripts) gets exactly one JSON line per outcome and nothing
+  // on stderr; a person at a terminal gets plain text on stderr.
   const stdoutIsTTY = io.stdoutIsTTY ?? (io.stdout ? true : Boolean(process.stdout.isTTY));
-  const structuredErrors = wantsJson || !stdoutIsTTY;
+  const structured = wantsJson || !stdoutIsTTY;
   try {
     const output = await execute(argv, {
       ...overrides,
@@ -164,14 +261,21 @@ export async function run(argv, io = {}, overrides = {}) {
     });
     if (output.command === "help" && !wantsJson) stdout(output.data.help);
     else if (output.command === "version" && !wantsJson) stdout(output.data.version);
-    else stdout(JSON.stringify(successEnvelope(output)));
-    if (output.message) stderr(output.message);
+    else {
+      // A compact line carries its notices itself when nobody is reading stderr.
+      const notice = [output.message, ...(output.notes ?? [])].filter(Boolean).join("; ");
+      // Doctor's compact line already says what is wrong in `next.why`; don't repeat it.
+      const repeated = !full && structured && output.command === "doctor";
+      const inline = !full && structured && notice && !repeated;
+      stdout(JSON.stringify(successLine(output, { full, note: inline ? notice : undefined })));
+      if (notice && !inline && !repeated) stderr(notice);
+    }
     return output.exitCode;
   } catch (cause) {
     const error = normalizeError(cause);
-    if (structuredErrors) stdout(JSON.stringify(errorEnvelope(error)));
-    stderr(`${error.code}: ${error.message}`);
-    if (error.details?.hint) stderr(`hint: ${error.details.hint}`);
+    const line = errorLine(error, { full, group: argv.find((word) => !word.startsWith("--")) });
+    if (structured) stdout(JSON.stringify(line));
+    else stderr(errorText(line));
     return error.exitCode;
   }
 }

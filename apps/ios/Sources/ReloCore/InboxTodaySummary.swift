@@ -10,6 +10,11 @@ public struct InboxTodaySummary: Equatable, Sendable {
     /// The hero's headline number, so it never contradicts the "Live Activities today" line.
     public var total: Int { notifications + liveActivities }
 
+    public init(notifications: Int, liveActivities: Int, active: Int, finished: Int) {
+        self.notifications = notifications; self.liveActivities = liveActivities
+        self.active = active; self.finished = finished
+    }
+
     public static func make(items: [InboxItem], attention: InboxAttentionProjection.Snapshot,
                             now: Date, calendar: Calendar = .current) -> Self {
         let start = calendar.startOfDay(for: now)

@@ -39,6 +39,7 @@ struct ReloIdentityHeader: View {
                     chip(project.name, symbol: project.systemImageName, tint: projectColor(project), accent: true)
                 }
                 if let topic = row.topic { chip(topic, symbol: "number", tint: .reloSecondaryText) }
+                if let origin = row.origin { chip(origin, symbol: "laptopcomputer", tint: .reloSecondaryText) }
                 chip(row.type, symbol: nil, tint: .reloSecondaryText)
                 chip(item.createdAt.formatted(date: .abbreviated, time: .shortened), symbol: "clock", tint: .reloSecondaryText)
             }

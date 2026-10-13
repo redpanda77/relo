@@ -586,6 +586,30 @@ final class ContractCodingTests: XCTestCase {
         XCTAssertEqual(roundTrip.presentation, presentation)
     }
 
+    func testContentStateDecodesStartedAtFromEpochOrISO8601AndToleratesItsAbsence() throws {
+        let base = #"{"generation":2,"updatedAt":1786060800,"header":"Relo","title":"Build","status":"Running","componentsJson":"[]","surfacesJson":"{\"compact_leading\":[],\"compact_trailing\":[],\"expanded_bottom\":[],\"expanded_leading\":[],\"expanded_trailing\":[],\"lock_screen\":[],\"minimal\":[]}","identityJson":"{\"direct\":true}","stateJson":"{\"icon\":\"active\",\"kind\":\"active\",\"tone\":\"live\"}","behaviorType":"progress","appearanceJson":"{\"roles\":{\"cardIdentity\":\"project\",\"componentIdentity\":\"thread\",\"statusEmphasis\":\"state\"},\"theme\":\"system\"}","privacy":"standard","sequence":1"#
+        let without = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: Data((base + "}").utf8))
+        XCTAssertNil(without.startedAt)
+
+        let epoch = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self, from: Data((base + #","startedAt":1786057200}"#).utf8))
+        XCTAssertEqual(epoch.startedAt, Date(timeIntervalSince1970: 1_786_057_200))
+
+        let iso = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self, from: Data((base + #","startedAt":"2026-08-06T23:00:00Z"}"#).utf8))
+        XCTAssertEqual(iso.startedAt, Date(timeIntervalSince1970: 1_786_057_200))
+
+        // Dates travel as Unix seconds, as they do on the wire.
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        let roundTrip = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self, from: encoder.encode(epoch))
+        XCTAssertEqual(roundTrip.startedAt, epoch.startedAt)
+        let bare = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self, from: encoder.encode(without))
+        XCTAssertNil(bare.startedAt)
+    }
+
     func testActivityKitInteractionRejectsMissingNullFractionalStringAndLegacyDateExpiry() {
         let prefix = #"{"id":"int_abcdefghijkl","notificationID":"ntf_abcdefghijkl","targetDeviceID":"dev_abcdefghijkl","accountID":"acc_abcdefghijkl","kind":"approval","state":"pending","credential":"credential-at-least-32-characters-long""#
         let invalid = [

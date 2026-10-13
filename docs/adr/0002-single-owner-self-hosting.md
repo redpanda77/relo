@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded by [ADR 0004](0004-isolated-multi-user-accounts.md).
 
 ## Decision
 

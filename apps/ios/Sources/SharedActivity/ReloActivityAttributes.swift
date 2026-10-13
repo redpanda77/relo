@@ -28,6 +28,8 @@ struct ReloActivityAttributes: Codable {
         var staleAt: Date?
         var interaction: Interaction?
         var presentation: LiveActivityPresentation
+        /// When the work began, for the elapsed timer; absent in older payloads.
+        var startedAt: Date?
 
         init(
             generation: Int,
@@ -36,7 +38,8 @@ struct ReloActivityAttributes: Codable {
             expiresAt: Date? = nil,
             staleAt: Date? = nil,
             interaction: Interaction?,
-            presentation: LiveActivityPresentation
+            presentation: LiveActivityPresentation,
+            startedAt: Date? = nil
         ) {
             precondition(generation > 0, "Live Activity generation must be positive")
             self.generation = generation
@@ -46,10 +49,11 @@ struct ReloActivityAttributes: Codable {
             self.staleAt = staleAt
             self.interaction = presentation.permitsLiveActivityActions ? interaction : nil
             self.presentation = presentation
+            self.startedAt = startedAt
         }
 
         private enum CodingKeys: String, CodingKey {
-            case generation, updatedAt, sequence, expiresAt, staleAt, interaction
+            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt
         }
 
         init(from decoder: Decoder) throws {
@@ -67,6 +71,7 @@ struct ReloActivityAttributes: Codable {
             sequence = try values.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
             expiresAt = try Self.decodeDateIfPresent(.expiresAt, from: values)
             staleAt = try Self.decodeDateIfPresent(.staleAt, from: values)
+            startedAt = try Self.decodeDateIfPresent(.startedAt, from: values)
             let decoded = try values.decodeIfPresent(Interaction.self, forKey: .interaction)
             interaction = presentation.permitsLiveActivityActions
                 && decoded?.isValidForPresentation == true ? decoded : nil
@@ -80,6 +85,7 @@ struct ReloActivityAttributes: Codable {
             try values.encode(sequence, forKey: .sequence)
             try values.encodeIfPresent(expiresAt, forKey: .expiresAt)
             try values.encodeIfPresent(staleAt, forKey: .staleAt)
+            try values.encodeIfPresent(startedAt, forKey: .startedAt)
             try values.encodeIfPresent(interaction, forKey: .interaction)
         }
 

@@ -50,7 +50,7 @@ export function validateSkill(root = defaultRoot) {
     if (!existsSync(path)) { errors.push(`Missing ${file}`); continue; }
     const text = readFileSync(path, "utf8");
     const taught = text.replace(/^## Deprecated and removed[\s\S]*?(?=^## |(?![\s\S]))/mu, "")
-      .replace(/^Relo installs no agent hooks[\s\S]*$/mu, "");
+      .replace(/^Hooks are optional[\s\S]*$/mu, "");
     for (const pattern of REMOVED) if (pattern.test(taught)) errors.push(`${file} still teaches removed ${pattern}`);
     for (const match of text.matchAll(/\]\(([^)#]+)(?:#[^)]*)?\)/gu)) {
       const target = match[1];

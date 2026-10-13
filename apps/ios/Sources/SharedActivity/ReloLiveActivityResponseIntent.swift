@@ -380,7 +380,7 @@ enum LiveActivityResponseTransport {
         }
 
         return try await submit(response, apiOrigin: baseURL) { request in
-            try await URLSession.shared.data(for: request)
+            try await ReloAPISession.shared.data(for: request)
         }
     }
 

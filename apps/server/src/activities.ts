@@ -35,7 +35,7 @@ persistedPresentationColumns
 } from "./presentation-runtime.js";
 import { NativeOccurrenceError } from "./relevance/native-occurrence.js";
 import { requireWorkIdentity,workIdentityError } from "./work-identity.js";
-export { activityProviderTimestamp,boundedPresentationText,cancelPendingActivityInteractions,createActivityCommands,expireDueActivities,replaceBlockingTaskActivities,serializeTaskActivity,taskActivityRequestHash } from "./activity-commands/runtime.js";
+export { activityProviderTimestamp,activityStartedAt,boundedPresentationText,cancelPendingActivityInteractions,createActivityCommands,expireDueActivities,replaceBlockingTaskActivities,serializeTaskActivity,taskActivityRequestHash } from "./activity-commands/runtime.js";
 export { activityDeliverySummarySchema,activityEndSchema,activityHeartbeatSchema,activityResolveSchema,activityStartSchema,activityUpdateSchema,activityWaitSchema,liveActivityStyles,liveActivitySymbols,taskLiveActivityStyles } from "./activity-commands/schemas.js";
 export type { ActivityDeliverySummary,ApnsMode } from "./activity-commands/schemas.js";
 

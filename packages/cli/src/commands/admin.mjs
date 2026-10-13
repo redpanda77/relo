@@ -55,7 +55,8 @@ export async function listAllDevices(client, pageSize = DEFAULT_DEVICE_PAGE_SIZE
   throw invalidDevicePage();
 }
 
-export async function resolveTargetDevices(client, values) {
+/** `verify: false` (a dry run) checks the IDs' shape only, with no request. */
+export async function resolveTargetDevices(client, values, { verify = true } = {}) {
   if (values.length === 0) return undefined;
   if (values.length > 50) throw new UsageError("--device may be specified at most 50 times");
   const malformed = values.filter((value) => !validateDeviceId(value));
@@ -63,6 +64,7 @@ export async function resolveTargetDevices(client, values) {
     throw new UsageError(`Malformed target device ID(s): ${malformed.join(", ")}`);
   }
   const deviceIds = [...new Set(values)];
+  if (!verify) return deviceIds;
   const response = await listAllDevices(client);
   const known = new Set(response.devices.map((device) => device.deviceId));
   const unknown = deviceIds.filter((id) => !known.has(id));

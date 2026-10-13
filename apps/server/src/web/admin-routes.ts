@@ -59,9 +59,16 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     return context.json({ id: user.id },201);
   });
 
+  /** Only users of the admin's own account; anyone else answers like a user that does not exist. */
+  const isAccountUser = async (principalId: string,subject: string) => Boolean((await db.query(
+    "SELECT 1 FROM account_identities WHERE principal_id=$1 AND subject=$2",[principalId,subject])).rowCount);
+
   app.post("/api/dashboard/users/:userId/reset-password", async (context) => {
     const account = await ownerAdminAccount(context);
     if (account instanceof Response) return account;
+    if (!await isAccountUser(account.principalId,context.req.param("userId"))) {
+      return context.json({ error: "user_not_found" },404);
+    }
     const input = z.object({ password: z.string().min(8).max(128) }).strict().parse(await context.req.json());
     await resetAccountUserPassword({ db,principalId: account.principalId,
       subject: context.req.param("userId"),password: input.password });
@@ -73,6 +80,7 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     if (account instanceof Response) return account;
     const action = z.enum(["disable","enable","revoke-sessions"]).parse(context.req.param("action"));
     const subject = context.req.param("userId");
+    if (!await isAccountUser(account.principalId,subject)) return context.json({ error: "user_not_found" },404);
     if (action === "revoke-sessions") {
       await db.query(`DELETE FROM auth.sessions s USING account_identities i
         WHERE s.user_id=i.subject AND i.principal_id=$1 AND i.subject=$2`,[account.principalId,subject]);

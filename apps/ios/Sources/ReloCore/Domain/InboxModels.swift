@@ -11,6 +11,7 @@ public struct InboxContext: Codable, Equatable, Sendable {
     public let taskTitle: String?
     public let threadNameSource: String?
     public let taskTitleSource: String?
+    public let account: String?
 
     public init(
         providerName: String? = nil,
@@ -22,8 +23,10 @@ public struct InboxContext: Codable, Equatable, Sendable {
         threadName: String? = nil,
         taskTitle: String? = nil,
         threadNameSource: String? = nil,
-        taskTitleSource: String? = nil
+        taskTitleSource: String? = nil,
+        account: String? = nil
     ) {
+        self.account = account
         self.providerName = providerName
         self.producerKind = producerKind
         self.computer = computer
@@ -34,6 +37,15 @@ public struct InboxContext: Codable, Equatable, Sendable {
         self.taskTitle = taskTitle
         self.threadNameSource = threadNameSource
         self.taskTitleSource = taskTitleSource
+    }
+
+    /// "MacBook Pro · Work", "MacBook Pro", "Work", or nil when neither is known.
+    public var originLabel: String? {
+        let parts = [computer, account].compactMap { value -> String? in
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
@@ -436,6 +448,8 @@ public struct InboxSnapshot: Codable, Equatable, Sendable {
     public var lastSuccessfulSyncAt: Date?
     public var readWatermark: String?
     public var unread: InboxUnreadSummary?
+    /// Agent sessions from the server; nil from older servers.
+    public var sessions: [AgentSession]? = nil
 
     public init(
         items: [InboxItem] = [],

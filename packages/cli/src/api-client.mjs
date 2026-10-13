@@ -9,8 +9,20 @@ function retryAfterSeconds(response) {
   return Number.isNaN(date) ? undefined : Math.max(0, Math.ceil((date - Date.now()) / 1_000));
 }
 
+export const MAX_AUTO_RETRY_SECONDS = 10;
+
+/** A server older than the sessions API answers 404 on its routes: say so instead of "No such item". */
+function sessionsUnsupported(error) {
+  if (!(error instanceof ApiError) || error.status !== 404) throw error;
+  throw new ApiError("This Relo server doesn't report agent sessions yet.", {
+    status: 404, code: "SESSIONS_UNSUPPORTED", details: { hint: "Update the server to 0.10.0 or later." },
+  });
+}
+
 export class ReloApiClient {
-  constructor({ apiUrl, token, fetchImpl = globalThis.fetch, version = "0.9.0" }) {
+  constructor({ apiUrl, token, fetchImpl = globalThis.fetch, version = "0.9.0",
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)) }) {
+    this.sleep = sleep;
     this.apiUrl = String(apiUrl).replace(/\/$/, "");
     this.token = token;
     this.fetchImpl = fetchImpl;
@@ -20,7 +32,7 @@ export class ReloApiClient {
   async request(
     method,
     path,
-    { body, idempotencyKey, query, authenticated = true, timeoutMs = 30_000 } = {},
+    { body, idempotencyKey, query, authenticated = true, timeoutMs = 30_000, retried = false } = {},
   ) {
     const url = new URL(`${this.apiUrl}${path}`);
     for (const [key, value] of Object.entries(query ?? {})) {
@@ -49,7 +61,13 @@ export class ReloApiClient {
     const payload = await response.json().catch(() => undefined);
     if (!response.ok) {
       const apiError = payload?.error;
-      const retryAfter = retryAfterSeconds(response);
+      const retryAfter = retryAfterSeconds(response)
+        ?? (Number.isFinite(payload?.retryAfterSeconds) && payload.retryAfterSeconds >= 0 ? Math.ceil(payload.retryAfterSeconds) : undefined);
+      // A write carries an idempotency key, so one retry after a short 429 wait cannot duplicate it.
+      if (response.status === 429 && !retried && idempotencyKey && retryAfter !== undefined && retryAfter <= MAX_AUTO_RETRY_SECONDS) {
+        await this.sleep(retryAfter * 1_000);
+        return this.request(method, path, { body, idempotencyKey, query, authenticated, timeoutMs, retried: true });
+      }
       throw new ApiError(
         typeof apiError?.message === "string"
           ? apiError.message
@@ -215,6 +233,15 @@ export class ReloApiClient {
 
   revokeService(id) {
     return this.request("DELETE", `/api/services/${encodeURIComponent(id)}`);
+  }
+
+  /** Hook traffic: no retries, a 2 s ceiling, so an agent is never held up. */
+  sendAgentSessionEvent(body) {
+    return this.request("POST", "/api/agent-sessions/events", { body, timeoutMs: 2_000 }).catch(sessionsUnsupported);
+  }
+
+  listAgentSessions() {
+    return this.request("GET", "/api/agent-sessions").catch(sessionsUnsupported);
   }
 
   ready() {

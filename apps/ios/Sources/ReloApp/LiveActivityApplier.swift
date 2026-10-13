@@ -116,6 +116,10 @@ final class LiveActivityApplier {
         guard let accountID = context.accountID(), context.isCurrent() else { return .failed }
         let presentation = command.presentation
         let display = command.lockScreenDisplay
+        // The card began when its first command arrived; later commands keep the running activity's start.
+        let startedAt = Activity<ReloActivityAttributes>.activities
+            .first { $0.attributes.identity == command.identity }?.content.state.startedAt
+            ?? (command.operation == .start ? envelope.createdAt : nil)
 
         let state = ReloActivityAttributes.ContentState(
             generation: command.generation,
@@ -135,7 +139,8 @@ final class LiveActivityApplier {
                     expiresAtUnixSeconds: Int64($0.expiresAt.timeIntervalSince1970.rounded(.down))
                 )
             } : nil,
-            presentation: presentation
+            presentation: presentation,
+            startedAt: startedAt
         )
         let fallbackStaleDate = Date().addingTimeInterval(600)
         let staleDate = command.staleAt
@@ -324,8 +329,14 @@ final class LiveActivityApplier {
                   context.accountID() == accountID else { throw CancellationError() }
             switch command.operation {
             case .start:
-                if let existingID {
-                    try await ActivityKitMutationAdapter.update(nativeID: existingID, content: content)
+                // The server's push may have started this card since `existing` was looked up.
+                let raced = Activity<ReloActivityAttributes>.activities.first {
+                    $0.attributes.accountID == accountID
+                        && $0.attributes.identity == LiveActivityIdentity(activityID: command.activityId, generation: command.generation)
+                        && ($0.activityState == .active || $0.activityState == .stale)
+                }?.id
+                if let nativeID = existingID ?? raced {
+                    try await ActivityKitMutationAdapter.update(nativeID: nativeID, content: content)
                 } else {
                     let display = command.lockScreenDisplay
                     let style = ReloActivityAttributes.Style(rawValue: display.style) ?? .standard

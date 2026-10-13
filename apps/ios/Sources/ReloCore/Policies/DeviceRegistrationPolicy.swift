@@ -7,12 +7,10 @@ public enum DeviceRegistrationPolicy {
         apnsTokenAvailable: Bool,
         pushRegistrationFailed: Bool
     ) -> DeviceRegistrationPhase? {
+        // Linking this iPhone needs only a signed-in account. Notifications are an extra on top:
+        // without permission or an Apple Push token the device still registers and syncs, and it
+        // registers again with the token once one arrives (`pushRegistrationChanged`).
         guard hasAuthenticatedAccount else { return .idle }
-        guard permissionAllowed else { return .waitingForPermission }
-        guard !pushRegistrationFailed else {
-            return .failed("Apple Push registration failed. Retry to request a fresh device token.")
-        }
-        guard apnsTokenAvailable else { return .waitingForAPNSToken }
         return nil
     }
 }

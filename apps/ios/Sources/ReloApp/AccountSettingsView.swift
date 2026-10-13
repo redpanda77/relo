@@ -33,7 +33,7 @@ struct AccountSettingsView: View {
         .reloGroupedScreen().navigationTitle("Account").navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Sign out of Relo?", isPresented: $confirmsSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { Task { _ = await model.signOut() } }
-        } message: { Text("This iPhone will stop receiving notifications. Your server must confirm account and device revocation before protected activity is removed.") }
+        } message: { Text("This iPhone stops getting notifications and Live Activities, and its saved activity is removed. You can sign back in anytime.") }
         .sheet(isPresented: $showsDeletion) { AccountDeletionView(model: model) }
     }
 }

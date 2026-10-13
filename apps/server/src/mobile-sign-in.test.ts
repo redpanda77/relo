@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { resetAuthAttempts } from "./auth-throttle.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
@@ -21,6 +22,7 @@ suite("Browser sign-in for the iPhone", () => {
   beforeAll(async () => { db = createDatabase(databaseUrl!); authDb = createAuthDatabase(databaseUrl!); await migrate(db); });
   afterAll(async () => Promise.all([db.end(), authDb.end()]));
   beforeEach(async () => {
+    resetAuthAttempts();
     await db.query("TRUNCATE account_identities, principal_api_keys, owner_principals CASCADE");
     await db.query("TRUNCATE auth.sessions, auth.accounts, auth.verifications, auth.users CASCADE");
     await bootstrapOwner(db, "owner", "bootstrap_owner_token_abcdefghijklmnopqrstuvwxyz");
@@ -72,6 +74,9 @@ suite("Browser sign-in for the iPhone", () => {
     expect(html).toContain(origin);
     expect(html).not.toContain("<script");
     expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    // Under no-referrer, browsers post the form with `Origin: null` and the approval is refused.
+    expect(response.headers.get("referrer-policy")).toBe("same-origin");
+    expect(html).not.toContain("no-referrer");
   });
 
   test("approving issues a one-time code that only the matching verifier redeems, once", async () => {

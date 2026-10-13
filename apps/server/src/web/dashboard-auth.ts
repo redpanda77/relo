@@ -1,4 +1,5 @@
 import type { Handler } from "hono";
+import { registrationMode } from "../server-accounts.js";
 import type { Database } from "../db.js";
 import { secureHtml } from "./http.js";
 import type { z } from "zod";
@@ -41,10 +42,11 @@ export function createDashboardAuthHandler(
       kind: "auth",
       route: { path: "/", nextPath: nextPath(context.req.query("next")) },
       mode: claimed ? "sign-in" : "sign-up",
+      registration: claimed ? await registrationMode(db) : "closed",
       title: claimed ? "Sign in to Relo" : "Create the owner account",
       description: claimed
         ? "Use the same account as your iPhone."
-        : "This first account claims the bootstrapped private owner.",
+        : "The first account owns this server and decides who else can join.",
     };
 
     return secureHtml(context, await renderDocument(bootstrap));

@@ -18,14 +18,14 @@ test("every creation rejects each missing or blank grouping level without an API
   for (const command of creates) {
     for (let index = 0; index < identity.length; index += 2) {
       const absent = identity.filter((_value, slot) => slot !== index && slot !== index + 1);
-      await assert.rejects(execute([...command,...absent], deps), /Missing work identity/);
+      await assert.rejects(execute([...command,...absent], deps), /Missing --(source|project|topic)/);
       const blank = [...identity]; blank[index + 1] = "  ";
       await assert.rejects(execute([...command,...blank], deps), /required|empty/);
     }
     for (const field of Object.keys(context)) {
       const partial = { ...context }; delete partial[field];
       await assert.rejects(execute([...command,"--stdin"],
-        dependencies({}, { context: partial })), /Missing work identity/);
+        dependencies({}, { context: partial })), /Missing --(source|project|topic)/);
     }
   }
   const stdout = [];
@@ -87,7 +87,7 @@ test("one error names every missing field with a runnable hint, and rejects plac
   const error = JSON.parse(stdout[0]).error;
   assert.deepEqual(error.details.missing, ["source","project","topic"]);
   assert.match(error.hint, /--source ".+" --project ".+" --topic ".+"/);
-  assert.ok(stderr.some(line => line.startsWith("hint: ")));
+  assert.deepEqual(stderr, []);
   await assert.rejects(execute(["notify","send","Ready","--source","Codex","--project","Project","--topic","Codex task"], deps),
     (cause) => { assert.deepEqual(cause.details.missing, ["project","topic"]); return true; });
 });

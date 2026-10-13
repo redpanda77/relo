@@ -15,6 +15,7 @@ export const allowedCliScopes = [
   "interactions:read",
   "activities:write",
   "activities:read",
+  "sessions:write",
   "devices:read",
   "services:read",
   "services:write",

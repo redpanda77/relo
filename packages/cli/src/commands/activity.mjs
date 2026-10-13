@@ -1,9 +1,11 @@
-import { parseDuration, numberOption, requireText } from "../args.mjs";
+import { parseDuration, numberOption, progressCountLabel, progressFraction, requireText } from "../args.mjs";
 import { ApiError, UsageError } from "../errors.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
 import { privacyOption } from "./notify.mjs";
 import { activityContext, cardKey, creationContext, partialIdentity } from "../identity.mjs";
-import { assertAllowedOptions, assertAtMostOne, assertNoExtra, booleanStdin, definedFields, deliveryGuard, enumOption, isIsoTimestamp, nullableNumberOption, optionalText, result, stdinDeviceIds, stdinObject, validateCanonicalId, validateIdempotencyKey } from "../support.mjs";
+import { assertAllowedOptions, assertAtMostOne, dryRunResult, assertNoExtra, booleanStdin, definedFields, deliveryGuard, enumOption, fitRequiredText, fitText, isIsoTimestamp, optionalText, result, stdinDeviceIds, stdinObject, validateCanonicalId, validateIdempotencyKey } from "../support.mjs";
+
+export const DEFAULT_LIST_LIMIT = 10;
 
 export const TASK_ACTIVITY_STYLES = ["standard", "ring", "hero", "terminal", "steps"];
 
@@ -51,29 +53,60 @@ export function progressOption(options, stdin) {
     throw new UsageError("--progress and --clear-progress cannot be used together");
   }
   const value = options["clear-progress"] ? null : options.progress ?? stdin.progress;
-  return nullableNumberOption(value, "progress", { minimum: 0, maximum: 1 });
+  return progressFraction(value, "progress");
 }
 
-export function semanticStepsOption(options,stdin,storedLabels) {
-  const explicitLabels = options.step?.length > 0 ? options.step : undefined;
-  const stdinLabels = Array.isArray(stdin.steps)
-    ? stdin.steps
-    : Array.isArray(stdin.stepLabels) ? stdin.stepLabels : undefined;
-  const labels = explicitLabels ?? stdinLabels ?? storedLabels;
+/** `--steps "Plan,Build,Ship"` or repeated `--step`: the labels sent with a card. */
+export function stepLabelsOption(options, stdin) {
+  if (options.steps !== undefined && options.step?.length > 0) {
+    throw new UsageError("Use --steps \"A,B,C\" or repeated --step, not both");
+  }
+  if (options.steps !== undefined) {
+    const labels = options.steps.split(",").map((label) => label.trim()).filter(Boolean);
+    if (labels.length === 0) throw new UsageError("--steps needs at least one label, e.g. --steps \"Plan,Build,Ship\"");
+    return labels;
+  }
+  if (options.step?.length > 0) return options.step;
+  return Array.isArray(stdin.steps) ? stdin.steps : Array.isArray(stdin.stepLabels) ? stdin.stepLabels : undefined;
+}
+
+/** A 1-based number, or a step label (any case) among the labels being sent. */
+function currentStepNumber(value, labels) {
+  if (value !== undefined && !/^\d+$/u.test(String(value).trim())) {
+    const wanted = String(value).trim().toLowerCase();
+    const index = labels.findIndex((label) => label.toLowerCase() === wanted);
+    if (index === -1) {
+      throw new UsageError(`--step-current "${value}" is not one of the steps`, {
+        hint: `Steps: ${labels.join(", ")}. Use a number (1-${labels.length}) or one of these names.`,
+      });
+    }
+    return index + 1;
+  }
+  if (value !== undefined && Number(value) === 0) throw new UsageError("Steps are numbered from 1.");
+  return numberOption(value, "step-current", { minimum: 1, maximum: labels.length, integer: true });
+}
+
+export function semanticStepsOption(options,stdin,storedLabels,{ defaultCurrent } = {}) {
+  const labels = stepLabelsOption(options, stdin) ?? storedLabels;
   const currentValue = options["step-current"] ?? stdin.stepCurrent;
   if (labels === undefined && currentValue === undefined) return undefined;
   if (!labels?.length) {
     throw new UsageError("--step-current needs the card's steps", {
-      hint: "Start the card with --step labels first, e.g. --step Build --step Test --step Deploy --step-current 1",
+      hint: 'Start the card with --steps "Build,Test,Deploy" --step-current 1 first',
     });
   }
   const normalized = labels.map((label) => requireText(label,"step",40));
-  if (normalized.length > 8) throw new UsageError("At most 8 --step labels are supported");
-  const current = numberOption(currentValue,"step-current",{
-    minimum: 1,maximum: normalized.length,integer: true,
-  });
-  if (current === undefined) throw new UsageError("--step-current is required with --step");
+  if (normalized.length > 8) throw new UsageError("At most 8 steps are supported");
+  const current = currentValue === undefined ? defaultCurrent : currentStepNumber(currentValue, normalized);
+  if (current === undefined) throw new UsageError("--step-current is required with --steps");
   return { labels: normalized,current };
+}
+
+/** The card's own steps, and which one is current (1-based; 0 when none is). */
+export function cardStepProgress(card) {
+  const labels = cardStepLabels(card);
+  const items = card?.presentation?.components?.find((component) => component?.type === "steps")?.items ?? [];
+  return { labels, current: items.findIndex((item) => item?.state === "current") + 1 };
 }
 
 export function activitySymbol(value, defaultValue) {
@@ -141,18 +174,27 @@ export async function activeCard(client, target) {
   }
 }
 
+const PROGRESS_FOLLOWS_STEPS = "progress follows this card's steps; use --next-step or --step-current";
+
+/** A card with a steps component draws its progress from the steps, so a sent --progress changes nothing. */
+function noteProgressOnSteps(sentProgress, payload, notes) {
+  if (typeof sentProgress !== "number") return;
+  const components = payload?.activity?.presentation?.components;
+  if (Array.isArray(components) && components.some((component) => component?.type === "steps")) notes.push(PROGRESS_FOLLOWS_STEPS);
+}
+
 /**
  * While a question waits on the card, the server keeps an update or start underneath it and sends
  * nothing to the phone yet; the card shows it once the question settles. That is success.
  */
-export function cardResult(command, payload) {
+export function cardResult(command, payload, notes) {
   const behavior = payload?.activity?.presentation?.behavior?.type;
   if (payload?.activity?.state === "active" && (behavior === "approval" || behavior === "yes_no")
     && payload?.delivery?.durableCommands === 0) {
     return result(command, { ...payload, heldForQuestion: true },
-      { message: "A question is waiting on this card; this shows on the card once it is answered." });
+      { message: "A question is waiting on this card; this shows on the card once it is answered.", notes });
   }
-  return result(command, deliveryGuard(payload));
+  return result(command, deliveryGuard(payload), { notes });
 }
 
 export function validateActivityWaitResponse(value, expected) {
@@ -217,6 +259,7 @@ export async function runActivityCommand(command) {
       "progress",
       "progress-label",
       "step",
+      "steps",
       "step-current",
       "symbol",
       "style",
@@ -228,6 +271,7 @@ export async function runActivityCommand(command) {
       "device",
       "idempotency-key",
       "computer",
+      "account",
       "source",
       "topic",
       "project",
@@ -235,31 +279,39 @@ export async function runActivityCommand(command) {
       "task-title",
       "stdin",
       "privacy",
+      "dry-run",
     ]);
     const stdin = await stdinObject(options, dependencies);
-    const context = creationContext(options, stdin, undefined, dependencies.identityDefaults());
+    const context = creationContext(options, stdin, undefined, dependencies.creationDefaults(),
+      'relo activity start --title "x"');
+    const notes = [];
+    const dryRun = Boolean(dependencies.dryRun);
     // Starting again reuses this work's running card: one card per agent session or topic.
     const manualKey = cardKey({ name: activityName(options,stdin), context, env: dependencies.env });
     const requestedStyle = options.style ?? stdin.style;
-    const progress = numberOption(options.progress ?? stdin.progress, "progress", {
-      minimum: 0,maximum: 1,
-    });
-    const progressLabel = optionalText(
-      options["progress-label"] ?? stdin.progressLabel,"progress-label",32,
+    const progress = progressFraction(options.progress ?? stdin.progress, "progress");
+    const progressLabel = fitText(
+      options["progress-label"] ?? stdin.progressLabel ?? progressCountLabel(options.progress ?? stdin.progress),
+      "progress-label",32,notes,
     );
     if (progressLabel !== undefined && progress === undefined) {
       throw new UsageError("--progress-label requires --progress when starting an activity");
+    }
+    if (progress !== undefined && (stepLabelsOption(options,stdin) !== undefined)) {
+      throw new UsageError("--progress cannot be combined with --steps: the card's progress follows its steps", {
+        hint: "Use --step-current or --next-step to move it, or drop --steps to use --progress",
+      });
     }
     const body = definedFields({
       key: manualKey,
       acquireMode: "ensure",
       replace: options.replace || booleanStdin(stdin.replace, "replace", false),
-      title: requireText(options.title ?? stdin.title, "--title", 80),
-      status: requireText(options.status ?? stdin.status, "--status", 60),
-      detail: optionalText(options.detail ?? stdin.detail, "detail", 240),
+      title: fitRequiredText(options.title ?? stdin.title, "--title", 80, notes),
+      status: fitRequiredText(options.status ?? stdin.status, "--status", 60, notes),
+      detail: fitText(options.detail ?? stdin.detail, "detail", 240, notes),
       progress,
       progressLabel,
-      steps: semanticStepsOption(options,stdin),
+      steps: semanticStepsOption(options,stdin,undefined,{ defaultCurrent: 1 }),
       symbol: activitySymbol(options.symbol ?? stdin.symbol),
       style: requestedStyle === undefined ? undefined : taskActivityStyle(requestedStyle),
       preset: enumOption(
@@ -287,21 +339,32 @@ export async function runActivityCommand(command) {
       deviceIds: await resolveTargetDevices(
         client,
         options.device.length > 0 ? options.device : stdinDeviceIds(stdin.deviceIds),
+        { verify: !dryRun },
       ),
       context,
     });
     const key = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
+    if (dryRun) {
+      if (body.deviceIds) notes.push("device IDs are not checked against the server in a dry run");
+      return dryRunResult("activity start", body, notes);
+    }
     const captured = await preparedActivityCommand({ config,client,operation: "start",key,body,
       selector: manualKey,originalOccurrence: stdin.occurredAt },dependencies);
-    return cardResult(`activity.${action}`,await client.startActivity(captured.body,key));
+    const started = await client.startActivity(captured.body,key);
+    noteProgressOnSteps(progress,started,notes);
+    return cardResult(`activity.${action}`,started,notes);
   }
 
-  if (group === "activity" && action === "status") {
+  if (group === "activity" && (action === "status" || action === "get")) {
     assertAllowedOptions(options,["name","source","project","topic","thread-name","stdin"]);
     const stdin = await stdinObject(options,dependencies);
-    const target = cardTarget(rest,options,stdin,dependencies,"Usage: relo activity status [ID_OR_NAME]");
+    const target = cardTarget(rest,options,stdin,dependencies,`Usage: relo activity ${action} [ID_OR_NAME]`);
+    // `get` with a card ID or name reads that card even when it has ended; with none, it is `status`.
+    if (action === "get" && (rest.length > 0 || activityName(options,stdin) !== undefined)) {
+      return result("activity.get",await client.getActivity(target));
+    }
     const card = await activeCard(client,target);
-    return result("activity.status",{ found: Boolean(card),activity: card,key: target });
+    return result(`activity.${action}`,{ found: Boolean(card),activity: card,key: target });
   }
 
   if (group === "activity" && action === "diagnose") {
@@ -365,13 +428,16 @@ export async function runActivityCommand(command) {
       "clear-progress",
       "progress-label",
       "step",
+      "steps",
       "step-current",
+      "next-step",
       "symbol",
       "style",
       "preset",
       "accent-color",
       "stale-after",
       "computer",
+      "account",
       "source",
       "topic",
       "project",
@@ -380,13 +446,38 @@ export async function runActivityCommand(command) {
       "if-sequence",
       "idempotency-key",
       "stdin",
+      "dry-run",
     ]);
     const stdin = await stdinObject(options, dependencies);
+    const dryRun = Boolean(dependencies.dryRun);
+    const notes = [];
     const target = cardTarget(rest,options,stdin,dependencies,"Usage: relo activity update [ID_OR_NAME] [options]");
-    // Advancing a step needs only --step-current: the labels come from the card itself.
-    const onlyStepCurrent = (options["step-current"] ?? stdin.stepCurrent) !== undefined
-      && !(options.step?.length) && stdin.steps === undefined && stdin.stepLabels === undefined;
-    const storedLabels = onlyStepCurrent ? cardStepLabels(await activeCard(client,target)) : undefined;
+    // Advancing a step needs only --step-current or --next-step: the labels come from the card itself.
+    const sendsSteps = stepLabelsOption(options,stdin) !== undefined;
+    const wantsNext = Boolean(options["next-step"]);
+    if (wantsNext && (sendsSteps || (options["step-current"] ?? stdin.stepCurrent) !== undefined)) {
+      throw new UsageError("--next-step cannot be combined with --steps, --step or --step-current");
+    }
+    const needsCard = wantsNext || (!sendsSteps && (options["step-current"] ?? stdin.stepCurrent) !== undefined);
+    if (dryRun && needsCard) notes.push("step resolution skipped in a dry run: the card's own steps are not read");
+    const stepCard = needsCard && !dryRun ? await activeCard(client,target) : undefined;
+    if (needsCard && !dryRun && !stepCard) {
+      throw new ApiError("activity_terminal",{ status: 409,code: "ACTIVITY_TERMINAL" });
+    }
+    const storedLabels = needsCard ? cardStepLabels(stepCard) : undefined;
+    let nextStep;
+    if (wantsNext && !dryRun) {
+      const progress = cardStepProgress(stepCard);
+      if (!progress.labels) {
+        throw new UsageError("This card has no steps to advance.", {
+          hint: 'Set them first: relo activity update --steps "Plan,Build,Ship" --step-current 1',
+        });
+      }
+      if (progress.current >= progress.labels.length) {
+        throw new UsageError("Already on the last step.", { hint: "Finish the card: relo activity end --status …" });
+      }
+      nextStep = progress.current + 1;
+    }
     const rawDetail =
       options.detail !== undefined || options["clear-detail"]
         ? detailOption(options)
@@ -399,14 +490,19 @@ export async function runActivityCommand(command) {
     const requestedUpdateStyle = options.style ?? stdin.style
       ?? (requestedPreset === undefined || requestedPreset === "automatic" ? undefined : requestedPreset);
     const body = definedFields({
-      title: optionalText(options.title ?? stdin.title, "title", 80),
-      status: optionalText(options.status ?? stdin.status, "status", 60),
-      detail: optionalText(rawDetail, "detail", 240),
+      title: fitText(options.title ?? stdin.title, "title", 80, notes),
+      status: fitText(options.status ?? stdin.status, "status", 60, notes),
+      detail: fitText(rawDetail, "detail", 240, notes),
       progress: progressOption(options, stdin),
-      progressLabel: optionalText(
-        options["progress-label"] ?? stdin.progressLabel,"progress-label",32,
+      progressLabel: fitText(
+        options["progress-label"] ?? stdin.progressLabel
+          ?? (options["clear-progress"] ? undefined : progressCountLabel(options.progress ?? stdin.progress)),
+        "progress-label",32,notes,
       ),
-      steps: semanticStepsOption(options,stdin,storedLabels),
+      steps: dryRun && needsCard ? undefined
+        : nextStep === undefined
+          ? semanticStepsOption(options,stdin,storedLabels)
+          : { labels: storedLabels,current: nextStep },
       symbol: activitySymbol(options.symbol ?? stdin.symbol),
       accentColor: accentColor(options["accent-color"] ?? stdin.accentColor),
       style:
@@ -426,13 +522,18 @@ export async function runActivityCommand(command) {
         integer: true,
       }),
     });
-    if (!Object.entries(body).some(([key, value]) => key !== "ifSequence" && value !== undefined)) {
+    if (!(dryRun && needsCard) && !Object.entries(body).some(([key, value]) => key !== "ifSequence" && value !== undefined)) {
       throw new UsageError("Activity update requires at least one changed field");
     }
     const key = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
+    if (dryRun) {
+      return dryRunResult("activity update", { target, ...body }, notes);
+    }
     const captured = await preparedActivityCommand({ config,client,operation: "update",key,body,target,
       selector: target,originalOccurrence: stdin.occurredAt },dependencies);
-    return cardResult("activity.update",await client.updateActivity(captured.target,captured.body,key));
+    const updated = await client.updateActivity(captured.target,captured.body,key);
+    noteProgressOnSteps(body.progress,updated,notes);
+    return cardResult("activity.update",updated,notes);
   }
 
   if (group === "activity" && action === "end") {
@@ -449,6 +550,7 @@ export async function runActivityCommand(command) {
       "if-sequence",
       "idempotency-key",
       "stdin",
+      "dry-run",
     ]);
     const stdin = await stdinObject(options, dependencies);
     const target = cardTarget(rest,options,stdin,dependencies,"Usage: relo activity end [ID_OR_NAME] [options]");
@@ -456,9 +558,10 @@ export async function runActivityCommand(command) {
       options.detail !== undefined || options["clear-detail"]
         ? detailOption(options)
         : stdin.detail;
+    const notes = [];
     const body = definedFields({
-      status: requireText(options.status ?? stdin.status ?? "Complete", "status", 60),
-      detail: optionalText(rawDetail, "detail", 240),
+      status: fitRequiredText(options.status ?? stdin.status ?? "Complete", "status", 60, notes),
+      detail: fitText(rawDetail, "detail", 240, notes),
       progress: progressOption(options, stdin),
       symbol: activitySymbol(options.symbol ?? stdin.symbol, "success"),
       accentColor: accentColor(options["accent-color"] ?? stdin.accentColor),
@@ -475,25 +578,20 @@ export async function runActivityCommand(command) {
       }),
     });
     const key = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
+    if (dependencies.dryRun) return dryRunResult("activity end", { target, ...body }, notes);
     const captured = await preparedActivityCommand({ config,client,operation: "end",key,body,target,
       selector: target,originalOccurrence: stdin.occurredAt },dependencies);
-    return result("activity.end",deliveryGuard(await client.endActivity(captured.target,captured.body,key)));
-  }
-
-  if (group === "activity" && action === "get") {
-    assertAllowedOptions(options, ["name"]);
-    const target = activityTarget(rest, options, "Usage: relo activity get ID_OR_NAME|--name NAME");
-    return result(
-      "activity.get",
-      await client.getActivity(target),
-    );
+    return result("activity.end",deliveryGuard(await client.endActivity(captured.target,captured.body,key)),{ notes });
   }
 
   if (group === "activity" && action === "list") {
     assertNoExtra(rest, 0, "Usage: relo activity list [--limit 1..100]");
     assertAllowedOptions(options, ["limit"]);
     const limit = numberOption(options.limit, "limit", { minimum: 1, maximum: 100, integer: true });
-    return result("activity.list", await client.listActivities(limit));
+    // The server returns its latest 100 whatever the limit; an agent needs the few that matter.
+    const listed = await client.listActivities(limit);
+    const activities = Array.isArray(listed?.activities) ? listed.activities.slice(0, limit ?? DEFAULT_LIST_LIMIT) : listed?.activities;
+    return result("activity.list", { ...listed, activities });
   }
   return undefined;
 }

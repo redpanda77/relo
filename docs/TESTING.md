@@ -48,3 +48,14 @@ context alongside the report; exclude notification contents, tokens, URLs, and r
 
 Do not subtract phone and server wall-clock timestamps to claim an exact end-to-end latency.
 Provider acceptance, phone presentation, and human response are separate observations.
+
+## Account isolation
+
+`apps/server/src/tenant-isolation.test.ts` enforces [ADR 0004](adr/0004-isolated-multi-user-accounts.md).
+Account A calls every route with account B's identifiers, using A's CLI key, phone credential and
+Dashboard session. A foreign identifier must answer exactly like a missing one, B's content must
+never appear in A's responses, and none of B's rows may change. Every route must be classified;
+a new route fails the suite until it is placed in the by-id attack, a body-id attack, an
+own-account action, or the documented list of routes that take no owner identifier. Dashboard pages
+must render for the check to mean anything, so build the Dashboard first
+(`pnpm --filter @relo/dashboard build`); a page that errors fails the suite.

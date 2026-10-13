@@ -31,6 +31,15 @@ export const accountDashboardBootstrapSchema = z.object({
     role: z.enum(["owner", "member"]), disabled: z.boolean(),
     sessions: z.number(), devices: z.number(),
   })),
+  /** Present only for the server admin (ADR 0004): account metadata, never account content. */
+  server: z.object({
+    registrationMode: z.enum(["closed", "approval", "open"]),
+    accounts: z.array(z.object({
+      id: z.string(), name: z.string(), email: z.string(),
+      status: z.enum(["active", "pending", "disabled"]), admin: z.boolean(),
+      createdAt: z.string(), devices: z.number(), sessions: z.number(),
+    })),
+  }).nullable(),
 })
 
 export type AccountDashboardBootstrap = z.infer<

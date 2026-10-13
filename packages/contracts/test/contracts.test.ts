@@ -433,3 +433,18 @@ test("the cross-package current-slice fixture matches the canonical schemas", ()
     assert.equal(publicHttpsUrlSchema.safeParse(value).success, false, value);
   }
 });
+
+test("agent session events accept only bounded labels", async () => {
+  const { agentSessionEventRequestSchema, inboxSnapshotResponseSchema } = await import("../src/index.js");
+  const ok = { session: "a".repeat(64), harness: "claude-code", event: "start" };
+  assert.equal(agentSessionEventRequestSchema.safeParse(ok).success, true);
+  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, event: "pause" }).success, false);
+  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, prompt: "hello" }).success, false);
+  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, session: "short" }).success, false);
+  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, project: "x".repeat(121) }).success, false);
+  assert.equal(apiTokenScopeSchema.parse("sessions:write"), "sessions:write");
+  const snapshot = inboxSnapshotResponseSchema.parse({
+    items: [], total: 0, serverTime: new Date().toISOString(), readWatermark: null, unread: { account: 0, projects: {} },
+  });
+  assert.equal(snapshot.sessions, undefined);
+});

@@ -4,7 +4,7 @@ Always keep credentials and sensitive payloads out of diagnostics.
 
 ## Authentication or scope failure
 
-Run `auth status --json`. If the credential is absent, invalid, or lacks a required scope, stop and
+Run `relo auth status`. If the credential is absent, invalid, or lacks a required scope, stop and
 ask the user to complete browser-approved onboarding. Never accept, reveal, generate, transfer, or
 SSH-copy a token as a workaround.
 
@@ -27,21 +27,64 @@ the prerequisite. Do not claim delivery and do not allow a protected action.
 
 ## Unanswered question
 
-Exit `4` means no answer within 5 minutes; treat it as no. The question expired and its card ended;
-`relo activity start` opens a new card if the work continues. Never ask again just to extend the
-wait. `question_pending` means the card already shows a question: wait for it, or
-`relo interaction cancel ID` first. `private_activity_question` means the card is private and cannot
-show questions.
+Exit `4` with state `timeout` ("No answer yet; the question is still open"): the wait ended before the
+question did (about 100s in an agent session). Run the hint, `relo interaction wait ID --timeout 100s`,
+as often as needed until the question closes. Exit `4` with state `expired` or `canceled` ("closed
+… Do not act"): treat it as no. The card ended; `relo activity start` opens a new one if the work
+continues. Never ask again just to extend the wait. `question_pending` means the
+card already shows a question: wait, or `relo interaction cancel ID` first. `private_activity_question`
+means the card is private and cannot show questions.
+
+## Unknown command or option
+
+A typo fails with exit `2` and a hint such as `Did you mean --status?` or `Did you mean activity update?`.
+Without a close match the hint lists the command's flags; `relo help all` shows everything.
+
+## Doctor says `ready:false`
+
+`relo doctor` is cheap (no phone pings; it writes only a 24h cache of the latest CLI release) and prints `{"ok","ready","next":{"step","run","why"}}`.
+Run `next.run` for the first unmet step, in this order, and ask the owner at most once per step:
+`login` (signed in and server reachable), `phone` (a phone with Live Activities on: `relo devices list`),
+`test` (`relo test`, once). A healthy but unready setup exits `0`; real failures keep their exit codes.
+`next.step` `skill` is a warning only (`ready` stays `true`): the skill is missing or not at the CLI's version,
+the owner reinstalls it, see [install.md](install.md). A `warnings.update` of `behind` means a newer CLI release exists: tell the owner once; `relo update` runs only with their go-ahead. Agents do not run installers mid-task. Whether an
+instruction-file block exists is the owner's choice and never a step (`relo doctor --full` mentions it).
+
+## Sign-in through an agent shell
+
+An agent's tool shows output only when the command ends, so `relo auth login` there does not block: it prints
+`{"state":"pending","url":…,"code":…,"next":"relo auth login --wait"}`. Give the owner the `url` (the code is
+the fallback), then run `relo auth login --wait`; it waits at most 100s. Exit `4` with state `pending` means the
+owner has not approved yet: run `--wait` again. "The sign-in link expired" means start over with
+`relo auth login --no-wait`. Tokens are never printed.
+
+## The phone test failed (`relo test`)
+
+`relo test` shows a short card and asks "Can you see this card on your iPhone?". Exit `5` (no), exit `4` (state
+`timeout`: no answer; run `relo test` again, it resumes the same question) or exit `7` (no phone could show it)
+mean: on the iPhone, iOS Settings > Relo > Live Activities is on and the Relo app is signed in to this server;
+then `relo devices list` shows the phone with `liveActivities:true`, then `relo test --again`. A phone that
+passed is remembered and never asked again unless it is removed.
+
+## Progress did not change on a steps card
+
+`"note":"progress follows this card's steps; …"` means `--progress` was ignored because the card draws
+progress from its steps. Move it with `--next-step` or `--step-current`.
+
+## "This card already ended."
+
+An update or end after the card ended (answered-then-expired question, stale timeout, or ended
+earlier) fails with that message. Start a new one: `relo activity start --title … --status …`.
 
 ## Activity sequence conflict
 
-Run `activity get ID --json`, compare the current sequence and state with the intended update, and
+Run `relo activity get ID`, compare the current sequence and state with the intended update, and
 send a new mutation only if it remains valid. Do not blindly overwrite newer progress. End an
 activity exactly once; a terminal state is not retried as a new activity.
 
 ## Live Activity missing or stale on the phone
 
-Run `relo activity diagnose --wait --timeout 30s --json` (add a card ID or `--name` for another card). The diagnosis
+Run `relo activity diagnose --wait --timeout 30s` (add a card ID or `--name` for another card). The diagnosis
 stops at the last proven boundary:
 
 - `problemStage: "server"` means the canonical activity exists but direct delivery was disabled,
@@ -58,9 +101,8 @@ application. Diagnostics report token presence but never token values.
 
 ## Two cards for one piece of work
 
-Inside Claude Code or Codex every command lands on the session's card, so this only happens outside
-a session when the topic changed between commands. Reuse the exact `--topic`, or pass `--name` for an
-explicit card. `relo activity list --json` shows what is open; end strays with `relo activity end ID`.
+Only outside Claude Code/Codex, when the topic changed between commands: reuse the exact `--topic`
+or pass `--name`. `relo activity list` shows what is open; end strays with `relo activity end ID`.
 
 ## APNs and delivery meaning
 

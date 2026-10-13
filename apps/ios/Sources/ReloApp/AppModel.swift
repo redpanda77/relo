@@ -65,6 +65,10 @@ final class AppModel {
     private(set) var currentState: CurrentRuntimeState? { didSet { currentStateSubject.send(currentState) } }
     private var decisionDrafts: [String: CurrentDecisionDraft] = [:]
     private(set) var historySnapshot = InboxHistorySnapshot.offlineCache(items: [])
+    /// Agent sessions from the last inbox snapshot (empty from older servers).
+    var agentSessions: [AgentSession] = []
+    /// When `agentSessions` was fetched; quiet times grow from the server's figure at that moment.
+    var agentSessionsFetchedAt = Date.now
     private(set) var historyLoadState: HistoryLoadState = .idle
     var syncState: SyncState = .idle
     var lastSyncedAt: Date?
@@ -127,6 +131,14 @@ final class AppModel {
         replyDraftState.set(text, requestID: requestID)
     }
     var serverOrigin: String { serverURL.absoluteString }
+    /// The server the owner entered or signed in to; nil until then. Onboarding never offers a
+    /// default: people host Relo in their own places.
+    private(set) var chosenServerOrigin: String?
+    /// What the Now deck presents. It lives here, not in a view, so rebuilt views never replay it.
+    @ObservationIgnored let deckDirector = ReloDeckDirector()
+    /// Set by a fresh sign-in until Now has played its "account linked" boot sequence once.
+    private(set) var linkCeremonyPending = false
+    func finishLinkCeremony() { linkCeremonyPending = false }
     /// Origin changes are offered only before authentication; a connected account uses sign-out.
     func selectServerOrigin(_ value: String) -> Bool {
         guard !hasLocalAccountAccess, !isAuthenticating,
@@ -142,6 +154,7 @@ final class AppModel {
         serverURL = url
         apiClient = HTTPMobileAPIClient(baseURL: url)
         RuntimeServerOrigin.persist(url)
+        chosenServerOrigin = url.absoluteString
         authenticationError = nil
         return true
     }
@@ -255,6 +268,18 @@ final class AppModel {
     @ObservationIgnored private var selectedCachedDetail = false
 
     var isRegistered: Bool { credential != nil && registrationState == .registered }
+    /// The server cannot be reached right now (no network, Tailscale off, server down).
+    var serverUnreachable: Bool {
+        guard hasLocalAccountAccess else { return false }
+        if currentState?.connection == .offline { return true }
+        if case .failed(let message) = registrationState,
+           message.hasPrefix("Tailnet") || message.contains("unavailable") { return true }
+        return false
+    }
+    /// Linked, live, and the first counts are in: the deck's HUD has something true to show.
+    var deckConnected: Bool {
+        isRegistered && currentState?.connection == .current && currentPresentation.actionableCount != nil
+    }
     var hasLocalAccountAccess: Bool { credential != nil || accountSession != nil }
     var apnsTokenAvailable: Bool { apnsTokenState.currentSessionTokenAvailable }
     var cachedAPNSTokenAvailable: Bool { apnsTokenState.cachedTokenAvailable }
@@ -485,6 +510,7 @@ final class AppModel {
             makePendingReadStore: dependencies.makePendingReadStore,
             makeDetailCache: dependencies.makeDetailCache
         )
+        chosenServerOrigin = dependencies.chosenServerURL?.absoluteString
     }
 
     var recoveryQueues: [RecoveryQueueStatus] {
@@ -703,6 +729,11 @@ final class AppModel {
         deliveryStatusScopeIdentity = nil
         deliveryStatusLastAttemptAt = nil
 
+        // A first sign-in needs a server the owner entered; signing in again keeps the current one.
+        guard chosenServerOrigin != nil || hasLocalAccountAccess else {
+            authenticationError = "Enter your Relo server's address first."
+            return false
+        }
         let flow = BrowserSignIn()
         guard let url = flow.authorizationURL(origin: serverURL) else {
             authenticationError = authenticationMessage(for: MobileAPIError.invalidRequest)
@@ -728,6 +759,9 @@ final class AppModel {
             try accountSessionStore.save(session)
             accountSession = session
             accountUser = session.user
+            RuntimeServerOrigin.persist(serverURL)
+            chosenServerOrigin = serverOrigin
+            linkCeremonyPending = true
             account = nil
             items = []
             clearHistory()
@@ -738,7 +772,10 @@ final class AppModel {
             configuredSyncScopeIdentity = nil
             selectedAccountId = nil
             accountState = .signedIn
-            await registerDevice(force: true)
+            // This iPhone registers only with notification permission, and the inbox syncs only once
+            // it is registered: ask now, as part of signing in, rather than leaving it to Settings.
+            await updatePermission()
+            if permission == .allowed { await registerDevice(force: true) } else { await requestNotifications() }
             return accountSession != nil
         } catch {
             accountState = credential == nil ? .signedOut : .reauthenticationRequired
@@ -928,6 +965,8 @@ final class AppModel {
             else { return false }
             items = snapshot.items.filter { $0.withdrawnAt == nil }
             inboxReadWatermark = snapshot.readWatermark
+            agentSessions = snapshot.sessions ?? []
+            agentSessionsFetchedAt = snapshot.lastSuccessfulSyncAt ?? .now
             unreadCount = snapshot.unread?.account ?? items.filter { $0.readAt == nil }.count
             unreadByProject = snapshot.unread?.projects ?? [:]
             historySnapshot = InboxHistorySnapshot(items: snapshot.items, cursor: nil, hasMore: false,
@@ -1161,6 +1200,7 @@ final class AppModel {
             state.updatedAt = .now
             await activity.end(ActivityContent(state: state,staleDate: nil),dismissalPolicy: .immediate)
         }
+        await endDuplicateLiveActivities()
     }
 
     private func invalidateSelectionScope() {
@@ -1731,6 +1771,7 @@ final class AppModel {
         guard credential != nil || accountSession != nil else { return true }
         registrationRecoveryTask?.cancel()
         registrationRecoveryTask = nil
+        let previousState = accountState
         accountState = .signingOut
         await quiesceRefresh()
 
@@ -1747,7 +1788,9 @@ final class AppModel {
                 )
                 try signOutProgressStore.save(progress!)
             }
-            if progress?.deviceRevoked != true, let credential {
+            // Revoke whenever a credential is still held, even if an earlier attempt recorded it:
+            // recovery can re-register the same device id in between, and revoking is idempotent.
+            if let credential {
                 try await apiClient.revokeDevice(credential: credential)
                 progress = progress?.recordingDeviceRevocation()
                 try signOutProgressStore.save(progress!)
@@ -1796,9 +1839,23 @@ final class AppModel {
             try signOutProgressStore.delete()
             return true
         } catch {
-            accountState = credential == nil ? .signedOut : .signedIn
-            signOutError = "Sign-out paused after its last confirmed step. Retry to resume safely; completed revocations will not be repeated."
+            // Still signed in: keep the state it had (re-auth, disabled...) and start syncing again,
+            // so a failed attempt never leaves the app frozen until relaunch.
+            accountState = credential == nil && accountSession == nil ? .signedOut : previousState
+            signOutError = Self.signOutFailureMessage(error)
+            Task { _ = await self.refresh() }
             return false
+        }
+    }
+
+    private static func signOutFailureMessage(_ error: Error) -> String {
+        switch error as? MobileAPIError {
+        case .forbidden?:
+            return "Your server refused to remove this iPhone. Open the dashboard to remove it, then try again."
+        case .some:
+            return "Couldn't reach your Relo server to finish signing out. Check your connection and try again; steps already done won't repeat."
+        case nil:
+            return "Couldn't clear this iPhone's saved sign-in. Try again."
         }
     }
 
@@ -1911,6 +1968,14 @@ final class AppModel {
             registrationState = prerequisite
             return
         }
+        // Launch, foreground and push-token callbacks all ask to register. When the server already
+        // registered exactly this request for the credential held, registering again would only
+        // rotate the credential and restart the live connection (it never settled on the iPhone).
+        if let credential, let request = try? makeRegistrationRequest(),
+           registrationAttemptStore.isRegistered(for: request, credentialVersion: credential.credentialVersion) {
+            if registrationState != .registered { registrationState = .registered }
+            return
+        }
         registrationState = .registering
         var stage = DeviceRegistrationStage.localRegistrationData
 
@@ -1931,7 +1996,8 @@ final class AppModel {
             let response = try await client.registerDevice(
                 sessionToken: accountSession.accessToken,
                 request: request,
-                idempotencyKey: attempt.idempotencyKey(installationId: request.installationId)
+                idempotencyKey: attempt.idempotencyKey(installationId: request.installationId,
+                                                       sessionId: accountSession.sessionId)
             )
             guard ownsRegistration() else { return }
             await quiesceRefresh()
@@ -1986,6 +2052,8 @@ final class AppModel {
                 let snapshot = try await cache.load()
                 guard ownsRegistration() else { return }
                 items = snapshot.items
+                agentSessions = snapshot.sessions ?? []
+                agentSessionsFetchedAt = snapshot.lastSuccessfulSyncAt ?? .now
                 useCachedHistory(snapshot.items)
                 await updateApplicationBadge()
                 guard ownsRegistration() else { return }
@@ -2007,7 +2075,7 @@ final class AppModel {
                 syncState = .idle
             }
             do {
-                try registrationAttemptStore.recordRegistrationSuccess()
+                try registrationAttemptStore.recordRegistrationSuccess(credentialVersion: response.device.credentialVersion)
             } catch {
                 // Registration-attempt bookkeeping is disposable. Never retain a
                 // stale retry deadline after the server accepted registration.
@@ -2285,11 +2353,29 @@ final class AppModel {
                     guard !Task.isCancelled, let self else { return }
                     self.observeActivityKitUpdates(for: activity)
                     self.currentChangeReceived()
+                    await self.endDuplicateLiveActivities()
                 }
             }
         }
         for activity in Activity<ReloActivityAttributes>.activities {
             observeActivityKitUpdates(for: activity)
+        }
+        Task { await endDuplicateLiveActivities() }
+    }
+
+    /// The server's push-to-start and the app's own start can race and leave two copies of one
+    /// card on the Lock Screen; keep the copy furthest along and end the others at once.
+    private func endDuplicateLiveActivities() async {
+        let live = Activity<ReloActivityAttributes>.activities.filter {
+            $0.activityState == .active || $0.activityState == .stale
+        }
+        let redundant = Set(LiveActivityDuplicates.redundant(live.map {
+            .init(nativeID: $0.id, identity: $0.attributes.identity,
+                  sequence: $0.content.state.sequence, updatedAt: $0.content.state.updatedAt)
+        }))
+        guard !redundant.isEmpty else { return }
+        for activity in Activity<ReloActivityAttributes>.activities where redundant.contains(activity.id) {
+            await activity.end(nil, dismissalPolicy: .immediate)
         }
     }
 

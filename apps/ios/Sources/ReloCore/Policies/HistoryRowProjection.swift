@@ -55,6 +55,8 @@ public struct HistoryRow: Equatable, Identifiable, Sendable {
     public let progress: Double?
     public let decision: Decision?
     public let unread: Bool
+    /// Which computer and agent account the card came from: "MacBook Pro · Work".
+    public let origin: String?
 }
 
 public enum HistoryRowProjection {
@@ -94,11 +96,12 @@ public enum HistoryRowProjection {
             steps: steps.flatMap { $0.total > 0 ? $0 : nil },
             progress: steps == nil ? card?.progress : nil,
             decision: asked.map { decision($0) },
-            unread: item.readAt == nil)
+            unread: item.readAt == nil,
+            origin: origin(of: item))
     }
 
     /// "3 done · 1 stopped · 2 need you": how the day went, in the order that matters.
-    public static func daySummary(_ rows: [HistoryRow]) -> String {
+    public static func daySummary(_ rows: [HistoryRow], now: Date? = nil) -> String {
         var counts: [(String, Int)] = []
         func add(_ label: String, _ count: Int) { if count > 0 { counts.append((label, count)) } }
         add("need you", rows.filter { $0.outcome == .waitingForYou || $0.decision?.pending == true }.count)
@@ -108,7 +111,60 @@ public enum HistoryRowProjection {
         add("ended", rows.filter { [.ended, .expired, .replaced].contains($0.outcome) }.count)
         add("answered", rows.filter { if case .answered = $0.outcome { true } else { $0.decision.map { !$0.pending } ?? false } }.count)
         add(rows.filter { $0.outcome == .message }.count == 1 ? "message" : "messages", rows.filter { $0.outcome == .message }.count)
-        return counts.map { "\($0.1) \($0.0)" }.joined(separator: " · ")
+        var parts = counts.map { "\($0.1) \($0.0)" }
+        if let now, let time = agentTimeLabel(agentTime(rows, now: now)) { parts.append("\(time) agent time") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Total time agents spent on these cards: (ended or, while running, now) minus start.
+    /// Messages and questions are not agent work; cards with no known end that are not running add nothing.
+    public static func agentTime(_ rows: [HistoryRow], now: Date) -> TimeInterval {
+        rows.reduce(0) { total, row in
+            guard row.item.kind == .liveActivity, let start = row.startedAt else { return total }
+            let span: TimeInterval
+            if let duration = row.duration { span = duration }
+            else if row.outcome == .running { span = now.timeIntervalSince(start) }
+            else { return total }
+            return total + max(0, span)
+        }
+    }
+
+    /// Agent time on the calendar day of `now`.
+    public static func agentTimeToday(_ rows: [HistoryRow], now: Date, calendar: Calendar = .current) -> TimeInterval {
+        agentTime(rows.filter { calendar.isDate($0.at, inSameDayAs: now) }, now: now)
+    }
+
+    /// "4h 12m", "12m", "3h"; nil under a minute.
+    public static func agentTimeLabel(_ seconds: TimeInterval) -> String? {
+        let minutes = Int(seconds / 60)
+        guard minutes >= 1 else { return nil }
+        let hours = minutes / 60, rest = minutes % 60
+        if hours == 0 { return "\(rest)m" }
+        return rest == 0 ? "\(hours)h" : "\(hours)h \(rest)m"
+    }
+
+    /// The distinct origins in these rows, most common first (ties alphabetical).
+    public static func origins(_ rows: [HistoryRow]) -> [String] {
+        var counts: [String: Int] = [:]
+        for origin in rows.compactMap(\.origin) { counts[origin, default: 0] += 1 }
+        return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.map(\.key)
+    }
+
+    /// The computer and account an item came from.
+    public static func origin(of item: InboxItem) -> String? {
+        (item.context ?? item.activitySummary?.context)?.originLabel
+    }
+
+    /// Items from one origin; `nil` means all of them.
+    public static func filter(_ items: [InboxItem], origin: String?) -> [InboxItem] {
+        guard let origin else { return items }
+        return items.filter { Self.origin(of: $0) == origin }
+    }
+
+    /// Rows from one origin; `nil` means all of them.
+    public static func filter(_ rows: [HistoryRow], origin: String?) -> [HistoryRow] {
+        guard let origin else { return rows }
+        return rows.filter { $0.origin == origin }
     }
 
     public static func typeLabel(_ item: InboxItem) -> String {

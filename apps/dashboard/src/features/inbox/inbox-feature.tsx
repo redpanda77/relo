@@ -28,7 +28,7 @@ export function InboxFeature({
       return <DeliveryHistoryPage initial={bootstrap} service={service} />
     case "notification-detail":
       return (
-        <Page title="Notification" actions={<a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">Back to Inbox</a>}>
+        <Page title="Notification" eyebrow="Activity detail" actions={<a href={bootstrap.route.backHref} className="micro inline-flex min-h-11 items-center hover:text-foreground">← Back to History</a>}>
           <div className="max-w-2xl">
             <NotificationDetailBody detail={bootstrap} service={service} />
           </div>

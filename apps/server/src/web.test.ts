@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { resetAuthAttempts } from "./auth-throttle.js";
 import { createAccountAuth } from "./account-auth.js";
 import { recoverOwnerPassword } from "./account-recovery.js";
 import { createApp } from "./app.js";
@@ -86,6 +87,7 @@ suite("account web authentication", () => {
   });
 
   beforeEach(async () => {
+    resetAuthAttempts();
     await db.query("TRUNCATE account_identities, principal_api_keys, owner_principals CASCADE");
     await db.query("TRUNCATE auth.sessions, auth.accounts, auth.verifications, auth.users CASCADE");
     await bootstrapOwner(db, "owner", "bootstrap_owner_token_abcdefghijklmnopqrstuvwxyz");
@@ -198,7 +200,7 @@ suite("account web authentication", () => {
       body: JSON.stringify({ name: "Second", email: "second@example.com", password: "another-unique-password" }),
     });
     expect(second.status).toBe(403);
-    expect(await second.json()).toEqual({ error: "account_already_configured" });
+    expect(await second.json()).toEqual({ error: "registration_closed" });
   });
 
   test("concurrent first sign-ups are serialized by PostgreSQL and failed owner mapping leaves no orphan user", async () => {

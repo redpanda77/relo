@@ -5,7 +5,7 @@ import { createDatabase } from "./db.js";
 
 const allowedScopes = [
   "notifications:send", "interactions:create", "interactions:read", "activities:write",
-  "activities:read", "devices:read", "services:read", "services:write",
+  "activities:read", "sessions:write", "devices:read", "services:read", "services:write",
 ] as const;
 
 const options = parseArgs({

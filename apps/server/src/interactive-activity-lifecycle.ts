@@ -3,7 +3,7 @@ import { lockDecisionActivity } from "./decision-lock.js";
 import { withdrawQuestionFallbacks } from "./activity-commands/question-fallback.js";
 import { retireUnsentActivityFrames } from "./activity-delivery-frame.js";
 import { randomUUID } from "node:crypto";
-import { cancelPendingActivityInteractions,activityProviderTimestamp,createActivityCommands,serializeTaskActivity, taskActivityRequestHash, type ApnsMode } from "./activities.js";
+import { cancelPendingActivityInteractions,activityProviderTimestamp,activityStartedAt,createActivityCommands,serializeTaskActivity, taskActivityRequestHash, type ApnsMode } from "./activities.js";
 import type { Database } from "./db.js";
 import { internalId,publicId } from "./ids.js";
 import {
@@ -91,7 +91,8 @@ export async function settleInteractiveLiveActivity(
   const terminalProjection = presentationCommandProjection(stored.presentation);
   const endCommand = {
     ...command, operation: "end", ...terminalProjection,
-    sequence: Number(ended.rows[0].sequence), providerTimestamp: activityProviderTimestamp(ended.rows[0]), dismissAfterSeconds: 5,
+    sequence: Number(ended.rows[0].sequence), providerTimestamp: activityProviderTimestamp(ended.rows[0]),
+    startedAt: activityStartedAt(ended.rows[0]), dismissAfterSeconds: 5,
     alertOwner: "none", interaction: null,
   };
   const terminal = await query.query(

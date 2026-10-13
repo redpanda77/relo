@@ -1,9 +1,10 @@
 import { inboxHistorySummarySchema,inboxSnapshotResponseSchema,safeContextSchema,type InboxSnapshotResponse } from "@relo/notification-contracts";
+import { agentSessionRowsSql,mapAgentSessionRows } from "../agent-sessions.js";
 import type { Database } from "../db.js";
 import type { InboxActor } from "../pending-inventory.js";
 
 const contextFields = {
-  providerName: 80,computer: 120,project: 120,providerThreadId: 200,providerWorkItemId: 200,threadName: 160,taskTitle: 160,
+  providerName: 80,computer: 120,account: 40,project: 120,providerThreadId: 200,providerWorkItemId: 200,threadName: 160,taskTitle: 160,
 } as const;
 // Only known, bounded presentation metadata crosses the list boundary. The full
 // payload, command, prompt, body and encrypted content are never selected.
@@ -21,7 +22,7 @@ const contextProjection = `jsonb_strip_nulls(jsonb_build_object(
 export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promise<InboxSnapshotResponse> {
   const result = await db.query<{
     items: unknown[]; total: number; unread: InboxSnapshotResponse["unread"];
-    server_time: Date; latest_at: string | null; latest_id: string | null;
+    server_time: Date; latest_at: string | null; latest_id: string | null; sessions: any[];
   }>(`WITH clock AS MATERIALIZED (SELECT statement_timestamp() AS at),
   visible AS MATERIALIZED (
     SELECT e.id,e.created_at,e.project_resource_id,e.read_at,e.withdrawn_at
@@ -115,7 +116,8 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
       'projects',COALESCE((SELECT jsonb_object_agg(COALESCE('prj_'||project_resource_id::text,'direct'),count) FROM unread),'{}'::jsonb)) AS unread,
     clock.at AS server_time,
     (SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_at,
-    (SELECT id FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_id
+    (SELECT id FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_id,
+    ${agentSessionRowsSql("$1::uuid")} AS sessions
   FROM clock`, [actor.principalId,actor.deviceId ?? null]);
   const row = result.rows[0]!;
   const items = row.items.map(raw => {
@@ -127,6 +129,6 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     value.context = context.success ? context.data : null;
     return value;
   });
-  return inboxSnapshotResponseSchema.parse({items,total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
+  return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
     readWatermark:row.latest_at && row.latest_id ? Buffer.from(JSON.stringify([row.latest_at,row.latest_id])).toString("base64url") : null});
 }

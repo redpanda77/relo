@@ -46,7 +46,8 @@ describe("Dashboard shell mobile contracts", () => {
   it("preserves navigation, release, account, and skip-link contracts", () => {
     const { container, rerender } = render(<DashboardShell shell={shell}><main id="main-content">Monitor</main></DashboardShell>)
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main-content")
-    expect(screen.getByRole("link", { name: "Inbox" })).toHaveAttribute("href", "/dashboard")
+    expect(screen.getByRole("link", { name: "Now" })).toHaveAttribute("href", "/dashboard")
+    expect(screen.getByRole("link", { name: "History" })).toHaveAttribute("href", "/dashboard/inbox/notifications")
     expect(screen.getByRole("link", { name: "Connections" })).toHaveAttribute("href", "/dashboard/connections")
     expect(screen.getByRole("link", { name: "Test Lab" })).toHaveAttribute("href", "/dashboard/testing")
     expect(screen.getByRole("link", { name: "Test Lab" })).toHaveAttribute("aria-current", "page")
@@ -61,7 +62,7 @@ describe("Dashboard shell mobile contracts", () => {
     fireEvent.keyDown(document.activeElement!, { key: "Escape" })
 
     rerender(<DashboardShell shell={{ ...shell, title: "Inbox", active: "inbox", counts: { pending: 0, notifications: 0, deliveries: 0 } }}><main id="main-content">Inbox</main></DashboardShell>)
-    expect(screen.getByRole("link", { name: "Inbox" })).toHaveAttribute("aria-current", "page")
+    expect(screen.getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page")
     expect(screen.getByText("Relo", { selector: "header span" })).toBeInTheDocument()
   })
 

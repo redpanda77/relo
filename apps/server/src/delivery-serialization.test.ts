@@ -41,6 +41,13 @@ function job(overrides: Partial<ApnsRuntimeJob> = {}): ApnsRuntimeJob {
 }
 
 describe("current delivery serialization", () => {
+  test("standard alerts carry the account label in safe context", () => {
+    const projection = deliveryProjection(job({
+      payload: { privacy: "standard",context: { computer: "Mac",account: "work" } },
+    }));
+    expect(projection).toMatchObject({ customData: { relo: { context: { computer: "Mac",account: "work" } } } });
+  });
+
   test("decision pushes retain their original action deadline and opaque recipient scope", () => {
     const input = job({
       interactionKind: "yes_no", interactionId: "int_22222222-2222-4222-8222-222222222222",

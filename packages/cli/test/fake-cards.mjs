@@ -71,3 +71,20 @@ export function cardDependencies(client, { env = {}, identity = { providerName: 
     captureActivityCommand: async ({ body }) => ({ target: null, ifSequence: body.ifSequence }),
   };
 }
+
+/** A throwaway home folder, optionally with the Relo block and a skill copy at a version. Tests never touch the real one. */
+export async function fakeHome({ block = false, skillVersion, agents = [".claude", ".codex"] } = {}) {
+  const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = await mkdtemp(join(tmpdir(), "relo-home-"));
+  for (const agent of agents) await mkdir(join(home, agent), { recursive: true });
+  if (block) await writeFile(join(home, ".claude", "CLAUDE.md"), "<!-- relo:start -->\nold\n<!-- relo:end -->\n");
+  if (skillVersion !== undefined) {
+    const skill = join(home, ".agents", "skills", "relo-notifications");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "package.json"), JSON.stringify({ name: "relo-notifications", version: skillVersion }));
+    await writeFile(join(skill, "SKILL.md"), "---\nname: relo-notifications\n---\n");
+  }
+  return home;
+}

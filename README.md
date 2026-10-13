@@ -211,23 +211,24 @@ relo doctor --smoke --json
 Relo reports server acceptance, Apple acceptance, and phone receipt as separate facts; Apple
 acceptance alone does not prove the phone displayed the notification.
 
-### 10. Install the Agent Skill with `npx skills`
+### 10. Install the Agent Skill
 
-Install the skill globally for Codex directly from GitHub:
+The CLI carries the matching skill. Install it for each agent harness you use (one directory per
+harness; `relo skill status` lists every copy and its version):
+
+```sh
+relo skill install --agent claude-code
+relo skill install --agent codex
+```
+
+Without the CLI, install it straight from GitHub:
 
 ```sh
 npx --yes skills@1.5.22 add redpanda77/relo@relo-notifications \
   --global --agent codex --yes
 ```
 
-Contributors validating a local checkout can select the reviewed skill directory explicitly:
-
-```sh
-npx --yes skills@1.5.22 add ./skills/relo-notifications \
-  --skill relo-notifications --global --agent codex --yes --copy
-```
-
-Restart Codex so it discovers the new global skill. Then ask:
+Restart the agent so it discovers the skill. Then ask:
 
 > Use Relo to keep a live view of this task on my iPhone, and ask me before you finish.
 

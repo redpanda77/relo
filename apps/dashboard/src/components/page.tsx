@@ -7,10 +7,13 @@ import { cn } from "@/lib/utils"
 /** One page frame for every dashboard route: a title, optional actions, content. */
 export function Page({
   title,
+  eyebrow,
   actions,
   children,
 }: {
   title: string
+  /** Monospaced micro-label above the title. */
+  eyebrow?: string
   actions?: React.ReactNode
   children: React.ReactNode
 }) {
@@ -21,10 +24,13 @@ export function Page({
       className="canvas min-h-[100dvh] px-4 py-8 outline-none sm:px-8 lg:px-12 lg:py-12"
     >
       <div className="mx-auto w-full max-w-5xl">
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            {title}
-          </h1>
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            {eyebrow ? <p className="micro mb-2">{eyebrow}</p> : null}
+            <h1 className="text-3xl font-light tracking-tight sm:text-4xl">
+              {title}
+            </h1>
+          </div>
           {actions ? (
             <div className="flex flex-wrap items-center gap-2">{actions}</div>
           ) : null}
@@ -48,7 +54,7 @@ export function Section({
   return (
     <section aria-labelledby={id}>
       <div className="mb-3 flex min-h-9 flex-wrap items-center justify-between gap-3">
-        <h2 id={id} className="text-sm font-medium text-muted-foreground">
+        <h2 id={id} className="micro">
           {title}
         </h2>
         {action}
@@ -69,7 +75,7 @@ export function List({
   return (
     <ul
       aria-label={label}
-      className="glass divide-y divide-border overflow-hidden rounded-2xl"
+      className="glass divide-y divide-white/[0.06] overflow-hidden rounded-2xl"
     >
       {children}
     </ul>

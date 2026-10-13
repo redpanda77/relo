@@ -628,6 +628,23 @@ final class MobileAPIClientTests: XCTestCase {
         }
     }
 
+    func testAPISessionNeverSendsCookies() {
+        // A stored Better Auth cookie made the server refuse sign-out (403 without Origin).
+        let configuration = ReloAPISession.shared.configuration
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertEqual(configuration.httpCookieAcceptPolicy, .never)
+    }
+
+    func testRegistrationKeysNeverRepeatAcrossSignIns() {
+        // Sign-out resets the attempt revision; the session keeps a new sign-in's key unused.
+        let request = registrationRequest()
+        let attempt = RegistrationAttempt(revision: 1, request: request)
+        let first = attempt.idempotencyKey(installationId: request.installationId, sessionId: "session-one")
+        XCTAssertNotEqual(first, attempt.idempotencyKey(installationId: request.installationId, sessionId: "session-two"))
+        XCTAssertEqual(first, attempt.idempotencyKey(installationId: request.installationId, sessionId: "session-one"))
+    }
+
     func testTwoCredentialSignOutUsesIndependentBearersAndAcceptsAlreadyRevoked() async throws {
         let requests = LockedTestValue<[URLRequest]>([])
         StubURLProtocol.handler = { request in
@@ -651,6 +668,8 @@ final class MobileAPIClientTests: XCTestCase {
         XCTAssertEqual(requests.value.map { $0.url?.path }, ["/api/devices/dev_0123456789ab", "/api/auth/sign-out"])
         XCTAssertEqual(requests.value[0].value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
         XCTAssertEqual(requests.value[1].value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
+        // The auth endpoint answers a bodiless JSON POST with 400, which used to pause sign-out for good.
+        XCTAssertEqual(Self.bodyData(requests.value[1]), Data("{}".utf8))
     }
 
     func testAccountDeletionUsesSessionBearerAndFrozenConfirmationBody() async throws {

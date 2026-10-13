@@ -25,6 +25,8 @@ struct AppDependencies {
     let notificationReceiptStore: any ScopedNotificationReceiptStoring
     let accountNotificationCleaner: any AccountNotificationClearing
     let serverURL: URL
+    /// What the owner chose; nil until they enter a server (never the build-time origin).
+    var chosenServerURL: URL? = nil
     var diagnostics: any DiagnosticStoring = NoopDiagnosticStore()
     var system: AppSystemServices = .live
     var tokenRegistrar: BackgroundLiveActivityTokenRegistrar? = nil
@@ -47,6 +49,9 @@ struct AppDependencies {
         system.reconnectActivityTokens = { tokenRegistrar.reconnect() }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let reloDirectory = support.appendingPathComponent("Relo", isDirectory: true)
+        // Relo authenticates with tokens only. Drop any cookie an older build stored (an email
+        // sign-in left a Better Auth session cookie that made sign-out fail with 403).
+        HTTPCookieStorage.shared.removeCookies(since: .distantPast)
         let origin = RuntimeServerOrigin.current()
             ?? URL(string: "https://relo.invalid")!
         let protectedActions = AccountScopedProtectedActionStore(
@@ -82,6 +87,7 @@ struct AppDependencies {
             notificationReceiptStore: FileScopedNotificationReceiptStore(baseDirectory: sharedRoot),
             accountNotificationCleaner: SystemAccountNotificationCleaner(),
             serverURL: origin,
+            chosenServerURL: RuntimeServerOrigin.chosen(),
             diagnostics: OSLogDiagnosticSink(store: BoundedDiagnosticStore(
                 fileURL: reloDirectory.appendingPathComponent("diagnostics.json"))),
             system: system,

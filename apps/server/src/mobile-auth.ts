@@ -1,4 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
+import { signInRefusal } from "./server-accounts.js";
 import type { Hono } from "hono";
 import { z } from "zod";
 import type { AccountAuth } from "./account-auth.js";
@@ -90,7 +91,8 @@ export function registerMobileAccountRoutes(
        WHERE i.provider='better-auth' AND i.subject=$1`, [session.user.id],
     );
     if (!mapped.rowCount) return context.json({ error: "reauthentication_required" }, 401);
-    if (mapped.rows[0]!.disabled_at) return context.json({ error: "account_disabled" }, 403);
+    const refusal = await signInRefusal(db,session.user.id);
+    if (refusal) return context.json({ error: refusal }, 403);
     const account: OwnerAccount = {
       ...session,
       principalId: mapped.rows[0]!.principal_id,

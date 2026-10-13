@@ -103,6 +103,7 @@ export const inboxLiveActivitySchema = z.object({
   alertOwner: z.enum(["apns","app","none"]).default("none"),
   sequence: z.number().int().min(0).default(0),
   providerTimestamp: z.number().int().min(0).optional(),
+  startedAt: z.number().int().min(0).optional(),
   relevanceScore: z.number().min(0).max(1).default(0.5),
   presentationState: z.enum([
     "eligible","foreground","background","pending_token","not_presented","ending","ended","unknown",
@@ -181,6 +182,7 @@ export const inboxContextSchema = z.object({
   providerName: z.string().trim().min(1).max(80).optional(),
   producerKind: z.enum(["agent","service","webhook","manual"]).optional(),
   computer: z.string().trim().min(1).max(120).optional(),
+  account: z.string().trim().min(1).max(40).optional(),
   project: z.string().trim().min(1).max(120).optional(),
   providerThreadId: z.string().trim().min(1).max(200).optional(),
   providerWorkItemId: z.string().trim().min(1).max(200).optional(),

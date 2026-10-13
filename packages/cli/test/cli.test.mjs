@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { execute as executeRaw, EXIT, run as runRaw } from "../src/cli.mjs";
 import { ApiError, AuthError, NetworkError } from "../src/errors.mjs";
+import { compactData } from "../src/output.mjs";
 
 // Existing behavioral tests use an explicitly grouped fixture; identity omissions have dedicated
 // tests against the raw entry point below.
@@ -34,11 +35,13 @@ function groupedArgs(argv, dependencies) {
   }
   return [args,dependencies];
 }
+// The computer a test runs on is not part of what these tests pin; origin has its own tests.
+const NO_ORIGIN = { originDefaults: () => ({}) };
 function execute(argv, dependencies = {}) {
-  return executeRaw(...groupedArgs(argv,dependencies));
+  return executeRaw(...groupedArgs(argv,{ ...NO_ORIGIN,...dependencies }));
 }
 function run(argv, io, dependencies = {}) {
-  const [args, grouped] = groupedArgs(argv,dependencies);
+  const [args, grouped] = groupedArgs(argv,{ ...NO_ORIGIN,...dependencies });
   return runRaw(args,io,grouped);
 }
 
@@ -351,7 +354,7 @@ test("auth login survives transient network and server failures while authorizat
   ],{
     env: { RELO_API_URL: "http://192.168.1.10:8180" },
     configPath: () => CONFIG.path,
-    configRevision: async () => null,
+    configRevision: async () => null, computerName: () => undefined,
     clientFactory: () => ({
       startDeviceAuthorization: async () => authorizationStart(),
       pollDeviceAuthorization: async () => {
@@ -397,6 +400,7 @@ test("auth login keeps the complete link visible when browser launch fails", asy
       }),
     }),
     env: { RELO_API_URL: "http://192.168.1.10:8180" },
+    computerName: () => undefined,
     now: () => now,
     sleep: async (milliseconds) => { now += milliseconds; },
     openBrowser: () => { throw new Error("browser unavailable"); },
@@ -485,7 +489,7 @@ test("auth login revokes an issued token when secure persistence fails", async (
   await assert.rejects(
     execute(["auth", "login", "--scope", "notifications:send", "--scope", "interactions:create", "--scope", "interactions:read"], {
       env: { RELO_API_URL: "http://192.168.1.10:8180" },
-      configRevision: async () => null,
+      configRevision: async () => null, computerName: () => undefined,
       clientFactory,
       now: () => now,
       sleep: async (milliseconds) => {
@@ -667,7 +671,6 @@ test("sends named step facts and an independent measured progress label",async (
   await execute([
     "activity","start","--name","release","--title","Release","--status","Building",
     "--step","Plan","--step","Build","--step","Verify","--step-current","2",
-    "--progress","0.625","--progress-label","5 of 8",
   ],overrides(client));
   await execute([
     "activity","update","release","--status","Verifying",
@@ -679,7 +682,6 @@ test("sends named step facts and an independent measured progress label",async (
       operation: "start",
       body: {
         key: "release",replace: false,title: "Release",status: "Building",
-        progress: 0.625,progressLabel: "5 of 8",
         steps: { labels: ["Plan","Build","Verify"],current: 2 },
         acquireMode: "ensure",expiresInSeconds: 28_800,staleAfterSeconds: 1_200,context: testContext(),
       },
@@ -697,9 +699,8 @@ test("sends named step facts and an independent measured progress label",async (
 test("rejects incomplete semantic step input before any API mutation",async () => {
   await assert.rejects(
     execute([
-      "activity","start","--title","Release","--status","Building",
-      "--step","Plan","--progress","0.25",
-    ],overrides({ startActivity: async () => assert.fail("must not call API") })),
+      "activity","update","release","--step","Plan","--progress","0.25",
+    ],overrides({ updateActivity: async () => assert.fail("must not call API") })),
     /--step-current is required/,
   );
   await assert.rejects(
@@ -1251,6 +1252,9 @@ test("creates and lists services with canonical request fields", async () => {
   assert.equal(createdOutput.data.service.id, "svc_123456789012");
   assert.equal(createdOutput.data.webhookUrl, "https://secret.invalid/hooks/hook_redacted");
   assert.deepEqual(listedOutput.data, listed);
+  assert.deepEqual(compactData("services.list", listed), { services: [{
+    id: "svc_123456789012", title: "Builds", prefix: "hook_example", createdAt: "2026-08-07T00:00:00.000Z",
+  }] });
 });
 
 test("service secret-file output is exclusive, private, durable, and secret-free", async () => {
@@ -1274,8 +1278,11 @@ test("service secret-file output is exclusive, private, durable, and secret-free
     if (process.platform !== "win32") assert.equal((await stat(secretPath)).mode & 0o777, 0o600);
     assert.equal(stdout.join("\n").includes(secret), false);
     assert.equal(stderr.join("\n").includes(secret), false);
-    assert.deepEqual(JSON.parse(stdout[0]).data, {
-      service: created.service,
+    assert.deepEqual(JSON.parse(stdout[0]), {
+      ok: true,
+      id: "svc_123456789012",
+      title: "Builds",
+      prefix: "hook_super",
       secretFileWritten: true,
       secretFileName: "builds.webhook",
     });
@@ -1460,7 +1467,7 @@ test("emits exact machine output and usage errors", async () => {
     overrides({ listServices: async () => ({ services: [] }) }),
   );
   assert.equal(successExit, EXIT.OK);
-  assert.deepEqual(successStdout, ['{"ok":true,"command":"services.list","data":{"services":[]}}']);
+  assert.deepEqual(successStdout, ['{"ok":true,"services":[]}']);
   assert.deepEqual(successStderr, []);
 
   const errorStdout = [];
@@ -1474,7 +1481,19 @@ test("emits exact machine output and usage errors", async () => {
   assert.deepEqual(errorStdout, [
     '{"ok":false,"error":{"code":"USAGE_ERROR","message":"--timeout cannot be combined with --no-wait"}}',
   ]);
-  assert.deepEqual(errorStderr, ["USAGE_ERROR: --timeout cannot be combined with --no-wait"]);
+  assert.deepEqual(errorStderr, []);
+
+  // At a terminal a person gets the plain text on stderr and no JSON.
+  const ttyStdout = [];
+  const ttyStderr = [];
+  const ttyExit = await run(
+    ["ask", "Continue?", "--approval", "--no-wait", "--timeout", "1m"],
+    { stdout: (line) => ttyStdout.push(line), stderr: (line) => ttyStderr.push(line), stdoutIsTTY: true },
+    overrides({}),
+  );
+  assert.equal(ttyExit, EXIT.USAGE);
+  assert.deepEqual(ttyStdout, []);
+  assert.deepEqual(ttyStderr, ["--timeout cannot be combined with --no-wait"]);
 });
 
 test("sends notification fields and preserves an idempotency key", async () => {
@@ -1569,7 +1588,7 @@ test("maps every approval, yes/no, and text terminal state to stable exit codes"
     );
     assert.equal(exitCode, expected);
     assert.equal(JSON.parse(stdout[0]).ok, expected === EXIT.OK);
-    if (expected !== EXIT.OK) assert.equal(stderr.length, 1);
+    assert.equal(stderr.length, 0);
   };
   let now = 0;
   await stateCase("approved", EXIT.OK);
@@ -1606,7 +1625,7 @@ test("interaction cancel returns the canonical canceled record as a successful m
   assert.equal(exitCode, EXIT.OK);
   assert.deepEqual(stderr, []);
   assert.deepEqual(stdout, [
-    '{"ok":true,"command":"interaction.cancel","data":{"interaction":{"id":"int_123456789012","state":"canceled","action":null,"response":null}}}',
+    '{"ok":true,"id":"int_123456789012","state":"canceled"}',
   ]);
 });
 
@@ -1644,7 +1663,8 @@ test("maps usage, transport, and no-delivery failures to stable exit codes", asy
     );
     assert.equal(exitCode, expected);
     assert.equal(JSON.parse(stdout[0]).ok, false);
-    assert.equal(stderr.length, 1);
+    assert.equal(stdout.length, 1);
+    assert.equal(stderr.length, 0);
   };
   await runCase(["unknown"], {}, EXIT.USAGE);
   await runCase(
@@ -1688,6 +1708,8 @@ test("enriches the current activity with safe thread and work context", async ()
       "Implementing",
       "--computer",
       "developer-mac-codex",
+      "--source",
+      "Codex",
       "--project",
       "Relo notifications",
       "--thread-name",
@@ -1705,6 +1727,7 @@ test("enriches the current activity with safe thread and work context", async ()
   assert.match(update.id, /^work-[0-9a-f]{24}$/u);
   assert.deepEqual(update.body.context, {
     computer: "developer-mac-codex",
+    providerName: "Codex",
     project: "Relo notifications",
     threadName: "Dashboard lifecycle audit",
     taskTitle: "Correct activity lifecycle history",

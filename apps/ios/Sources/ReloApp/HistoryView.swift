@@ -8,13 +8,14 @@ struct HistoryView: View {
     @AppStorage(ReloHistoryPreferences.clearedAtKey) private var clearedAt: Double = 0
     @State private var projectID: String?
     @State private var sourceID: String?
+    @State private var origin: String?
     private var kind: ReloHistoryFilter { ReloHistoryFilter(rawValue: state.filterIdentifier) ?? .all }
     private var since: Date? {
         ReloHistoryPreferences.since(retention: retentionRaw, clearedAt: clearedAt, now: model.attentionDate)
     }
     private var results: [InboxItem] {
         let since = since, now = model.attentionDate
-        return ReloHistoryResults.make(items: model.historyItems, query: state.searchQuery, kind: kind, projectID: projectID)
+        return HistoryRowProjection.filter(ReloHistoryResults.make(items: model.historyItems, query: state.searchQuery, kind: kind, projectID: projectID), origin: origin)
             .filter { InboxSourceProjection.matches($0, sourceID: sourceID) && HistoryRetention.isVisible($0, since: since, now: now) }
     }
     /// Once loaded history reaches past the cutoff, older pages would only hold hidden items.
@@ -23,18 +24,28 @@ struct HistoryView: View {
         return oldest < since
     }
     private var visible: [InboxItem] { Array(results.prefix(state.visibleLimit)) }
+    private var allRows: [HistoryRow] {
+        HistoryRowProjection.rows(visible, events: model.historyItems, now: model.attentionDate)
+    }
+    /// Computers and accounts in the loaded history; the chip row only appears when there is a choice.
+    private var origins: [String] {
+        HistoryRowProjection.origins(HistoryRowProjection.rows(
+            InboxHistoryProjection.collapsedActivities(model.historyItems),
+            events: model.historyItems, now: model.attentionDate))
+    }
     private var days: [(date: Date, rows: [HistoryRow])] {
-        let rows = HistoryRowProjection.rows(visible, events: model.historyItems, now: model.attentionDate)
+        let rows = allRows
         return Dictionary(grouping: rows) { Calendar.current.startOfDay(for: $0.at) }
             .map { (date: $0.key, rows: $0.value) }.sorted { $0.date > $1.date }
     }
-    private var filtered: Bool { !state.searchQuery.isEmpty || kind != .all || projectID != nil || sourceID != nil }
+    private var filtered: Bool { !state.searchQuery.isEmpty || kind != .all || projectID != nil || sourceID != nil || origin != nil }
     var body: some View {
         List {
             Section {
                 filterBar
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
+                if origins.count > 1 || origin != nil { originBar.listRowInsets(EdgeInsets()).listRowBackground(Color.clear) }
             } footer: {
                 if filtered {
                     Text(results.count == 1 ? "1 match" : "\(results.count) matches")
@@ -59,12 +70,12 @@ struct HistoryView: View {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(dayTitle(day.date)).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                                 Spacer(minLength: 8)
-                                Text(HistoryRowProjection.daySummary(day.rows))
+                                Text(HistoryRowProjection.daySummary(day.rows, now: model.attentionDate))
                                     .font(.caption).foregroundStyle(Color.reloSecondaryText).fixedSize()
                             }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(dayTitle(day.date)).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                                Text(HistoryRowProjection.daySummary(day.rows))
+                                Text(HistoryRowProjection.daySummary(day.rows, now: model.attentionDate))
                                     .font(.caption).foregroundStyle(Color.reloSecondaryText)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -100,12 +111,13 @@ struct HistoryView: View {
         .listStyle(.insetGrouped).listSectionSpacing(ReloLayout.itemSpacing).reloGroupedScreen()
         .navigationTitle("History").navigationBarTitleDisplayMode(.inline)
         .searchable(text: $state.searchQuery, prompt: "Search notifications")
-        .refreshable { _ = await model.refresh() }
+        .reloRefreshable { _ = await model.refresh() }
         .onAppear { state.transition(to: model.presentationScopeIdentity) }
-        .onChange(of: model.presentationScopeIdentity) { _, scope in state.transition(to: scope); projectID = nil; sourceID = nil }
+        .onChange(of: model.presentationScopeIdentity) { _, scope in state.transition(to: scope); projectID = nil; sourceID = nil; origin = nil }
         .onChange(of: state.searchQuery) { _, _ in state.resetPagination() }
         .onChange(of: state.filterIdentifier) { _, _ in state.resetPagination() }
         .onChange(of: projectID) { _, _ in state.resetPagination() }
+        .onChange(of: origin) { _, _ in state.resetPagination() }
         .onChange(of: sourceID) { _, _ in state.resetPagination(); projectID = nil }
     }
     /// Pills, not a hidden menu: the active filters are always visible and one tap to undo.
@@ -118,7 +130,7 @@ struct HistoryView: View {
                     Button {
                         withAnimation(.snappy) {
                             state.searchQuery = ""; state.filterIdentifier = ReloHistoryFilter.all.rawValue
-                            projectID = nil; sourceID = nil
+                            projectID = nil; sourceID = nil; origin = nil
                         }
                     } label: {
                         Image(systemName: "xmark").font(.caption.weight(.bold))
@@ -166,6 +178,26 @@ struct HistoryView: View {
         }
         .scrollClipDisabled()
         .sensoryFeedback(.selection, trigger: "\(kind.rawValue)|\(sourceID ?? "")|\(projectID ?? "")")
+    }
+
+    /// All · each computer or account, one tap to narrow the list.
+    private var originBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ReloFilterPill(title: "All", symbol: nil, selected: origin == nil) {
+                    withAnimation(.snappy) { origin = nil }
+                }
+                ForEach(origins, id: \.self) { name in
+                    ReloFilterPill(title: name, symbol: "laptopcomputer", selected: origin == name) {
+                        withAnimation(.snappy) { origin = origin == name ? nil : name }
+                    }
+                }
+            }
+            .padding(.horizontal, ReloLayout.screenInset)
+            .padding(.vertical, 4)
+        }
+        .scrollClipDisabled()
+        .accessibilityLabel("Filter by computer")
     }
 
     private var paginationLabel: String {

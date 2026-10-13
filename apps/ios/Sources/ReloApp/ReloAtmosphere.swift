@@ -1,20 +1,44 @@
+import ReloCore
 import SwiftUI
 
-/// One clock for every authored effect. It ticks only while the view is on screen, the app is
-/// active, and the person has not asked for less motion or power; otherwise it holds `still`,
-/// which renders the same frame every time.
+/// Set by a screen when its animated surface has scrolled out of view, so effects stop drawing.
+struct ReloMotionPausedKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var reloMotionPaused: Bool {
+        get { self[ReloMotionPausedKey.self] }
+        set { self[ReloMotionPausedKey.self] = newValue }
+    }
+}
+
+/// Whether a change on the deck is news. False while the screen is opening, the first counts are
+/// arriving, or the HUD is booting: what is already true when you look is shown in place, and only
+/// changes that happen while you watch get an effect (a ring flash, a module flash, a ripple).
+struct ReloEffectsArmedKey: EnvironmentKey { static let defaultValue = true }
+extension EnvironmentValues {
+    var reloEffectsArmed: Bool {
+        get { self[ReloEffectsArmedKey.self] }
+        set { self[ReloEffectsArmedKey.self] = newValue }
+    }
+}
+
+/// One clock for every authored effect. It ticks only while the view is on screen (and not
+/// scrolled away), the app is active, the device is cool, and the person has not asked for less
+/// motion or power; otherwise it holds `still`, which renders the same frame every time.
+/// Effects are slow, so 30 fps is the default: half the work of 60 with no visible loss.
 struct ReloMotionClock<Content: View>: View {
     var live = true
-    var framesPerSecond: Double = 60
+    var framesPerSecond: Double = 30
     var still: TimeInterval = 42
     @ViewBuilder let content: (TimeInterval) -> Content
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var visible = false
+    @Environment(\.reloMotionPaused) private var paused
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @State private var hot = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
 
     private var ticking: Bool {
-        live && visible && scenePhase == .active && !reduceMotion && !lowPower
+        live && visible && !paused && scenePhase == .active && !reduceMotion && !lowPower && !hot
     }
 
     var body: some View {
@@ -32,6 +56,9 @@ struct ReloMotionClock<Content: View>: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
             lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in
+            hot = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+        }
     }
 }
 
@@ -42,8 +69,8 @@ enum ReloSignalState: Equatable {
     /// The color named in text and badges for this state.
     var primary: Color {
         switch self {
-        case .clear: .reloDone
-        case .running: .reloSignalIndigo
+        case .clear: ReloHoloTheme.blue
+        case .running: ReloHoloTheme.cyan
         case .needsYou: .reloSignalCoral
         }
     }
@@ -51,9 +78,9 @@ enum ReloSignalState: Equatable {
     /// Three particle stops, sampled across the sphere. Needs-you carries the full brand gradient.
     fileprivate var palette: [ReloRGB] {
         switch self {
-        case .clear: [.init(0x34D399), .init(0x5EEAD4), .init(0x8B7CFF)]
-        case .running: [.init(0x7C6BFF), .init(0xA99CFF), .init(0xD65CF0)]
-        case .needsYou: [.init(0xFF6B57), .init(0xD65CF0), .init(0x7C6BFF)]
+        case .clear: [.init(0x5CE1FF), .init(0x4D8DFF), .init(0x8B7CFF)]
+        case .running: [.init(0x7DD3FC), .init(0x5CE1FF), .init(0x38BDF8)]
+        case .needsYou: [.init(0xFF8A3D), .init(0xFF6B57), .init(0xFBBF24)]
         }
     }
 
@@ -89,6 +116,38 @@ struct ReloAppBackdrop: View {
 }
 
 // MARK: - Particle orb
+
+/// A ripple through the particles, from a touch or an arriving event. `origin` is in the
+/// coordinate space shared by every layer that draws it (the Now deck).
+struct ReloOrbWave: Equatable {
+    let origin: CGPoint
+    let at: Date
+    var strength: Double = 1
+
+    /// How far a point at `point` is pushed away from the origin right now, and how bright it gets.
+    func push(_ point: CGPoint, now: Date) -> (dx: CGFloat, dy: CGFloat, lift: Double) {
+        let age = now.timeIntervalSince(at)
+        guard age >= 0, age < 2.6 else { return (0, 0, 0) }
+        let dx = point.x - origin.x, dy = point.y - origin.y
+        let distance = max(hypot(dx, dy), 0.001)
+        let front = age * 240
+        let band = exp(-pow((distance - front) / 28, 2)) * strength * exp(-age * 1.3)
+        let shove = band * 15
+        return (dx / distance * shove, dy / distance * shove, band)
+    }
+}
+
+/// Each meaning's light and deep shade, matching ReloHoloTheme.color/deep.
+fileprivate func signalRamp(_ signal: NowSignal) -> (ReloRGB, ReloRGB) {
+    switch signal {
+    case .done: (.init(0x34D399), .init(0x10B981))
+    case .running: (.init(0x5CE1FF), .init(0x4D8DFF))
+    case .needsYou: (.init(0xFF8A3D), .init(0xFF6B57))
+    case .attention: (.init(0xFACC15), .init(0xFBBF24))
+    case .failed: (.init(0xF43F5E), .init(0xBE123C))
+    case .message: (.init(0x8B7CFF), .init(0xD65CF0))
+    }
+}
 
 fileprivate struct ReloRGB: Equatable {
     let red, green, blue: Double
@@ -171,12 +230,21 @@ struct ReloSignalOrb: View {
     /// Changes when new activity arrives; each increase emits one particle ring.
     let emissionTrigger: Int
     var live = true
+    /// Today's work by meaning; each particle takes the color of its share. Empty: the state palette.
+    var mix: NowMix? = nil
+    /// Ripples to draw, in the shared space; `waveOffset` is this canvas's top-left in that space.
+    var waves: [ReloOrbWave] = []
+    var waveOffset: CGPoint = .zero
+    /// Draw every other particle: over the plasma core a thinner shell reads the same (battery).
+    var sparse = false
+    var framesPerSecond: Double = 30
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var emittedAt: Date?
     @State private var previous: ReloSignalState?
     @State private var changedAt = Date.distantPast
+    @Environment(\.reloEffectsArmed) private var armed
 
     var body: some View {
         Group {
@@ -185,19 +253,33 @@ struct ReloSignalOrb: View {
                     .overlay { Circle().strokeBorder(state.primary, lineWidth: 2) }
                     .padding(48)
             } else {
-                ReloMotionClock(live: live, framesPerSecond: 60, still: 11) { time in
-                    Canvas(opaque: false, colorMode: .extendedLinear, rendersAsynchronously: live) { context, size in
-                        draw(in: &context, size: size, time: time)
+                ZStack {
+                    // Body light and the dark lens behind the count: composited on the GPU once.
+                    GeometryReader { proxy in
+                        let radius = min(proxy.size.width, proxy.size.height) / 2 * 0.6
+                        let mid = sample(state.palette, 0.5).color
+                        ZStack {
+                            RadialGradient(stops: [.init(color: mid.opacity(0.30 + 0.16 * state.energy), location: 0),
+                                                   .init(color: mid.opacity(0.10 + 0.06 * state.energy), location: 0.55),
+                                                   .init(color: .clear, location: 1)],
+                                           center: .center, startRadius: radius * 0.2, endRadius: radius * 1.5)
+                            RadialGradient(colors: [Color.reloCanvas.opacity(0.85), Color.reloCanvas.opacity(0)],
+                                           center: .center, startRadius: 0, endRadius: radius * 0.95)
+                        }
+                        .animation(.smooth(duration: 0.9), value: state)
+                    }
+                    ReloMotionClock(live: live, framesPerSecond: framesPerSecond, still: 11) { time in
+                        Canvas(opaque: false, colorMode: .extendedLinear, rendersAsynchronously: live) { context, size in
+                            draw(in: &context, size: size, time: time)
+                        }
                     }
                 }
             }
         }
         .onChange(of: emissionTrigger) { old, new in
-            if new > old && !reduceMotion { emittedAt = .now }
+            if new > old && !reduceMotion && armed { emittedAt = .now }
         }
-        .onChange(of: state) { old, _ in previous = old; changedAt = .now }
-        // The one authored entrance: the signal announces itself once when it appears.
-        .onAppear { if live && !reduceMotion { emittedAt = .now } }
+        .onChange(of: state) { old, _ in if armed { previous = old; changedAt = .now } }
         .allowsHitTesting(false).accessibilityHidden(true)
     }
 
@@ -220,18 +302,33 @@ struct ReloSignalOrb: View {
         let radius = extent * 0.6
         let palette = self.palette
         let energy = state.energy
+        let now = Date.now
+        let activeWaves = waves.filter { now.timeIntervalSince($0.at) < 2.6 }
+        let mix = self.mix.flatMap { $0.isEmpty ? nil : $0 }
+        func ripple(_ point: CGPoint) -> (CGPoint, Double) {
+            guard !activeWaves.isEmpty else { return (point, 0) }
+            let shared = CGPoint(x: point.x + waveOffset.x, y: point.y + waveOffset.y)
+            var moved = point, lift = 0.0
+            for wave in activeWaves {
+                let push = wave.push(shared, now: now)
+                moved.x += push.dx; moved.y += push.dy; lift += push.lift
+            }
+            return (moved, min(lift, 1))
+        }
+        /// A particle's color: the state palette, with a share of particles in today's meanings.
+        func tint(_ particle: ReloParticleField.Particle) -> ReloRGB {
+            guard let signal = ReloHoloTheme.accentSignal(mix, slot: particle.phase / (.pi * 2)) else {
+                return sample(palette, particle.hue)
+            }
+            let (light, deep) = signalRamp(signal)
+            return light.mixed(with: deep, particle.hue)
+        }
         let small = radius < 60
         let mid = sample(palette, 0.5)
 
-        // Ambient body light, then a dark lens so the count reads over the front particles.
-        context.fill(Path(ellipseIn: CGRect(x: center.x - radius * 1.5, y: center.y - radius * 1.5,
-                                            width: radius * 3, height: radius * 3)),
-                     with: .radialGradient(Gradient(colors: [mid.color.opacity(0.20 + 0.10 * energy), .clear]),
-                                           center: center, startRadius: radius * 0.2, endRadius: radius * 1.5))
-        context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius,
-                                            width: radius * 2, height: radius * 2)),
-                     with: .radialGradient(Gradient(colors: [Color.reloCanvas.opacity(0.85), Color.reloCanvas.opacity(0)]),
-                                           center: center, startRadius: 0, endRadius: radius * 0.95))
+        // The body light and the dark lens are GPU layers behind this canvas (see `body`): large
+        // gradients rasterized here every frame were the main CPU cost.
+        _ = mid
 
         context.blendMode = .plusLighter
         let spin = time * (0.16 + 0.14 * energy)
@@ -239,7 +336,7 @@ struct ReloSignalOrb: View {
         let sinSpin = sin(spin), cosSpin = cos(spin)
         let sinTilt = sin(tilt), cosTilt = cos(tilt)
         let scale = radius / 96
-        let stride = small ? 3 : 1
+        let stride = small ? 3 : (sparse ? 2 : 1)
 
         func project(_ x: Double, _ y: Double, _ z: Double) -> (CGPoint, Double) {
             let perspective = 3.4 / (3.4 - z)
@@ -255,18 +352,19 @@ struct ReloSignalOrb: View {
             let rz0 = -px * sinSpin + pz * cosSpin
             let ry = py * cosTilt - rz0 * sinTilt
             let rz = py * sinTilt + rz0 * cosTilt
-            let (point, depth) = project(rx, ry, rz)
-            let distance = hypot(point.x - center.x, point.y - center.y) / radius
-            let lens = rz > 0 ? 0.22 + 0.78 * smoothstep(0.30, 0.82, distance) : 1
+            let (projected, depth) = project(rx, ry, rz)
+            let (point, lift) = ripple(projected)
+            let distance = hypot(projected.x - center.x, projected.y - center.y) / radius
+            // Clear a lens at every depth so nothing crosses the count; the front thins further out.
+            let lens = (rz > 0 ? 0.22 + 0.78 * smoothstep(0.30, 0.82, distance) : 1) * smoothstep(0.18, 0.52, distance)
             let twinkle = 0.72 + 0.28 * sin(time * (1.6 + particle.phase) + particle.phase * 7)
-            let alpha = (0.10 + 0.9 * pow(depth, 1.5)) * lens * twinkle
-            let size = particle.size * (0.5 + 0.8 * depth) * scale * (small ? 1.6 : 1)
-            let color = sample(palette, particle.hue).color
+            let alpha = min(1, (0.10 + 0.9 * pow(depth, 1.5)) * lens * twinkle * (1 + 1.4 * lift))
+            let size = particle.size * (0.5 + 0.8 * depth) * scale * (small ? 1.6 : 1) * (1 + 0.6 * lift)
+            let color = tint(particle).color
             if particle.size > 1.25 && depth > 0.55 && !small {
-                let glow = size * 3.2
-                context.fill(Path(ellipseIn: CGRect(x: point.x - glow, y: point.y - glow, width: glow * 2, height: glow * 2)),
-                             with: .radialGradient(Gradient(colors: [color.opacity(alpha * 0.35), .clear]),
-                                                   center: point, startRadius: 0, endRadius: glow))
+                // A soft halo as two faint discs: plain fills, no per-frame gradient shading.
+                dot(&context, point, size * 3.0, color.opacity(alpha * 0.08))
+                dot(&context, point, size * 1.8, color.opacity(alpha * 0.14))
             }
             dot(&context, point, size, color.opacity(alpha))
         }
@@ -283,10 +381,10 @@ struct ReloSignalOrb: View {
                 let tz = particle.y * sin(ringTilt) + oz * cos(ringTilt)
                 let rx = ox * cos(roll) - ty * sin(roll)
                 let ry = ox * sin(roll) + ty * cos(roll)
-                let (point, depth) = project(rx, ry, tz)
-                let alpha = (0.08 + 0.62 * depth) * (0.6 + 0.4 * sin(time * 2 + particle.phase))
-                dot(&context, point, particle.size * (0.5 + 0.6 * depth) * scale,
-                    sample(palette, particle.hue).color.opacity(alpha))
+                let (projected, depth) = project(rx, ry, tz)
+                let (point, lift) = ripple(projected)
+                let alpha = min(1, (0.08 + 0.62 * depth) * (0.6 + 0.4 * sin(time * 2 + particle.phase)) * (1 + lift))
+                dot(&context, point, particle.size * (0.5 + 0.6 * depth) * scale, tint(particle).color.opacity(alpha))
             }
         }
 
