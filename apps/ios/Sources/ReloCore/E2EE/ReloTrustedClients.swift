@@ -1,8 +1,9 @@
 import Foundation
 
-/// Computers (CLI identity keys) the owner verified on this phone (docs/END-TO-END-ENCRYPTION.md, E2.4).
-/// The phone opens sealed content only from these keys, so a server that signs with its own key is
-/// refused. Verification pins the exact public key: a computer whose key changes must be verified again.
+/// Computers (CLI identity keys) this phone accepts sealed content from (docs/END-TO-END-ENCRYPTION.md).
+/// Like WhatsApp and Signal, a computer is trusted the first time the phone sees its key ("auto"); a
+/// changed key is trusted again with a visible "security code changed" notice. Comparing the security
+/// code is an optional upgrade to "verified".
 public struct ReloClientKey: Codable, Equatable, Sendable, Identifiable {
     public var clientId: String
     public var name: String
@@ -22,11 +23,21 @@ public struct ReloClientKey: Codable, Equatable, Sendable, Identifiable {
 }
 
 public struct ReloTrustedClient: Codable, Equatable, Sendable {
+    public struct Notice: Codable, Equatable, Sendable {
+        public var at: Date
+        public var previousKeyId: String
+    }
+
     public var clientId: String
     public var name: String
     public var keyId: String
     public var publicKey: String
     public var verifiedAt: Date
+    /// "auto" (trusted on first use) or "verified" (security code compared); absent means verified.
+    public var level: String?
+    public var notice: Notice?
+
+    public var isVerified: Bool { level != "auto" }
 }
 
 public protocol ReloTrustedClientStore: Sendable {
@@ -35,7 +46,12 @@ public protocol ReloTrustedClientStore: Sendable {
 }
 
 public enum ReloClientTrust: String, Equatable, Sendable {
-    case trusted, unverified, changed
+    /// Security code compared by the owner.
+    case verified
+    /// Trusted on first use (or after a change, with a notice).
+    case auto
+    /// Not seen yet: trusted automatically the next time keys are refreshed.
+    case new
 }
 
 public struct ReloTrustedClients: Sendable {
@@ -46,8 +62,36 @@ public struct ReloTrustedClients: Sendable {
     }
 
     public func trust(of client: ReloClientKey) throws -> ReloClientTrust {
-        guard let pinned = try store.load().first(where: { $0.clientId == client.clientId }) else { return .unverified }
-        return pinned.publicKey == client.publicKey ? .trusted : .changed
+        guard let pinned = try store.load().first(where: { $0.clientId == client.clientId }),
+              pinned.publicKey == client.publicKey else { return .new }
+        return pinned.isVerified ? .verified : .auto
+    }
+
+    public func notice(for client: ReloClientKey) throws -> ReloTrustedClient.Notice? {
+        try store.load().first(where: { $0.clientId == client.clientId && $0.publicKey == client.publicKey })?.notice
+    }
+
+    /// Trust on first use: pins every computer not seen yet, and re-pins a changed key with a notice.
+    @discardableResult
+    public func autoTrust(_ clients: [ReloClientKey], now: Date = Date()) throws -> Bool {
+        var pinned = try store.load()
+        var changed = false
+        for client in clients {
+            guard let key = try? ReloE2EE.data(base64URL: client.publicKey, length: 65, field: "client_key"),
+                  ReloE2EE.keyID(publicKeyX963: key) == client.keyId else { continue }
+            let existing = pinned.firstIndex { $0.clientId == client.clientId }
+            if let existing, pinned[existing].publicKey == client.publicKey { continue }
+            let previous = existing.map { pinned[$0] }
+            let entry = ReloTrustedClient(
+                clientId: client.clientId, name: client.name, keyId: client.keyId, publicKey: client.publicKey,
+                verifiedAt: now, level: "auto",
+                notice: previous.map { .init(at: now, previousKeyId: $0.keyId) }
+            )
+            if let existing { pinned[existing] = entry } else { pinned.append(entry) }
+            changed = true
+        }
+        if changed { try store.save(pinned) }
+        return changed
     }
 
     /// The same 60 digits `relo keys verify` prints on that computer.
@@ -61,7 +105,7 @@ public struct ReloTrustedClients: Sendable {
         guard ReloE2EE.keyID(publicKeyX963: key) == client.keyId else { throw ReloE2EEError.untrustedSender }
         var clients = try store.load().filter { $0.clientId != client.clientId }
         clients.append(ReloTrustedClient(clientId: client.clientId, name: client.name, keyId: client.keyId,
-                                         publicKey: client.publicKey, verifiedAt: now))
+                                         publicKey: client.publicKey, verifiedAt: now, level: "verified"))
         try store.save(clients)
     }
 

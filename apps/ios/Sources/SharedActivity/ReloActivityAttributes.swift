@@ -71,7 +71,9 @@ struct ReloActivityAttributes: Codable {
             let decodedPresentation = try LiveActivityPresentation(from: decoder)
             sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
             // Opened on this phone: every surface shows the real text instead of the placeholders.
-            presentation = sealed.flatMap(ReloSealedCards.open).map(decodedPresentation.applying) ?? decodedPresentation
+            let opened = sealed.flatMap(ReloSealedCards.open).map(decodedPresentation.applying) ?? decodedPresentation
+            // Opaque project and topic handles show their real names (E2.5).
+            presentation = opened.resolvingNames(ReloSealedCards.knownNames())
             updatedAt = try Self.decodeDate(.updatedAt, from: values)
             sequence = try values.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
             expiresAt = try Self.decodeDateIfPresent(.expiresAt, from: values)

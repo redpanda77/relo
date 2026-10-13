@@ -85,7 +85,7 @@ suite("a compromised server holds no readable content (E6.4)",() => {
     env = { PATH: process.env.PATH,HOME: folder,RELO_API_URL: apiUrl,RELO_TOKEN: cliToken,RELO_NO_UPDATE_CHECK: "1",
       RELO_CONFIG_PATH: join(folder,"config.json"),RELO_KEY_STORE_PATH: join(folder,"e2ee.json"),
       RELO_SEALED_CARD_DIR: join(folder,"cards"),XDG_STATE_HOME: join(folder,"state"),
-      RELO_SOURCE: "Proof",RELO_PROJECT: "relo",RELO_COMPUTER: "proof-mac",RELO_ACCOUNT: "proof" };
+      RELO_SOURCE: "Proof",RELO_PROJECT: "compromised-relo-project",RELO_COMPUTER: "proof-mac",RELO_ACCOUNT: "proof" };
   });
 
   afterAll(async () => {
@@ -108,17 +108,25 @@ suite("a compromised server holds no readable content (E6.4)",() => {
     expect(asked.ok).toBe(true);
 
     expect(await tableLeaks(MARK)).toEqual([]);
+    // Project, computer and account names travel as handles too (E2.5).
+    expect(await tableLeaks("proof-mac")).toEqual([]);
+    expect(await tableLeaks("compromised-relo-project")).toEqual([]);
     const sealedEvents = await db.query("SELECT count(*)::int AS count FROM notification_events WHERE payload ? 'sealed'");
     expect(sealedEvents.rows[0].count).toBeGreaterThan(0);
   },60_000);
 
-  test("control: the same CLI without a verified phone sends readable text, and the scan finds it",async () => {
+  test("control: readable text that does reach the server is found by the scan",async () => {
     const plain = "ZZPLAINCONTROL";
-    const unsealed = { ...env,RELO_KEY_STORE_PATH: join(folder,"missing-e2ee.json") };
-    const sent = JSON.parse((await run(process.execPath,[cli,"notify",`${plain} body`,"--title",`${plain} title`,
-      "--topic","Control","--json"],{ env: unsealed })).stdout.trim());
-    expect(sent.ok).toBe(true);
+    const call = (method: string,path: string,body: unknown) => fetch(`${apiUrl}${path}`,{ method,
+      headers: { authorization: `Bearer ${env.RELO_TOKEN}`,"content-type": "application/json" },body: JSON.stringify(body) });
+    // With a phone that has keys, readable content is refused by default; the owner can turn that off.
+    expect((await call("POST","/api/notifications",{ sourceName: "Control",title: `${plain} title`,body: `${plain} body`,
+      context: { project: "relo",threadName: "Control" } })).status).toBe(409);
+    expect((await call("PUT","/api/end-to-end/policy",{ required: false })).status).toBe(200);
+    expect((await call("POST","/api/notifications",{ sourceName: "Control",title: `${plain} title`,body: `${plain} body`,
+      context: { project: "relo",threadName: "Control" } })).status).toBe(201);
     expect((await tableLeaks(plain)).length).toBeGreaterThan(0);
+    await call("PUT","/api/end-to-end/policy",{ required: null });
   },60_000);
 
   /** Every row of every table, as text, that contains `marker`. */

@@ -7,9 +7,44 @@
 // while any other input gets unrelated values.
 import { createHash, createHmac } from "node:crypto";
 import { b64u, fromB64u, sealEnvelope, verifyPrekey } from "./e2ee.mjs";
-import { identityKeys, keyStorePath, loadKeyStore, trustKey } from "./keystore.mjs";
+import { identityKeys, trustKey } from "./keystore.mjs";
+import { ensureTrust } from "./trust.mjs";
+import { groupingKey, loadKnownNames, opaqueContext, rememberNames } from "./opaque-names.mjs";
 
 const MAX_ALERT_PLAINTEXT = 760;
+
+/** Adds the handle → name map when it still fits; the phone also learns names from other envelopes. */
+function withNames(content, names, limit) {
+  if (!names || Object.keys(names).length === 0) return content;
+  const named = { ...content, names };
+  return limit === undefined || Buffer.byteLength(JSON.stringify(named)) <= limit ? named : content;
+}
+
+const STORE_ERRORS = new Set(["ENOENT", "EACCES", "EROFS", "ENOTDIR", "EPERM"]);
+
+/**
+ * This computer's trust, established automatically (trust on first use), or null when it cannot be
+ * (an older server without key routes, an unwritable key store). A failure other than the local key
+ * store is reported, so readable fallback is never silent.
+ */
+export async function trustFor({ client, config, dependencies, notes }) {
+  try {
+    return await ensureTrust({ client, config, dependencies });
+  } catch (error) {
+    // A server without key routes (older than 0.11) and a key store that cannot be written are not
+    // failures to report; anything else is, so a readable fallback is never silent.
+    const unsupported = error?.status === 404 || error instanceof TypeError || STORE_ERRORS.has(error?.code);
+    if (!unsupported) notes?.push(`not end-to-end encrypted: ${error?.message ?? "keys unavailable"}`);
+    return null;
+  }
+}
+
+/** The opaque work identity for a sealed request (E2.5), and the names to seal for the phone. */
+export async function opaqueIdentity(store, context, dependencies) {
+  const opaque = opaqueContext(context, groupingKey(identityKeys(store).privateKey), await loadKnownNames(dependencies.env));
+  await rememberNames(dependencies.env, Object.fromEntries(Object.entries(opaque.names)));
+  return opaque;
+}
 
 function derive(seed, label, length) {
   return createHmac("sha256", seed).update(label).digest().subarray(0, length);
@@ -41,8 +76,8 @@ export function fitAlert({ title, summary }) {
   return alert;
 }
 
-export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, kind = "notice", alert }) {
-  const plaintext = sentAt === undefined ? { ...content } : { ...content, sentAt };
+export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, kind = "notice", alert, names }) {
+  const plaintext = withNames(sentAt === undefined ? { ...content } : { ...content, sentAt }, names);
   const recipients = [...phones].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
   const seed = createHmac("sha256", sender.privateKey).update([
     `relo.e2e.v1 seal-${kind}`, idempotencyKey,
@@ -51,7 +86,8 @@ export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, ki
   ].join("\n")).digest();
   const context = `ntf:${createHash("sha256").update(idempotencyKey).digest("hex").slice(0, 32)}`;
   // A card's per-phone envelope is what the Lock Screen renders, so it carries the whole card text.
-  const alertContent = alert ?? { ...fitAlert({ title: content.title, summary: content.summary }), ...(sentAt === undefined ? {} : { sentAt }) };
+  const alertContent = withNames(alert ?? { ...fitAlert({ title: content.title, summary: content.summary }),
+    ...(sentAt === undefined ? {} : { sentAt }) }, names, MAX_ALERT_PLAINTEXT);
   const alerts = recipients.map((phone, index) => sealEnvelope({
     kind, context, sender, recipients: [phone], content: alertContent,
     contentKey: derive(seed, `alert-key ${index}`, 32), nonce: derive(seed, `alert-nonce ${index}`, 12),
@@ -70,18 +106,15 @@ export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, ki
  * plain body with a note. `body` is the already validated plaintext request.
  */
 export async function sealNoticeRequest({ body, key, client, config, dependencies, notes }) {
-  // Read only: a computer that never ran `relo keys` gets no key store from sending a notice.
-  const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
-  const hasTrust = store.identity && Object.keys(store.trusted).some((entry) => entry.startsWith(`${config.apiUrl}|`));
-  if (!hasTrust) return body;
-  const { devices } = await client.listDeviceKeys();
+  // Trust on first use: phones with keys are trusted automatically and everything to them is sealed.
+  const trust = await trustFor({ client, config, dependencies, notes });
+  if (!trust) return body;
+  const { store, devices } = trust;
   const { eligible, skipped } = sealablePhones(store, config.apiUrl, devices, body.deviceIds);
-  if (eligible.length === 0) {
-    notes.push("not end-to-end encrypted: no verified phone has a valid key (relo keys status)");
-    return body;
-  }
+  if (eligible.length === 0) return body;
+  const identity = await opaqueIdentity(store, body.context, dependencies);
   const sealed = sealNotice({
-    sender: identityKeys(store), idempotencyKey: key, phones: eligible,
+    sender: identityKeys(store), idempotencyKey: key, phones: eligible, names: identity.names,
     // The captured command time, not now: an exact retry must seal the same plaintext.
     sentAt: body.relevance?.occurredAt ?? new Date(dependencies.now()).toISOString(),
     content: Object.fromEntries(Object.entries({
@@ -89,26 +122,25 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
       imageUrl: body.imageUrl, destinationUrl: body.destinationUrl,
     }).filter(([, value]) => value !== undefined)),
   });
-  if (skipped.length) notes.push(`end-to-end encrypted for ${eligible.length} verified phone(s); ${skipped.length} unverified phone(s) skipped`);
+  if (skipped.length) notes.push(`end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys skipped`);
   const { title, summary, body: _text, bodyFormat, imageUrl, destinationUrl, deviceIds, ...metadata } = body;
-  return { ...metadata, sealed };
+  return { ...metadata, ...(identity.context ? { context: identity.context } : {}), sealed };
 }
 
 /**
- * Seals a question's title and prompt for this computer's verified phones (E4.1); null when none
- * are verified, so the question goes out as today. The answer buttons' labels stay readable.
+ * Seals a question's title and prompt for the account's phones that have keys (E4.1); null when
+ * none has, so the question goes out as today. The answer buttons' labels stay readable.
+ * Returns { sealed, context } where context is the opaque work identity to send (E2.5).
  */
-export async function sealQuestion({ title, prompt, key, client, config, dependencies, notes, deviceIds }) {
-  const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
-  const hasTrust = store.identity && Object.keys(store.trusted).some((entry) => entry.startsWith(`${config.apiUrl}|`));
-  if (!hasTrust) return null;
-  const { devices } = await client.listDeviceKeys();
+export async function sealQuestion({ title, prompt, key, client, config, dependencies, notes, deviceIds, context }) {
+  const trust = await trustFor({ client, config, dependencies, notes });
+  if (!trust) return null;
+  const { store, devices } = trust;
   const { eligible, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
-  if (eligible.length === 0) {
-    notes.push("question not end-to-end encrypted: no verified phone has a valid key (relo keys status)");
-    return null;
-  }
-  if (skipped.length) notes.push(`question end-to-end encrypted for ${eligible.length} verified phone(s); ${skipped.length} unverified phone(s) see a placeholder`);
-  return sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible,
-    content: { title: title ?? "Question", summary: prompt, body: prompt } });
+  if (eligible.length === 0) return null;
+  if (skipped.length) notes.push(`question end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys see a placeholder`);
+  const identity = await opaqueIdentity(store, context, dependencies);
+  const sealed = sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible,
+    content: { title: title ?? "Question", summary: prompt, body: prompt }, names: identity.names });
+  return { sealed, context: identity.context };
 }

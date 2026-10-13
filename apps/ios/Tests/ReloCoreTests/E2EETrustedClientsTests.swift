@@ -17,24 +17,34 @@ final class E2EETrustedClientsTests: XCTestCase {
                              publicKey: ReloE2EE.base64URL(publicKey), changedAt: "2026-10-13T16:00:00.000Z")
     }
 
-    func testOnlyVerifiedComputersAreTrustedSendersAndAChangedKeyIsNot() throws {
+    func testComputersAreTrustedOnFirstUseAndAChangedKeyIsTrustedAgainWithANotice() throws {
         let trust = ReloTrustedClients(store: MemoryStore())
         let mac = P256.Signing.PrivateKey()
         let entry = client(mac)
-        XCTAssertEqual(try trust.trust(of: entry), .unverified)
+        XCTAssertEqual(try trust.trust(of: entry), .new)
         XCTAssertEqual(try trust.trustedSenders(), [:])
 
-        try trust.markVerified(entry)
-        XCTAssertEqual(try trust.trust(of: entry), .trusted)
+        XCTAssertTrue(try trust.autoTrust([entry]))
+        XCTAssertFalse(try trust.autoTrust([entry]), "an unchanged key changes nothing")
+        XCTAssertEqual(try trust.trust(of: entry), .auto)
+        XCTAssertNil(try trust.notice(for: entry))
         XCTAssertEqual(try trust.trustedSenders(), [entry.keyId: mac.publicKey.x963Representation])
 
-        // The server presents a different key under the same computer id.
-        let swapped = client(P256.Signing.PrivateKey())
-        XCTAssertEqual(try trust.trust(of: swapped), .changed)
-        XCTAssertNil(try trust.trustedSenders()[swapped.keyId])
+        // A reinstall on the computer: the new key is trusted, with a "security code changed" notice.
+        let reinstalled = client(P256.Signing.PrivateKey())
+        XCTAssertTrue(try trust.autoTrust([reinstalled]))
+        XCTAssertEqual(try trust.trust(of: reinstalled), .auto)
+        XCTAssertEqual(try trust.notice(for: reinstalled)?.previousKeyId, entry.keyId)
+        XCTAssertNil(try trust.trustedSenders()[entry.keyId], "the old key no longer opens anything")
 
-        try trust.forget(clientId: entry.clientId)
-        XCTAssertEqual(try trust.trust(of: entry), .unverified)
+        try trust.markVerified(reinstalled)
+        XCTAssertEqual(try trust.trust(of: reinstalled), .verified)
+        try trust.forget(clientId: reinstalled.clientId)
+        XCTAssertEqual(try trust.trust(of: reinstalled), .new)
+
+        var forged = client(P256.Signing.PrivateKey(), id: "key_2")
+        forged.keyId = entry.keyId
+        XCTAssertFalse(try trust.autoTrust([forged]), "a key id that does not match its key is ignored")
     }
 
     func testRefusesAKeyIdThatDoesNotMatchItsKeyAndMatchesTheCLISafetyNumber() throws {

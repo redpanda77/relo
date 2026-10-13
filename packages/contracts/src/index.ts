@@ -630,6 +630,8 @@ export const inboxHistorySummarySchema = inboxItemSchema.omit({
     currentUntil: isoTimestampSchema.nullable(), actionExpiresAt: isoTimestampSchema.nullable(),
     freshUntil: isoTimestampSchema.nullable(), deliverUntil: isoTimestampSchema,
   }).strict().nullable(),
+  /** End-to-end sealed text for this phone; title and summaries are placeholders until opened. */
+  sealed: z.object({ alert: z.unknown().nullable(),content: z.unknown() }).nullable().optional(),
 }).strict();
 export const inboxSnapshotResponseSchema = z.object({
   items: z.array(inboxHistorySummarySchema).max(250),

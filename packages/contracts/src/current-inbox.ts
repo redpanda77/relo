@@ -24,6 +24,8 @@ export const currentSubjectProjectionSchema = z.object({
       icon: z.string(),revision: z.number().int().positive() }),
     conversationId: z.string().nullable(),workItemId: z.string().nullable(),
   }).nullable(),
+  /** End-to-end sealed text for this phone (opened on the phone; the fields above are placeholders). */
+  sealed: z.object({ alert: z.unknown().nullable(),content: z.unknown() }).nullable().optional(),
 }).strict();
 export const retiredSubjectSchema = z.object({
   subjectId: currentSubjectIdSchema,

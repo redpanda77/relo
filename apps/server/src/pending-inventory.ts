@@ -1,3 +1,4 @@
+import { sealedForDevice } from "./sealed-content.js";
 import { z } from "zod";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
@@ -103,7 +104,7 @@ type PendingRow = {
   id: string | null; event_id: string; subject_id: string | null; generation: string; revision: string;
   kind: "approval" | "yes_no" | "text"; title: string; summary: string; source: string;
   created_at_iso: string; read_at: Date | null; expires_at_iso: string;
-  total: number; next_expiry_at: Date | null; server_time: Date;
+  total: number; next_expiry_at: Date | null; server_time: Date; sealed: unknown;
 };
 
 export async function loadPendingInteractions(
@@ -135,10 +136,13 @@ export async function loadPendingInteractions(
         ELSE left(request_detail.prompt,240) END AS summary,
       to_char(e.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso,
       e.read_at,to_char(page.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS expires_at_iso,
-      metadata.total,metadata.next_expiry_at,clock.at AS server_time
+      metadata.total,metadata.next_expiry_at,clock.at AS server_time,
+      COALESCE(e.payload->'sealed',activity_row.sealed) AS sealed
     FROM metadata CROSS JOIN clock LEFT JOIN page ON true
     LEFT JOIN notification_events e ON e.id=page.event_id
     LEFT JOIN interaction_requests request_detail ON request_detail.id=page.id
+    LEFT JOIN live_activities activity_row ON activity_row.principal_id=e.principal_id
+      AND e.payload#>>'{liveActivity,activityId}'='act_'||activity_row.id::text
     ORDER BY page.expires_at,page.id`,
   [actor.principalId,actor.deviceId ?? null,input.after?.expiresAt ?? null,input.after?.id ?? null,input.limit+1]);
   const metadata = result.rows[0]!;
@@ -154,6 +158,9 @@ export async function loadPendingInteractions(
       kind: "decision",title: row.title,summary: row.summary,source: row.source,
       createdAt: row.created_at_iso,readAt: row.read_at?.toISOString() ?? null,urgencyRank: 0,
       interaction: { id: publicId("int",row.id),type: row.kind,state: "pending",expiresAt: row.expires_at_iso },
+      // A sealed question's text for this phone; title and summary are placeholders.
+      ...(() => { const sealed = sealedForDevice({ sealed: row.sealed },actor.deviceId ? publicId("dev",actor.deviceId) : undefined);
+        return sealed ? { sealed } : {}; })(),
     })),
     total: metadata.total,hasMore,
     cursor: hasMore && last ? encodePendingCursor({ urgencyRank: 0,expiresAt: last.expires_at_iso,id: last.id },actor) : null,

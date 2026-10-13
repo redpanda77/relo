@@ -32,16 +32,27 @@ public struct ReloSealedContent: Sendable {
     private let ring: ReloKeyRing
     private let trust: ReloTrustedClients
     private let ledger: (any ReloReplayLedger)?
+    /// Where names carried by opened envelopes are remembered (E2.5).
+    public let nameBook: (any ReloNameBook)?
 
-    public init(ring: ReloKeyRing, trust: ReloTrustedClients, ledger: (any ReloReplayLedger)? = nil) {
+    public init(ring: ReloKeyRing, trust: ReloTrustedClients, ledger: (any ReloReplayLedger)? = nil,
+                nameBook: (any ReloNameBook)? = nil) {
         self.ring = ring
         self.trust = trust
         self.ledger = ledger
+        self.nameBook = nameBook
     }
 
     public static func live(bundle: Bundle = .main) -> ReloSealedContent {
-        ReloSealedContent(ring: .live(bundle: bundle), trust: .live(bundle: bundle),
-                          ledger: KeychainReplayLedger(accessGroup: ReloKeyRing.sharedAccessGroup(bundle: bundle)))
+        let group = ReloKeyRing.sharedAccessGroup(bundle: bundle)
+        return ReloSealedContent(ring: .live(bundle: bundle), trust: .live(bundle: bundle),
+                                 ledger: KeychainReplayLedger(accessGroup: group), nameBook: KeychainNameBook(accessGroup: group))
+    }
+
+    /// Replaces known handles in a server response before it is decoded.
+    public var nameResolver: @Sendable (Data) -> Data {
+        let book = nameBook
+        return { data in book.map { ReloNames.resolve(json: data, $0.names()) } ?? data }
     }
 
     /// Opens `envelope` for the item `itemID` carries; a context already seen under another item is a replay.
@@ -51,7 +62,11 @@ public struct ReloSealedContent: Sendable {
             guard ["notice", "question", "card"].contains(envelope.kind) else { return .unavailable }
             let data = try ReloE2EE.open(envelope, deviceID: deviceID, prekey: ring.prekeyOpener(state: state),
                                          trustedSenders: senders)
-            if let itemID, let ledger, !ledger.admit(context: envelope.context, itemID: itemID, now: now) { return .replayed }
+            // Cards are exempt: the server repeats a card's latest envelope on updates it makes itself.
+            if envelope.kind != "card", let itemID, let ledger,
+               !ledger.admit(context: envelope.context, itemID: itemID, now: now) { return .replayed }
+            let carried = ReloNames.carried(in: data)
+            if !carried.isEmpty { nameBook?.learn(carried) }
             return .opened(data)
         } catch ReloE2EEError.untrustedSender {
             return .unverifiedSender
@@ -71,9 +86,10 @@ public struct ReloSealedContent: Sendable {
         switch open(envelope, deviceID: deviceID, itemID: relo["notificationId"] as? String) {
         case .opened(let plaintext):
             guard let alert = try? JSONDecoder().decode(Alert.self, from: plaintext) else { return nil }
-            return (alert.title, alert.summary ?? "")
+            let names = nameBook?.names() ?? [:]
+            return (ReloNames.resolve(alert.title, names), ReloNames.resolve(alert.summary ?? "", names))
         case .unverifiedSender:
-            return ("Relo", "Encrypted message from a computer you have not verified. Open Settings → Security.")
+            return ("Relo", "Encrypted message from a new computer. Open Relo to read it.")
         case .replayed:
             return ("Relo", "A repeated encrypted message was blocked.")
         case .unavailable:

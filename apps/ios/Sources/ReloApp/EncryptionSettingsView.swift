@@ -2,14 +2,15 @@ import ReloCore
 import ReloNotificationSupport
 import SwiftUI
 
-/// Settings → Security: the computers whose sealed messages this iPhone opens
-/// (docs/END-TO-END-ENCRYPTION.md, E2.4). The owner compares the safety number with
-/// `relo keys verify` on that computer; only a match makes it trusted.
+/// Settings → Security (docs/END-TO-END-ENCRYPTION.md). Encryption is automatic, like WhatsApp: the
+/// screen says what is protected, shows a "security code changed" line when a computer's key changes,
+/// and keeps comparing security codes as an optional step.
 @MainActor @Observable
 final class EncryptionSecurityModel {
     struct Computer: Identifiable, Equatable {
         let client: ReloClientKey
         var trust: ReloClientTrust
+        let notice: ReloTrustedClient.Notice?
         let safetyNumber: String
         var id: String { client.clientId }
     }
@@ -27,17 +28,27 @@ final class EncryptionSecurityModel {
         self.trust = trust
     }
 
+    var statusLine: String {
+        let names = computers.map(\.client.name)
+        switch names.count {
+        case 0: return "Messages are end-to-end encrypted as soon as a computer signs in to this account."
+        case 1: return "End-to-end encrypted with \(names[0])."
+        default: return "End-to-end encrypted with \(names.dropLast().joined(separator: ", ")) and \(names.last!)."
+        }
+    }
+
     func load(credential: DeviceCredential?, directory: (any ClientKeyDirectory)?) async {
         guard let credential, let directory else {
-            phase = .unavailable("Sign in to see the computers that can send to this iPhone.")
+            phase = .unavailable("Sign in to see which computers send to this iPhone.")
             return
         }
         do {
             let state = try ring.store.load() ?? ring.maintain()
             phoneKeyID = ReloE2EE.keyID(publicKeyX963: state.identity.publicKey)
             let clients = try await directory.clientKeys(credential: credential)
+            try trust.autoTrust(clients)
             computers = try clients.map { client in
-                Computer(client: client, trust: try trust.trust(of: client),
+                Computer(client: client, trust: try trust.trust(of: client), notice: try trust.notice(for: client),
                          safetyNumber: try trust.safetyNumber(phoneIdentity: state.identity.publicKey, client: client))
             }
             phase = .ready
@@ -49,13 +60,7 @@ final class EncryptionSecurityModel {
     func markVerified(_ computer: Computer) {
         guard (try? trust.markVerified(computer.client)) != nil,
               let index = computers.firstIndex(of: computer) else { return }
-        computers[index].trust = .trusted
-    }
-
-    func forget(_ computer: Computer) {
-        guard (try? trust.forget(clientId: computer.client.clientId)) != nil,
-              let index = computers.firstIndex(of: computer) else { return }
-        computers[index].trust = .unverified
+        computers[index].trust = .verified
     }
 }
 
@@ -72,19 +77,29 @@ struct EncryptionSettingsView: View {
                 Text(message).foregroundStyle(Color.reloSecondaryText)
             case .ready:
                 Section {
-                    if security.computers.isEmpty {
-                        Text("No computer has an encryption key yet. Run relo keys status on a computer signed in to this account.")
-                            .foregroundStyle(Color.reloSecondaryText)
-                    }
-                    ForEach(security.computers) { computer in
-                        NavigationLink { ComputerVerificationView(security: security, computer: computer) } label: {
-                            LabeledContent(computer.client.name) { Text(label(computer.trust)) }
-                        }
-                    }
-                } header: { Text("Computers") } footer: {
-                    Text("This iPhone opens end-to-end encrypted messages only from computers you verified. The server cannot read them or add a computer.")
+                    Label(security.statusLine, systemImage: "lock.fill")
+                } footer: {
+                    Text("Only this iPhone can read what your computers send. The Relo server, its operator and Apple cannot.")
                 }
                 .listRowBackground(ReloListRowBackground())
+                if !security.computers.isEmpty {
+                    Section {
+                        ForEach(security.computers) { computer in
+                            NavigationLink { ComputerVerificationView(security: security, computer: computer) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    LabeledContent(computer.client.name) {
+                                        if computer.trust == .verified { Text("Verified") }
+                                    }
+                                    if let notice = computer.notice {
+                                        Text("Security code changed \(notice.at.formatted(.relative(presentation: .named)))")
+                                            .font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                                    }
+                                }
+                            }
+                        }
+                    } header: { Text("Computers") }
+                    .listRowBackground(ReloListRowBackground())
+                }
                 if let problem = model.encryptionKeysProblem {
                     Section {
                         Text(problem).foregroundStyle(Color.reloErrorText)
@@ -106,14 +121,6 @@ struct EncryptionSettingsView: View {
         .task { await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory) }
         .refreshable { await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory) }
     }
-
-    private func label(_ trust: ReloClientTrust) -> String {
-        switch trust {
-        case .trusted: "Verified"
-        case .unverified: "Not verified"
-        case .changed: "Key changed"
-        }
-    }
 }
 
 private struct ComputerVerificationView: View {
@@ -128,28 +135,20 @@ private struct ComputerVerificationView: View {
     var body: some View {
         List {
             Section {
+                Label("Messages from \(computer.client.name) are end-to-end encrypted.", systemImage: "lock.fill")
+            }
+            .listRowBackground(ReloListRowBackground())
+            Section {
                 Text(formatted(current.safetyNumber))
                     .font(.title3.monospacedDigit())
                     .frame(maxWidth: .infinity)
                     .textSelection(.enabled)
-                    .accessibilityLabel("Safety number \(current.safetyNumber)")
-            } header: { Text("Safety number") } footer: {
-                Text("On \(computer.client.name), run relo keys verify with this iPhone's id. Trust it only if both screens show exactly these digits.")
-            }
-            .listRowBackground(ReloListRowBackground())
-            if current.trust == .changed {
-                Section {
-                    Text("This computer's key changed since you verified it. Messages from it stay locked until you verify again.")
-                        .foregroundStyle(Color.reloErrorText)
+                    .accessibilityLabel("Security code \(current.safetyNumber)")
+                if current.trust != .verified {
+                    Button("Mark as verified") { security.markVerified(current); dismiss() }
                 }
-                .listRowBackground(ReloListRowBackground())
-            }
-            Section {
-                if current.trust == .trusted {
-                    Button("Stop trusting this computer", role: .destructive) { security.forget(current); dismiss() }
-                } else {
-                    Button("The numbers match — trust this computer") { security.markVerified(current); dismiss() }
-                }
+            } header: { Text("Verify security code (optional)") } footer: {
+                Text("To check, run relo keys verify on \(computer.client.name) and compare the 60 digits. You never need to do this for encryption to work.")
             }
             .listRowBackground(ReloListRowBackground())
         }

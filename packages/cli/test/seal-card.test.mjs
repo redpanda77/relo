@@ -54,19 +54,19 @@ test("the card cache is private, per card, and forgotten when the card ends", as
   }
 });
 
-test("a verified phone opens the whole card text from its own envelope", async () => {
+test("the account's phone opens the whole card text from its own envelope", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-seal-card-"));
   const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
   const device = phone("dev_00000000-0000-4000-8000-00000000000a");
   const dependencies = { configPath: () => join(folder, "config.json"), env };
-  const client = { listDeviceKeys: async () => ({ devices: [device.resource] }) };
+  const client = { listDeviceKeys: async () => ({ devices: [device.resource] }), publishClientKey: async () => ({}) };
   const body = { title: "Deploy 0.12", status: "Building", steps: { labels: ["Build", "Ship"], current: 1 } };
   try {
-    const plain = await sealCardRequest({ body, cardId: null, key: "k", client, config: { apiUrl }, dependencies, notes: [] });
+    const noPhones = { listDeviceKeys: async () => ({ devices: [] }), publishClientKey: async () => ({}) };
+    const plain = await sealCardRequest({ body, cardId: null, key: "k", client: noPhones, config: { apiUrl }, dependencies, notes: [] });
     assert.equal(plain.body, body);
+    await sealCardRequest({ body, cardId: null, key: "k0", client, config: { apiUrl }, dependencies, notes: [] });
     const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
-    store.trusted = { [trustKey(apiUrl, device.resource.deviceId)]: { publicKey: device.resource.identityKey.publicKey } };
-    await saveKeyStore(env.RELO_KEY_STORE_PATH, store);
     await saveCardText(env.RELO_SEALED_CARD_DIR, cardId, { title: "Deploy 0.12", status: "Building", steps: ["Build", "Ship"] });
     const sealed = await sealCardRequest({ body: { status: "Shipping", steps: { labels: ["Step 1", "Step 2"], current: 2 } },
       cardId, key: "k2", client, config: { apiUrl }, dependencies, notes: [] });

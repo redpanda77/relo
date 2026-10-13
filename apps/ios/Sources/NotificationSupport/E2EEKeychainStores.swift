@@ -194,3 +194,67 @@ public struct KeychainReplayLedger: ReloReplayLedger {
         return query
     }
 }
+
+/// Handle → name for opaque project, topic and task names (E2.5), shared by the app, the
+/// Notification Service Extension and the widget through the same Keychain group.
+public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
+    public static let account = "e2ee-name-book-v1"
+    private let service: String
+    private let accessGroup: String?
+    private let lock = NSLock()
+
+    public init(service: String = "relo.e2ee", accessGroup: String?) {
+        self.service = service
+        self.accessGroup = accessGroup
+    }
+
+    public func names() -> [String: String] {
+        lock.withLock { load() }
+    }
+
+    public func learn(_ names: [String: String]) {
+        let accepted = ReloNames.accepted(names)
+        guard !accepted.isEmpty else { return }
+        lock.withLock {
+            var current = load()
+            let before = current
+            current.merge(accepted) { _, new in new }
+            if current.count > ReloNames.capacity {
+                for key in current.keys.sorted().prefix(current.count - ReloNames.capacity) { current.removeValue(forKey: key) }
+            }
+            if current != before { save(current) }
+        }
+    }
+
+    private func load() -> [String: String] {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }
+
+    private func save(_ names: [String: String]) {
+        guard let data = try? JSONEncoder().encode(names) else { return }
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        if SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary) == errSecItemNotFound {
+            var insertion = baseQuery
+            attributes.forEach { insertion[$0.key] = $0.value }
+            SecItemAdd(insertion as CFDictionary, nil)
+        }
+    }
+
+    private var baseQuery: [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: Self.account,
+        ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
+    }
+}

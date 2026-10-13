@@ -12,7 +12,8 @@ import { b64u, fromB64u, generateKeyPair, keyId, publicKeyFor } from "./e2ee.mjs
 const MAX_STORE_BYTES = 256 * 1024;
 
 export function keyStorePath(configFile, env = process.env) {
-  return env.RELO_KEY_STORE_PATH || join(dirname(configFile), "e2ee.json");
+  // process.env too: a caller's own env object (as in tests) must never fall back to the real store.
+  return env.RELO_KEY_STORE_PATH || process.env.RELO_KEY_STORE_PATH || join(dirname(configFile), "e2ee.json");
 }
 
 function insecure(message) {
@@ -100,8 +101,10 @@ export function trustKey(apiUrl, deviceId) {
   return `${apiUrl}|${deviceId}`;
 }
 
+/** "verified" or "auto" when the pinned key matches; "changed" only while strict mode holds a change; "new" before first use. */
 export function trustState(store, apiUrl, device) {
   const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
-  if (!pinned) return "unverified";
-  return pinned.publicKey === device.identityKey.publicKey ? "trusted" : "changed";
+  if (!pinned) return "new";
+  if (pinned.publicKey !== device.identityKey.publicKey) return "changed";
+  return pinned.level === "auto" ? "auto" : "verified";
 }

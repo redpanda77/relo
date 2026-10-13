@@ -194,6 +194,20 @@ suite("sealed notices through the API (E3.1)",() => {
       ORDER BY created_at DESC LIMIT 1`,[started.body.activity.id])).rows[0];
     expect(latest.payload.liveActivity.sealed).toEqual(alerts[0]);
 
+    // Live now reads the current feed: it carries this phone's envelope next to the placeholders.
+    const current = await request("GET","/api/inbox/current?limit=50",undefined,shown.credential);
+    expect(current.status).toBe(200);
+    const live = current.body.items.find((item: any) => item.activity?.id === started.body.activity.id);
+    expect(live.title).toBe("Encrypted card");
+    expect(live.sealed).toEqual({ alert: alerts[0],content: sealed.content });
+
+    // History and the Now caches repair from the snapshot: it carries this phone's envelope too.
+    const snapshot = await request("GET","/api/inbox/snapshot",undefined,shown.credential);
+    expect(snapshot.status).toBe(200);
+    const cardEvents = snapshot.body.items.filter((item: any) => item.activityEvent?.id === started.body.activity.id);
+    expect(cardEvents.length).toBeGreaterThan(0);
+    for (const item of cardEvents) expect(item.sealed).toEqual({ alert: alerts[0],content: sealed.content });
+
     const wrongKind = { alerts: [envelope([shown.publicId])],content: envelope([shown.publicId]) };
     expect((await request("POST","/api/live-activities",{ key: "bad-card",title: "Encrypted card",status: "Updating…",
       context,deviceIds: [shown.publicId],sealed: wrongKind },owner)).body).toEqual({ error: "invalid_sealed_content" });

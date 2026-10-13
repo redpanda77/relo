@@ -1,6 +1,6 @@
 // Verifies a phone's signed answer before the CLI acts on it (docs/END-TO-END-ENCRYPTION.md, E4.2).
 //
-// Once this computer trusts a phone on a server (`relo keys verify`), every positive answer from that
+// Once this computer trusts a phone on a server (automatically, on first use), every positive answer from that
 // server must carry a valid signature by a trusted phone's identity key over exactly this interaction,
 // notification, device and value. Anything else (unsigned, unknown device, changed key, a value the
 // phone did not sign) is refused with exit 4: do not act. Computers that never verified a phone keep
@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { TerminalInteractionError } from "./errors.mjs";
 import { answerSigningInput, fromB64u, keyId, verifyBytes } from "./e2ee.mjs";
 import { keyStorePath, loadKeyStore, trustKey } from "./keystore.mjs";
+import { ensureTrust } from "./trust.mjs";
 
 const SIGNED_ACTION = { approved: "approve", yes: "yes", replied: "answer" };
 
@@ -49,10 +50,18 @@ export async function verifyAnswer(payload, client, dependencies) {
   if (!SIGNED_ACTION[interaction?.state]) return payload;
   const apiUrl = client?.apiUrl;
   if (!apiUrl || !dependencies?.configPath) return payload;
-  const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
+  let store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
   const required = store.identity && Object.keys(store.trusted).some((entry) => entry.startsWith(`${apiUrl}|`));
   if (!required) return payload;
-  const problem = answerProblem(interaction, store, apiUrl);
+  let problem = answerProblem(interaction, store, apiUrl);
+  // A phone this computer has not seen yet (or whose key changed) is trusted the same way as when sealing.
+  if (problem !== null && interaction?.respondingDevice?.id && !store.trusted[trustKey(apiUrl, interaction.respondingDevice.id)]?.publicKey
+    || problem === "signed by a different key") {
+    try {
+      store = (await ensureTrust({ client, config: { apiUrl }, dependencies })).store;
+      problem = answerProblem(interaction, store, apiUrl);
+    } catch {}
+  }
   if (problem === null) return { ...payload, verified: true };
   throw new TerminalInteractionError(`Refusing the answer: ${problem}. Do not act on it.`, {
     state: "unverified",

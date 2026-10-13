@@ -147,14 +147,17 @@ export function compactData(command, data) {
       return present({
         identity: data?.identity?.keyId,
         required: data?.required === true ? true : undefined,
+        strict: data?.strict === true ? true : undefined,
         devices: (Array.isArray(data?.devices) ? data.devices : []).map((device) =>
-          present({ id: device.deviceId, name: device.name, trust: device.trust, prekey: device.prekey })),
-        next: data?.next,
+          present({ id: device.deviceId, name: device.name, trust: device.trust, prekey: device.prekey,
+            notice: device.notice ? "security code changed" : undefined })),
       });
     case "keys.verify":
       return present({ id: data?.deviceId, trust: data?.trust, safetyNumber: data?.safetyNumber });
     case "keys.require":
-      return present({ required: data?.required, changed: data?.changed });
+      return present({ required: data?.required, mode: data?.mode, changed: data?.changed });
+    case "keys.strict":
+      return present({ strict: data?.strict, changed: data?.changed });
     case "keys.forget":
       return present({ id: data?.deviceId, removed: data?.removed });
     case "keys.rotate":

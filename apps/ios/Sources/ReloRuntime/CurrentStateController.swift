@@ -25,6 +25,10 @@ public final class CurrentStateController {
     private var expiryTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
     private var inventoryTask: Task<Void, Never>?
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryID: UInt64 = 0
+    var backoff = ReconnectBackoff.standard
+    var randomUnit: @Sendable () -> Double = { .random(in: 0...1) }
     private var inventoryEnabled = false
     private var resetInventory = false
     private var nextInventoryPage = false
@@ -49,6 +53,7 @@ public final class CurrentStateController {
 
     deinit {
         loadTask?.cancel(); streamTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); saveTask?.cancel(); inventoryTask?.cancel()
+        recoveryTask?.cancel()
     }
 
     public func activate(observeChanges: Bool = true) {
@@ -78,12 +83,48 @@ public final class CurrentStateController {
                 guard let self, self.owns(captured) else { return }
                 self.handle(error)
             }
+            // A stream that ended is never left as a dead owner: the recovery loop reopens it.
+            guard let self, self.epoch == captured else { return }
+            self.streamTask = nil
+            self.startRecoveryIfNeeded()
+        }
+    }
+
+    /// Asks again right now (network came back, app became active). No-op unless we are offline.
+    public func retryNow() {
+        guard active, inventoryEnabled, state.connection == .offline else { return }
+        recoveryTask?.cancel(); recoveryTask = nil
+        reopenStreamIfEnded()
+        receive(.reconcile)
+    }
+
+    private func reopenStreamIfEnded() { if inventoryEnabled, streamTask == nil { openStream(epoch: epoch) } }
+
+    /// One backoff loop while a foreground session is offline; ends on the first success.
+    private func startRecoveryIfNeeded() {
+        guard active, inventoryEnabled, state.connection == .offline, recoveryTask == nil else { return }
+        recoveryID &+= 1
+        let id = recoveryID, captured = epoch
+        recoveryTask = Task { [weak self, sleep] in
+            var attempt = 0
+            while !Task.isCancelled, self?.state.connection == .offline {
+                guard let delay = self.map({ $0.backoff.delay(attempt: attempt, randomUnit: $0.randomUnit()) }) else { return }
+                do { try await sleep(delay) } catch { break }
+                guard let self, self.owns(captured), self.recoveryID == id, self.state.connection == .offline else { break }
+                attempt += 1
+                self.reopenStreamIfEnded()
+                self.receive(.reconcile)
+                await self.refreshTask?.value
+            }
+            guard let self, self.recoveryID == id else { return }
+            self.recoveryTask = nil
         }
     }
 
     public func deactivate() {
         active = false; epoch &+= 1
         loadTask?.cancel(); streamTask?.cancel(); refreshTask?.cancel(); expiryTask?.cancel(); saveTask?.cancel(); inventoryTask?.cancel()
+        recoveryTask?.cancel(); recoveryTask = nil; recoveryID &+= 1
         loadTask = nil; streamTask = nil; refreshTask = nil; expiryTask = nil; saveTask = nil
         hasFullRefresh = false; wantsCurrentPage = false; state.isLoadingCurrentPage = false
         pendingIDs = []; repairIDs = []; nextSave = nil
@@ -310,6 +351,7 @@ public final class CurrentStateController {
         } else if error as? InboxRemoteError == .incompatibleResponse { state.connection = .incompatible }
         else { state.connection = .offline }
         state.countsAreCurrent = false; publish()
+        startRecoveryIfNeeded()
     }
 
     private func evaluateDeadlines() {

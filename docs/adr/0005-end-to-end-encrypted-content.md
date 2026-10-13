@@ -25,9 +25,10 @@ it by hand.
 - **The server's view is limited to metadata.** It sees accounts, devices, timing, size buckets,
   state enums, and opaque project and topic handles. Every server decision that reads text today
   moves to explicit metadata that the CLI computes.
-- **Trust comes from the endpoints.** The CLI encrypts only to device keys the owner has verified
-  with a safety number, or that an already verified device has cross-signed. A key the server
-  supplies is never trusted on its own.
+- **Trust is automatic.** Following WhatsApp and Signal, by the owner's decision, endpoints trust
+  each other's keys on first use. A later key change is accepted and shown as a "security code
+  changed" notice. Comparing the security code, and a strict mode that blocks on change, are
+  optional.
 - **Answers are signed by the device.** The CLI acts on an approval only when the answering
   device's signature verifies against a trusted key.
 - **Content is short-lived.** The server deletes content after a configurable window, with 10

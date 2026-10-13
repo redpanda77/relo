@@ -38,7 +38,7 @@ public struct InboxHistoryMetadata: Codable, Equatable, Sendable {
 }
 
 public struct InboxHistorySummary: Decodable, Equatable, Sendable {
-    public let item: InboxItem
+    public var item: InboxItem
     public let metadata: InboxHistoryMetadata
     private enum CodingKeys: String, CodingKey { case detail, content, liveActivity, payload, body }
 
@@ -60,7 +60,7 @@ public struct InboxHistorySummary: Decodable, Equatable, Sendable {
 }
 
 public struct InboxRepairResponse: Decodable, Equatable, Sendable {
-    public let items: [InboxHistorySummary]
+    public var items: [InboxHistorySummary]
     public let total: Int
     public let serverTime: Date
     public let readWatermark: String?
@@ -104,6 +104,6 @@ extension InboxItem {
             readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: destinationUrl, privacy: privacy, interaction: request, context: context, resources: resources,
-            activityEvent: activityEvent ?? self.activityEvent, activity: activity)
+            activityEvent: activityEvent ?? self.activityEvent, activity: activity, sealed: sealed)
     }
 }

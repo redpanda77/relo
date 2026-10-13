@@ -35,11 +35,13 @@ struct AppDependencies {
     var encryptionKeys: E2EEKeyMaintenance? = nil
     var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)? = nil
     var makeInboxDataSource: (URL, String) -> any InboxDataSource = {
-        HTTPInboxDataSource(baseURL: $0, token: $1, sealedOpener: ReloSealedContent.live().opener)
+        let sealed = ReloSealedContent.live()
+        return HTTPInboxDataSource(baseURL: $0, token: $1, sealedOpener: sealed.opener, nameResolver: sealed.nameResolver)
     }
 
     var makeCurrentDataSource: (URL, String) -> any CurrentStateSource = {
-        HTTPCurrentStateSource(baseURL: $0, token: $1)
+        let sealed = ReloSealedContent.live()
+        return HTTPCurrentStateSource(baseURL: $0, token: $1, nameResolver: sealed.nameResolver, sealedOpener: sealed.opener)
     }
     var makeCurrentCache: (StorageScope) -> any CurrentStateCaching = { _ in InMemoryCurrentStateCache() }
 
@@ -47,7 +49,9 @@ struct AppDependencies {
     var makeDetailCache: (StorageScope) -> any NotificationDetailCaching = { _ in InMemoryNotificationDetailCache() }
 
     static func live() -> AppDependencies {
-        ReloSealedCards.install(ReloSealedContent.live().cardOpener)
+        let sealedContent = ReloSealedContent.live()
+        ReloSealedCards.install(sealedContent.cardOpener)
+        if let book = sealedContent.nameBook { ReloSealedCards.installNames { book.names() } }
         let tokenRegistrar = BackgroundLiveActivityTokenRegistrar()
         var system = AppSystemServices.live
         system.configureActivityTokens = { tokenRegistrar.configure($0) }
@@ -97,7 +101,8 @@ struct AppDependencies {
                 fileURL: reloDirectory.appendingPathComponent("diagnostics.json"))),
             system: system,
             tokenRegistrar: tokenRegistrar,
-            encryptionKeys: E2EEKeyMaintenance(ring: .live(), publisher: HTTPMobileAPIClient(baseURL: origin)),
+            encryptionKeys: E2EEKeyMaintenance(ring: .live(), publisher: HTTPMobileAPIClient(baseURL: origin),
+                                               directory: HTTPMobileAPIClient(baseURL: origin), trust: .live()),
             answerSigner: { ReloKeyRing.live().existingIdentitySigner() },
             makeCurrentCache: { scope in
                 FileCurrentStateCache(baseDirectory: reloDirectory.appendingPathComponent("current", isDirectory: true), scope: scope)

@@ -31,6 +31,7 @@ public extension InboxItem {
     /// The item with its sealed text opened on this phone, or unchanged when nothing opens.
     func openingSealed(_ open: ReloSealedOpener) -> InboxItem {
         guard let sealed else { return self }
+        if sealed.content.kind == "card" { return openingSealedCard(sealed, open: open) }
         let decoder = JSONDecoder()
         let notice = open(sealed.content, id).flatMap { try? decoder.decode(ReloSealedNoticeContent.self, from: $0) }
             ?? sealed.alert.flatMap { open($0, id) }.flatMap { try? decoder.decode(ReloSealedNoticeContent.self, from: $0) }
@@ -73,5 +74,135 @@ public extension InboxNotificationDetail {
 public extension InboxInteraction {
     func replacingPrompt(_ prompt: String) -> InboxInteraction {
         InboxInteraction(id: id, kind: kind, prompt: prompt, state: state, expiresAt: expiresAt, respondedAt: respondedAt)
+    }
+}
+
+/// The readable text an opened envelope gives a Now row: a notice or question (title, summary, body)
+/// or a card (title, status, detail). Only the server's placeholders are replaced.
+struct ReloOpenedRowText {
+    static let titlePlaceholders: Set<String> = ["Encrypted card", "Encrypted notification", "Encrypted question"]
+    static let summaryPlaceholders: Set<String> = [
+        "Private notification", "Updating…", "Open Relo on your iPhone to read this.",
+        "Open Relo on your iPhone to read this question.",
+    ]
+
+    let title: String?
+    let summary: String?
+    let status: String?
+
+    init?(_ sealed: InboxSealedNotice, itemID: String, open: ReloSealedOpener) {
+        guard let data = open(sealed.content, itemID) ?? sealed.alert.flatMap({ open($0, itemID) }),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        title = object["title"] as? String
+        status = object["status"] as? String
+        summary = (object["summary"] as? String) ?? (object["status"] as? String) ?? (object["detail"] as? String)
+            ?? (object["body"] as? String).map { String($0.prefix(240)) }
+    }
+
+    func title(replacing current: String) -> String {
+        guard Self.titlePlaceholders.contains(current), let title, !Self.titlePlaceholders.contains(title) else { return current }
+        return String(title.prefix(200))
+    }
+
+    func summary(replacing current: String) -> String {
+        guard let summary else { return current }
+        if Self.summaryPlaceholders.contains(current) { return String(summary.prefix(240)) }
+        if let status, current.contains("Updating…") { return String(current.replacingOccurrences(of: "Updating…", with: status).prefix(240)) }
+        return current
+    }
+
+    func status(replacing current: String?) -> String? {
+        guard let current, let status, current.contains("Updating…") else { return current }
+        return String(current.replacingOccurrences(of: "Updating…", with: status).prefix(240))
+    }
+}
+
+public extension CurrentSubjectProjection {
+    /// Live now with the real text: opens this phone's envelope and replaces the placeholders.
+    func openingSealed(_ open: ReloSealedOpener) -> CurrentSubjectProjection {
+        guard let sealed, let text = ReloOpenedRowText(sealed, itemID: notificationId ?? subjectId, open: open) else { return self }
+        return CurrentSubjectProjection(
+            subjectId: subjectId, notificationId: notificationId, kind: kind, version: version,
+            title: text.title(replacing: title), summary: text.summary(replacing: summary), source: source,
+            createdAt: createdAt, updatedAt: updatedAt, occurredAt: occurredAt, acceptedAt: acceptedAt, readAt: readAt,
+            currentUntil: currentUntil, freshUntil: freshUntil, deliverUntil: deliverUntil, freshness: freshness,
+            interaction: interaction,
+            activity: activity.map { CurrentActivity(id: $0.id, generation: $0.generation, sequence: $0.sequence,
+                                                      status: text.status(replacing: $0.status), progress: $0.progress) },
+            resources: resources, sealed: sealed
+        )
+    }
+}
+
+public extension PendingCurrentDecision {
+    func openingSealed(_ open: ReloSealedOpener) -> PendingCurrentDecision {
+        guard let sealed, let text = ReloOpenedRowText(sealed, itemID: notificationId, open: open) else { return self }
+        return PendingCurrentDecision(
+            subjectId: subjectId, notificationId: notificationId, version: version, kind: kind,
+            title: text.title(replacing: title), summary: text.summary(replacing: summary), source: source,
+            createdAt: createdAt, readAt: readAt, urgencyRank: urgencyRank, interaction: interaction, sealed: sealed
+        )
+    }
+}
+
+public extension CurrentInboxResponse {
+    func openingSealed(_ open: ReloSealedOpener) -> CurrentInboxResponse {
+        var opened = self
+        opened.items = items.map { $0.openingSealed(open) }
+        return opened
+    }
+}
+
+public extension PendingCurrentPage {
+    func openingSealed(_ open: ReloSealedOpener) -> PendingCurrentPage {
+        var opened = self
+        opened.items = items.map { $0.openingSealed(open) }
+        return opened
+    }
+}
+
+extension InboxItem {
+    /// A card event in History or Now: real title, status and current step from the card's envelope.
+    func openingSealedCard(_ sealed: InboxSealedNotice, open: ReloSealedOpener) -> InboxItem {
+        guard let data = open(sealed.content, id) ?? sealed.alert.flatMap({ open($0, id) }),
+              let text = try? JSONDecoder().decode(ReloSealedCardText.self, from: data) else { return self }
+        let placeholders: Set<String> = ["Encrypted card", "Encrypted question"]
+        let realTitle = text.title.flatMap { placeholders.contains($0) ? nil : $0 }
+        let shownTitle = placeholders.contains(title) ? (realTitle ?? title) : title
+        let opened = { (value: String?) -> String? in
+            guard let value, let status = text.status else { return value }
+            return value.replacingOccurrences(of: "Updating…", with: status)
+        }
+        let card = activity.map { digest -> InboxCardDigest in
+            let steps = digest.steps.map { steps -> InboxCardDigest.Steps in
+                guard let current = steps.current, let labels = text.steps, current.hasPrefix("Step "),
+                      let number = Int(current.dropFirst(5)), labels.indices.contains(number - 1) else { return steps }
+                return .init(done: steps.done, total: steps.total, current: labels[number - 1])
+            }
+            return InboxCardDigest(state: digest.state, outcome: digest.outcome, status: opened(digest.status),
+                                   progress: digest.progress, steps: steps, updates: digest.updates,
+                                   startedAt: digest.startedAt, endedAt: digest.endedAt)
+        }
+        return InboxItem(
+            id: id, kind: kind, sourceName: sourceName, sourceImageUrl: sourceImageUrl, title: shownTitle,
+            detail: opened(detail) ?? text.status, content: content, readAt: readAt, withdrawnAt: withdrawnAt, result: result,
+            deliveryState: deliveryState, apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt,
+            createdAt: createdAt, destinationUrl: destinationUrl, privacy: privacy, liveActivity: liveActivity,
+            activitySummary: activitySummary, interaction: interaction, context: context, resources: resources,
+            activityEvent: activityEvent, activity: card, sealed: sealed
+        )
+    }
+}
+
+public extension InboxRepairResponse {
+    /// The snapshot with sealed rows opened on this phone.
+    func openingSealed(_ open: ReloSealedOpener) -> InboxRepairResponse {
+        var opened = self
+        opened.items = items.map { summary in
+            var summary = summary
+            summary.item = summary.item.openingSealed(open)
+            return summary
+        }
+        return opened
     }
 }

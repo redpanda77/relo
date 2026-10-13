@@ -6,13 +6,28 @@ import type { Database } from "./db.js";
  * to a readable notice, question or card text. Webhooks hold no keys and are unaffected.
  */
 export async function endToEndRequired(db: Pick<Database,"query">,principalId: string): Promise<boolean> {
-  const result = await db.query<{ require_end_to_end: boolean }>(
-    "SELECT require_end_to_end FROM owner_principals WHERE id=$1",[principalId],
-  );
-  return Boolean(result.rows[0]?.require_end_to_end);
+  return (await endToEndPolicy(db,principalId)).required;
 }
 
-export async function setEndToEndRequired(db: Pick<Database,"query">,principalId: string,required: boolean): Promise<void> {
+/**
+ * The account's choice (true/false) or automatic (null): automatic requires sealing as soon as an
+ * active phone of the account has published encryption keys, so encryption is on by default.
+ */
+export async function endToEndPolicy(db: Pick<Database,"query">,principalId: string): Promise<{ required: boolean; mode: "on" | "off" | "auto" }> {
+  const result = await db.query<{ choice: boolean | null; phones_with_keys: boolean }>(
+    `SELECT p.require_end_to_end AS choice,EXISTS (
+       SELECT 1 FROM device_identity_keys k JOIN devices d ON d.id=k.device_id
+       WHERE k.principal_id=p.id AND d.revoked_at IS NULL
+     ) AS phones_with_keys
+     FROM owner_principals p WHERE p.id=$1`,[principalId],
+  );
+  const row = result.rows[0];
+  if (row?.choice === true) return { required: true,mode: "on" };
+  if (row?.choice === false) return { required: false,mode: "off" };
+  return { required: Boolean(row?.phones_with_keys),mode: "auto" };
+}
+
+export async function setEndToEndRequired(db: Pick<Database,"query">,principalId: string,required: boolean | null): Promise<void> {
   await db.query("UPDATE owner_principals SET require_end_to_end=$2 WHERE id=$1",[principalId,required]);
 }
 

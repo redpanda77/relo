@@ -55,6 +55,8 @@ public final class SessionController {
     public func currentTime() -> Date? { current?.currentTime() }
     public func loadMoreCurrent() async { await current?.loadMoreCurrent() }
     public func loadMorePending() async { await current?.loadMorePending() }
+    /// Network path changed or the app became active: retry immediately if the server was unreachable.
+    public func retryNow() { current?.retryNow() }
     public func retryStorage() { current?.retryStorage() }
 
     /// A push wakeup reconciles once and opens no long-lived stream while backgrounded.

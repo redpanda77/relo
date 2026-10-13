@@ -1,3 +1,4 @@
+import { sealedForDevice } from "./sealed-content.js";
 import { z } from "zod";
 import { currentSubjectIdSchema,type CurrentInboxResponse,type CurrentSubjectProjection,type RetiredSubject } from "@relo/notification-contracts";
 import type { Database } from "./db.js";
@@ -100,7 +101,8 @@ SELECT page.*,to_char(page.sort_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.U
  source.id AS source_id,source.kind AS source_kind,left(source.display_name,200) AS source_name,
  project.id AS project_id,left(project.display_name,200) AS project_name,project.is_direct AS project_direct,
  project.palette_ordinal,project.icon AS project_icon,project.revision AS project_revision,
- COALESCE(a.conversation_id,e.conversation_id) AS conversation_id,COALESCE(a.work_item_id,e.work_item_id) AS work_item_id
+ COALESCE(a.conversation_id,e.conversation_id) AS conversation_id,COALESCE(a.work_item_id,e.work_item_id) AS work_item_id,
+ COALESCE(a.sealed,e.payload->'sealed') AS sealed
 FROM metadata CROSS JOIN clock LEFT JOIN page ON true
 LEFT JOIN notification_events e ON e.id=page.event_id
 LEFT JOIN live_activities a ON a.id=page.activity_id
@@ -120,11 +122,15 @@ type CurrentRow = {
  activity_status: string | null;activity_progress: number | null;activity_generation: number;activity_sequence: string;
  source_id: string | null;source_kind: string;source_name: string;project_id: string | null;project_name: string;
  project_direct: boolean;palette_ordinal: string;project_icon: string;project_revision: string;conversation_id: string | null;work_item_id: string | null;
+ sealed: unknown;
 };
 
-function projection(row: CurrentRow & {subject_id:string}): CurrentSubjectProjection {
+function projection(row: CurrentRow & {subject_id:string},devicePublicId?: string): CurrentSubjectProjection {
  const palette=Number(row.palette_ordinal);
+ // End-to-end sealed text for this phone; title, summary and status are placeholders (E3–E5).
+ const sealed=sealedForDevice({ sealed: row.sealed },devicePublicId);
  return {
+  ...(sealed?{sealed}:{}),
   subjectId:row.subject_id,notificationId:row.event_id?`ntf_${row.event_id}`:null,kind:row.kind,
   version:{generation:Number(row.generation),revision:Number(row.revision)},title:row.title,summary:row.summary,source:row.source,
   createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString(),occurredAt:row.occurred_at?.toISOString()??null,acceptedAt:row.accepted_at.toISOString(),readAt:row.read_at?.toISOString()??null,
@@ -148,7 +154,7 @@ export async function loadCurrentState(db: Database,actor: InboxActor,input:{lim
  const rows=input.ids?candidates:candidates.slice(0,input.limit),last=rows.at(-1);
  const retired:RetiredSubject[]=rows.filter(row=>row.retired_reason!==null).map(row=>({subjectId:row.subject_id,reason:row.retired_reason!,version:{generation:Number(row.generation),revision:Number(row.revision)}}));
  if(input.ids){const found=new Set(rows.map(row=>row.subject_id));for(const id of input.ids)if(!found.has(id))retired.push({subjectId:id,reason:"not_found"});}
- return {items:rows.filter(row=>row.retired_reason===null).map(projection),retired,total:metadata.total,
+ return {items:rows.filter(row=>row.retired_reason===null).map(row=>projection(row,actor.deviceId?`dev_${actor.deviceId}`:undefined)),retired,total:metadata.total,
   counts:{actionable:metadata.actionable,currentUnread:metadata.unread},nextExpiryAt:metadata.next_expiry?.toISOString()??null,serverTime:metadata.server_time.toISOString(),hasMore,
   cursor:hasMore && last?encodeCurrentCursor({createdAt:last.sort_at_iso,subjectId:last.subject_id},actor):null};
 }

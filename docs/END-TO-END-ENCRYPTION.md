@@ -91,22 +91,24 @@ These are standard primitives only, with no Relo-specific crypto:
 The phone publishes `{prekeyId, publicKey, createdAt, signature-by-identity}`. The server stores
 public halves only.
 
-### Trust: why the server cannot slip in its own key
+### Trust: automatic, like WhatsApp and Signal
 
-The server hands out public keys, so it could hand out the wrong one. The CLI keeps its own trust
-store, `trust.json` next to `config.json`, and encrypts only to device identity keys in that store.
-A key gets into the store in one of two ways:
+Nobody has to compare keys for encryption to work. A computer trusts a phone's identity key the first
+time it sees it, and a phone trusts a computer's key the first time it sees it (trust on first use).
+Sealing and signed approvals start at once.
 
-1. **Safety-number verification.** `relo keys verify` and the iPhone's Settings → Security screen
-   both show the same 60-digit number, derived from the two identity keys as Signal's safety
-   numbers are. The owner compares them and confirms on both sides.
-2. **Cross-signing.** A new iPhone or iPad is trusted when a device that is already verified signs
-   its identity key, after the owner approves the request on that device.
+- **A key change** (a reinstall, a new phone, `relo keys rotate`) is trusted again automatically and
+  keeps working. It leaves a visible, non-blocking notice: "security code changed" in
+  `relo keys status` and on the phone's Settings → Security.
+- **Verifying is optional.** `relo keys verify` and Settings → Security → Verify security code show
+  the same 60-digit number, derived from the two identity keys like Signal's safety numbers.
+  Confirming that they match upgrades the pairing to "verified".
+- **Strict mode is optional.** `relo keys strict on` (a person at a terminal) stops sealing to a phone
+  whose security code changed until it is verified again.
 
-The phone also keeps a list of trusted CLI identity keys and shows any envelope from an unknown
-key as unverified. When a verified key changes, both sides warn and stop until the owner verifies
-again. A first-use (trust on first use) shortcut exists only in `relo setup` on a fresh account,
-and the owner is still shown the safety number.
+The trade-off is the usual one for trust on first use. A server that is malicious *at the moment a
+device is first seen* could present its own key. Against that, every later substitution shows up as
+a security code change. People who want more can verify once, or use strict mode.
 
 ### Envelope
 
@@ -210,8 +212,8 @@ Built and tested in source, **not yet in a release**:
 | E1.1 Retention | Done in source: `RELO_CONTENT_RETENTION_HOURS`, migration `0063`. |
 | E2.1 Phone keys | Done in source: Secure Enclave identity + prekeys rotated every 10 h, private prekeys deleted after retention + 2 h, published with each heartbeat; shared Keychain group for the app and both extensions. |
 | E2.2 Key directory | Done in source: migrations `0064`/`0065`, `PUT/GET /api/devices/…/keys`, `PUT /api/clients/self/keys`, `GET /api/clients/keys`. |
-| E2.3 CLI trust | Done: `relo keys status · verify · forget · rotate`; verification needs a person at a terminal. |
-| E2.4 Phone trust | Done in source: Settings → Security lists computers, shows the safety number, and trusts one only when the owner confirms it. |
+| E2.3 CLI trust | Done: trust on first use, automatically; `relo keys status` shows "security code changed" notices; `verify` (optional, a person), `strict on|off`, `forget`, `rotate`. |
+| E2.4 Phone trust | Done in source: the phone trusts the account's computers automatically on launch and foreground; Settings → Security leads with "End-to-end encrypted with …", shows "Security code changed" lines, and keeps "Verify security code" optional. |
 | E3.1–E3.2 Sealed notices | Done in source: `relo notify` seals for verified phones; the server stores envelopes and placeholders only; the Notification Service Extension and the app open them. Project and topic names are still metadata (E2.5). |
 | E4.2 Signed answers | Done in source: the iPhone signs every answer when it is queued (in the app, from a notification, or from a Live Activity button); once a computer trusts a phone, `relo ask` acts on approved, yes or replied only with a valid signature from a trusted phone, and otherwise exits 4 (do not act). Negative answers need no signature. |
 | E4.1 Sealed questions | Done in source: `relo ask` seals the question's title and prompt for verified phones on both the card path and the in-app path; the server stores the placeholder "Encrypted question" and the envelopes; the iPhone opens them in the app and the notification. A card shows the placeholder until E5. Answer button labels stay readable. |
@@ -222,6 +224,9 @@ Built and tested in source, **not yet in a release**:
 | E5 Sealed cards | Done in source: `relo activity start/update/end` seal the card's title, status, detail, step labels and progress label for verified phones. The server stores placeholders ("Encrypted card", "Updating…", "Step n") and the latest envelopes (migration `0082`), and each phone's Live Activity push carries its own envelope. The phone opens it while decoding the card state, so the Lock Screen, Dynamic Island and Watch show the real text; words the server writes itself ("Approved", "Expired") are kept. A question folded into a card shows its real prompt the same way. The CLI keeps each card's text in a private local cache (0600, removed when the card ends) so an update can seal the whole card. |
 | E6.1 Enforcement | Done in source: `relo keys require on` (a person at a terminal) makes the account refuse readable notices, questions and card text from CLI keys with `end_to_end_required` (migration `0083`); webhooks and server-made messages are unaffected and labelled. The card `relo ask` starts is sealed too. |
 | E6.4 Proof | Done: `apps/server/src/compromised-server.test.ts` runs the real `relo` CLI against a real server for a verified phone (notice, card with steps, an update, a question), then searches every row of every table for the agent's words and finds none; a control run without a verified phone proves the search finds readable text. Still open: an external review of the protocol and code. |
+| E2.5 Opaque names | Done in source: the CLI sends keyed handles (`p-…`, `t-…`, `w-…`, `c-…`, `a-…`) for project, topic, task, computer and account, keyed per computer, and seals the names (agent-session hooks too); the iPhone remembers handle → name and shows the names everywhere (inbox, history, Now, cards). The same project used from two computers has two handles but one name on the phone. |
+| Default policy | Encryption is required automatically once a phone of the account has keys (migration `0084`): CLI keys then must seal. `relo keys require off` (a person) turns it off; `on` and `auto` need nobody. |
+| Phone surfaces | Every feed the iPhone reads carries that phone's envelopes next to the placeholders: inbox detail and history, the snapshot, current state (Now → Live now) and pending decisions, plus Live Activity pushes. The app opens them on arrival, so no screen shows "Encrypted card" or a handle when the phone holds the key. The web Dashboard has no key by design and shows placeholders and handles. |
 | Everything else | Open, in the order below. |
 
 ## Delivery plan

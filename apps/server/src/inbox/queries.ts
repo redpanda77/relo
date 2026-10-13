@@ -77,6 +77,11 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
           'current',CASE WHEN private.is_private THEN NULL ELSE NULLIF(left(steps.current,80),'') END) END,
         'updates',GREATEST(activity.sequence,0)+1,
         'startedAt',activity.created_at,'endedAt',activity.ended_at) END,
+      -- End-to-end sealed text for this phone (its own alert envelope and the shared content).
+      'sealed',CASE WHEN jsonb_typeof(COALESCE(e.payload->'sealed',activity.sealed)->'alerts')='array' THEN jsonb_build_object(
+        'alert',(SELECT alert FROM jsonb_array_elements(COALESCE(e.payload->'sealed',activity.sealed)->'alerts') alert
+          WHERE $2::uuid IS NOT NULL AND alert#>>'{recipients,0,device}'='dev_'||$2::text LIMIT 1),
+        'content',COALESCE(e.payload->'sealed',activity.sealed)->'content') END,
       'relevance',CASE WHEN relevance.notification_event_id IS NOT NULL THEN jsonb_build_object(
         'subjectId','sub_'||relevance.subject_id::text,'generation',relevance.generation,'revision',relevance.revision,
         'status',relevance.relevance->>'status','supersededAt',relevance.superseded_at,

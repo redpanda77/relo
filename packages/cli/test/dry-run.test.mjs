@@ -186,9 +186,11 @@ test("the CLI wires the client's retry sleep to its own clock", async () => {
     readStdinJson: async () => ({}),
     env: {},
     sleep: async (milliseconds) => { slept.push(milliseconds); },
-    fetchImpl: async () => (count++ === 0
-      ? Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "2" } })
-      : Response.json({ eventId: "ntf_1", delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 } })),
+    fetchImpl: async (url) => (/\/api\/(clients|devices)\//.test(String(url))
+      ? Response.json({ error: "not_found" }, { status: 404 })
+      : count++ === 0
+        ? Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "2" } })
+        : Response.json({ eventId: "ntf_1", delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 } })),
   });
   assert.equal(out.exitCode, EXIT.OK);
   assert.deepEqual(slept, [2_000]);

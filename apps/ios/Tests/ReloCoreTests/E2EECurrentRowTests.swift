@@ -1,0 +1,107 @@
+import CryptoKit
+import Foundation
+import XCTest
+@testable import ReloCore
+@testable import ReloNotificationSupport
+
+/// Live now shows the real text of sealed notices, questions and cards (the current feed only has placeholders).
+final class E2EECurrentRowTests: XCTestCase {
+    private final class RingStore: ReloKeyRingStore, @unchecked Sendable {
+        private let lock = NSLock()
+        private var state: ReloKeyRingState?
+        func load() throws -> ReloKeyRingState? { lock.withLock { state } }
+        func save(_ state: ReloKeyRingState) throws { lock.withLock { self.state = state } }
+        func delete() throws { lock.withLock { state = nil } }
+    }
+    private final class TrustStore: ReloTrustedClientStore, @unchecked Sendable {
+        private let lock = NSLock()
+        private var clients: [ReloTrustedClient] = []
+        func load() throws -> [ReloTrustedClient] { lock.withLock { clients } }
+        func save(_ clients: [ReloTrustedClient]) throws { lock.withLock { self.clients = clients } }
+    }
+    private final class Ledger: ReloReplayLedger, @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [String: ReloReplayEntry] = [:]
+        func admit(context: String, itemID: String, now: Date) -> Bool {
+            lock.withLock { ReloReplayRules.admit(&entries, context: context, itemID: itemID, now: now) }
+        }
+    }
+
+    private func fixture() throws -> (ReloSealedContent, ReloSoftwareIdentity, ReloStoredPrekey) {
+        let ring = ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory())
+        let state = try ring.maintain()
+        let trust = ReloTrustedClients(store: TrustStore())
+        let mac = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
+        try trust.autoTrust([ReloClientKey(clientId: "key_1", name: "Mac", keyId: ReloE2EE.keyID(publicKeyX963: mac.publicKeyX963),
+                                           publicKey: ReloE2EE.base64URL(mac.publicKeyX963), changedAt: "")])
+        return (ReloSealedContent(ring: ring, trust: trust, ledger: Ledger()), mac, state.prekeys[0])
+    }
+
+    private func envelope(_ kind: String, _ content: [String: Any], mac: ReloSoftwareIdentity, prekey: ReloStoredPrekey) throws -> ReloEnvelope {
+        try ReloE2EE.seal(kind: kind, context: "ctx:\(kind)", sender: mac, recipients: [("dev_1", prekey.id, prekey.key.publicKey)],
+                          content: try JSONSerialization.data(withJSONObject: content))
+    }
+
+    private func row(id: String, title: String, summary: String, status: String?, sealed: InboxSealedNotice) -> CurrentSubjectProjection {
+        CurrentSubjectProjection(
+            subjectId: id, notificationId: id.replacingOccurrences(of: "act_", with: "ntf_"), kind: .progress,
+            version: CurrentVersion(generation: 1, revision: 1), title: title, summary: summary, source: "Claude Code",
+            createdAt: Date(), updatedAt: Date(), occurredAt: nil, acceptedAt: Date(), readAt: nil,
+            currentUntil: nil, freshUntil: nil, deliverUntil: Date(), freshness: .fresh, interaction: nil,
+            activity: status.map { CurrentActivity(id: id, generation: 1, sequence: 1, status: $0, progress: 0.25) },
+            resources: nil, sealed: sealed
+        )
+    }
+
+    func testSealedCardsShowTheirRealTitleAndStatus() throws {
+        let (sealed, mac, prekey) = try fixture()
+        let card = try envelope("card", ["title": "Deploy 0.15", "status": "Testing"], mac: mac, prekey: prekey)
+        let opened = row(id: "act_00000000-0000-4000-8000-000000000001", title: "Encrypted card", summary: "Updating…",
+                         status: "Updating…", sealed: InboxSealedNotice(alert: card, content: card)).openingSealed(sealed.opener)
+        XCTAssertEqual(opened.title, "Deploy 0.15")
+        XCTAssertEqual(opened.summary, "Testing")
+        XCTAssertEqual(opened.activity?.status, "Testing")
+        // A card started readable and sealed later keeps its own title.
+        let mixed = row(id: "act_00000000-0000-4000-8000-000000000002", title: "Automatic E2E rollout", summary: "Approved · Updating…",
+                        status: "Approved · Updating…", sealed: InboxSealedNotice(alert: card, content: card)).openingSealed(sealed.opener)
+        XCTAssertEqual(mixed.title, "Automatic E2E rollout")
+        XCTAssertEqual(mixed.activity?.status, "Approved · Testing")
+        // The server repeats a card's envelope on later events: never treated as a replay.
+        let again = row(id: "act_00000000-0000-4000-8000-000000000003", title: "Encrypted card", summary: "Updating…",
+                        status: "Updating…", sealed: InboxSealedNotice(alert: card, content: card)).openingSealed(sealed.opener)
+        XCTAssertEqual(again.title, "Deploy 0.15")
+    }
+
+    func testSealedQuestionsShowTheirPromptInPendingDecisions() throws {
+        let (sealed, mac, prekey) = try fixture()
+        let question = try envelope("question", ["title": "Release", "summary": "Deploy now?"], mac: mac, prekey: prekey)
+        let pending = PendingCurrentDecision(
+            subjectId: "ntf_00000000-0000-4000-8000-000000000009", notificationId: "ntf_00000000-0000-4000-8000-000000000009",
+            version: nil, kind: .decision, title: "Encrypted question", summary: "Private notification", source: "Claude Code",
+            createdAt: Date(), readAt: nil, urgencyRank: 0,
+            interaction: CurrentDecision(id: "int_1", type: .approval, state: .pending, expiresAt: Date().addingTimeInterval(60)),
+            sealed: InboxSealedNotice(alert: question, content: question)
+        ).openingSealed(sealed.opener)
+        XCTAssertEqual(pending.title, "Release")
+        XCTAssertEqual(pending.summary, "Deploy now?")
+    }
+
+    func testHistoryCardRowsShowRealTitleStatusAndStep() throws {
+        let (sealed, mac, prekey) = try fixture()
+        let card = try envelope("card", ["title": "Deploy 0.15", "status": "Testing", "steps": ["Build", "Test", "Ship"]], mac: mac, prekey: prekey)
+        let item = InboxItem(
+            id: "ntf_00000000-0000-4000-8000-000000000010", kind: .liveActivity, sourceName: "Claude Code", title: "Encrypted card",
+            detail: "Updating…", createdAt: Date(),
+            activity: InboxCardDigest(state: "active", status: "Approved · Updating…", steps: .init(done: 1, total: 3, current: "Step 2"),
+                                      updates: 3, startedAt: Date()),
+            sealed: InboxSealedNotice(alert: card, content: card)
+        )
+        let opened = item.openingSealed(sealed.opener)
+        XCTAssertEqual(opened.title, "Deploy 0.15")
+        XCTAssertEqual(opened.detail, "Testing")
+        XCTAssertEqual(opened.activity?.status, "Approved · Testing")
+        XCTAssertEqual(opened.activity?.steps?.current, "Test")
+        // The snapshot keeps the envelope through its history summary so the app can open it.
+        XCTAssertEqual(item.historySummary().sealed, item.sealed)
+    }
+}

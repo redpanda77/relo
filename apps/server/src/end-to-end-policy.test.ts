@@ -59,12 +59,12 @@ suite("require end-to-end encryption (E6.1)",() => {
 
   test("off by default; once on, readable CLI content is refused and sealed content is accepted",async () => {
     const device = await phone();
-    expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: false });
+    expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: false,mode: "auto" });
     expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(201);
 
-    expect((await request("PUT","/api/end-to-end/policy",{ required: true },owner))).toEqual({ status: 200,body: { required: true } });
+    expect((await request("PUT","/api/end-to-end/policy",{ required: true },owner))).toEqual({ status: 200,body: { required: true,mode: "on" } });
     expect((await request("PUT","/api/end-to-end/policy",{ required: false },device.credential)).status).toBe(403);
-    expect((await request("GET","/api/end-to-end/policy",undefined,device.credential)).body).toEqual({ required: true });
+    expect((await request("GET","/api/end-to-end/policy",undefined,device.credential)).body).toEqual({ required: true,mode: "on" });
 
     const refused = { status: 409,body: expect.objectContaining({ error: "end_to_end_required" }) };
     expect(await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).toMatchObject(refused);
@@ -83,7 +83,21 @@ suite("require end-to-end encryption (E6.1)",() => {
     expect(await request("POST",`/api/live-activities/${card.body.activity.id}/wait`,{ type: "approval",prompt: "Plain?",expiresInSeconds: 60 },owner))
       .toMatchObject(refused);
 
-    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ required: false });
+    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ required: false,mode: "off" });
     expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(201);
+  });
+
+  test("automatic by default: required once a phone of the account has published keys",async () => {
+    const device = await phone();
+    expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: false,mode: "auto" });
+    await db.query(`INSERT INTO device_identity_keys(device_id,principal_id,key_id,public_key)
+      VALUES ($1,$2,'k_AAAAAAAAAAAAAAAAAAAAAA',$3)`,[device.id,principalId,"A".repeat(87)]);
+    expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: true,mode: "auto" });
+    expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(409);
+    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ required: false,mode: "off" });
+    expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(201);
+    expect((await request("PUT","/api/end-to-end/policy",{ required: null },owner)).body).toEqual({ required: true,mode: "auto" });
+    await db.query("UPDATE devices SET revoked_at=now() WHERE id=$1",[device.id]);
+    expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: false,mode: "auto" });
   });
 });

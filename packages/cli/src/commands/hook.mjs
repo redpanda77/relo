@@ -1,3 +1,4 @@
+import { hookLabels } from "../opaque-names.mjs";
 // `relo hook <event>`: the one entry point for agent-harness hooks (installed by `relo setup --hooks`).
 // It reports THAT a session started, is working, stopped or ended, on its own channel, never what the
 // agent did. From the harness's hook JSON (stdin) it keeps the session id, the event name and the cwd
@@ -111,8 +112,12 @@ export async function processHook({ positionals, options, dependencies }) {
     if (!project && typeof input.cwd === "string" && input.cwd) {
       try { project = label(repositoryName(input.cwd), 120); } catch { /* no repository */ }
     }
-    const computer = await computerFor(dependencies, config);
-    const account = label(detectAccount(env, dependencies.accountProbes).account, 40);
+    // Once this computer seals for a phone, project, computer and account go out as handles (E2.5).
+    const plainLabels = { project, computer: await computerFor(dependencies, config),
+      account: label(detectAccount(env, dependencies.accountProbes).account, 40) };
+    const labels = await hookLabels(plainLabels, config?.apiUrl, dependencies).catch(() => plainLabels);
+    project = labels.project;
+    const { computer, account } = labels;
     // The card key the activity commands derive for this session, so the server can link card and session.
     const explicit = agentSession(dependencies.env)?.agent === "relo";
     const key = explicit ? cardKey({ env: dependencies.env })

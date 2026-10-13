@@ -8,8 +8,8 @@ import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { identityKeys, keyStorePath, loadKeyStore } from "./keystore.mjs";
-import { sealablePhones, sealNotice } from "./seal-notice.mjs";
+import { identityKeys } from "./keystore.mjs";
+import { opaqueIdentity, sealablePhones, sealNotice, trustFor } from "./seal-notice.mjs";
 
 export const SEALED_CARD_TITLE = "Encrypted card";
 export const SEALED_CARD_STATUS = "Updating…";
@@ -17,7 +17,7 @@ const MAX_CARD_TEXT_BYTES = 500;
 const CARD_ID = /^act_[0-9a-f-]{36}$/u;
 
 export function sealedCardDirectory(env = process.env) {
-  return env.RELO_SEALED_CARD_DIR
+  return env.RELO_SEALED_CARD_DIR || process.env.RELO_SEALED_CARD_DIR
     || join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state"), "relo", "sealed-cards");
 }
 
@@ -89,20 +89,22 @@ export function placeholderCardBody(body) {
  * and null text. `cardId` is the card being updated or ended (null for a start).
  */
 export async function sealCardRequest({ body, cardId, key, client, config, dependencies, notes, deviceIds }) {
-  const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
-  const hasTrust = store.identity && Object.keys(store.trusted).some((entry) => entry.startsWith(`${config.apiUrl}|`));
-  if (!hasTrust) return { body, text: null };
-  const { devices } = await client.listDeviceKeys();
+  const trust = await trustFor({ client, config, dependencies, notes });
+  if (!trust) return { body, text: null };
+  const { store, devices } = trust;
   const { eligible } = sealablePhones(store, config.apiUrl, devices, deviceIds);
-  if (eligible.length === 0) {
-    notes.push("card not end-to-end encrypted: no verified phone has a valid key (relo keys status)");
-    return { body, text: null };
-  }
+  if (eligible.length === 0) return { body, text: null };
   const previous = cardId ? await loadCardText(sealedCardDirectory(dependencies.env), cardId) : null;
   const text = mergedCardText(previous, body);
+  // The card's project, topic and task go to the server as handles; the phone gets the names (E2.5).
+  const identity = await opaqueIdentity(store, body.context, dependencies);
+  const named = Object.keys(identity.names).length && Buffer.byteLength(JSON.stringify({ ...text, names: identity.names })) <= 760
+    ? { ...text, names: identity.names } : text;
   const sealed = sealNotice({ kind: "card", sender: identityKeys(store), idempotencyKey: key, phones: eligible,
-    content: text, alert: text });
-  return { body: { ...placeholderCardBody(body), sealed }, text };
+    content: named, alert: named });
+  const placeholder = placeholderCardBody(body);
+  if (identity.context) placeholder.context = identity.context;
+  return { body: { ...placeholder, sealed }, text };
 }
 
 /** The card's real step labels when this computer sealed it, else the server's. */

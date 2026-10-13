@@ -77,51 +77,57 @@ test("alerts shrink to fit a push", () => {
   assert.deepEqual(fitAlert({ title: "Short" }), { title: "Short" });
 });
 
-test("relo notify sends plain text without verified phones and only envelopes with them", async () => {
+test("relo notify seals for the account's phones automatically, and stays readable only for older servers", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-seal-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
   const device = phone("dev_00000000-0000-4000-8000-00000000000a");
   const dependencies = { configPath: () => join(folder, "config.json"), env, now: () => Date.parse("2026-10-13T17:00:00.000Z") };
-  const client = { listDeviceKeys: async () => ({ devices: [device.resource] }) };
+  const client = { listDeviceKeys: async () => ({ devices: [device.resource] }), publishClientKey: async () => ({}) };
   const body = { title: "Deployed", body: "Secret", sourceName: "Codex", context: { project: "relo" },
     relevance: { occurredAt: "2026-10-13T16:59:00.000Z" }, imageUrl: "https://example.com/x.png" };
   try {
     const notes = [];
-    assert.equal(await sealNoticeRequest({ body, key: "k1", client, config: { apiUrl }, dependencies, notes }), body);
-    const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
-    store.trusted = pinned(device);
-    await saveKeyStore(env.RELO_KEY_STORE_PATH, store);
+    const oldServer = { listDeviceKeys: async () => { throw Object.assign(new Error("not found"), { status: 404 }); },
+      publishClientKey: async () => { throw Object.assign(new Error("not found"), { status: 404 }); } };
+    assert.equal(await sealNoticeRequest({ body, key: "k1", client: oldServer, config: { apiUrl }, dependencies, notes }), body);
+    assert.deepEqual(notes, [], "an older server is not an error");
+    // Trust on first use: the phone's key is pinned automatically and the notice is sealed.
     const sealed = await sealNoticeRequest({ body, key: "k1", client, config: { apiUrl }, dependencies, notes });
+    const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, device.resource.deviceId)].level, "auto");
     assert.deepEqual(Object.keys(sealed).sort(), ["context", "relevance", "sealed", "sourceName"]);
     assert.ok(!JSON.stringify(sealed).includes("Secret"));
     const opened = openEnvelope(sealed.sealed.content, { deviceId: device.resource.deviceId, prekeyPrivateKey: () => device.prekey.privateKey,
       trustedSenders: { [store.identity.keyId]: fromB64u(store.identity.publicKey) } });
-    assert.deepEqual(opened.content, { title: "Deployed", body: "Secret", imageUrl: "https://example.com/x.png", sentAt: "2026-10-13T16:59:00.000Z" });
+    // The project travels as a handle; its name only inside the envelope (E2.5).
+    assert.match(sealed.context.project, /^p-[a-z2-7]{16}$/);
+    assert.ok(!JSON.stringify(sealed).includes('"relo"'));
+    assert.deepEqual(opened.content, { title: "Deployed", body: "Secret", imageUrl: "https://example.com/x.png",
+      sentAt: "2026-10-13T16:59:00.000Z", names: { [sealed.context.project]: "relo" } });
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
 });
 
-test("questions are sealed for verified phones only, with the prompt readable only on the phone", async () => {
+test("questions are sealed for the account's phones automatically, with the prompt readable only on the phone", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-seal-question-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
   const device = phone("dev_00000000-0000-4000-8000-00000000000a");
   const dependencies = { configPath: () => join(folder, "config.json"), env, now: () => 0 };
-  const client = { listDeviceKeys: async () => ({ devices: [device.resource] }) };
+  const client = { listDeviceKeys: async () => ({ devices: [device.resource] }), publishClientKey: async () => ({}) };
   const args = { title: "Release", prompt: "Deploy 0.11.0 to production?", key: "k-q", client, config: { apiUrl }, dependencies, notes: [] };
   try {
-    assert.equal(await sealQuestion(args), null);
+    assert.equal(await sealQuestion({ ...args, client: { listDeviceKeys: async () => ({ devices: [] }), publishClientKey: async () => ({}) } }), null,
+      "no phone with keys: the question goes out as before");
+    const { sealed } = await sealQuestion(args);
     const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
-    store.trusted = pinned(device);
-    await saveKeyStore(env.RELO_KEY_STORE_PATH, store);
-    const sealed = await sealQuestion(args);
     assert.equal(sealed.content.kind, "question");
     assert.ok(!JSON.stringify(sealed).includes("Deploy 0.11.0"));
     const options = { deviceId: device.resource.deviceId, prekeyPrivateKey: () => device.prekey.privateKey,
       trustedSenders: { [store.identity.keyId]: fromB64u(store.identity.publicKey) }, expectedKind: "question" };
     assert.deepEqual(openEnvelope(sealed.content, options).content, { title: "Release", summary: args.prompt, body: args.prompt });
     assert.deepEqual(openEnvelope(sealed.alerts[0], options).content, { title: "Release", summary: args.prompt });
-    const retry = await sealQuestion(args);
+    const { sealed: retry } = await sealQuestion(args);
     assert.equal(retry.content.ct, sealed.content.ct, "an exact retry seals identically");
   } finally {
     rmSync(folder, { recursive: true, force: true });

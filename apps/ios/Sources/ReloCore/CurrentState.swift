@@ -46,6 +46,8 @@ public struct CurrentSubjectProjection: Codable, Equatable, Identifiable, Sendab
     public let interaction: CurrentDecision?
     public let activity: CurrentActivity?
     public let resources: InboxResourceLinks?
+    /// End-to-end sealed text for this phone; title, summary and status are placeholders until opened.
+    public var sealed: InboxSealedNotice? = nil
 
     var isValid: Bool {
         guard CurrentWireIdentity.isSubject(subjectId), version.isValid,
@@ -88,7 +90,7 @@ public struct CurrentCounts: Codable, Equatable, Sendable {
 }
 
 public struct CurrentInboxResponse: Codable, Equatable, Sendable {
-    public let items: [CurrentSubjectProjection]
+    public var items: [CurrentSubjectProjection]
     public let retired: [RetiredCurrentSubject]
     public let total: Int
     public let cursor: String?
@@ -124,10 +126,12 @@ public struct PendingCurrentDecision: Codable, Equatable, Identifiable, Sendable
     public let readAt: Date?
     public let urgencyRank: Int
     public let interaction: CurrentDecision
+    /// A sealed question's text for this phone; title and summary are placeholders until opened.
+    public var sealed: InboxSealedNotice? = nil
 }
 
 public struct PendingCurrentPage: Codable, Equatable, Sendable {
-    public let items: [PendingCurrentDecision]
+    public var items: [PendingCurrentDecision]
     public let total: Int
     public let hasMore: Bool
     public let cursor: String?

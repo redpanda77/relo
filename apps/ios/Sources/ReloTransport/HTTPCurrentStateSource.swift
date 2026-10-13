@@ -8,11 +8,19 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
     private let session: URLSession
     private let retry: @Sendable (Int) async throws -> Void
 
-    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared) {
+    /// Puts real names back for opaque project and topic handles (E2.5) before decoding.
+    private var nameResolver: (@Sendable (Data) -> Data)?
+    /// Opens end-to-end sealed rows so Now shows real titles and statuses (E3–E5).
+    private var sealedOpener: ReloSealedOpener?
+
+    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared,
+                nameResolver: (@Sendable (Data) -> Data)? = nil, sealedOpener: ReloSealedOpener? = nil) {
         self.init(baseURL: baseURL, token: token, session: session) { failure in
             let ceiling = min(5_000, 250 * (1 << min(failure, 5)))
             try await Task.sleep(for: .milliseconds(Int.random(in: max(1, ceiling / 2)...ceiling)))
         }
+        self.nameResolver = nameResolver
+        self.sealedOpener = sealedOpener
     }
 
     init(baseURL: URL, token: String, session: URLSession, retry: @escaping @Sendable (Int) async throws -> Void) {
@@ -25,21 +33,21 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
         let unique = Array(Set(ids)).sorted()
         let response: CurrentInboxResponse = try await fetch(path: "api/inbox/current", query: unique.map { .init(name: "id", value: $0) })
         guard response.isValid(requestedIDs: unique) else { throw InboxRemoteError.incompatibleResponse }
-        return response
+        return sealedOpener.map { response.openingSealed($0) } ?? response
     }
 
     public func fetchCurrentPage(after cursor: String?) async throws -> CurrentInboxResponse {
         let query = try pageQuery(cursor: cursor, limit: 50)
         let response: CurrentInboxResponse = try await fetch(path: "api/inbox/current", query: query)
         guard response.isValid(requestedIDs: nil), response.cursor != cursor || !response.hasMore else { throw InboxRemoteError.incompatibleResponse }
-        return response
+        return sealedOpener.map { response.openingSealed($0) } ?? response
     }
 
     public func fetchPending(after cursor: String?, limit: Int = 50) async throws -> PendingCurrentPage {
         guard (1...100).contains(limit) else { throw CurrentStateQueryError.invalidQuery }
         let response: PendingCurrentPage = try await fetch(path: "api/inbox/pending", query: pageQuery(cursor: cursor, limit: limit))
         guard response.isValid(limit: limit), response.cursor != cursor || !response.hasMore else { throw InboxRemoteError.incompatibleResponse }
-        return response
+        return sealedOpener.map { response.openingSealed($0) } ?? response
     }
 
     private func pageQuery(cursor: String?, limit: Int) throws -> [URLQueryItem] {
@@ -79,7 +87,8 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
                 return data
             } onCancel: { task.cancel() }
             try Task.checkCancellation()
-            do { return try ReloWireJSON.decoder().decode(Value.self, from: data) }
+            let resolved = nameResolver?(data) ?? data
+            do { return try ReloWireJSON.decoder().decode(Value.self, from: resolved) }
             catch { throw InboxRemoteError.incompatibleResponse }
         } catch { throw mapped(error) }
     }
@@ -87,7 +96,7 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
     public func changes() -> AsyncThrowingStream<CurrentChangeHint, Error> {
         AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let owner = Task {
-                var failures = 0
+                var failures = 0, resync = false
                 emit(.reconcile, to: continuation)
                 while !Task.isCancelled {
                     do {
@@ -97,6 +106,8 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
                         defer { task.cancel() }
                         try validate(response, stream: true)
                         let connectedAt = ContinuousClock.now
+                        // A reconnect after an outage must re-read: the failure-time reconcile ran while the server was down.
+                        if resync { resync = false; emit(.reconcile, to: continuation) }
                         try await withTaskCancellationHandler {
                             var parser = CurrentEventDecoder()
                             for try await byte in bytes {
@@ -114,7 +125,7 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
                             continuation.finish(throwing: failure); return
                         }
                         // Reconcile immediately; only reopening the connection waits for jitter.
-                        emit(.reconcile, to: continuation)
+                        emit(.reconcile, to: continuation); resync = true
                         do { try await retry(failures) }
                         catch { continuation.finish(throwing: error); return }
                         failures = min(failures + 1, 5)

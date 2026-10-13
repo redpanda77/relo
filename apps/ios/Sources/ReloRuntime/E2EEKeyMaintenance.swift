@@ -7,17 +7,29 @@ import ReloCore
 public actor E2EEKeyMaintenance {
     private let ring: ReloKeyRing
     private let publisher: any DeviceKeyPublishing
+    private let directory: (any ClientKeyDirectory)?
+    private let trust: ReloTrustedClients?
     private var publishedFor: String?
 
-    public init(ring: ReloKeyRing, publisher: any DeviceKeyPublishing) {
+    public init(ring: ReloKeyRing, publisher: any DeviceKeyPublishing,
+                directory: (any ClientKeyDirectory)? = nil, trust: ReloTrustedClients? = nil) {
         self.ring = ring
         self.publisher = publisher
+        self.directory = directory
+        self.trust = trust
+    }
+
+    /// Trust on first use for the account's computers, so their sealed messages open with no setup.
+    public func refreshTrustedComputers(credential: DeviceCredential, now: Date = Date()) async throws {
+        guard let directory, let trust else { return }
+        try trust.autoTrust(try await directory.clientKeys(credential: credential), now: now)
     }
 
     /// Returns true when a publication was sent. Errors leave the next call to retry.
     @discardableResult
     public func run(credential: DeviceCredential, now: Date = Date()) async throws -> Bool {
         let state = try ring.maintain(now: now)
+        try? await refreshTrustedComputers(credential: credential, now: now)
         guard let current = state.prekeys.first(where: { $0.retiredAt == nil }) else { return false }
         let marker = "\(credential.deviceId)|\(credential.credentialVersion)|\(current.id)|\(ReloE2EE.base64URL(state.identity.publicKey))"
         guard publishedFor != marker else { return false }

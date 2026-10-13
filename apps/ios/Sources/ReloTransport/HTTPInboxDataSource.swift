@@ -11,13 +11,19 @@ public struct HTTPInboxDataSource: InboxDataSource {
 
     /// Opens end-to-end sealed items on this phone as they arrive; nil leaves placeholders.
     private let sealedOpener: ReloSealedOpener?
+    /// Puts real names back for opaque project and topic handles (E2.5) before decoding.
+    private let nameResolver: (@Sendable (Data) -> Data)?
 
-    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared, sealedOpener: ReloSealedOpener? = nil) {
+    public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared, sealedOpener: ReloSealedOpener? = nil,
+                nameResolver: (@Sendable (Data) -> Data)? = nil) {
         self.baseURL = baseURL
         self.token = token
         self.session = session
         self.sealedOpener = sealedOpener
+        self.nameResolver = nameResolver
     }
+
+    private func resolved(_ data: Data) -> Data { nameResolver?(data) ?? data }
 
     public func fetchSnapshot() async throws -> InboxRepairResponse {
         var request = URLRequest.relo(baseURL.appendingPathComponent("api/inbox/snapshot"), bearer: token)
@@ -27,9 +33,14 @@ public struct HTTPInboxDataSource: InboxDataSource {
         case 200:
             do {
                 guard data.count <= 4 * 1_024 * 1_024 else { throw InboxRemoteError.incompatibleResponse }
-                let result = try ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: data)
+                let result = try ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: resolved(data))
                 guard result.isValid else { throw InboxRemoteError.incompatibleResponse }
-                return result
+                guard let sealedOpener else { return result }
+                // Opening teaches names; a second pass shows them on this same snapshot.
+                let opened = result.openingSealed(sealedOpener)
+                guard nameResolver != nil,
+                      let named = try? ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: resolved(data)) else { return opened }
+                return named.openingSealed(sealedOpener)
             } catch { throw InboxRemoteError.incompatibleResponse }
         case 401, 403: throw InboxRemoteError.unauthorized
         default: throw InboxRemoteError.unavailable
@@ -53,11 +64,15 @@ public struct HTTPInboxDataSource: InboxDataSource {
         case 200:
             let decoder = ReloWireJSON.decoder()
             do {
-                let page = try decoder.decode(InboxHistoryPage.self, from: data)
+                let page = try decoder.decode(InboxHistoryPage.self, from: resolved(data))
                 guard InboxHistoryPagePolicy.isValid(page, requestedCursor: cursor) else {
                     throw InboxRemoteError.unavailable
                 }
-                return sealedOpener.map { page.openingSealed($0) } ?? page
+                guard let sealedOpener else { return page }
+                // Opening envelopes teaches names; the second pass shows them on this same page.
+                let opened = page.openingSealed(sealedOpener)
+                guard nameResolver != nil, let named = try? decoder.decode(InboxHistoryPage.self, from: resolved(data)) else { return opened }
+                return named.openingSealed(sealedOpener)
             } catch let error as InboxRemoteError {
                 throw error
             } catch {
@@ -118,9 +133,12 @@ public struct HTTPInboxDataSource: InboxDataSource {
             throw InboxRemoteError.unavailable
         }
         let detail: InboxNotificationDetail
-        do { detail = try Self.decoder().decode(InboxNotificationDetail.self, from: data) }
+        do { detail = try Self.decoder().decode(InboxNotificationDetail.self, from: resolved(data)) }
         catch { throw InboxRemoteError.incompatibleResponse }
-        return sealedOpener.map { detail.openingSealed($0) } ?? detail
+        guard let sealedOpener else { return detail }
+        let opened = detail.openingSealed(sealedOpener)
+        guard nameResolver != nil, let named = try? Self.decoder().decode(InboxNotificationDetail.self, from: resolved(data)) else { return opened }
+        return named.openingSealed(sealedOpener)
     }
 
 

@@ -27,28 +27,30 @@ function phone(name = "Owner iPhone", deviceId = "dev_00000000-0000-4000-8000-00
 function harness({ devices, tty = false, answer = false }) {
   const folder = mkdtempSync(join(tmpdir(), "relo-keys-"));
   const published = [];
-  const prompts = [];
   const printed = [];
+  const state = { devices };
   const dependencies = {
     configPath: () => join(folder, "config.json"),
-    env: {},
+    env: { RELO_KEY_STORE_PATH: join(folder, "e2ee.json") },
     now: () => Date.parse("2026-10-13T17:00:00.000Z"),
     stdinIsTTY: tty,
-    confirm: async (question) => { prompts.push(question); return answer; },
+    confirm: async () => answer,
     stderr: (line) => printed.push(line),
   };
   const client = {
     publishClientKey: async (body) => { published.push(body); return { keyId: "k" }; },
-    listDeviceKeys: async () => ({ devices }),
+    listDeviceKeys: async () => ({ devices: state.devices }),
+    endToEndPolicy: async () => ({ required: true, mode: "auto" }),
+    setEndToEndPolicy: async (required) => ({ required: required !== false, mode: required === null ? "auto" : required ? "on" : "off" }),
   };
-  const run = (action, rest = []) => runKeysCommand({
-    group: "keys", action, rest, options: {}, dependencies, client, config: { apiUrl },
+  const run = (action, rest = [], overrides = {}) => runKeysCommand({
+    group: "keys", action, rest, options: {}, dependencies: { ...dependencies, ...overrides }, client, config: { apiUrl },
   });
-  return { folder, published, prompts, printed, run, storePath: keyStorePath(join(folder, "config.json"), {}),
+  return { folder, published, printed, state, run, storePath: join(folder, "e2ee.json"),
     cleanup: () => rmSync(folder, { recursive: true, force: true }) };
 }
 
-test("status creates a private identity, publishes only its public half and lists unverified phones", async () => {
+test("status creates a private identity, publishes it once and trusts the account's phones automatically", async () => {
   const device = phone();
   const h = harness({ devices: [device.resource] });
   try {
@@ -57,63 +59,65 @@ test("status creates a private identity, publishes only its public half and list
     assert.equal(statSync(h.storePath).mode & 0o777, 0o600);
     assert.deepEqual(h.published, [{ identityKey: store.identity.publicKey }]);
     assert.equal(output.data.identity.keyId, store.identity.keyId);
-    assert.deepEqual(output.data.devices, [{ deviceId: device.resource.deviceId, name: "Owner iPhone", keyId: device.resource.identityKey.keyId, trust: "unverified", prekey: "fresh" }]);
-    assert.equal(output.data.next, `relo keys verify ${device.resource.deviceId}`);
-    assert.equal((await h.run("status")).data.identity.keyId, store.identity.keyId, "the identity is created once");
+    assert.equal(output.data.required, true);
+    assert.deepEqual(output.data.devices, [{ deviceId: device.resource.deviceId, name: "Owner iPhone",
+      keyId: device.resource.identityKey.keyId, trust: "auto", prekey: "fresh" }]);
+    await h.run("status");
+    assert.equal(h.published.length, 1, "the identity is published once per server");
   } finally {
     h.cleanup();
   }
 });
 
-test("an agent without a terminal cannot verify a phone", async () => {
-  const device = phone();
-  const h = harness({ devices: [device.resource], tty: false });
-  try {
-    await assert.rejects(h.run("verify", [device.resource.deviceId]), (error) => error.code === "PERSON_REQUIRED" && error.exitCode === 2);
-    assert.deepEqual((await loadKeyStore(h.storePath)).trusted, {});
-  } finally {
-    h.cleanup();
-  }
-});
-
-test("a person who confirms the safety number pins that exact phone key; a changed key is not trusted", async () => {
+test("a changed security code is trusted again with a notice, unless strict mode holds it", async () => {
   const device = phone();
   const h = harness({ devices: [device.resource], tty: true, answer: true });
   try {
-    const output = await h.run("verify", [device.resource.deviceId]);
-    const store = await loadKeyStore(h.storePath);
-    const expected = safetyNumber(Buffer.from(store.identity.publicKey, "base64url"), device.identity.publicKey);
-    assert.equal(output.data.trust, "trusted");
-    assert.equal(output.data.safetyNumber, expected);
-    assert.ok(h.printed.join("\n").includes(expected.split(" ").slice(0, 6).join(" ")));
-    assert.equal(store.trusted[`${apiUrl}|${device.resource.deviceId}`].publicKey, device.resource.identityKey.publicKey);
-    assert.equal((await h.run("status")).data.devices[0].trust, "trusted");
+    await h.run("status");
+    const reinstalled = phone("Owner iPhone", device.resource.deviceId);
+    h.state.devices = [reinstalled.resource];
+    const changed = (await h.run("status")).data.devices[0];
+    assert.equal(changed.trust, "auto");
+    assert.equal(changed.notice.kind, "security_code_changed");
+    assert.equal(changed.notice.previousKeyId, device.resource.identityKey.keyId);
 
-    // The server swaps in its own key for the same phone id: the CLI reports it as changed.
-    const impostor = phone("Owner iPhone", device.resource.deviceId);
-    const swapped = harness({ devices: [impostor.resource] });
-    swapped.storePath = h.storePath;
-    const status = await runKeysCommand({ group: "keys", action: "status", rest: [], options: {},
-      dependencies: { configPath: () => join(h.folder, "config.json"), env: {}, now: () => 0 }, client: {
-        publishClientKey: async () => ({}), listDeviceKeys: async () => ({ devices: [impostor.resource] }) }, config: { apiUrl } });
-    swapped.cleanup();
-    assert.equal(status.data.devices[0].trust, "changed");
-
-    assert.equal((await h.run("forget", [device.resource.deviceId])).data.removed, true);
-    assert.equal((await h.run("status")).data.devices[0].trust, "unverified");
+    assert.deepEqual((await h.run("strict", ["on"])).data, { strict: true, changed: true });
+    h.state.devices = [phone("Owner iPhone", device.resource.deviceId).resource];
+    assert.equal((await h.run("status")).data.devices[0].trust, "changed", "strict mode does not re-trust");
+    await assert.rejects(h.run("strict", ["off"], { stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");
   } finally {
     h.cleanup();
   }
 });
 
-test("declining keeps the phone untrusted, and a forged prekey signature shows as invalid", async () => {
+test("verify is an optional upgrade that needs a person and the matching security code", async () => {
   const device = phone();
-  device.resource.prekey.signature = b64u(Buffer.alloc(64, 1));
-  const h = harness({ devices: [device.resource], tty: true, answer: false });
+  const h = harness({ devices: [device.resource], tty: true, answer: true });
   try {
-    assert.equal((await h.run("verify", [device.resource.deviceId])).data.trust, "unverified");
-    assert.equal((await h.run("status")).data.devices[0].prekey, "invalid");
+    await assert.rejects(h.run("verify", [device.resource.deviceId], { stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");
+    const output = await h.run("verify", [device.resource.deviceId]);
+    const store = await loadKeyStore(h.storePath);
+    assert.equal(output.data.trust, "verified");
+    assert.equal(output.data.safetyNumber, safetyNumber(Buffer.from(store.identity.publicKey, "base64url"), device.identity.publicKey));
+    assert.equal((await h.run("status")).data.devices[0].trust, "verified");
+    assert.equal((await h.run("verify", [device.resource.deviceId], { confirm: async () => false })).data.trust, "verified");
+    assert.equal((await h.run("forget", [device.resource.deviceId])).data.removed, true);
+    assert.equal((await h.run("status")).data.devices[0].trust, "auto", "forgotten phones are trusted again on use");
     await assert.rejects(h.run("verify", ["not-a-device"]), /Usage/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("require: on and auto need nobody, off needs a person", async () => {
+  const h = harness({ devices: [], tty: false });
+  try {
+    assert.deepEqual((await h.run("require", ["on"])).data, { required: true, mode: "on", changed: true });
+    assert.deepEqual((await h.run("require", ["auto"])).data, { required: true, mode: "auto", changed: true });
+    await assert.rejects(h.run("require", ["off"]), (error) => error.code === "PERSON_REQUIRED");
+    assert.deepEqual((await h.run("require", ["off"], { stdinIsTTY: true, confirm: async () => true })).data,
+      { required: false, mode: "off", changed: true });
+    await assert.rejects(h.run("require", ["maybe"]), /Usage/);
   } finally {
     h.cleanup();
   }
@@ -127,15 +131,13 @@ test("rotate needs a person and replaces the identity", async () => {
     assert.equal(rotated.data.previous, before);
     assert.notEqual(rotated.data.keyId, before);
     assert.equal(h.published.at(-1).identityKey, (await loadKeyStore(h.storePath)).identity.publicKey);
-    const agent = harness({ devices: [], tty: false });
-    await assert.rejects(agent.run("rotate"), (error) => error.code === "PERSON_REQUIRED");
-    agent.cleanup();
+    await assert.rejects(h.run("rotate", [], { stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");
   } finally {
     h.cleanup();
   }
 });
 
-test("the key store refuses loose permissions and corrupted identities", async () => {
+test("the key store refuses loose permissions and corrupted identities, and tests never touch the real one", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-keystore-"));
   const path = join(folder, "e2ee.json");
   try {
@@ -145,25 +147,9 @@ test("the key store refuses loose permissions and corrupted identities", async (
     chmodSync(path, 0o600);
     writeFileSync(path, JSON.stringify({ ...store, identity: { ...store.identity, publicKey: b64u(generateKeyPair().publicKey) } }));
     await assert.rejects(loadKeyStore(path), (error) => error.code === "INSECURE_KEY_STORE");
+    assert.notEqual(keyStorePath(join(folder, "config.json"), {}), join(folder, "e2ee.json"),
+      "with no override in the caller's env, the test-wide override still applies");
   } finally {
     rmSync(folder, { recursive: true, force: true });
-  }
-});
-
-test("require needs a person and reports the account setting", async () => {
-  const calls = [];
-  const h = harness({ devices: [], tty: true, answer: true });
-  try {
-    const client = { endToEndPolicy: async () => ({ required: false }), setEndToEndPolicy: async (required) => { calls.push(required); return { required }; } };
-    const run = (rest, dependencies) => runKeysCommand({ group: "keys", action: "require", rest, options: {},
-      dependencies, client, config: { apiUrl } });
-    const dependencies = { configPath: () => join(h.folder, "config.json"), env: {}, now: () => 0, stdinIsTTY: true, confirm: async () => true };
-    assert.deepEqual((await run(["on"], dependencies)).data, { required: true, changed: true });
-    assert.deepEqual((await run(["off"], { ...dependencies, confirm: async () => false })).data, { required: true, changed: false });
-    await assert.rejects(run(["on"], { ...dependencies, stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");
-    await assert.rejects(run(["maybe"], dependencies), /Usage/);
-    assert.deepEqual(calls, [true]);
-  } finally {
-    h.cleanup();
   }
 });

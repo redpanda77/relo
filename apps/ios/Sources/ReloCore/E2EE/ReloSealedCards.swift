@@ -32,12 +32,22 @@ public enum ReloSealedCards {
     private final class Box: @unchecked Sendable {
         let lock = NSLock()
         var opener: (@Sendable (ReloEnvelope) -> Data?)?
+        var names: (@Sendable () -> [String: String])?
     }
 
     private static let box = Box()
 
     public static func install(_ opener: @escaping @Sendable (ReloEnvelope) -> Data?) {
         box.lock.withLock { box.opener = opener }
+    }
+
+    /// The handle → name book for opaque project and topic names (E2.5).
+    public static func installNames(_ names: @escaping @Sendable () -> [String: String]) {
+        box.lock.withLock { box.names = names }
+    }
+
+    public static func knownNames() -> [String: String] {
+        (box.lock.withLock { box.names })?() ?? [:]
     }
 
     public static func open(_ envelope: ReloEnvelope) -> ReloSealedCardText? {

@@ -273,9 +273,10 @@ cannot read it, and they cannot forge your answer to a question.
   update to keys held in your iPhone's Secure Enclave. It uses HPKE (RFC 9180) with P-256 and
   AES-256-GCM, a standard scheme with no custom cryptography. The server stores and relays sealed
   envelopes and never holds a key that opens them.
-- **You verify the keys yourself.** Before encrypting to a device, the CLI checks that device's key
-  against a safety number you compare on the phone. A key supplied only by the server is never
-  trusted, so the server cannot add a device that receives your content.
+- **Nothing to set up.** Like WhatsApp and Signal, your computers and iPhones trust each other's
+  keys automatically the first time they meet. If a key changes later, the phone and
+  `relo keys status` show a "security code changed" notice. Comparing the 60-digit security code
+  is an optional extra (`relo keys verify`, or Settings → Security on the iPhone).
 - **Answers are signed.** Approvals and replies are signed by the phone's device key. The CLI acts
   on an approval only when that signature verifies, so a compromised server cannot approve
   anything on your behalf.
@@ -285,22 +286,21 @@ cannot read it, and they cannot forge your answer to a question.
 - **Isolated accounts.** Each person on a server has their own account. The server admin manages
   accounts but cannot open them ([ADR 0004](docs/adr/0004-isolated-multi-user-accounts.md)).
 
-**What stays visible:** the server always sees metadata. That means which device and key is
-involved, when something was sent, roughly how large it is, whether a card is active or ended, and
-whether a question was approved. Webhooks and other producers that hold no Relo key cannot
-encrypt end to end. Their content stays encrypted at rest on the server, and the phone labels it
-as not end-to-end encrypted. The web Dashboard shows end-to-end-encrypted items as metadata only.
+**What stays visible:** the server always sees metadata. That means which phone and key is
+involved, when something was sent, roughly how large it is, whether a card is active or ended,
+whether a question was approved, and the name of the agent harness (such as "Claude Code").
+Project, topic, computer and account names reach it only as opaque handles. Webhooks and other
+producers that hold no Relo key cannot encrypt end to end; their content stays encrypted at rest on
+the server and the phone labels it as not end-to-end encrypted. The web Dashboard shows
+end-to-end-encrypted items as placeholders and handles.
 
-**Status:** end-to-end encryption is being rolled out in phases and is not yet in a release.
-Built so far: device keys in the iPhone's Secure Enclave that rotate every 10 hours, the key
-directory, `relo keys` and the iPhone's Security screen for safety-number verification, sealed
-`relo notify` messages and `relo ask` questions that the iPhone opens itself, signed answers
-that `relo ask` verifies before acting, and automatic server retention
+**Status:** built and on by default once your iPhone runs a current build. Notifications,
+questions and Live Activity cards are sealed on your computer. Project and topic names reach the
+server only as opaque handles. Answers are signed, and the server deletes old content on a schedule
 (`RELO_CONTENT_RETENTION_HOURS`, see [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md#content-retention)).
-Sealed Live Activity cards are built too, and `relo keys require on` makes the server refuse
-anything a CLI sends unsealed. Next: opaque project and topic names.
-Until then, project and topic names are encrypted only at rest with a server-held key. See [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) for the
-threat model, the protocol and the current state of each phase.
+Webhooks and other producers without keys stay readable to the server and are labelled on the phone.
+See [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) for the threat model, the
+protocol and the current state of each phase.
 
 ## Development
 

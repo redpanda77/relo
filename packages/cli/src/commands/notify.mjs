@@ -92,10 +92,12 @@ export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSe
   const questionTitle = requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80);
   const deviceIds = await resolveTargetDevices(client, options.device.length > 0 ? options.device : []);
   // Sealed end to end for this computer's verified phones (E4.1).
-  const sealed = await sealQuestion({ title: questionTitle, prompt, key: `${idempotencyKey}:in-app`, client,
-    config: { apiUrl: client.apiUrl }, dependencies, notes: [], deviceIds });
+  const sealedQuestion = await sealQuestion({ title: questionTitle, prompt, key: `${idempotencyKey}:in-app`, client,
+    config: { apiUrl: client.apiUrl }, dependencies, notes: [], deviceIds, context: identity });
+  const sealed = sealedQuestion?.sealed;
   const created = deliveryGuard(await client.createInteraction(definedFields({
-    ...(sealed ? { sealed } : { prompt, title: questionTitle }), type, expiresInSeconds, answerInApp: true, context: identity,
+    ...(sealed ? { sealed } : { prompt, title: questionTitle }), type, expiresInSeconds, answerInApp: true,
+    context: sealedQuestion?.context ?? identity,
     correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
     callback: await callbackOption(options, stdin, dependencies),
     deviceIds: sealed ? undefined : deviceIds,
@@ -210,7 +212,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   const callback = await callbackOption(options, stdin, dependencies);
   const notes = [];
   // Sealed end to end for this computer's verified phones (E4.1); the card shows a placeholder.
-  const sealed = await sealQuestion({ title: card.title, prompt, key: idempotencyKey, client, config, dependencies, notes });
+  const sealed = (await sealQuestion({ title: card.title, prompt, key: idempotencyKey, client, config, dependencies, notes }))?.sealed;
   let createdRaw;
   try {
     createdRaw = await client.createActivityWait(card.id, definedFields({

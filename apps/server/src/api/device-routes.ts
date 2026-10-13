@@ -10,7 +10,7 @@ import type { ApiRouteContext } from "./route-context.js";
 import {
   listClientKeys, listDeviceKeys, publishClientKey, publishClientKeySchema, publishDeviceKeys, publishDeviceKeysSchema,
 } from "../device-keys.js";
-import { endToEndRequired,setEndToEndRequired } from "../end-to-end-policy.js";
+import { endToEndPolicy,setEndToEndRequired } from "../end-to-end-policy.js";
 
 /** Phone inventory, self-registration updates, Live Activity tokens and dismissals, and revocation. */
 export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
@@ -104,16 +104,18 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
 
   // E6.1: whether this account refuses readable content from CLI keys.
   app.get("/api/end-to-end/policy", async (context) => {
-    return context.json({ required: await endToEndRequired(db,context.get("auth").principalId) });
+    return context.json(await endToEndPolicy(db,context.get("auth").principalId));
   });
 
   app.put("/api/end-to-end/policy", async (context) => {
     const auth = context.get("auth");
     if (auth.credentialKind !== "principal" || !auth.credentialId) return context.json({ error: "cli_credential_required" },403);
     const body = await context.req.json().catch(() => null) as { required?: unknown } | null;
-    if (!body || typeof body.required !== "boolean" || Object.keys(body).length !== 1) return context.json({ error: "invalid_request" },400);
-    await setEndToEndRequired(db,auth.principalId,body.required);
-    return context.json({ required: body.required });
+    if (!body || !(typeof body.required === "boolean" || body.required === null) || Object.keys(body).length !== 1) {
+      return context.json({ error: "invalid_request" },400);
+    }
+    await setEndToEndRequired(db,auth.principalId,body.required as boolean | null);
+    return context.json(await endToEndPolicy(db,auth.principalId));
   });
 
   app.get("/api/devices/self", requireScope("device:self"), async (context) => {

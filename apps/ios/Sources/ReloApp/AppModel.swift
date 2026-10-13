@@ -3,6 +3,7 @@ import ReloRuntime
 import ReloPersistence
 import ActivityKit
 import Combine
+import Network
 import OSLog
 import ReloCore
 import SwiftUI
@@ -267,11 +268,17 @@ final class AppModel {
     private var selectedItemSnapshot = InboxSelectedItemSnapshot()
     @ObservationIgnored private var selectedCachedDetail = false
 
+    private(set) var outageBannerShown = false
+    @ObservationIgnored private var offlineSince: Date?
+    @ObservationIgnored private var outageBannerTask: Task<Void, Never>?
+    @ObservationIgnored private var pathMonitor: NWPathMonitor?
+
     var isRegistered: Bool { credential != nil && registrationState == .registered }
     /// The server cannot be reached right now (no network, Tailscale off, server down).
     var serverUnreachable: Bool {
         guard hasLocalAccountAccess else { return false }
-        if currentState?.connection == .offline { return true }
+        // A brief outage (a redeploy) stays silent; the banner waits out `OutageBannerPolicy.grace`.
+        if currentState?.connection == .offline, outageBannerShown { return true }
         if case .failed(let message) = registrationState,
            message.hasPrefix("Tailnet") || message.contains("unavailable") { return true }
         return false
@@ -935,7 +942,11 @@ final class AppModel {
             recordDiagnostic(.init(operation: .currentSync, phase: state?.connection == .connecting ? .started : .completed,
                 outcome: RecoveryStatusPolicy.current(state), priority: .current))
         }
+        let wasOffline = currentState?.connection == .offline
         currentState = state
+        trackOutage(offline: state?.connection == .offline)
+        // The first good current-state read after an outage also clears a stale legacy sync failure.
+        if wasOffline, state?.connection == .current, case .offline = syncState { Task { _ = await self.refresh() } }
         if state == nil {
             decisionDrafts = [:]; diagnosticQueueDepths = [:]; diagnosticQueuesCheckedAt = nil; diagnosticQueueIssues = [:]
             diagnosticResponseStatus = .pending; diagnosticResponseConfirmedAt = nil
@@ -946,6 +957,36 @@ final class AppModel {
            let scope = currentSyncScopeIdentity, configuredSyncScopeIdentity == scope {
             scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope)
         }
+    }
+
+    private func trackOutage(offline: Bool) {
+        guard offline else {
+            offlineSince = nil; outageBannerTask?.cancel(); outageBannerTask = nil
+            if outageBannerShown { outageBannerShown = false }
+            return
+        }
+        guard offlineSince == nil else { return }
+        let since = Date(); offlineSince = since
+        let policy = OutageBannerPolicy.standard
+        outageBannerTask = Task { @MainActor [weak self] in
+            if let wait = policy.remaining(offlineSince: since, now: Date()), wait > 0 {
+                try? await Task.sleep(for: .seconds(wait))
+            }
+            guard !Task.isCancelled, let self, self.offlineSince == since else { return }
+            self.outageBannerShown = true
+        }
+    }
+
+    /// Foreground only: a path that becomes usable retries the unreachable server at once.
+    private func startPathMonitor() {
+        guard pathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor in self?.sessionController.retryNow() }
+        }
+        monitor.start(queue: DispatchQueue(label: "relo.path-monitor"))
+        pathMonitor = monitor
     }
 
     private func requestMaintenance() {
@@ -1325,6 +1366,7 @@ final class AppModel {
     func backgrounded() {
         isForeground = false
         sessionController.setForeground(false)
+        pathMonitor?.cancel(); pathMonitor = nil
         historyRepair.stop(); maintenance.stop(); readCoordinator.suspend(); receiptCoordinator.suspend()
     }
 
@@ -1743,7 +1785,9 @@ final class AppModel {
         // Leftover cards are ended before anything else, and without needing the network.
         _ = await LiveActivityApplier.endAbandonedActivities(now: .now)
         sessionController.setForeground(true)
+        startPathMonitor()
         synchronizeCurrentSession()
+        sessionController.retryNow()
         sessionController.receive(.reconcile)
         requestMaintenance()
         await updatePermission()

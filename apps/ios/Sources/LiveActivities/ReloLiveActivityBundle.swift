@@ -7,7 +7,9 @@ import WidgetKit
 struct ReloLiveActivityBundle: WidgetBundle {
     /// End-to-end sealed cards open on this phone while their state is decoded (E5).
     init() {
-        ReloSealedCards.install(ReloSealedContent.live().cardOpener)
+        let sealed = ReloSealedContent.live()
+        ReloSealedCards.install(sealed.cardOpener)
+        if let book = sealed.nameBook { ReloSealedCards.installNames { book.names() } }
     }
 
     /// Exactly one activity configuration per OS. The builder has an `if #available` but no
