@@ -38,8 +38,6 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSCameraUsageDescription</key>
-	<string>Scan a Relo connection QR to connect this iPhone to your server.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Relo connects to your notification server on the local network.</string>
 	<key>NSSupportsLiveActivities</key>
@@ -76,5 +74,7 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
 </dict>
 </plist>

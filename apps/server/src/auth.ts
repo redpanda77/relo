@@ -6,6 +6,7 @@ export type AuthIdentity = {
   principalId: string;
   deviceId?: string;
   deviceCredentialVersion?: number;
+  deviceCredentialId?: string;
   credentialId?: string;
   clientName?: string;
   tokenPrefix?: string;
@@ -74,12 +75,14 @@ export function authenticate(db: Database) {
     }
 
     const device = await db.query<{
+      credential_id: string;
+      expires_at: Date | null;
       principal_id: string;
       device_id: string;
       credential_version: number;
       scopes: string[];
     }>(
-      `SELECT d.principal_id, d.id AS device_id, d.credential_version, c.scopes
+      `SELECT c.id AS credential_id,c.expires_at,d.principal_id, d.id AS device_id, d.credential_version, c.scopes
        FROM device_credentials c
        JOIN devices d ON d.id = c.device_id
        JOIN owner_principals p ON p.id = d.principal_id
@@ -91,6 +94,8 @@ export function authenticate(db: Database) {
     if (!device.rowCount) return context.json({ error: "unauthorized" }, 401);
     context.set("auth", {
       principalId: device.rows[0]!.principal_id,
+      deviceCredentialId: device.rows[0]!.credential_id,
+      expiresAt: device.rows[0]!.expires_at,
       deviceId: device.rows[0]!.device_id,
       deviceCredentialVersion: device.rows[0]!.credential_version,
       scopes: new Set(device.rows[0]!.scopes),

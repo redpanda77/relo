@@ -1,3 +1,4 @@
+@testable import ReloRuntime
 import XCTest
 @testable import ReloCore
 

@@ -1,6 +1,6 @@
 import * as React from "react"
 
-export const ROUTE_LOADING_DELAY_MS = 240
+export const ROUTE_LOADING_DELAY_MS = 400
 
 function DelayedRouteLoadingIndicator() {
   const [visible, setVisible] = React.useState(false)

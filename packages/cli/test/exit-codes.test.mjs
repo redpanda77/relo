@@ -39,12 +39,12 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
     "utf8",
   );
   for (const document of [cliReadme, skillReference]) {
-    assert.match(document, /\| `1` \| API,/u);
-    assert.match(document, /\| `3` \| Missing, invalid, or insufficient authentication/u);
-    assert.match(document, /\| `4` \| Canceled, expired, or timed-out interaction/u);
-    assert.match(document, /\| `5` \| Explicit denial or `no`/u);
-    assert.match(document, /\| `6` \| (?:Server\/network|Network) unreachable/u);
-    assert.match(document, /\| `7` \| No durable device command was enqueued/u);
+    assert.match(document, /\| `1` \| Server or other failure/u);
+    assert.match(document, /\| `3` \| Missing, invalid, or insufficient credential/u);
+    assert.match(document, /\| `4` \| No answer within 5 minutes, canceled, or expired: the card has ended/u);
+    assert.match(document, /\| `5` \| The owner denied or said no/u);
+    assert.match(document, /\| `6` \| Network unreachable/u);
+    assert.match(document, /\| `7` \| No phone could receive it/u);
   }
 
   const cases = [
@@ -104,7 +104,7 @@ test("publishes the stable 0.5 golden exit-code matrix", async () => {
     },
     {
       name: "no accepted device",
-      argv: ["notify", "send", "Done"],
+      argv: ["notify", "send", "Done", "--source", "Test", "--project", "Checks", "--topic", "Exit codes"],
       client: {
         sendNotification: async () => ({
           eventId: "ntf_golden_123456",

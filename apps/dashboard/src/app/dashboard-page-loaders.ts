@@ -43,10 +43,7 @@ export function preloadDashboardPage(bootstrap: DashboardBootstrap) {
       return loadTestLabPage()
     case "activity-history":
       return loadActivityHistoryPage()
-    case "connections-services":
-    case "connections-pairing":
-    case "connections-phones":
-    case "connections-clients":
+    case "connections":
       return loadConnectionsFeature()
     case "account":
       return loadAccountPage()
@@ -62,4 +59,14 @@ export function preloadDashboardPage(bootstrap: DashboardBootstrap) {
     default:
       return bootstrap satisfies never
   }
+}
+
+/** Fetch every section's code after first paint so later navigations never show a loading frame. */
+export function preloadAllDashboardPages() {
+  const load = () => {
+    for (const loader of [loadInboxFeature, loadProjectsPage, loadConnectionsFeature, loadTestLabPage,
+      loadActivityHistoryPage, loadAccountPage, loadDocumentationPage]) void loader().catch(() => undefined)
+  }
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(load, { timeout: 2000 })
+  else setTimeout(load, 300)
 }

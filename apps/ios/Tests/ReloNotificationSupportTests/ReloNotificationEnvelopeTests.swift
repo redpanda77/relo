@@ -2,9 +2,7 @@ import Foundation
 #if canImport(UserNotifications)
 import UserNotifications
 #endif
-#if SWIFT_PACKAGE
 @testable import ReloNotificationSupport
-#endif
 import XCTest
 
 final class ReloNotificationEnvelopeTests: XCTestCase {
@@ -178,7 +176,7 @@ final class ReloNotificationEnvelopeTests: XCTestCase {
         XCTAssertTrue(ReloNotificationServicePolicy.usesCommunicationUpdate(for: .donationSucceeded))
     }
 
-    func testReceiptStoreSerializesConcurrentIndependentInstances() {
+    func testReceiptStoreSerializesConcurrentIndependentInstances() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("relo-nse-receipts-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -187,14 +185,15 @@ final class ReloNotificationEnvelopeTests: XCTestCase {
 
         DispatchQueue.concurrentPerform(iterations: 250) { index in
             let identifier = String(format: "ntf_%012d", index)
-            (index.isMultiple(of: 2) ? first : second).add(notificationID: identifier)
+            do { try (index.isMultiple(of: 2) ? first : second).add(notificationID: identifier) }
+            catch { XCTFail("Receipt append failed: \(error)") }
         }
 
-        let pending = first.pending(limit: 500)
+        let pending = try first.pending(limit: 500)
         XCTAssertEqual(pending.count, 250)
         XCTAssertEqual(Set(pending).count, 250)
-        second.remove(notificationIDs: Set(pending.prefix(50)))
-        XCTAssertEqual(first.pending(limit: 500).count, 200)
+        try second.remove(notificationIDs: Set(pending.prefix(50)))
+        XCTAssertEqual(try first.pending(limit: 500).count, 200)
     }
 
     func testProductionOrchestratorPrivateBypassesMediaAndDonation() async {
@@ -397,6 +396,123 @@ final class ReloNotificationEnvelopeTests: XCTestCase {
     }
 #endif
 
+    func testPresentationBudgetCompletesWhileMediaIsSuspendedAndStopsDonation() async {
+        let capture = LockedCapture<TestNotificationContent>()
+        let donationCalls = LockedCapture<Bool>()
+        let latch = AsyncResultLatch<TestNotificationContent>()
+        let mediaStarted = expectation(description: "media suspended")
+        var timeout: (@Sendable () -> Void)?
+        var budget: TimeInterval?
+        let orchestrator = makeTestOrchestrator(capture: capture)
+        let task = orchestrator.start(
+            context: ReloNotificationOrchestrationContext(
+                hasEnvelope: true, isPrivate: false,
+                supportsCommunicationStyle: true, conversationIdentifier: "conversation-1"
+            ),
+            enrichMedia: { _ in await latch.wait { mediaStarted.fulfill() } },
+            donateAndUpdate: { content in donationCalls.append(true); return .updated(content) },
+            scheduleTimeout: { seconds, callback in budget = seconds; timeout = callback }
+        )
+        await fulfillment(of: [mediaStarted], timeout: 1)
+        XCTAssertEqual(budget, 0.100)
+        XCTAssertLessThan(ReloNotificationPresentationBudget.enrichmentSeconds + ReloNotificationPresentationBudget.receiptLockSeconds,
+                          ReloNotificationPresentationBudget.processingSeconds)
+        XCTAssertTrue(capture.values.isEmpty)
+        timeout?()
+        XCTAssertEqual(capture.values.map(\.body), ["original"])
+        XCTAssertEqual(capture.values.first?.category, "RELO_APPROVAL")
+        XCTAssertTrue(task.isCancelled)
+        latch.resume(TestNotificationContent(body: "late media"))
+        await task.value
+        timeout?()
+        XCTAssertTrue(donationCalls.values.isEmpty)
+        XCTAssertEqual(capture.values.count, 1)
+    }
+
+    func testPresentationBudgetCompletesWhileDonationIsSuspended() async {
+        let capture = LockedCapture<TestNotificationContent>()
+        let latch = AsyncResultLatch<ReloNotificationDonationResult<TestNotificationContent>>()
+        let donationStarted = expectation(description: "donation suspended")
+        var timeout: (@Sendable () -> Void)?
+        let orchestrator = makeTestOrchestrator(capture: capture)
+        let task = orchestrator.start(
+            context: ReloNotificationOrchestrationContext(
+                hasEnvelope: true, isPrivate: false,
+                supportsCommunicationStyle: true, conversationIdentifier: "conversation-1"
+            ),
+            enrichMedia: { _ in TestNotificationContent(body: "cached media") },
+            donateAndUpdate: { _ in await latch.wait { donationStarted.fulfill() } },
+            scheduleTimeout: { _, callback in timeout = callback }
+        )
+        await fulfillment(of: [donationStarted], timeout: 1)
+        timeout?()
+        XCTAssertEqual(capture.values.map(\.body), ["cached media"])
+        XCTAssertTrue(task.isCancelled)
+        latch.resume(.updated(TestNotificationContent(body: "late donation")))
+        await task.value
+        XCTAssertEqual(capture.values.count, 1)
+    }
+
+    func testReceiptCaptureYieldsWhenAnotherProcessHoldsTheLock() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = ReloNotificationReceiptStore(baseDirectory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("pending-notification-receipts.json.lock").path
+        let descriptor = Darwin.open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { Darwin.close(descriptor) }
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+        let recorded = try store.add(notificationID: "ntf_abcdefghijkl", lockWait: 0)
+        XCTAssertEqual(recorded, .notRecordedWithinBudget)
+        XCTAssertEqual(flock(descriptor, LOCK_UN), 0)
+        XCTAssertEqual(try store.add(notificationID: "ntf_abcdefghijkl", lockWait: 0.020), .inserted)
+        XCTAssertEqual(try store.pending(limit: 10), ["ntf_abcdefghijkl"])
+    }
+
+    func testHeldReceiptLockCannotDelayTextDeadlineOrDuplicateCompletion() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let descriptor = Darwin.open(directory.appendingPathComponent("pending-notification-receipts.json.lock").path,
+                                     O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        XCTAssertEqual(flock(descriptor, LOCK_EX), 0)
+        let capture = LockedCapture<TestNotificationContent>()
+        let donation = AsyncResultLatch<ReloNotificationDonationResult<TestNotificationContent>>()
+        let started = expectation(description: "donation held")
+        var deadline: (@Sendable () -> Void)?
+        let orchestrator = makeTestOrchestrator(capture: capture)
+        let task = orchestrator.start(
+            context: .init(hasEnvelope: true, isPrivate: false, supportsCommunicationStyle: true,
+                           conversationIdentifier: "conversation"),
+            enrichMedia: { $0 },
+            donateAndUpdate: { _ in await donation.wait { started.fulfill() } },
+            scheduleTimeout: { seconds, callback in
+                XCTAssertEqual(seconds, 0.100)
+                deadline = callback
+            }
+        )
+        await fulfillment(of: [started], timeout: 1)
+        let receiptFinished = expectation(description: "bounded receipt attempt")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let result = try ReloNotificationReceiptStore(baseDirectory: directory).add(
+                    notificationID: "ntf_held", lockWait: 0.020)
+                XCTAssertEqual(result, .notRecordedWithinBudget)
+            } catch { XCTFail("Unexpected receipt failure: \(error)") }
+            receiptFinished.fulfill()
+        }
+        deadline?() // Inject the optional enrichment deadline while the receipt flock is still held.
+        XCTAssertEqual(capture.values.map(\.body), ["original"])
+        donation.resume(.updated(TestNotificationContent(body: "late")))
+        await task.value
+        await fulfillment(of: [receiptFinished], timeout: 1)
+        orchestrator.timeout()
+        XCTAssertEqual(capture.values.count, 1)
+    }
+
     private func makeTestOrchestrator(
         capture: LockedCapture<TestNotificationContent>
     ) -> ReloNotificationServiceOrchestrator<TestNotificationContent> {
@@ -462,7 +578,7 @@ private final class AsyncResultLatch<Value>: @unchecked Sendable {
         }
     }
 
-    func resume(_ value: Value) {
+    func resume(_ value: sending Value) {
         lock.lock()
         let continuation = continuation
         self.continuation = nil

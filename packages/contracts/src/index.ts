@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export * from "./presentation.js";
 export * from "./delivery-evidence.js";
+export * from "./relevance.js";
+export * from "./current-inbox.js";
 
 export function isPublicHttpsUrl(value: string): boolean {
   try {
@@ -585,3 +587,59 @@ export type DeliverySummary = z.infer<typeof deliverySummarySchema>;
 export type TaskLiveActivity = z.infer<typeof taskLiveActivitySchema>;
 export type LiveActivityResolveRequest = z.infer<typeof liveActivityResolveRequestSchema>;
 export type LiveActivityResolveResponse = z.infer<typeof liveActivityResolveResponseSchema>;
+
+/** History is an authoritative bounded repair window, never current action authority. */
+export const inboxHistorySummarySchema = inboxItemSchema.omit({
+  detail: true, content: true, liveActivity: true, interaction: true, privacy: true, deliveryState: true,
+}).extend({
+  title: z.string().refine(value => Array.from(value).length <= 200),
+  sourceName: z.string().refine(value => Array.from(value).length <= 200),
+  privacy: z.enum(["standard", "private"]),
+  deliveryState: z.enum(["queued", "sending", "accepted_by_apns", "retryable", "rejected", "token_invalid", "reconciliation_required"]).nullable(),
+  updatedAt: isoTimestampSchema,
+  contentSummary: z.object({
+    summary: z.string().refine(value => Array.from(value).length <= 240),
+    format: z.enum(["text", "markdown"]), byteLength: z.number().int().min(0).max(65_536),
+  }).strict(),
+  interaction: inboxInteractionSchema.extend({ prompt: z.string().refine(value => Array.from(value).length <= 240) }).nullable(),
+  activityEvent: z.object({
+    id: z.string().regex(/^act_[0-9a-f-]{36}$/), operation: z.enum(["start", "update", "end"]),
+    generation: z.number().int().positive(), sequence: z.number().int().nonnegative(),
+  }).strict().nullable(),
+  // Where the card behind this event stands now, so a list can say how the work turned out.
+  activity: z.object({
+    state: z.enum(["active", "ended", "expired", "replaced"]),
+    outcome: z.enum(["completed", "failed"]).nullable(),
+    status: z.string().refine(value => Array.from(value).length <= 160).nullable(),
+    progress: z.number().min(0).max(1).nullable(),
+    steps: z.object({
+      done: z.number().int().nonnegative(), total: z.number().int().positive(),
+      current: z.string().refine(value => Array.from(value).length <= 80).nullable(),
+    }).strict().nullable(),
+    updates: z.number().int().nonnegative(),
+    startedAt: isoTimestampSchema, endedAt: isoTimestampSchema.nullable(),
+  }).strict().nullable().optional(),
+  relevance: z.object({
+    subjectId: z.string().regex(/^sub_[0-9a-f-]{36}$/),
+    generation: z.number().int().positive(), revision: z.number().int().positive(),
+    status: z.string().max(40), supersededAt: isoTimestampSchema.nullable(),
+    currentUntil: isoTimestampSchema.nullable(), actionExpiresAt: isoTimestampSchema.nullable(),
+    freshUntil: isoTimestampSchema.nullable(), deliverUntil: isoTimestampSchema,
+  }).strict().nullable(),
+}).strict();
+export const inboxSnapshotResponseSchema = z.object({
+  items: z.array(inboxHistorySummarySchema).max(250),
+  total: z.number().int().nonnegative(), serverTime: isoTimestampSchema,
+  readWatermark: z.string().max(512).nullable(),
+  unread: z.object({ account: z.number().int().nonnegative(), projects: z.record(z.string(), z.number().int().nonnegative()) }).strict(),
+}).strict().refine(value => value.total >= value.items.length && new Set(value.items.map(item => item.id)).size === value.items.length);
+export type InboxHistorySummary = z.infer<typeof inboxHistorySummarySchema>;
+export type InboxSnapshotResponse = z.infer<typeof inboxSnapshotResponseSchema>;
+
+const exactNotificationIdSchema = z.string().regex(/^ntf_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+export const inboxReadItemsRequestSchema = z.object({notificationIds: z.array(exactNotificationIdSchema).min(1).max(250)}).strict();
+export const inboxReadItemsResponseSchema = z.object({
+  results: z.array(z.object({notificationId: exactNotificationIdSchema, outcome: z.enum(["read","already_read","not_found"])}).strict()).min(1).max(250),
+  unread: z.object({account: z.number().int().nonnegative(), projects: z.record(z.string(),z.number().int().nonnegative())}).strict(),
+}).strict().refine(value=>new Set(value.results.map(item=>item.notificationId)).size===value.results.length);
+export type InboxReadItemsResponse = z.infer<typeof inboxReadItemsResponseSchema>;

@@ -79,7 +79,7 @@ databaseSuite("Inbox maturity PostgreSQL and API behavior",() => {
     expect(stored.body_ciphertext).not.toContain("Private implementation detail");
     expect(Number(stored.body_bytes)).toBe(Buffer.byteLength(normalizedLongBody,"utf8"));
 
-    const page = await (await request("/api/inbox",deviceToken)).json() as any;
+    const page = await (await request("/api/inbox/history?limit=100",deviceToken)).json() as any;
     expect(page.items[0].content).toMatchObject({ body:normalizedLongBody,format:"markdown" });
     expect(page.unread.account).toBe(1);
     expect(page.readWatermark).toEqual(expect.any(String));
@@ -89,8 +89,8 @@ databaseSuite("Inbox maturity PostgreSQL and API behavior",() => {
       body:JSON.stringify({ sourceName:"Codex",title:"Late arrival",body:"Committed later" }),
     });
     expect(second.status).toBe(201);
-    const marked = await request("/api/inbox/read",deviceToken,{
-      method:"POST",body:JSON.stringify({ watermark:page.readWatermark }),
+    const marked = await request("/api/inbox/read-items",deviceToken,{
+      method:"POST",body:JSON.stringify({ notificationIds:page.items.map((item: any) => item.id) }),
     });
     expect(marked.status).toBe(200);
     expect((await marked.json() as any).unread.account).toBe(1);

@@ -8,8 +8,8 @@ import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
 import { registerDeviceSchema } from "./schemas.js";
 import { createTransportTokenEncryption } from "./token-encryption.js";
-import { consumeConnectionGrant } from "./connection-grants.js";
 import type { OwnerAccount } from "./web.js";
+import { stableJson } from "./stable-json.js";
 
 const mobileAuthorizationState = z.enum(["authorized", "denied", "pending"]);
 
@@ -24,14 +24,6 @@ const mobileRegisterSchema = registerDeviceSchema.omit({
 
 export function persistedMobileAuthorization(value: z.infer<typeof mobileAuthorizationState>): "authorized" | "denied" | "unknown" {
   return value === "pending" ? "unknown" : value;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 function registrationToken(secret: string, principalId: string, deviceId: string, version: number, idempotencyKey: string): string {
@@ -89,29 +81,6 @@ export function registerMobileAccountRoutes(
   credentialDerivationSecret: string,
 ): void {
   const tokenEncryption = createTransportTokenEncryption(credentialDerivationSecret);
-  app.post("/api/mobile/connection-grants/consume", async (context) => {
-    const input = z.object({
-      type: z.literal("relo.connection"),
-      grant: z.string().min(32).max(200),
-      installationId: z.string().min(8).max(200),
-    }).strict().parse(await context.req.json());
-    const result = await consumeConnectionGrant({
-      db,
-      grant: input.grant,
-      installationId: input.installationId,
-    });
-    if (typeof result === "string") {
-      const status = result === "expired" ? 410 : result === "consumed" ? 409 : 403;
-      return context.json({ error: `connection_grant_${result}` },status);
-    }
-    context.header("cache-control","private, no-store");
-    return context.json({
-      sessionToken: result.sessionToken,
-      session: { id: result.sessionId, expiresAt: result.expiresAt.toISOString() },
-      user: result.user,
-      replayed: result.replayed,
-    });
-  });
   app.post("/api/devices/register", async (context) => {
     const session = await getAccountSession(accountAuth, context.req.raw.headers);
     if (!session) return context.json({ error: "reauthentication_required" }, 401);

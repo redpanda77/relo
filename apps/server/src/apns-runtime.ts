@@ -38,6 +38,9 @@ export type ApnsRuntimeJob = {
   deepLink: string | null;
   notificationId: string;
   accountId: string;
+  deviceId?: string;
+  serverOriginHash?: string;
+  interactionExpiresAt?: Date | null;
   interactionKind: "approval" | "yes_no" | "text" | null;
   interactionId: string | null;
   badge: number;
@@ -49,6 +52,7 @@ export type ApnsRuntimeJob = {
 export type ApnsRuntimeResult =
   | { kind: "accepted"; providerMessageId?: string }
   | { kind: "retry"; code: string; message: string }
+  | { kind: "retry_scheduled"; notBefore: Date; code: string; message: string }
   | { kind: "invalid_token"; code: string; message: string }
   | { kind: "unavailable"; code: string; message: string }
   | { kind: "reconcile"; code: string; message: string; providerMessageId?: string }
@@ -271,6 +275,9 @@ export function mapApnsOutcomeToRuntimeResult(outcome: ApnsOutcome): ApnsRuntime
       : { kind: "accepted" };
   }
   const message = outcome.reason ? `${outcome.category}: ${outcome.reason}` : outcome.category;
+  if (outcome.category === "retry-scheduled" && Number.isSafeInteger(outcome.nextAttemptNotBeforeMs)) {
+    return { kind: "retry_scheduled", notBefore: new Date(outcome.nextAttemptNotBeforeMs!), code: outcome.category, message };
+  }
   if (outcome.category === "invalid-recipient") {
     return { kind: "invalid_token", code: outcome.reason ?? "invalid-recipient", message };
   }

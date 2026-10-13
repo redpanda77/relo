@@ -61,7 +61,7 @@ describe("Projects workspace",() => {
     expect(screen.getByRole("heading",{ name:"Projects" })).toBeInTheDocument()
     const link = screen.getByRole("link",{ name:/Relo/ })
     expect(link).toHaveAttribute("href",`/dashboard/projects/${project.id}`)
-    expect(link).toHaveTextContent("1 conversations · 7 notifications · 2 activities")
+    expect(link).toHaveTextContent("1 topic · 7 notifications")
   })
 
   it("exposes immutable identity, exact split mechanics, and guarded lifecycle actions",() => {
@@ -84,7 +84,6 @@ describe("Projects workspace",() => {
       },
     }
     render(<ProjectsPage bootstrap={detail} />)
-    expect(screen.getByText("named:relo")).toBeInTheDocument()
     expect(screen.getByText("Relo notifications")).toBeInTheDocument()
     const splitHeading = screen.getByText("Split conversations")
     const splitCard = splitHeading.closest<HTMLElement>("[data-slot='card']")!

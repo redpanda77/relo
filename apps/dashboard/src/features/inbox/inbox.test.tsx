@@ -9,8 +9,13 @@ import {
 } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+const navigation = vi.hoisted(() => ({ navigateDashboard: vi.fn() }))
+vi.mock("@/state/use-dashboard-route", async (original) => ({
+  ...(await original<typeof import("@/state/use-dashboard-route")>()),
+  navigateDashboard: navigation.navigateDashboard,
+}))
+
 import { InboxFeature } from "@/features/inbox/inbox-feature"
-import { DeliveryRow } from "@/features/inbox/components"
 import {
   inboxDashboardBootstrapSchema,
   type DeliveryHistory,
@@ -211,7 +216,7 @@ describe("Inbox feature contracts", () => {
   it("preserves approval action hooks and performs an explicit owner decision", async () => {
     const inboxService = service()
     const onSuccess = vi.fn()
-    const { container } = render(
+    render(
       <InboxFeature
         bootstrap={overview}
         service={inboxService}
@@ -219,17 +224,15 @@ describe("Inbox feature contracts", () => {
       />
     )
 
-    const authorize = screen.getByRole("button", { name: "Authorize" })
+    const authorize = screen.getByRole("button", { name: "Approve" })
     expect(authorize).toHaveAttribute("data-action", "approve-approval")
     expect(authorize).toHaveAttribute("data-code", "ABCD-EFGH")
     expect(authorize.className).toContain("min-h-11")
-    expect(screen.getByText("Approval expires")).toBeVisible()
-    const credentialExpiry = screen.getByText("Credential expires")
-    expect(credentialExpiry).toBeVisible()
-    expect(
-      credentialExpiry.compareDocumentPosition(authorize) &
-        Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
+    // The owner sees what the client asks for and for how long before approving.
+    const request = authorize.closest("li")!
+    expect(request).toHaveTextContent("ABCD-EFGH")
+    expect(request).toHaveTextContent("notifications:write")
+    expect(request).toHaveTextContent("access until")
     fireEvent.click(authorize)
 
     await waitFor(() =>
@@ -239,14 +242,7 @@ describe("Inbox feature contracts", () => {
       )
     )
     expect(onSuccess).toHaveBeenCalledOnce()
-    expect(
-      container.querySelector('a[href="/dashboard/inbox/notifications"]')
-    ).toBeInTheDocument()
-    const pendingResponse = container.querySelector(
-      '[data-slot="pending-response-link"] [data-slot="card"]'
-    )
-    expect(pendingResponse).toHaveAttribute("data-tone", "warning")
-    expect(pendingResponse).not.toHaveAttribute("data-live")
+    expect(within(screen.getByRole("list", { name: "Needs you" })).getByRole("button", { name: "Open Release gate" })).toBeVisible()
   })
 
   it("coalesces a same-code double decision into one mutation", async () => {
@@ -261,7 +257,7 @@ describe("Inbox feature contracts", () => {
       />
     )
 
-    const authorize = screen.getByRole("button", { name: "Authorize" })
+    const authorize = screen.getByRole("button", { name: "Approve" })
     fireEvent.click(authorize)
     fireEvent.click(authorize)
     expect(inboxService.decideApproval).toHaveBeenCalledTimes(1)
@@ -293,15 +289,15 @@ describe("Inbox feature contracts", () => {
     )
 
     const firstCard = screen
-      .getByText("Relo CLI")
-      .closest<HTMLElement>('[data-slot="card"]')
+      .getByText("Connect Relo CLI")
+      .closest<HTMLElement>("li")
     const secondCard = screen
-      .getByText("Release CLI")
-      .closest<HTMLElement>('[data-slot="card"]')
+      .getByText("Connect Release CLI")
+      .closest<HTMLElement>("li")
     expect(firstCard).not.toBeNull()
     expect(secondCard).not.toBeNull()
     fireEvent.click(
-      within(firstCard!).getByRole("button", { name: "Authorize" })
+      within(firstCard!).getByRole("button", { name: "Approve" })
     )
     expect(
       within(firstCard!).getByRole("button", { name: "Deny" })
@@ -349,89 +345,26 @@ describe("Inbox feature contracts", () => {
     render(<InboxFeature bootstrap={concurrent} service={inboxService} />)
 
     const firstCard = screen
-      .getByText("Relo CLI")
-      .closest<HTMLElement>('[data-slot="card"]')!
+      .getByText("Connect Relo CLI")
+      .closest<HTMLElement>("li")!
     const secondCard = screen
-      .getByText("Release CLI")
-      .closest<HTMLElement>('[data-slot="card"]')!
+      .getByText("Connect Release CLI")
+      .closest<HTMLElement>("li")!
     fireEvent.click(
-      within(firstCard).getByRole("button", { name: "Authorize" })
+      within(firstCard).getByRole("button", { name: "Approve" })
     )
     fireEvent.click(within(secondCard).getByRole("button", { name: "Deny" }))
 
     first.resolve()
     await waitFor(() =>
       expect(
-        within(firstCard).getByRole("button", { name: "Authorize" })
+        within(firstCard).getByRole("button", { name: "Approve" })
       ).toBeEnabled()
     )
     expect(reload).not.toHaveBeenCalled()
 
     second.resolve()
     await waitFor(() => expect(reload).toHaveBeenCalledOnce())
-  })
-
-  it("keeps server-rendered approval totals aligned with stale action cards", async () => {
-    vi.useFakeTimers()
-    const inboxService = service()
-    inboxService.getSnapshot = vi
-      .fn()
-      .mockResolvedValueOnce({
-        revision: 2,
-        counts: {
-          notifications: 40,
-          deliveries: 3,
-          approvals: 0,
-          devices: 1,
-        },
-        devices: [],
-        clients: [],
-      })
-      .mockRejectedValueOnce(new Error("offline"))
-    render(
-      <InboxFeature
-        bootstrap={overview}
-        service={inboxService}
-        onApprovalSuccess={vi.fn()}
-      />
-    )
-
-    await act(async () => vi.advanceTimersByTimeAsync(15_000))
-    const summary = within(
-      screen.getByRole("region", { name: "Inbox summary" })
-    )
-    expect(summary.getByText("CLI approvals").parentElement).toHaveTextContent(
-      "1"
-    )
-    expect(summary.getByText("Notifications").parentElement).toHaveTextContent(
-      "40"
-    )
-    await act(async () => vi.advanceTimersByTimeAsync(15_000))
-    expect(
-      screen.getByText(
-        "Live totals paused. Showing the last-known refreshed totals."
-      )
-    ).toBeVisible()
-  })
-
-  it("identifies initial server-rendered totals when the first poll fails", async () => {
-    vi.useFakeTimers()
-    const inboxService = service()
-    inboxService.getSnapshot = vi.fn().mockRejectedValue(new Error("offline"))
-    render(
-      <InboxFeature
-        bootstrap={overview}
-        service={inboxService}
-        onApprovalSuccess={vi.fn()}
-      />
-    )
-
-    await act(async () => vi.advanceTimersByTimeAsync(15_000))
-    expect(
-      screen.getByText(
-        "Live totals paused. Showing the initial server-rendered totals."
-      )
-    ).toBeVisible()
   })
 
   it("ignores stale snapshot revisions and aborts the active request on unmount", async () => {
@@ -465,262 +398,6 @@ describe("Inbox feature contracts", () => {
     expect(activeSignal?.aborted).toBe(false)
     view.unmount()
     expect(activeSignal?.aborted).toBe(true)
-  })
-
-  it("keeps route-backed GET filters, names, selections, and deep links", async () => {
-    const history: NotificationHistory = {
-      version: 1,
-      kind: "notification-history",
-      route: {
-        path: "/dashboard/inbox/notifications",
-        page: 2,
-        filters: { kind: "question", state: "active", project: "Kuatzi" },
-      },
-      filterOptions: { projects: ["Relo notifications", "Kuatzi"] },
-      shell: {
-        ...shell,
-        active: "inbox-notifications",
-        title: "Notifications",
-      },
-      unread: {
-        total: 3,
-        byProject: [
-          { project: "Relo notifications", count: 1 },
-          { project: "Kuatzi", count: 2 },
-        ],
-      },
-      notifications: [notification],
-      pagination: {
-        page: 2,
-        pageSize: 25,
-        total: 32,
-        pageCount: 2,
-        previousHref:
-          "/dashboard/inbox/notifications?kind=question&state=active&page=1",
-        nextHref: null,
-      },
-    }
-    const inboxService = service()
-    inboxService.markAllNotificationsRead = vi.fn().mockResolvedValue(undefined)
-    render(<InboxFeature bootstrap={history} service={inboxService} />)
-
-    const form = screen
-      .getByRole("button", { name: "Apply filters" })
-      .closest("form")
-    expect(form).toHaveAttribute("method", "get")
-    expect(form).toHaveAttribute("action", "/dashboard/inbox/notifications")
-    expect(screen.getByLabelText("Kind")).toHaveAttribute("name", "kind")
-    expect(screen.getByLabelText("Kind")).toHaveValue("question")
-    expect(screen.getByLabelText("State")).toHaveAttribute("name", "state")
-    expect(screen.getByLabelText("State")).toHaveValue("active")
-    expect(screen.getByLabelText("State")).toHaveTextContent("Running")
-    expect(screen.getByLabelText("Project")).toHaveAttribute("name", "project")
-    expect(screen.getByLabelText("Project")).toHaveValue("Kuatzi")
-    expect(form).not.toHaveClass("rounded-2xl", "bg-card/75")
-    expect(screen.getByRole("link", { name: /release gate/i })).toHaveAttribute(
-      "href",
-      `/dashboard/inbox/notifications/${eventId}`
-    )
-    const notificationCard = document.querySelector(
-      '[data-slot="notification-card"]'
-    )
-    expect(notificationCard).toHaveClass("status-card", "rounded-2xl")
-    expect(notificationCard).toHaveAttribute("data-tone", "active")
-    expect(notificationCard).toHaveAttribute("data-live", "true")
-    expect(
-      notificationCard?.querySelector(".status-icon-tile")
-    ).toBeInTheDocument()
-    expect(
-      within(notificationCard as HTMLElement).getByLabelText("Status: active")
-    ).toBeVisible()
-    expect(
-      screen.getByRole("region", { name: "Origin Test Lab" })
-    ).toBeVisible()
-    expect(
-      within(notificationCard as HTMLElement).getByText("Developer's iPhone")
-    ).toBeVisible()
-    expect(
-      within(notificationCard as HTMLElement).getByText(
-        "Review the production build"
-      )
-    ).toBeVisible()
-    expect(
-      within(notificationCard as HTMLElement).getByLabelText("Link attached")
-    ).toBeVisible()
-    expect(screen.getByText(/3 unread/i)).toBeVisible()
-    expect(screen.getByText(/Kuatzi 2/)).toBeVisible()
-    fireEvent.click(screen.getByRole("button", { name: "Mark all read" }))
-    await waitFor(() =>
-      expect(inboxService.markAllNotificationsRead).toHaveBeenCalledOnce()
-    )
-    expect(screen.getByText(/0 unread/i)).toBeVisible()
-    expect(screen.queryByRole("button", { name: "Mark all read" })).not.toBeInTheDocument()
-  })
-
-  it("renders canonical activity state and origin context instead of the event default", () => {
-    const history = {
-      version: 1,
-      kind: "notification-history",
-      route: {
-        path: "/dashboard/inbox/notifications",
-        page: 1,
-        filters: { kind: "live_activity", state: "ended", project: null },
-      },
-      filterOptions: { projects: ["Relo notifications"] },
-      shell: {
-        ...shell,
-        active: "inbox-notifications",
-        title: "Notifications",
-      },
-      notifications: [
-        {
-          ...notification,
-          title: "Codex · Relo notifications",
-          body: "Earlier update",
-          source: "Codex",
-          kind: "live_activity",
-          state: "ended",
-          activity: liveActivity,
-        },
-      ],
-      pagination: {
-        page: 1,
-        pageSize: 25,
-        total: 1,
-        pageCount: 1,
-        previousHref: null,
-        nextHref: null,
-      },
-    } as NotificationHistory
-    render(<InboxFeature bootstrap={history} />)
-
-    const card = document.querySelector('[data-slot="notification-card"]')
-    expect(card).toHaveAttribute("data-tone", "success")
-    expect(card).not.toHaveAttribute("data-live")
-    expect(
-      within(card as HTMLElement).getByLabelText("Status: ended")
-    ).toBeVisible()
-    expect(
-      within(card as HTMLElement).getByText(
-        "Correct activity lifecycle history"
-      )
-    ).toBeVisible()
-    expect(
-      screen.getByRole("heading", {
-        name: "Thread: Dashboard lifecycle audit",
-      })
-    ).toBeVisible()
-    expect(within(card as HTMLElement).getByText("Complete")).toBeVisible()
-    expect(within(card as HTMLElement).getByText(/generation 2/i)).toBeVisible()
-    expect(
-      within(card as HTMLElement).getByText(/update event · sequence 4 of 6/i)
-    ).toBeVisible()
-    const originGroup = document.querySelector(
-      '[data-slot="notification-origin-group"]'
-    )
-    expect(originGroup).toBeInTheDocument()
-    expect(
-      within(originGroup as HTMLElement).getByRole("heading", {
-        name: "Codex",
-      })
-    ).toBeVisible()
-    expect(
-      within(originGroup as HTMLElement).getByRole("heading", {
-        name: "Project: Relo notifications",
-      })
-    ).toBeVisible()
-    expect(
-      within(originGroup as HTMLElement).getByRole("link", {
-        name: /correct activity lifecycle history/i,
-      })
-    ).toBeVisible()
-  })
-
-  it("groups scattered records by origin, then project, then thread", () => {
-    const contextual = (
-      id: string,
-      project: string,
-      threadId: string,
-      threadName: string,
-      taskTitle: string
-    ) => ({
-      ...notification,
-      id,
-      title: taskTitle,
-      source: "Developer Mac Codex",
-      kind: "notification",
-      state: "recorded",
-      context: {
-        ...emptyContext,
-        providerName: "Codex",
-        computer: "Mac",
-        project,
-        providerThreadId: threadId,
-        threadName,
-        taskTitle,
-      },
-    })
-    const history: NotificationHistory = {
-      version: 1,
-      kind: "notification-history",
-      route: {
-        path: "/dashboard/inbox/notifications",
-        page: 1,
-        filters: { kind: null, state: null, project: null },
-      },
-      filterOptions: { projects: ["Relo notifications", "Kuatzi"] },
-      shell: {
-        ...shell,
-        active: "inbox-notifications",
-        title: "Notifications",
-      },
-      notifications: [
-        contextual(
-          "ntf_kuatzi-one",
-          "Kuatzi",
-          "thread-kuatzi",
-          "Kuatzi",
-          "First task"
-        ),
-        contextual(
-          "ntf_relo",
-          "Relo notifications",
-          "thread-relo",
-          "Relo",
-          "Other task"
-        ),
-        contextual(
-          "ntf_kuatzi-two",
-          "Kuatzi",
-          "thread-kuatzi",
-          "Kuatzi",
-          "Second task"
-        ),
-      ],
-      pagination: {
-        page: 1,
-        pageSize: 25,
-        total: 3,
-        pageCount: 1,
-        previousHref: null,
-        nextHref: null,
-      },
-    }
-
-    render(<InboxFeature bootstrap={history} />)
-
-    expect(
-      document.querySelectorAll('[data-slot="notification-origin-group"]')
-    ).toHaveLength(1)
-    expect(
-      document.querySelectorAll('[data-slot="notification-project-group"]')
-    ).toHaveLength(2)
-    const kuatzi = screen.getByRole("group", { name: "Project Kuatzi" })
-    expect(within(kuatzi).getAllByText("2 records")).toHaveLength(2)
-    expect(
-      within(kuatzi).getByRole("heading", { name: "Thread: Kuatzi" })
-    ).toBeVisible()
-    expect(within(kuatzi).getAllByRole("link")).toHaveLength(2)
   })
 
   it("does not advertise an attached link when none was validated", () => {
@@ -757,88 +434,6 @@ describe("Inbox feature contracts", () => {
     render(<InboxFeature bootstrap={history} />)
 
     expect(screen.queryByLabelText("Link attached")).not.toBeInTheDocument()
-  })
-
-  it("labels and consolidates context-free CLI calls without synthetic threads", () => {
-    const history: NotificationHistory = {
-      version: 1,
-      kind: "notification-history",
-      route: {
-        path: "/dashboard/inbox/notifications",
-        page: 1,
-        filters: { kind: null, state: null, project: null },
-      },
-      filterOptions: { projects: [] },
-      shell: {
-        ...shell,
-        active: "inbox-notifications",
-        title: "Notifications",
-      },
-      notifications: ["one", "two", "three"].map((id) => ({
-        ...notification,
-        id: `ntf_direct-${id}`,
-        title: `Direct call ${id}`,
-        source: "developer-mac-codex",
-        requesterKind: "cli",
-      })),
-      pagination: {
-        page: 1,
-        pageSize: 25,
-        total: 3,
-        pageCount: 1,
-        previousHref: null,
-        nextHref: null,
-      },
-    }
-
-    render(<InboxFeature bootstrap={history} />)
-
-    expect(screen.getByText("Origin: Direct CLI")).toBeVisible()
-    expect(screen.getByRole("heading", { name: "Direct CLI" })).toBeVisible()
-    expect(
-      document.querySelectorAll('[data-slot="notification-thread-group"]')
-    ).toHaveLength(0)
-    const directGroup = screen.getByRole("group", {
-      name: "Project Direct CLI",
-    })
-    expect(within(directGroup).getAllByRole("link")).toHaveLength(3)
-
-    const summary = within(directGroup)
-      .getByRole("heading", { name: "Direct CLI" })
-      .closest("summary")
-    expect(summary).not.toBeNull()
-    fireEvent.click(summary as HTMLElement)
-    expect(directGroup).not.toHaveAttribute("open")
-  })
-
-  it("filters recent Inbox records with the project chip", () => {
-    const contextual = {
-      ...notification,
-      id: "ntf_project",
-      title: "Project notification",
-      context: { ...emptyContext, project: "Kuatzi" },
-    }
-    render(
-      <InboxFeature
-        bootstrap={{
-          ...overview,
-          recentNotifications: [notification, contextual],
-        }}
-      />
-    )
-
-    const project = screen.getByLabelText("Project", { selector: "select" })
-    expect(
-      within(project).getByRole("option", { name: "Direct CLI" })
-    ).toBeVisible()
-    expect(
-      within(project).getByRole("option", { name: "Kuatzi" })
-    ).toBeVisible()
-
-    fireEvent.change(project, { target: { value: "project:Kuatzi" } })
-    const recent = screen.getByRole("region", { name: "Recent notifications" })
-    expect(within(recent).getByText("Project notification")).toBeVisible()
-    expect(within(recent).queryByText("Release gate")).not.toBeInTheDocument()
   })
 
   it("requires confirmation and settles a reconciliation-required delivery", async () => {
@@ -910,254 +505,6 @@ describe("Inbox feature contracts", () => {
       ).not.toBeInTheDocument()
     )
     expect(screen.getByLabelText("Status: retry")).toBeVisible()
-  })
-
-  it("exposes only the server-validated destination as an external action", () => {
-    const detail: NotificationDetail = {
-      version: 1,
-      kind: "notification-detail",
-      route: {
-        path: `/dashboard/inbox/notifications/${eventId}`,
-        backHref: "/dashboard/inbox/notifications",
-      },
-      shell: { ...shell, active: "inbox-notifications", title: "Release gate" },
-      notification: {
-        ...notification,
-        serviceTitle: null,
-        privacy: "standard",
-        targetMode: "devices",
-        updatedAt: now,
-        expiresAt: now,
-        destination: {
-          state: "safe",
-          href: "https://example.test/releases/42",
-        },
-      },
-      activity: null,
-      interaction: {
-        kind: "question",
-        state: "responded",
-        action: "reply",
-        prompt: "Ship it?",
-        responseText: "yes",
-        respondingDevice: { id: "dev_public", name: "Developer's iPhone" },
-        createdAt: now,
-        expiresAt: now,
-        respondedAt: now,
-      },
-      deliveries: [
-        {
-          id: "job_delivery-test",
-          notificationId: eventId,
-          title: "Release gate",
-          source: "Test Lab",
-          deviceName: "Developer's iPhone",
-          transport: "apns",
-          state: "accepted",
-          attemptCount: 1,
-          providerMessageId: "provider-safe-id",
-          error: null,
-          reconciliation: {
-            required: false,
-            allowedActions: [],
-            resolvedAction: null,
-          },
-          acceptedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        },
-      ],
-      evidenceTimeline: [],
-      receipts: [
-        { kind: "answer", deviceName: "Developer's iPhone", createdAt: now },
-      ],
-    }
-    render(<InboxFeature bootstrap={detail} />)
-
-    const destination = screen.getByRole("link", { name: /open attached link/i })
-    expect(destination).toHaveAttribute(
-      "href",
-      "https://example.test/releases/42"
-    )
-    expect(destination).toHaveAttribute("rel", "noopener noreferrer")
-    expect(screen.getAllByText(/example\.test/).length).toBeGreaterThan(0)
-    const detailDelivery = document.querySelector(
-      '[data-slot="delivery-detail-row"]'
-    )
-    expect(detailDelivery).toBeInTheDocument()
-    expect(detailDelivery?.querySelector("a")).toBeNull()
-    expect(
-      detailDelivery?.querySelector('[data-slot="delivery-card"]')
-    ).toHaveAttribute("data-tone", "success")
-    expect(
-      detailDelivery?.querySelector(".status-icon-tile")
-    ).toBeInTheDocument()
-    const historyRow = render(<DeliveryRow delivery={detail.deliveries[0]} />)
-    expect(within(historyRow.container).getByRole("link")).toHaveAttribute(
-      "href",
-      `/dashboard/inbox/notifications/${eventId}`
-    )
-    expect(
-      screen.getByRole("link", { name: /back to history/i })
-    ).toHaveAttribute("href", "/dashboard/inbox/notifications")
-  })
-
-  it("shows complete Live Activity identity, lifecycle, and timeline in detail", () => {
-    const detail = {
-      version: 1,
-      kind: "notification-detail",
-      route: {
-        path: `/dashboard/inbox/notifications/${eventId}`,
-        backHref: "/dashboard/inbox/notifications",
-      },
-      shell: {
-        ...shell,
-        active: "inbox-notifications",
-        title: "Correct activity lifecycle history",
-      },
-      notification: {
-        ...notification,
-        source: "Codex",
-        kind: "live_activity",
-        title: "Codex · Relo notifications",
-        body: "",
-        state: "ended",
-        serviceTitle: null,
-        privacy: "standard",
-        targetMode: "explicit",
-        updatedAt: now,
-        expiresAt: now,
-        destination: { state: "not-set", href: null },
-      },
-      activity: {
-        ...liveActivity,
-        threadHistory: [
-          {
-            id: liveActivity.id,
-            generation: 2,
-            state: "ended",
-            title: liveActivity.title,
-            status: "Complete",
-            taskTitle: "Correct activity lifecycle history",
-            createdAt: now,
-            updatedAt: now,
-            endedAt: now,
-            terminalReason: "explicit_end",
-            current: true,
-          },
-          {
-            id: "act_77777777-7777-4777-8777-777777777777",
-            generation: 1,
-            state: "ended",
-            title: liveActivity.title,
-            status: "Complete",
-            taskTitle: "Audit lifecycle history",
-            createdAt: now,
-            updatedAt: now,
-            endedAt: now,
-            terminalReason: "explicit_end",
-            current: false,
-          },
-        ],
-        timeline: [
-          {
-            operation: "start",
-            sequence: 1,
-            state: "active",
-            status: "Planning",
-            createdAt: now,
-          },
-          {
-            operation: "end",
-            sequence: 6,
-            state: "ended",
-            status: "Complete",
-            createdAt: now,
-          },
-        ],
-        presentationLeases: [
-          {
-            deviceId: "dev_88888888-8888-4888-8888-888888888888",
-            deviceName: "Developer's iPhone",
-            state: "ended",
-            reason: "terminal_command_applied",
-            relevanceScore: 0,
-            lastCommandSequence: 6,
-            selectedAt: now,
-            lastAppliedAt: now,
-            endedAt: now,
-          },
-        ],
-        relationships: [
-          {
-            id: "rel_dashboard-lifecycle",
-            kind: "continuation",
-            direction: "predecessor",
-            relatedActivity: {
-              id: "act_77777777-7777-4777-8777-777777777777",
-              title: "Audit lifecycle history",
-              state: "ended",
-              generation: 1,
-            },
-            actor: "dashboard",
-            reason: "same_origin_generation",
-            provenance: "runtime",
-            createdAt: now,
-          },
-        ],
-        correlationDecisions: [
-          {
-            id: "cor_dashboard-lifecycle",
-            outcome: "resumed",
-            matchedBy: "origin",
-            actor: "dashboard",
-            reason: "same_origin_generation",
-            provenance: "runtime",
-            relationshipId: "rel_dashboard-lifecycle",
-            createdAt: now,
-          },
-        ],
-      },
-      interaction: null,
-      deliveries: [],
-      evidenceTimeline: [],
-      receipts: [],
-    } as NotificationDetail
-    render(<InboxFeature bootstrap={detail} />)
-
-    expect(
-      screen.getAllByText("Correct activity lifecycle history").length
-    ).toBeGreaterThan(1)
-    expect(screen.getByText("Dashboard lifecycle fixed")).toBeVisible()
-    expect(
-      screen.getAllByText(/Dashboard lifecycle audit/).length
-    ).toBeGreaterThan(0)
-    expect(screen.getByText("Relo notifications")).toBeVisible()
-    expect(screen.getByText(liveActivity.originThreadId)).toBeVisible()
-    expect(screen.getByText("codex-run-dashboard-lifecycle")).toBeVisible()
-    expect(
-      screen.getByRole("heading", { name: "Lifecycle timeline" })
-    ).toBeVisible()
-    expect(
-      screen.getByRole("heading", {
-        name: "Task instructions and activity generations",
-      })
-    ).toBeVisible()
-    expect(screen.getAllByText("Audit lifecycle history").length).toBeGreaterThan(1)
-    expect(
-      screen.getByRole("heading", { name: "Relationship and correlation evidence" })
-    ).toBeVisible()
-    expect(screen.getByText("continuation predecessor")).toBeVisible()
-    expect(screen.getByText("resumed")).toBeVisible()
-    expect(screen.getByText("Selected")).toBeVisible()
-    expect(screen.getByText("Planning")).toBeVisible()
-    expect(screen.getAllByText("Complete").length).toBeGreaterThan(0)
-    expect(
-      screen.getByText(
-        /APNs acceptance only confirms that Apple accepted the push/
-      )
-    ).toBeVisible()
-    expect(screen.queryByText("No message body.")).not.toBeInTheDocument()
   })
 
   it("keeps provider acceptance separate and can show a dismissed activity again", async () => {
@@ -1255,29 +602,138 @@ describe("Inbox feature contracts", () => {
     const inboxService = service()
     render(<InboxFeature bootstrap={detail} service={inboxService} />)
 
-    expect(
-      screen.getByText(
-        "APNs accepted for at least one target · iOS display unconfirmed"
-      )
-    ).toBeVisible()
-    expect(screen.getByText("No app confirmation yet")).toBeVisible()
-    expect(screen.getByRole("heading", { level: 2, name: "Delivery evidence" })).toBeVisible()
-    expect(screen.getByText("provider accepted")).toBeVisible()
-    expect(
-      screen.getByText(/Provider acceptance and app confirmation are separate/)
-    ).toBeVisible()
-    fireEvent.click(
-      screen.getByRole("button", { name: "Show Live Activity again" })
-    )
+    // Apple acceptance is its own step; with no receipt the phone is never claimed.
+    expect(screen.getByText("Accepted by Apple")).toBeVisible()
+    expect(screen.queryByText(/^Received on/)).toBeNull()
+    expect(screen.queryByRole("link", { name: /open link/i })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Show on iPhone again" }))
     await waitFor(() =>
       expect(inboxService.reactivateActivity).toHaveBeenCalledWith(
         liveActivity.id
       )
     )
-    expect(
-      screen.getByText(
-        "A fresh Live Activity presentation was queued for the dismissed phone."
-      )
-    ).toBeVisible()
+
   })
+
+  it("says what is true now, shows the question once, and confirms before withdrawing", async () => {
+    const future = new Date(Date.now() + 15 * 60_000).toISOString()
+    const prompt = "The checks passed. Deploy now?"
+    const detail = {
+      version: 1,
+      kind: "notification-detail",
+      route: {
+        path: `/dashboard/inbox/notifications/${eventId}`,
+        backHref: "/dashboard/inbox/notifications",
+      },
+      shell: { ...shell, active: "inbox-notifications", title: "Notification" },
+      notification: {
+        ...notification,
+        title: "Deploy 0.7.50 to production?",
+        body: prompt,
+        source: "Codex",
+        kind: "question",
+        state: "active",
+        serviceTitle: null,
+        privacy: "standard",
+        targetMode: "explicit",
+        updatedAt: now,
+        expiresAt: future,
+        readAt: now,
+        destination: { state: "not-set", href: null },
+      },
+      activity: null,
+      interaction: {
+        kind: "approval",
+        state: "pending",
+        action: null,
+        prompt,
+        responseText: null,
+        respondingDevice: null,
+        createdAt: now,
+        expiresAt: future,
+        respondedAt: null,
+      },
+      deliveries: [],
+      evidenceTimeline: [],
+      receipts: [],
+    } as unknown as NotificationDetail
+    const inboxService = {
+      ...service(),
+      withdrawNotification: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<InboxFeature bootstrap={detail} service={inboxService} />)
+
+    expect(screen.getByText("Waiting for your answer")).toBeVisible()
+    expect(screen.getAllByText(prompt)).toHaveLength(1)
+    expect(
+      screen.getByText(/Answer from the notification on your iPhone/)
+    ).toBeVisible()
+    expect(screen.getByText("Sent")).toBeVisible()
+    expect(screen.queryByText("Accepted by Apple")).toBeNull()
+
+    fireEvent.click(screen.getByRole("button", { name: "Withdraw" }))
+    expect(
+      await screen.findByRole("alertdialog", { name: "Withdraw this notification?" })
+    ).toBeVisible()
+    expect(inboxService.withdrawNotification).not.toHaveBeenCalled()
+    const confirm = screen
+      .getAllByRole("button", { name: "Withdraw" })
+      .find((button) => button.closest('[role="alertdialog"]'))!
+    fireEvent.click(confirm)
+    await waitFor(() =>
+      expect(inboxService.withdrawNotification).toHaveBeenCalledWith(eventId)
+    )
+    expect(await screen.findByText("Withdrawn")).toBeVisible()
+  })
+
+  it("shows Source › Project › Topic on each row and the source alone without context", () => {
+    const withContext = {
+      ...notification,
+      id: "ntf_33333333-3333-4333-8333-333333333333",
+      title: "Deploy finished",
+      source: "Codex",
+      context: { ...emptyContext, project: "Relo", threadName: "Releases" },
+    }
+    render(
+      <InboxFeature
+        bootstrap={{ ...overview, pendingResponses: [], approvalRequests: [], recentNotifications: [withContext, notification] }}
+        service={service()}
+      />
+    )
+    const activity = within(screen.getByRole("list", { name: "Activity" }))
+    expect(activity.getByText("Codex › Relo › Releases")).toBeVisible()
+    expect(activity.getByText("Test Lab")).toBeVisible()
+    expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull()
+  })
+
+  it("filters the recent list by project without a round trip", () => {
+    const other = {
+      ...notification,
+      id: "ntf_44444444-4444-4444-8444-444444444444",
+      title: "Sync complete",
+      context: { ...emptyContext, project: "Recovery" },
+    }
+    const relo = { ...notification, context: { ...emptyContext, project: "Relo" } }
+    render(<InboxFeature bootstrap={{ ...overview, recentNotifications: [relo, other] }} service={service()} />)
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "project:Recovery" } })
+    const activity = within(screen.getByRole("list", { name: "Activity" }))
+    expect(activity.getByText("Sync complete")).toBeVisible()
+    expect(activity.queryByText("Release gate")).toBeNull()
+  })
+
+  it("filters history on the server across every page", () => {
+    const history = {
+      version: 1,
+      kind: "notification-history",
+      route: { path: "/dashboard/inbox/notifications", page: 2, filters: { kind: "question", state: null, project: null } },
+      filterOptions: { projects: ["Relo", "Kuatzi"] },
+      shell: { ...shell, active: "inbox-notifications" },
+      notifications: [notification, { ...notification, id: "ntf_55555555-5555-4555-8555-555555555555" }],
+      pagination: { page: 2, pageSize: 25, total: 27, pageCount: 2, previousHref: "/dashboard/inbox/notifications?page=1", nextHref: null },
+    } as NotificationHistory
+    render(<InboxFeature bootstrap={history} service={service()} />)
+    fireEvent.change(screen.getByLabelText("Project"), { target: { value: "Kuatzi" } })
+    expect(navigation.navigateDashboard).toHaveBeenCalledWith("/dashboard/inbox/notifications?project=Kuatzi&kind=question")
+  })
+
 })

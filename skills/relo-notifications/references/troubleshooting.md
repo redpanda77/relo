@@ -6,8 +6,7 @@ Always keep credentials and sensitive payloads out of diagnostics.
 
 Run `auth status --json`. If the credential is absent, invalid, or lacks a required scope, stop and
 ask the user to complete browser-approved onboarding. Never accept, reveal, generate, transfer, or
-SSH-copy a token as a workaround. Run `permissions doctor --json` for permission prerequisites;
-hook absence is an accurately reported limitation, not proof of failure in notification delivery.
+SSH-copy a token as a workaround.
 
 ## Network failure
 
@@ -26,12 +25,13 @@ Exit `7` means no durable device command was enqueued. Inspect safe device readi
 explicit target ownership and status, and retry only after correcting
 the prerequisite. Do not claim delivery and do not allow a protected action.
 
-## Pending or timed-out interaction
+## Unanswered question
 
-A local timeout does not delete a still-valid server interaction. Preserve its ID and resume with
-`interaction wait ID --timeout DURATION --json`. Until an approval returns all permission gates,
-the protected action remains denied. Never create duplicate approval prompts merely to extend a
-local wait.
+Exit `4` means no answer within 5 minutes; treat it as no. The question expired and its card ended;
+`relo activity start` opens a new card if the work continues. Never ask again just to extend the
+wait. `question_pending` means the card already shows a question: wait for it, or
+`relo interaction cancel ID` first. `private_activity_question` means the card is private and cannot
+show questions.
 
 ## Activity sequence conflict
 
@@ -41,7 +41,7 @@ activity exactly once; a terminal state is not retried as a new activity.
 
 ## Live Activity missing or stale on the phone
 
-Run `relo activity diagnose [ID_OR_NAME|--name NAME] --wait --timeout 30s --json`. The diagnosis
+Run `relo activity diagnose --wait --timeout 30s --json` (add a card ID or `--name` for another card). The diagnosis
 stops at the last proven boundary:
 
 - `problemStage: "server"` means the canonical activity exists but direct delivery was disabled,
@@ -56,20 +56,11 @@ claim display from provider acceptance. For starts, a current-generation update-
 is creation proof; for updates and ends, only the receipt tied to that exact event and device proves
 application. Diagnostics report token presence but never token values.
 
-## Codex completes with an ordinary notification
+## Two cards for one piece of work
 
-Automatic lifecycle integration must not fall back to `notify send`. Resolve the installed notifier
-helper from `npm root --global` and run its `doctor` action against the exact `config.toml`, adapter,
-CLI, and installation identity paths. Also run the lifecycle hook doctor. Both must target the same
-reviewed package pair; the notifier command must contain `--lifecycle-only`. A missing lifecycle is
-a safe no-op, while a status/read error is a visible failure. `--notification-fallback` is an explicit
-explicit opt-in and must not appear in the managed command.
-
-Codex may cache or require trust review for changed hooks. After a successful on-disk reconciliation,
-review the hook warning and start a new Codex task before treating an old task's behavior as release
-evidence. A Live Activity remote start includes the alert Apple requires for push-to-start; that one
-alert is not an ordinary Relo notification. Updates and terminal reconciliation remain lifecycle
-operations.
+Inside Claude Code or Codex every command lands on the session's card, so this only happens outside
+a session when the topic changed between commands. Reuse the exact `--topic`, or pass `--name` for an
+explicit card. `relo activity list --json` shows what is open; end strays with `relo activity end ID`.
 
 ## APNs and delivery meaning
 

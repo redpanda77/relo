@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AuthIdentity } from "./auth.js";
 import type { Database } from "./db.js";
 import { internalId,publicId } from "./ids.js";
+import { decodeCursor,encodeCursor } from "./cursor.js";
 
 const resourceCursorSchema = z.tuple([
   z.literal("context-resources-v1"),
@@ -28,24 +29,12 @@ function internalResourceId(prefix: "src" | "prj" | "cnv" | "wrk", value: string
 }
 
 function encodeResourceCursor(snapshotAt: string, firstSeenAt: string, id: string): string {
-  return Buffer.from(
-    JSON.stringify(["context-resources-v1",snapshotAt,firstSeenAt,id]),
-    "utf8",
-  ).toString("base64url");
+  return encodeCursor(["context-resources-v1",snapshotAt,firstSeenAt,id]);
 }
 
 function decodeResourceCursor(value: string | undefined): ResourceCursor | null {
-  if (!value) return null;
-  try {
-    const parsed = resourceCursorSchema.safeParse(
-      JSON.parse(Buffer.from(value,"base64url").toString("utf8")),
-    );
-    return parsed.success
-      ? { snapshotAt: parsed.data[1], firstSeenAt: parsed.data[2], id: parsed.data[3] }
-      : null;
-  } catch {
-    return null;
-  }
+  const parsed = decodeCursor(value,resourceCursorSchema);
+  return parsed ? { snapshotAt: parsed[1], firstSeenAt: parsed[2], id: parsed[3] } : null;
 }
 
 function resourceLimit(context: Context): number | null {
@@ -67,12 +56,14 @@ function resourceReadGuard(): MiddlewareHandler {
   };
 }
 
-function pageBoundary(context: Context): {
+// The first page snapshots the database clock, the same clock that writes first_seen_at,
+// so a resource recorded just before the request is never hidden by host clock skew.
+async function pageBoundary(context: Context, db: Database): Promise<{
   limit: number;
   snapshotAt: string;
   firstSeenAt: string | null;
   id: string | null;
-} | Response {
+} | Response> {
   const limit = resourceLimit(context);
   if (limit === null) return context.json({ error: "invalid_limit" },400);
   const suppliedCursor = context.req.query("cursor");
@@ -82,7 +73,7 @@ function pageBoundary(context: Context): {
   }
   return {
     limit,
-    snapshotAt: cursor?.snapshotAt ?? new Date().toISOString(),
+    snapshotAt: cursor?.snapshotAt ?? iso((await db.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0]!.now),
     firstSeenAt: cursor?.firstSeenAt ?? null,
     id: cursor?.id ?? null,
   };
@@ -136,7 +127,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   const guard = resourceReadGuard();
 
   app.get("/api/resources/sources",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const auth = context.get("auth");
     const result = await db.query<any>(
@@ -160,7 +151,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   });
 
   app.get("/api/resources/projects",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const auth = context.get("auth");
     const result = await db.query<any>(
@@ -191,7 +182,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   });
 
   app.get("/api/resources/conversations",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const sourceIdParam = context.req.query("sourceId");
     const projectIdParam = context.req.query("projectId");
@@ -226,7 +217,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   });
 
   app.get("/api/resources/work-items",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const conversationIdParam = context.req.query("conversationId");
     const conversationId = conversationIdParam === undefined
@@ -261,7 +252,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   });
 
   app.get("/api/resources/generations",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const conversationIdParam = context.req.query("conversationId");
     const workItemIdParam = context.req.query("workItemId");
@@ -300,7 +291,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   });
 
   app.get("/api/resources/activity-relationships",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const activityIdParam = context.req.query("activityId");
     const conversationIdParam = context.req.query("conversationId");
@@ -368,7 +359,7 @@ export function registerContextResourceRoutes(app: Hono, db: Database): void {
   });
 
   app.get("/api/resources/correlation-decisions",guard,async (context) => {
-    const page = pageBoundary(context);
+    const page = await pageBoundary(context,db);
     if (page instanceof Response) return page;
     const activityIdParam = context.req.query("activityId");
     const conversationIdParam = context.req.query("conversationId");

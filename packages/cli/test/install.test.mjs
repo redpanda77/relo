@@ -72,7 +72,7 @@ test("uses distinct artifacts for install, update, exact rollback, and removal w
 
     install(oldArtifact.tarball);
     assert.equal(execFileSync(bin, ["--version"], { encoding: "utf8" }).trim(), "0.1.0");
-    assert.match(execFileSync(alias, ["--help"], { encoding: "utf8" }), /--secret-file PATH/);
+    assert.match(execFileSync(alias, ["help", "all"], { encoding: "utf8" }), /--secret-file PATH/);
     await assertSentinels();
 
     install(newArtifact.tarball);

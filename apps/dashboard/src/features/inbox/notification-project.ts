@@ -1,4 +1,5 @@
 import type { NotificationSummary } from "@/features/inbox/types"
+import { hierarchy } from "@/lib/format"
 
 export type NotificationProjectOption = {
   key: string
@@ -52,4 +53,14 @@ export function notificationProjectOptions(
     options.set(project.key, { key: project.key, name: project.name })
   }
   return [...options.values()]
+}
+
+export function notificationContext(notification: NotificationSummary): string {
+  const project = notificationProject(notification)
+  const context = notification.activity?.context ?? notification.context
+  return hierarchy(
+    notification.source,
+    project.direct ? null : project.name,
+    context.threadName
+  )
 }

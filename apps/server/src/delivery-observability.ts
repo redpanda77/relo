@@ -6,12 +6,13 @@ import type { ApnsMode } from "./activities.js";
 import { requireScope } from "./auth.js";
 import type { Database } from "./db.js";
 import {
-  DeliveryEvidenceError,loadDeliveryEvidence,loadDeliveryEvidenceMetrics,
+  DeliveryEvidenceError,loadDeliveryEvidence,loadDeliveryEvidenceMetrics,shortHash,
 } from "./delivery-evidence.js";
 import {
   DeliveryReconciliationError,deliveryReconciliationActions,reconcileDeliveryJob,
 } from "./delivery-reconciliation.js";
 import { internalId,publicId } from "./ids.js";
+import { decodeCursor,encodeCursor } from "./cursor.js";
 
 const deliveryStatuses = [
   "queued","sending","accepted_by_apns","retryable","rejected","token_invalid",
@@ -307,12 +308,6 @@ function deliveryResource(row: any) {
   };
 }
 
-function shortHash(value: unknown): string | null {
-  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value)
-    ? `sha256:${value.slice(0,12)}`
-    : null;
-}
-
 export function apnsTransportTruth(mode: ApnsMode) {
   return mode === "disabled" ? {
     mode,
@@ -409,38 +404,30 @@ function sameFilters(cursor: DeliveryCursor,filters: ReturnType<typeof parseDeli
     && cursor.deviceId === filters.deviceId && cursor.status === filters.status;
 }
 
+const deliveryCursorSchema = z.tuple([
+  z.literal("deliveries-v1"),z.iso.datetime(),z.uuid(),
+  z.string().nullable(),z.string().nullable(),deliveryStatusSchema.nullable(),
+]);
+const attemptCursorSchema = z.tuple([
+  z.literal("delivery-attempts-v1"),z.iso.datetime(),z.uuid(),z.string().regex(/^job_[A-Za-z0-9-]{36}$/),
+]);
+
 function encodeDeliveryCursor(value: DeliveryCursor): string {
-  return Buffer.from(JSON.stringify([
-    "deliveries-v1",value.createdAt,value.id,value.notificationId,value.deviceId,value.status,
-  ]),"utf8").toString("base64url");
+  return encodeCursor(["deliveries-v1",value.createdAt,value.id,value.notificationId,value.deviceId,value.status]);
 }
 
 function decodeDeliveryCursor(value: string | undefined): DeliveryCursor | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = z.tuple([
-      z.literal("deliveries-v1"),z.iso.datetime(),z.uuid(),
-      z.string().nullable(),z.string().nullable(),deliveryStatusSchema.nullable(),
-    ]).safeParse(JSON.parse(Buffer.from(value,"base64url").toString("utf8")));
-    return parsed.success ? {
-      createdAt: parsed.data[1],id: parsed.data[2],notificationId: parsed.data[3],
-      deviceId: parsed.data[4],status: parsed.data[5],
-    } : undefined;
-  } catch { return undefined; }
+  const parsed = decodeCursor(value,deliveryCursorSchema);
+  return parsed && {
+    createdAt: parsed[1],id: parsed[2],notificationId: parsed[3],deviceId: parsed[4],status: parsed[5],
+  };
 }
 
 function encodeAttemptCursor(value: AttemptCursor): string {
-  return Buffer.from(JSON.stringify([
-    "delivery-attempts-v1",value.createdAt,value.id,value.deliveryId,
-  ]),"utf8").toString("base64url");
+  return encodeCursor(["delivery-attempts-v1",value.createdAt,value.id,value.deliveryId]);
 }
 
 function decodeAttemptCursor(value: string | undefined): AttemptCursor | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = z.tuple([
-      z.literal("delivery-attempts-v1"),z.iso.datetime(),z.uuid(),z.string().regex(/^job_[A-Za-z0-9-]{36}$/),
-    ]).safeParse(JSON.parse(Buffer.from(value,"base64url").toString("utf8")));
-    return parsed.success ? { createdAt: parsed.data[1],id: parsed.data[2],deliveryId: parsed.data[3] } : undefined;
-  } catch { return undefined; }
+  const parsed = decodeCursor(value,attemptCursorSchema);
+  return parsed && { createdAt: parsed[1],id: parsed[2],deliveryId: parsed[3] };
 }

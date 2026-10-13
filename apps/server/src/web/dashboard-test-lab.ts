@@ -1,4 +1,5 @@
 import type { LiveActivityPresentation } from "@relo/notification-contracts";
+import { RUN_CARD_EVIDENCE_SQL,RUN_PHONE_EVIDENCE_SQL } from "./run-evidence.js";
 import type { Handler } from "hono";
 import type { Database } from "../db.js";
 import { internalId, publicId } from "../ids.js";
@@ -75,6 +76,7 @@ export function createDashboardTestLabHandler(
           run_delivery.summary AS delivery_summary,
           run_receipts.expected AS expected_receipts,
           run_receipts.confirmed AS confirmed_receipts,
+          run_card.shown_at AS card_shown_at,
           run_interaction.kind AS interaction_kind,
           run_interaction.state AS interaction_state,
           run_interaction.action AS interaction_action,
@@ -103,18 +105,8 @@ export function createDashboardTestLabHandler(
              e.payload#>>'{workbench,parentActivityId}'='act_'||a.id::text)
            ORDER BY e.created_at DESC,j.updated_at DESC NULLS LAST LIMIT 1
          ) run_delivery ON true
-         LEFT JOIN LATERAL (
-           SELECT count(*)::int AS expected,
-             count(*) FILTER (WHERE EXISTS (
-               SELECT 1 FROM interactions i
-               WHERE i.notification_event_id=e.id
-                 AND i.device_id=t.device_id AND i.kind='received'))::int AS confirmed
-           FROM notification_events e
-           JOIN notification_event_targets t ON t.notification_event_id=e.id
-           WHERE e.principal_id=a.principal_id
-             AND e.payload#>>'{liveActivity,activityId}'='act_'||a.id::text
-             AND e.payload#>>'{liveActivity,sequence}'=a.sequence::text
-         ) run_receipts ON true
+         ${RUN_PHONE_EVIDENCE_SQL}
+         ${RUN_CARD_EVIDENCE_SQL}
          LEFT JOIN LATERAL (
            SELECT r.kind,r.state,i.kind AS action,r.responded_at
            FROM interaction_requests r

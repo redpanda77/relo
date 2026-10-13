@@ -48,10 +48,7 @@ export function DashboardApp({
     case "activity-history":
       content = <ActivityHistoryPage bootstrap={bootstrap} />
       break
-    case "connections-services":
-    case "connections-pairing":
-    case "connections-phones":
-    case "connections-clients":
+    case "connections":
       content = <ConnectionsFeature bootstrap={bootstrap} />
       break
     case "account":

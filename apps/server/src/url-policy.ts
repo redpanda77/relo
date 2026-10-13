@@ -43,3 +43,23 @@ export function isPublicHttpsUrl(value: string): boolean {
 export const publicHttpsUrlSchema = z.url().max(2_048)
   .refine(isPublicHttpsUrl, "Must be a public HTTPS URL");
 export const httpsUrlSchema = z.url().max(2_048).startsWith("https://");
+
+// Schemes that run code or read local state; never a tap destination.
+const blockedDestinationSchemes = new Set([
+  "http", "javascript", "vbscript", "data", "file", "blob", "about", "filesystem", "content",
+]);
+
+/** Tap destinations: HTTPS web or universal links, an app's own scheme, or `shortcuts://`. */
+export function isAllowedDestinationUrl(value: string): boolean {
+  let url: URL;
+  try { url = new URL(value); } catch { return false; }
+  const scheme = url.protocol.slice(0, -1).toLowerCase();
+  if (!/^[a-z][a-z0-9+.-]{0,31}$/.test(scheme) || blockedDestinationSchemes.has(scheme)) return false;
+  if (url.username || url.password) return false;
+  if (scheme === "https") return url.hostname.length > 0;
+  return value.length > scheme.length + 1;
+}
+
+export const destinationUrlSchema = z.string().trim().min(1).max(2_048)
+  .refine(isAllowedDestinationUrl,
+    "Must be an https:// link, an app link such as your-app://path, or a shortcuts:// URL");

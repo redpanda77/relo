@@ -232,11 +232,11 @@ describe("Test Lab contracts", () => {
       />
     )
     const title = await screen.findByLabelText("Title")
-    fireEvent.change(screen.getByLabelText("Target iPhone"), {
+    fireEvent.change(screen.getByLabelText("iPhone"), {
       target: { value: "dev_public_1" },
     })
     fireEvent.change(title, { target: { value: "Persist this draft" } })
-    fireEvent.click(screen.getByRole("button", { name: "Launch run" }))
+    fireEvent.click(screen.getByRole("button", { name: "Send test" }))
     await waitFor(() =>
       expect(openRun).toHaveBeenCalledWith("act_returned_public_id")
     )
@@ -249,7 +249,7 @@ describe("Test Lab contracts", () => {
     expect(
       JSON.parse(localStorage.getItem(BUILDER_DRAFT_KEY)!).allowParallel
     ).toBe(false)
-    fireEvent.click(screen.getByRole("button", { name: "Reset" }))
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }))
     await waitFor(() =>
       expect(screen.getByLabelText("Title")).toHaveValue(
         DEFAULT_BUILDER_DRAFT.title
@@ -278,10 +278,10 @@ describe("Test Lab contracts", () => {
     })
 
     render(<TestLabPage initial={bootstrap} service={testService} />)
-    fireEvent.change(await screen.findByLabelText("Target iPhone"), {
+    fireEvent.change(await screen.findByLabelText("iPhone"), {
       target: { value: "dev_public_1" },
     })
-    fireEvent.click(screen.getByRole("button", { name: "Launch run" }))
+    fireEvent.click(screen.getByRole("button", { name: "Send test" }))
 
     await waitFor(() =>
       expect(document.querySelector("#activity-session")).toHaveAttribute(
@@ -407,56 +407,46 @@ describe("Test Lab contracts", () => {
     expect(container.querySelector("[style]")).not.toBeInTheDocument()
   })
 
-  it("applies the Approval preset and previews both response actions", async () => {
+  it("picks one notification kind and shows only the fields it needs", async () => {
     window.history.replaceState(
       {},
       "",
       "/dashboard/testing?compose=1#activity-builder-panel"
     )
-    const approvalPresentation = {
-      ...presentation,
-      content: {
-        header: "Relo",
-        title: "Approval needed",
-        subtitle: "Review the guarded change",
-        status: "Waiting",
-      },
-      visual: { type: "none" as const },
-      behavior: {
-        type: "approval" as const,
-        primary: { action: "approve", label: "Authorize" },
-        secondary: { action: "deny", label: "Reject" },
-      },
-      components: [],
-      surfaces: {
-        lock_screen: [],
-        expanded_leading: [],
-        expanded_trailing: [],
-        expanded_bottom: [],
-        compact_leading: [],
-        compact_trailing: [],
-        minimal: [],
-      },
-    }
-    const initial = structuredClone(bootstrap)
-    initial.composer.presets.push({
-      id: "approval",
-      label: "Approval",
-      presentation: approvalPresentation,
-    })
+    render(<TestLabPage initial={bootstrap} service={service()} />)
+    expect(
+      await screen.findByRole("radio", { name: /^Progress/ })
+    ).toBeChecked()
+    expect(
+      document.querySelector("[data-builder-progress-fields]")
+    ).toBeInTheDocument()
 
-    render(<TestLabPage initial={initial} service={service()} />)
-    fireEvent.change(await screen.findByLabelText("Preset shortcut"), {
-      target: { value: "approval" },
+    fireEvent.click(screen.getByRole("radio", { name: /^Approval/ }))
+    expect(
+      document.querySelector("[data-builder-progress-fields]")
+    ).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Right button"), {
+      target: { value: "Authorize" },
     })
-
-    expect(screen.getByLabelText("Behavior")).toHaveValue("approval")
-    expect(screen.getByLabelText("Layout recipe")).toHaveValue("none")
-    expect(screen.getByLabelText("Title")).toHaveValue("Approval needed")
+    fireEvent.change(screen.getByLabelText("Left button"), {
+      target: { value: "Reject" },
+    })
+    const draft = JSON.parse(localStorage.getItem(BUILDER_DRAFT_KEY)!)
+    expect(draft).toMatchObject({ behavior: "approval", visual: "none" })
     const actions = document.querySelector("[data-preview-actions]")
     expect(actions).toHaveTextContent("Reject")
     expect(actions).toHaveTextContent("Authorize")
-    expect(actions?.className).toContain("grid-cols-2")
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Steps/ }))
+    expect(screen.getByLabelText("Step 1")).toHaveValue("Queued")
+    fireEvent.click(screen.getByRole("button", { name: "Add step" }))
+    expect(screen.getByLabelText("Step 4")).toHaveValue("")
+    fireEvent.click(screen.getByLabelText("Make step 3 current"))
+    expect(JSON.parse(localStorage.getItem(BUILDER_DRAFT_KEY)!)).toMatchObject({
+      behavior: "progress",
+      visual: "steps",
+      stepCurrent: 3,
+    })
   })
 
   it("sends valid empty JSON for per-run and finish-all terminal mutations", async () => {
@@ -500,14 +490,7 @@ describe("Test Lab contracts", () => {
 
     render(<TestLabPage initial={initial} service={service()} />)
 
-    const ids = [
-      "activity-device",
-      "builder-preset",
-      "builder-behavior",
-      "builder-visual",
-      "builder-symbol",
-      "builder-theme",
-    ]
+    const ids = ["activity-device", "builder-symbol", "builder-theme"]
     for (const id of ids) {
       const select = await waitFor(() => document.getElementById(id))
       expect(select).toBeInstanceOf(HTMLSelectElement)
@@ -515,7 +498,7 @@ describe("Test Lab contracts", () => {
       expect(select).toHaveAttribute("name", id)
     }
 
-    const deviceSelect = screen.getByLabelText("Target iPhone")
+    const deviceSelect = screen.getByLabelText("iPhone")
     expect(deviceSelect).toBeRequired()
     expect(
       deviceSelect.querySelector('option[value="dev_public_unavailable"]')
@@ -536,7 +519,7 @@ describe("Test Lab contracts", () => {
     )
   })
 
-  it("shows generation and keeps ActivityKit evidence separate", async () => {
+  it("shows the delivery chain in plain language and keeps internals in technical details", async () => {
     window.history.replaceState(
       {},
       "",
@@ -554,21 +537,76 @@ describe("Test Lab contracts", () => {
       })
     )
     render(<TestLabPage initial={bootstrap} service={service()} />)
-    expect((await screen.findAllByText("Generation 2")).length).toBeGreaterThan(
-      0
+    const chain = await waitFor(() => {
+      const node = document.querySelector("[data-delivery-chain]")
+      if (!node) throw new Error("chain missing")
+      return node
+    })
+    expect(
+      [...chain.querySelectorAll("[data-stage]")].map((stage) => [
+        stage.getAttribute("data-stage"),
+        stage.getAttribute("data-state"),
+      ])
+    ).toEqual([
+      ["server", "done"],
+      ["apple", "waiting"],
+      ["iphone", "skipped"],
+      ["live-activity", "skipped"],
+      ["response", "skipped"],
+    ])
+    expect(chain).toHaveTextContent("Receipt not tracked")
+    expect(chain).toHaveTextContent("Waiting for the iPhone to show it")
+    expect(screen.getAllByText("Waiting on Apple").length).toBeGreaterThan(0)
+    expect(
+      screen.getByText("Sent as an update to the test already on this iPhone.")
+    ).toBeVisible()
+    expect(screen.getByText("Technical details")).toBeVisible()
+    expect(screen.getByText("2 (Live Activity 2)")).toBeInTheDocument()
+  })
+
+  it("asks before ending a live test", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      `/dashboard/testing/runs/${encodeURIComponent(longId)}#activity-session`
     )
-    expect(screen.getAllByText("Sequence 2").length).toBeGreaterThan(0)
-    expect(screen.getByText("Reused active generation")).toBeVisible()
-    for (const label of [
-      "Server",
-      "Provider",
-      "Phone",
-      "ActivityKit",
-      "Response",
-    ]) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0)
-    }
-    expect(screen.getByText("No native state reported")).toBeVisible()
+    const testService = service()
+    render(<TestLabPage initial={bootstrap} service={testService} />)
+    fireEvent.click(await screen.findByRole("button", { name: "End test" }))
+    expect(
+      await screen.findByRole("alertdialog", { name: "End this test?" })
+    ).toBeVisible()
+    expect(testService.finishRun).not.toHaveBeenCalled()
+    const confirm = screen
+      .getAllByRole("button", { name: "End test" })
+      .find((button) => button.closest('[role="alertdialog"]'))!
+    fireEvent.click(confirm)
+    await waitFor(() =>
+      expect(testService.finishRun).toHaveBeenCalledWith(longId)
+    )
+    expect(testService.getSnapshot).toHaveBeenCalled()
+  })
+
+  it("routes a first-time owner to Connections when no iPhone is ready", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/dashboard/testing?compose=1#activity-builder-panel"
+    )
+    const initial = structuredClone(bootstrap)
+    initial.devices = []
+    initial.runs = []
+    render(<TestLabPage initial={initial} service={service()} />)
+    expect(
+      await screen.findByText("Connect an iPhone to start testing")
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("link", { name: "Connect an iPhone" })
+    ).toHaveAttribute("href", "/dashboard/connections")
+    expect(screen.getByRole("button", { name: "Send test" })).toBeDisabled()
+    expect(document.getElementById("builder-operation")).toHaveTextContent(
+      "Connect an iPhone in Connections to send tests."
+    )
   })
 
   it("consumes only an exact, well-formed launch receipt", () => {
@@ -588,18 +626,21 @@ describe("Test Lab contracts", () => {
     expect(sessionStorage.length).toBe(0)
   })
 
-  it("keeps long public IDs readable and limits active motion to the semantic dot", () => {
+  it("lists runs as one glass list with a delivery trail and plain status", () => {
     const { container, rerender } = render(
       <Sheet>
         <RunMonitor runs={[run]} onSelect={() => undefined} />
       </Sheet>
     )
-    expect(container.querySelector(`[title="${longId}"]`)).toBeVisible()
+    const row = container.querySelector(".test-row")
+    expect(row).toHaveAttribute("data-live", "true")
+    expect(row).toHaveTextContent("Warm launch")
+    expect(row).toHaveTextContent("Waiting on Apple")
+    expect(row?.className).not.toContain("animate-")
     expect(
-      container.querySelector('.status-card[data-live="true"]')
-    ).toBeInTheDocument()
-    expect(container.querySelector(".run-row")?.className).not.toContain(
-      "animate-"
+      container.querySelector("[data-delivery-trail]")?.getAttribute("aria-label")
+    ).toBe(
+      "Delivery: Relo done, Apple waiting, iPhone waiting, Live Activity not needed, Response not needed"
     )
 
     rerender(
@@ -610,16 +651,14 @@ describe("Test Lab contracts", () => {
         />
       </Sheet>
     )
-    expect(
-      container.querySelector('.status-card[data-live="true"]')
-    ).not.toBeInTheDocument()
+    expect(container.querySelector(".test-row")).toHaveAttribute(
+      "data-live",
+      "false"
+    )
 
     const css = readFileSync("src/index.css", "utf8")
     expect(css).toContain("@media (prefers-reduced-motion: reduce)")
     expect(css).toMatch(/\.animate-status-pulse\s*\{\s*display:\s*none;/)
-    expect(css).toContain(
-      '.status-card[data-live="true"] .status-icon-tile::after'
-    )
   })
 
   it("renders notification color and progress without CSP-blocked inline styles", () => {

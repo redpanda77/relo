@@ -29,7 +29,7 @@ flowchart LR
 | `apns-provider-cleanroom.ts` | HTTP/2, signing, Apple response handling | Database/domain policy |
 | `apps/dashboard` | Owner-facing control surface | Canonical business rules |
 | `packages/cli` | Authenticated commands and stable process exits | Parallel state machines or hidden server fallback |
-| `skills/relo-notifications`, `packages/codex-notify` | Agent workflow guidance and Codex lifecycle adaptation | Credentials, server authority, or UI composition |
+| `skills/relo-notifications` | Agent workflow guidance: keep one Live Activity card current, ask on it, notify sparingly | Credentials, server authority, or UI composition |
 | `apps/ios` | Native UI, local cache, ActivityKit, receipts, replies | Server policy or inferred delivery truth |
 | `packages/contracts` | Shared schemas and limits | Runtime I/O or persistence |
 
@@ -53,18 +53,17 @@ the server fetches the destination as part of notification delivery.
 
 ### Phone connection
 
-1. A signed-in Dashboard user creates a ten-minute connection grant from Connections → Connect
-   iPhone. The server stores only its hash and returns the raw grant once inside a current QR
-   document containing the canonical server origin.
-2. The iOS login screen scans the document, validates its type, origin, and expiry, then
-   asks the user to confirm the visible origin.
-3. The API atomically consumes the grant for one installation, creates an account session, and
-   rejects expiry, revocation, or consumption by another installation.
-4. iOS persists the confirmed origin, registers its device through the existing authenticated
-   idempotent registration operation, and uses the resulting device credential for Inbox work.
+1. In the Relo app the only setup action is **Sign in**. It opens the server's web sign-in in the
+   browser, bound to this installation.
+2. The signed-in owner approves on the server's `/mobile/sign-in` page and returns to the app.
+   The server stores only a hash of the one-time code, which expires quickly.
+3. The API atomically consumes the code for that one installation, creates an account session, and
+   rejects expiry or consumption by another installation.
+4. iOS persists the origin, registers its device through the existing authenticated idempotent
+   registration operation, and uses the resulting device credential for Inbox work.
 
-The QR is an authentication handoff, not a container for a password, reusable browser session,
-device credential, or APNs token.
+The returned code is an authentication handoff, not a container for a password, reusable browser
+session, device credential, or APNs token.
 
 ### User administration
 
@@ -101,10 +100,10 @@ flowchart LR
 
 - Requests use `/api`; `/v1` is not an alias.
 - A presentation has no version or fallback field and is projected once for every eligible device.
-- A phone registers through a current account connection grant; pairing-code routes do not exist.
+- A phone registers after browser sign-in; pairing-code and QR routes do not exist.
 - iOS accepts only the current local-storage envelope and discards retired stores.
 - A coordinated contract change clears disposable activity/device state and requires the app to
-  rebuild and pair again.
+  rebuild and sign in again.
 
 Release numbers, PostgreSQL migration filenames, credential revision counters, and Activity
 generation/sequence remain because they identify artifacts, order schema changes, revoke secrets,
@@ -121,7 +120,7 @@ bundle identifiers, package coordinates, configuration keys, and runtime paths a
 
 Major identity or storage cutovers may intentionally invalidate a development database, credentials,
 device registrations, queued jobs, and installed iOS builds. Those cutovers require an explicit
-release note, a fresh database, and client re-pairing; they are not silent compatibility behavior.
+release note, a fresh database, and clients signing in again; they are not silent compatibility behavior.
 
 ## Known structural debt
 

@@ -36,6 +36,7 @@ import type {
   InboxPagination,
   NotificationSummary,
 } from "@/features/inbox/types"
+import { Page } from "@/components/page"
 import { formatDashboardDate } from "@/features/inbox/utils"
 import { semanticStatusTone } from "@/lib/status-tone"
 import { cn } from "@/lib/utils"
@@ -125,76 +126,9 @@ export function InboxPageFrame({
   children: React.ReactNode
 }) {
   return (
-    <main
-      id="main-content"
-      tabIndex={-1}
-      className="canvas min-h-[100dvh] px-4 py-7 sm:px-6 lg:px-10 lg:py-10"
-    >
-      <div className="mx-auto w-full max-w-[1500px]">
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-              {bootstrap.shell.title}
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-              {bootstrap.shell.description}
-            </p>
-          </div>
-          {actions}
-        </header>
-        <InboxTabs bootstrap={bootstrap} />
-        {children}
-      </div>
-    </main>
-  )
-}
-
-function InboxTabs({ bootstrap }: { bootstrap: InboxDashboardBootstrap }) {
-  const items = [
-    {
-      id: "inbox",
-      label: "Inbox",
-      href: "/dashboard",
-      count: bootstrap.shell.counts.pending,
-    },
-    {
-      id: "inbox-notifications",
-      label: "Notifications",
-      href: "/dashboard/inbox/notifications",
-      count: bootstrap.shell.counts.notifications,
-    },
-    {
-      id: "inbox-delivery",
-      label: "Delivery",
-      href: "/dashboard/inbox/delivery",
-      count: bootstrap.shell.counts.deliveries,
-    },
-  ] as const
-  return (
-    <nav aria-label="Inbox views" className="mt-7 overflow-x-auto pb-1">
-      <div className="flex min-w-max gap-1 rounded-xl border border-border bg-card/70 p-1">
-        {items.map((item) => (
-          <Button
-            key={item.id}
-            asChild
-            variant={bootstrap.shell.active === item.id ? "secondary" : "ghost"}
-            className="min-h-11 gap-2 px-3"
-          >
-            <a
-              href={item.href}
-              aria-current={
-                bootstrap.shell.active === item.id ? "page" : undefined
-              }
-            >
-              {item.label}
-              <Badge variant="outline" className="min-w-5 px-1.5 tabular-nums">
-                {item.count}
-              </Badge>
-            </a>
-          </Button>
-        ))}
-      </div>
-    </nav>
+    <Page title={bootstrap.shell.title} actions={actions}>
+      {children}
+    </Page>
   )
 }
 

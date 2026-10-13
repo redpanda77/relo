@@ -10,7 +10,10 @@ enum InboxPresentationProjection {
                 header: base.header ?? item.sourceName,
                 title: semanticContext?.taskTitle ?? summary.title,
                 subtitle: summary.detail ?? base.subtitle,
-                status: summary.status,
+                // An ended card keeps the status it ended with ("Shipped", "Tests failed").
+                status: InboxAttentionProjection.finalStatus(item, now: .now)
+                    ?? InboxAttentionProjection.activityEnding(item, now: .now).map { $0 == .expired ? "Expired" : "Ended" }
+                    ?? summary.status,
                 visual: canonicalVisual(base.visual, progress: summary.progress),
                 behavior: base.behavior,
                 theme: base.theme,
@@ -52,17 +55,17 @@ enum InboxPresentationProjection {
         case nil:
             behavior = .informational
             symbol = InboxHierarchyProjection.project(for: item).presentationSymbol
-            status = item.result ?? item.kind.rawValue
+            status = item.result ?? item.kind.displayName
             accentColor = LiveActivityPresentationFormatting.defaultAccentColor
             secondaryColor = nil
         }
 
         return LiveActivityDisplayPresentation(
             header: item.sourceName,
-            title: item.title,
-            subtitle: item.detail ?? item.interaction?.prompt,
-            status: status,
-            visual: .none,
+            title: item.activitySummary?.context?.taskTitle ?? item.activitySummary?.title ?? item.title,
+            subtitle: item.activitySummary?.detail ?? item.detail ?? item.interaction?.prompt,
+            status: item.interaction != nil ? status : (item.activitySummary?.status ?? status),
+            visual: item.activitySummary?.progress.map { .progressBar(value: $0, label: "Progress") } ?? .none,
             behavior: behavior,
             accentColor: accentColor,
             secondaryColor: secondaryColor,

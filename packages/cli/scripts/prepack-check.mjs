@@ -18,8 +18,9 @@ if (!Array.isArray(manifest.files)
   || !manifest.files.includes("LICENSE")) {
   throw new Error("reloctl package files must include README.md and LICENSE");
 }
+// The packed README must still teach the model, login, and exit codes.
 for (const required of [
-  "--api-url", "--secret-file", "--page-size", "SHA-256", "same-version", "rollback", "uninstall",
+  "--api-url", "--secret-file", "relo activity start", "relo ask", "relo notify", "| `5` | The owner denied or said no",
 ]) {
   if (!readme.includes(required)) throw new Error(`reloctl README is missing ${required}`);
 }

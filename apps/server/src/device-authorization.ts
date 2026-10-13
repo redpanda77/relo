@@ -6,7 +6,7 @@ import type { AccountAuth } from "./account-auth.js";
 import { generateToken, hashMachineToken, hashToken } from "./auth.js";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
-import { escapeHtml, getOwnerAccount } from "./web.js";
+import { getOwnerAccount } from "./web.js";
 import { lockAccountLifecycle } from "./account-lifecycle.js";
 
 export const allowedCliScopes = [

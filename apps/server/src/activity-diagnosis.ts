@@ -225,7 +225,7 @@ function assessDevice(
   if (state === "queued" || state === "sending" || state === "retrying") {
     return assessment("waiting","server","apns","AWAITING_APNS",
       "The command is durable on the server and is still awaiting a final APNs outcome.",
-      "Wait briefly and rerun with `--wait 30s`; inspect the worker if this state does not advance.");
+      "Wait briefly and rerun with `--wait --timeout 30s`; inspect the worker if this state does not advance.");
   }
   if (state !== "accepted") {
     return assessment("unconfirmed","server","apns","APNS_STATE_UNKNOWN",
@@ -248,7 +248,7 @@ function assessDevice(
     operation === "start"
       ? "APNs accepted the start, but the server has no proof that the phone created the Live Activity."
       : "APNs accepted the command, but the phone has not reported applying this exact event.",
-    "Keep Relo installed and registered, verify Live Activities are enabled, then rerun with `--wait 30s`.");
+    "Keep Relo installed and registered, verify Live Activities are enabled, then rerun with `--wait --timeout 30s`.");
 }
 
 function assessment(

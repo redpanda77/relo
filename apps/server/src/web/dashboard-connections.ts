@@ -6,17 +6,15 @@ import {
   effectivePresentationPolicy,
   parsePresentationPolicy,
 } from "../presentation-policy.js";
+import { accountOrRedirect,isoDate,pageNumber,secureHtml } from "./http.js";
+import type { z } from "zod";
+import { connectionsDashboardBootstrapSchema,connectionsOverviewSchema,connectionsShellSchema } from "@relo/notification-contracts/dashboard/connections";
 
 const pageSize = 25;
+/** One page shows every connection a single-owner server realistically has; larger totals are disclosed, never hidden. */
+const overviewLimit = 200;
 
-export type DashboardConnectionsShell = {
-  title: string;
-  description: string;
-  active: "connections-pairing" | "connections-services" | "connections-phones" | "connections-clients";
-  releaseIdentity: string;
-  account: { id: string; initial: string; name: string; email: string };
-  counts: { pending: number; notifications: number; deliveries: number };
-};
+export type DashboardConnectionsShell = z.input<typeof connectionsShellSchema>;
 
 export type DashboardConnectionsPagination = {
   page: number;
@@ -89,23 +87,9 @@ export type ConnectionsClientsBootstrap = ConnectionsBootstrapBase & {
   }>;
 };
 
-export type ConnectionsPairingBootstrap = ConnectionsBootstrapBase & {
-  kind: "connections-pairing";
-  grants: Array<{
-    id: string;
-    prefix: string;
-    status: "pending" | "consumed" | "expired" | "revoked";
-    createdAt: string;
-    expiresAt: string;
-    consumedAt: string | null;
-  }>;
-};
 
-export type ConnectionsDashboardBootstrap =
-  | ConnectionsPairingBootstrap
-  | ConnectionsServicesBootstrap
-  | ConnectionsPhonesBootstrap
-  | ConnectionsClientsBootstrap;
+export type ConnectionsOverviewBootstrap = z.input<typeof connectionsOverviewSchema>;
+export type ConnectionsDashboardBootstrap = z.input<typeof connectionsDashboardBootstrapSchema>;
 
 export type ConnectionsDashboardAccount = {
   principalId: string;
@@ -123,18 +107,6 @@ type ConnectionsHandlerDependencies = {
 function number(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
-}
-
-function isoDate(value: unknown): string | null {
-  if (!value) return null;
-  const date = new Date(String(value));
-  return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
-}
-
-function pageNumber(value: string | undefined): number {
-  if (!value || !/^\d+$/.test(value)) return 1;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
 function pagination(
@@ -249,192 +221,98 @@ function common(input: {
   };
 }
 
-async function accountOrRedirect(
-  context: any,
-  getAccount: ConnectionsHandlerDependencies["getAccount"],
-): Promise<ConnectionsDashboardAccount | Response> {
-  const account = await getAccount(context.req.raw.headers);
-  return (
-    account ??
-    context.redirect(`/?next=${encodeURIComponent(context.req.path)}`)
+async function loadServices(db: Database, principalId: string, accountPolicy: unknown, limit: number) {
+  const result = await db.query<any>(
+    `SELECT id,title,secret_prefix,image_url,default_url,live_activity_policy,created_at
+    FROM webhook_services WHERE principal_id=$1 AND revoked_at IS NULL
+    ORDER BY created_at DESC,id DESC LIMIT $2`,
+    [principalId, limit],
   );
+  return result.rows.map((row): ConnectionsServicesBootstrap["services"][number] => {
+    const resolved = effectivePresentationPolicy(row.live_activity_policy,accountPolicy,"service");
+    return {
+      id: publicId("svc", String(row.id)),
+      title: String(row.title),
+      prefix: String(row.secret_prefix),
+      imageUrl: row.image_url == null ? null : String(row.image_url),
+      destinationUrl: row.default_url == null ? null : String(row.default_url),
+      liveActivityPolicy: parsePresentationPolicy(row.live_activity_policy),
+      effectiveLiveActivityPolicy: resolved.policy,
+      liveActivityPolicySource: resolved.source as "service" | "account" | "system",
+      createdAt: isoDate(row.created_at),
+    };
+  });
 }
 
-function secureHtml(context: any, html: string): Response {
-  context.header(
-    "content-security-policy",
-    "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+async function loadPhones(db: Database, principalId: string, limit: number) {
+  const result = await db.query<any>(
+    `SELECT id,name,model,app_version,os_version,notification_authorization,
+      live_activity_authorization,last_seen_at
+    FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
+    ORDER BY last_seen_at DESC,id DESC LIMIT $2`,
+    [principalId, limit],
   );
-  context.header("cache-control", "private, no-store");
-  context.header("x-content-type-options", "nosniff");
-  return context.html(html);
+  return result.rows.map((row): ConnectionsPhonesBootstrap["phones"][number] => ({
+    id: publicId("dev", String(row.id)),
+    name: String(row.name),
+    model: String(row.model ?? "Unknown model"),
+    appVersion: String(row.app_version ?? "Unknown"),
+    osVersion: String(row.os_version ?? "Unknown"),
+    notificationAuthorization: String(row.notification_authorization ?? "unknown"),
+    liveActivityAuthorization: String(row.live_activity_authorization ?? "unknown"),
+    lastSeenAt: isoDate(row.last_seen_at),
+  }));
+}
+
+async function loadClients(db: Database, principalId: string, accountPolicy: unknown, limit: number) {
+  const result = await db.query<any>(
+    `SELECT id,label,token_prefix,scopes,live_activity_policy,created_at,expires_at,last_used_at
+    FROM principal_api_keys WHERE principal_id=$1 AND revoked_at IS NULL
+      AND (expires_at IS NULL OR expires_at>now())
+    ORDER BY created_at DESC,id DESC LIMIT $2`,
+    [principalId, limit],
+  );
+  return result.rows.map((row): ConnectionsClientsBootstrap["clients"][number] => {
+    const resolved = effectivePresentationPolicy(row.live_activity_policy,accountPolicy,"client");
+    return {
+      id: publicId("key", String(row.id)),
+      label: String(row.label),
+      prefix: String(row.token_prefix),
+      scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
+      liveActivityPolicy: parsePresentationPolicy(row.live_activity_policy),
+      effectiveLiveActivityPolicy: resolved.policy,
+      liveActivityPolicySource: resolved.source as "client" | "account" | "system",
+      createdAt: isoDate(row.created_at),
+      expiresAt: isoDate(row.expires_at),
+      lastUsedAt: isoDate(row.last_used_at),
+    };
+  });
 }
 
 export function createDashboardConnectionsHandlers(
   dependencies: ConnectionsHandlerDependencies,
-): { pairing: Handler; services: Handler; phones: Handler; clients: Handler } {
+): { overview: Handler } {
   const { db, getAccount, releaseIdentity, renderDocument } = dependencies;
 
-  const pairing: Handler = async (context) => {
+  const overview: Handler = async (context) => {
     const account = await accountOrRedirect(context, getAccount);
     if (account instanceof Response) return account;
+    const accountPolicy = await loadAccountPolicy(db,account.principalId);
     const summary = await loadSummary(db, account.principalId);
-    const result = await db.query<any>(
-      `SELECT id,grant_prefix,created_at,expires_at,consumed_at,revoked_at
-       FROM connection_grants WHERE principal_id=$1
-       ORDER BY created_at DESC LIMIT 25`,
-      [account.principalId],
-    );
     const { base } = common({
-      context, account, releaseIdentity, active: "connections-pairing",
+      context, account, releaseIdentity, active: "connections",
       title: "Connections",
-      description: "Connect phones, webhook services, and agent clients to this Relo server.",
-      summary, total: result.rowCount ?? 0,
+      description: "Phones, CLI clients, and webhooks connected to this server.",
+      summary, total: 0,
     });
-    const now = Date.now();
-    const bootstrap: ConnectionsPairingBootstrap = {
-      ...base,
-      kind: "connections-pairing",
-      grants: result.rows.map((row) => ({
-        id: publicId("pair",String(row.id)),
-        prefix: String(row.grant_prefix),
-        status: row.revoked_at ? "revoked" : row.consumed_at ? "consumed"
-          : new Date(row.expires_at).valueOf() <= now ? "expired" : "pending",
-        createdAt: new Date(row.created_at).toISOString(),
-        expiresAt: new Date(row.expires_at).toISOString(),
-        consumedAt: isoDate(row.consumed_at),
-      })),
-    };
+    const [phones, clients, services] = await Promise.all([
+      loadPhones(db, account.principalId, overviewLimit),
+      loadClients(db, account.principalId, accountPolicy, overviewLimit),
+      loadServices(db, account.principalId, accountPolicy, overviewLimit),
+    ]);
+    const bootstrap: ConnectionsOverviewBootstrap = { ...base, kind: "connections", phones, clients, services };
     return secureHtml(context, await renderDocument(bootstrap));
   };
 
-  const services: Handler = async (context) => {
-    const account = await accountOrRedirect(context, getAccount);
-    if (account instanceof Response) return account;
-    const accountPolicy = await loadAccountPolicy(db,account.principalId);
-    const summary = await loadSummary(db, account.principalId);
-    const { base, pages } = common({
-      context,
-      account,
-      releaseIdentity,
-      active: "connections-services",
-      title: "Connections",
-      description: "Connect phones, webhook services, and agent clients to this Relo server.",
-      summary,
-      total: summary.services,
-    });
-    const result = await db.query<any>(
-      `SELECT id,title,secret_prefix,image_url,default_url,live_activity_policy,created_at
-      FROM webhook_services WHERE principal_id=$1 AND revoked_at IS NULL
-      ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`,
-      [account.principalId, pageSize, (pages.page - 1) * pageSize],
-    );
-    const bootstrap: ConnectionsServicesBootstrap = {
-      ...base,
-      kind: "connections-services",
-      services: result.rows.map((row) => {
-        const resolved = effectivePresentationPolicy(row.live_activity_policy,accountPolicy,"service");
-        return {
-          id: publicId("svc", String(row.id)),
-          title: String(row.title),
-          prefix: String(row.secret_prefix),
-          imageUrl: row.image_url == null ? null : String(row.image_url),
-          destinationUrl: row.default_url == null ? null : String(row.default_url),
-          liveActivityPolicy: parsePresentationPolicy(row.live_activity_policy),
-          effectiveLiveActivityPolicy: resolved.policy,
-          liveActivityPolicySource: resolved.source,
-          createdAt: isoDate(row.created_at),
-        };
-      }),
-    };
-    return secureHtml(context, await renderDocument(bootstrap));
-  };
-
-  const phones: Handler = async (context) => {
-    const account = await accountOrRedirect(context, getAccount);
-    if (account instanceof Response) return account;
-    const summary = await loadSummary(db, account.principalId);
-    const { base, pages } = common({
-      context,
-      account,
-      releaseIdentity,
-      active: "connections-phones",
-      title: "Connections",
-      description: "Connect phones, webhook services, and agent clients to this Relo server.",
-      summary,
-      total: summary.phones,
-    });
-    const result = await db.query<any>(
-      `SELECT id,name,model,app_version,os_version,notification_authorization,
-        live_activity_authorization,last_seen_at
-      FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
-      ORDER BY last_seen_at DESC,id DESC LIMIT $2 OFFSET $3`,
-      [account.principalId, pageSize, (pages.page - 1) * pageSize],
-    );
-    const bootstrap: ConnectionsPhonesBootstrap = {
-      ...base,
-      kind: "connections-phones",
-      phones: result.rows.map((row) => ({
-        id: publicId("dev", String(row.id)),
-        name: String(row.name),
-        model: String(row.model ?? "Unknown model"),
-        appVersion: String(row.app_version ?? "Unknown"),
-        osVersion: String(row.os_version ?? "Unknown"),
-        notificationAuthorization: String(
-          row.notification_authorization ?? "unknown",
-        ),
-        liveActivityAuthorization: String(
-          row.live_activity_authorization ?? "unknown",
-        ),
-        lastSeenAt: isoDate(row.last_seen_at),
-      })),
-    };
-    return secureHtml(context, await renderDocument(bootstrap));
-  };
-
-  const clients: Handler = async (context) => {
-    const account = await accountOrRedirect(context, getAccount);
-    if (account instanceof Response) return account;
-    const accountPolicy = await loadAccountPolicy(db,account.principalId);
-    const summary = await loadSummary(db, account.principalId);
-    const { base, pages } = common({
-      context,
-      account,
-      releaseIdentity,
-      active: "connections-clients",
-      title: "Connections",
-      description: "Connect phones, webhook services, and agent clients to this Relo server.",
-      summary,
-      total: summary.clients,
-    });
-    const result = await db.query<any>(
-      `SELECT id,label,token_prefix,scopes,live_activity_policy,created_at,expires_at,last_used_at
-      FROM principal_api_keys WHERE principal_id=$1 AND revoked_at IS NULL
-        AND (expires_at IS NULL OR expires_at>now())
-      ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`,
-      [account.principalId, pageSize, (pages.page - 1) * pageSize],
-    );
-    const bootstrap: ConnectionsClientsBootstrap = {
-      ...base,
-      kind: "connections-clients",
-      clients: result.rows.map((row) => {
-        const resolved = effectivePresentationPolicy(row.live_activity_policy,accountPolicy,"client");
-        return {
-          id: publicId("key", String(row.id)),
-          label: String(row.label),
-          prefix: String(row.token_prefix),
-          scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
-          liveActivityPolicy: parsePresentationPolicy(row.live_activity_policy),
-          effectiveLiveActivityPolicy: resolved.policy,
-          liveActivityPolicySource: resolved.source,
-          createdAt: isoDate(row.created_at),
-          expiresAt: isoDate(row.expires_at),
-          lastUsedAt: isoDate(row.last_used_at),
-        };
-      }),
-    };
-    return secureHtml(context, await renderDocument(bootstrap));
-  };
-
-  return { pairing, services, phones, clients };
+  return { overview };
 }

@@ -2,15 +2,12 @@ import {
   Archive,
   ArrowLeft,
   CircleCheck,
-  CircleDot,
-  ChevronRight,
   Code2,
   Folder,
   FolderKanban,
   GitMerge,
   Hammer,
   LayoutDashboard,
-  MessageSquareText,
   Palette,
   RotateCcw,
   Split,
@@ -21,7 +18,7 @@ import {
 } from "lucide-react"
 import * as React from "react"
 
-import { Badge } from "@/components/ui/badge"
+import { Empty, List, Page, Row, Section, Status } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -40,6 +37,7 @@ import type {
   DashboardProject,
   ProjectsDashboardBootstrap,
 } from "@/features/projects/types"
+import { relativeTime } from "@/lib/format"
 import { projectsService } from "@/services/projects-service"
 
 const projectColors = [
@@ -106,62 +104,22 @@ function ProjectMark({ project }: { project: DashboardProject }) {
   )
 }
 
-function Summary({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }) {
-  const items = [
-    ["Active", bootstrap.summary.active],
-    ["Direct", bootstrap.summary.direct],
-    ["Archived", bootstrap.summary.archived],
-    ["Conversations", bootstrap.summary.conversations],
-  ] as const
-  return (
-    <dl className="mt-7 grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-4">
-      {items.map(([label, value]) => (
-        <div key={label} className="bg-card px-4 py-3 sm:px-5">
-          <dt className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            {label}
-          </dt>
-          <dd className="mt-1 text-2xl font-semibold tabular-nums">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
 function ProjectIndex({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }) {
   if (!bootstrap.projects.length)
-    return (
-      <Card className="mt-6">
-        <CardContent className="py-10 text-center text-muted-foreground">
-          Projects appear when notifications or Live Activities provide context.
-        </CardContent>
-      </Card>
-    )
+    return <Empty title="No projects yet" description="Projects appear as soon as a notification or Live Activity names one." />
   return (
-    <section className="mt-6 overflow-hidden rounded-xl border bg-card" aria-label="Project index">
+    <List label="Projects">
       {bootstrap.projects.map((project) => (
-        <a
+        <Row
           key={project.id}
           href={`/dashboard/projects/${encodeURIComponent(project.id)}`}
-          className="group grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b px-4 py-3 outline-none last:border-b-0 hover:bg-accent/45 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
-        >
-          <ProjectMark project={project} />
-          <span className="min-w-0">
-            <span className="flex min-w-0 items-center gap-2">
-              <strong className="truncate text-[15px]">{project.name}</strong>
-              {project.isDirect ? <Badge variant="outline">Direct</Badge> : null}
-              {project.archivedAt ? <Badge variant="secondary">Archived</Badge> : null}
-            </span>
-            <span className="mt-1 block truncate text-xs text-muted-foreground">
-              {project.counts.conversations} conversations · {project.counts.notifications} notifications · {project.counts.activities} activities
-            </span>
-          </span>
-          <span className="col-start-2 text-xs text-muted-foreground sm:col-start-auto">
-            Seen {date(project.lastSeenAt)}
-          </span>
-          <ChevronRight className="col-start-3 row-span-2 row-start-1 size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 sm:col-start-auto sm:row-auto" aria-hidden="true" />
-        </a>
+          leading={<ProjectMark project={project} />}
+          title={<>{project.name}{project.archivedAt ? <span className="ml-2 text-xs font-normal text-muted-foreground">Archived</span> : null}</>}
+          meta={`${project.counts.conversations} ${project.counts.conversations === 1 ? "topic" : "topics"} · ${project.counts.notifications} notifications`}
+          trailing={<time dateTime={project.lastSeenAt} title={date(project.lastSeenAt)}>{relativeTime(project.lastSeenAt)}</time>}
+        />
       ))}
-    </section>
+    </List>
   )
 }
 
@@ -377,76 +335,44 @@ function ManagementRail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }
 
 function ProjectDetail({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }) {
   const selected = bootstrap.selected!
-  const project = selected.project
   return (
-    <div className="mt-7 grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
-      <div className="order-2 min-w-0 space-y-5 xl:order-1">
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="flex min-w-0 items-center gap-3">
-                <ProjectMark project={project} />
-                <div className="min-w-0">
-                  <h2 className="truncate text-xl font-semibold leading-none tracking-tight">{project.name}</h2>
-                  <CardDescription className="mt-1 font-mono text-xs">{project.key}</CardDescription>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                {project.isDirect ? <Badge variant="outline">System direct</Badge> : <Badge variant="outline">Named project</Badge>}
-                {project.archivedAt ? <Badge variant="secondary">Archived</Badge> : <Badge>Active</Badge>}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="grid grid-cols-3 gap-3 border-t pt-4 text-center">
-            {[["Conversations",project.counts.conversations],["Notifications",project.counts.notifications],["Activities",project.counts.activities]].map(([label,value]) => (
-              <div key={label} className="min-w-0"><strong className="block text-xl tabular-nums">{value}</strong><span className="text-xs text-muted-foreground">{label}</span></div>
+    <>
+      <Section title="Topics">
+        {selected.conversations.length ? (
+          <List label="Topics">
+            {selected.conversations.map((conversation) => (
+              <Row key={conversation.id} title={conversation.name}
+                trailing={<time dateTime={conversation.lastSeenAt} title={date(conversation.lastSeenAt)}>{relativeTime(conversation.lastSeenAt)}</time>} />
             ))}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><h2 className="flex items-center gap-2 font-semibold leading-none tracking-tight"><MessageSquareText className="size-4" /> Conversations</h2><CardDescription>Durable threads currently assigned to this identity.</CardDescription></CardHeader>
-          <CardContent>
-            {selected.conversations.length ? <ul className="divide-y rounded-lg border">{selected.conversations.map((conversation) => (
-              <li key={conversation.id} className="flex min-w-0 items-center justify-between gap-3 px-3 py-3">
-                <span className="min-w-0"><strong className="block truncate text-sm">{conversation.name}</strong><span className="text-xs text-muted-foreground">{conversation.producerKind} · {conversation.assignmentSource} assignment</span></span>
-                <span className="shrink-0 text-xs text-muted-foreground">{date(conversation.lastSeenAt)}</span>
-              </li>
-            ))}</ul> : <p className="text-sm text-muted-foreground">No durable conversations are assigned.</p>}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><h2 className="flex items-center gap-2 font-semibold leading-none tracking-tight"><CircleDot className="size-4" /> Recent history</h2><CardDescription>Latest canonical activity for this project.</CardDescription></CardHeader>
-          <CardContent>
-            {selected.recent.length ? <ul className="divide-y rounded-lg border">{selected.recent.map((item) => (
-              <li key={`${item.kind}-${item.id}`} className="flex min-w-0 items-center justify-between gap-3 px-3 py-3">
-                <span className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><span className="text-xs capitalize text-muted-foreground">{item.kind} · {item.state.replaceAll("_"," ")}</span></span>
-                <span className="shrink-0 text-xs text-muted-foreground">{date(item.occurredAt)}</span>
-              </li>
-            ))}</ul> : <p className="text-sm text-muted-foreground">No recent history remains.</p>}
-          </CardContent>
-        </Card>
-      </div>
-      <ManagementRail bootstrap={bootstrap} />
-    </div>
+          </List>
+        ) : <Empty title="No topics yet" />}
+      </Section>
+      <Section title="Recent activity">
+        {selected.recent.length ? (
+          <List label="Recent activity">
+            {selected.recent.map((item) => (
+              <Row key={`${item.kind}-${item.id}`} title={item.title}
+                trailing={<><Status value={item.state} /><time dateTime={item.occurredAt} title={date(item.occurredAt)}>{relativeTime(item.occurredAt)}</time></>} />
+            ))}
+          </List>
+        ) : <Empty title="No recent activity" />}
+      </Section>
+      <details className="group">
+        <summary className="cursor-pointer text-sm text-muted-foreground select-none hover:text-foreground">Manage project</summary>
+        <div className="mt-4 max-w-xl"><ManagementRail bootstrap={bootstrap} /></div>
+      </details>
+    </>
   )
 }
 
 export function ProjectsPage({ bootstrap }: { bootstrap: ProjectsDashboardBootstrap }) {
+  const selected = bootstrap.selected
   return (
-    <main id="main-content" tabIndex={-1} className="canvas min-h-[100dvh] px-4 py-7 sm:px-6 lg:px-10 lg:py-10">
-      <div className="mx-auto w-full max-w-[1500px]">
-        <header className="flex min-w-0 items-start gap-3">
-          {bootstrap.selected ? <Button asChild variant="ghost" size="icon" className="mt-0.5 size-11 shrink-0"><a href="/dashboard/projects" aria-label="Back to Projects"><ArrowLeft /></a></Button> : null}
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Resource registry</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{bootstrap.selected ? bootstrap.selected.project.name : bootstrap.shell.title}</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">{bootstrap.selected ? "Inspect identity and membership, then make revision-fenced owner changes." : bootstrap.shell.description}</p>
-          </div>
-        </header>
-        {bootstrap.selected ? <ProjectDetail bootstrap={bootstrap} /> : <><Summary bootstrap={bootstrap} /><ProjectIndex bootstrap={bootstrap} /></>}
-      </div>
-    </main>
+    <Page
+      title={selected ? selected.project.name : "Projects"}
+      actions={selected ? <a href="/dashboard/projects" className="inline-flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" aria-hidden="true" /> All projects</a> : null}
+    >
+      {selected ? <ProjectDetail bootstrap={bootstrap} /> : <ProjectIndex bootstrap={bootstrap} />}
+    </Page>
   )
 }

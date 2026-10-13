@@ -1,6 +1,6 @@
 {
   "name": "@relo/cli",
-  "version": "0.7.17",
+  "version": "0.9.2",
   "private": true,
   "description": "Command-line client for a self-hosted Relo server",
   "type": "module",
@@ -15,8 +15,8 @@
     "reloctl": "./bin/relo.mjs"
   },
   "scripts": {
-    "test": "node --test",
-    "check": "node --check src/*.mjs && node --check bin/*.mjs && node --check scripts/*.mjs",
+    "test": "node --import ./test/hermetic-env.mjs --test",
+    "check": "node --check src/*.mjs && node --check src/commands/*.mjs && node --check bin/*.mjs && node --check scripts/*.mjs",
     "prepack": "npm run check && node scripts/prepack-check.mjs"
   },
   "engines": {

@@ -40,30 +40,30 @@ export function systemPresentationPolicySnapshot(presetId: string) {
 }
 
 const accentPalette = [
-  "#5ED8B7",
-  "#63B3FF",
-  "#F2A65A",
-  "#C59BFF",
-  "#FF7A90",
-  "#58CFD2",
-  "#E2C45B",
-  "#7BD88F",
-  "#7A9CFF",
-  "#E58CD8",
-  "#FF916F",
-  "#72C7F2",
-  "#A6D75B",
-  "#B58AFF",
-  "#F0B45A",
-  "#50C6A8",
-  "#E47AAB",
-  "#8DB7E8",
-  "#D3A65C",
-  "#6FC4D8",
-  "#B4C96A",
-  "#D28DE0",
-  "#F08A78",
-  "#83BEEB",
+  "#5CE1FF",
+  "#8B7CFF",
+  "#D65CF0",
+  "#4D8DFF",
+  "#34D399",
+  "#FBBF24",
+  "#FF6B57",
+  "#FF5CA8",
+  "#2DD4E0",
+  "#A78BFA",
+  "#F472D0",
+  "#60A5FA",
+  "#4ADE80",
+  "#FFD24D",
+  "#FF8A5C",
+  "#FF7AB6",
+  "#22D3EE",
+  "#B07CFF",
+  "#E879F9",
+  "#3B9CFF",
+  "#2EE6A6",
+  "#FFC53D",
+  "#FF7467",
+  "#6EE7F9",
 ] as const;
 
 type ActivityPresentationInput = {
@@ -74,7 +74,8 @@ type ActivityPresentationInput = {
   progressLabel?: string | null | undefined;
   steps?: { labels: string[];current: number } | undefined;
   symbol?: "terminal" | "code" | "build" | "success" | "warning" | undefined;
-  style?: "standard" | "hero" | "terminal" | "steps" | undefined;
+  style?: "standard" | "ring" | "hero" | "terminal" | "steps" | undefined;
+  privacy?: "standard" | "private" | undefined;
   preset?: LiveActivityPresentationPolicy["preset"] | undefined;
   theme?: LiveActivityPresentationPolicy["theme"] | undefined;
   accentColor?: string | undefined;
@@ -175,14 +176,26 @@ function stableAccentIndex(principalId: string,key: string): number {
   return digest.readUInt16BE(0) % accentPalette.length;
 }
 
+const identityLabelLimit = 48;
+
+/** Identity labels are display text: trim to the contract instead of rejecting the activity. */
+function identityLabel(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.length <= identityLabelLimit ? trimmed : `${trimmed.slice(0, identityLabelLimit - 1).trimEnd()}…`;
+}
+
 function generatedPresentationIdentity(
   principalId: string,
   input: ActivityPresentationInput,
   presentation: LiveActivityPresentation,
   policy: LiveActivityPresentationPolicy,
 ): LiveActivityPresentation["identity"] {
-  const projectLabel = input.origin?.project ?? input.context?.project;
-  const threadLabel = input.origin?.thread ?? input.context?.threadName ?? input.context?.taskTitle;
+  // Colors key on the stable identity; labels show the human name and always fit the contract.
+  const projectKey = input.origin?.project ?? input.context?.project;
+  const threadKey = input.origin?.thread ?? input.context?.threadName ?? input.context?.taskTitle;
+  const projectLabel = projectKey === undefined ? undefined : identityLabel(input.context?.project ?? projectKey);
+  const threadLabel = threadKey === undefined ? undefined
+    : identityLabel(input.context?.threadName ?? input.context?.taskTitle ?? threadKey);
   if (!projectLabel) {
     const ownerProject = presentation.identity.project?.provenance === "owner"
       ? presentation.identity.project : null;
@@ -190,10 +203,10 @@ function generatedPresentationIdentity(
       ? { project: ownerProject,thread: null,direct: false }
       : { project: null,thread: null,direct: true };
   }
-  const projectIndex = stableAccentIndex(principalId,`project:${projectLabel}`);
-  let threadIndex = threadLabel === undefined
+  const projectIndex = stableAccentIndex(principalId,`project:${projectKey}`);
+  let threadIndex = threadKey === undefined
     ? projectIndex
-    : stableAccentIndex(principalId,`project:${projectLabel}\0thread:${threadLabel}`);
+    : stableAccentIndex(principalId,`project:${projectKey}\0thread:${threadKey}`);
   if (threadLabel !== undefined && threadIndex === projectIndex) {
     threadIndex = (threadIndex + 7) % accentPalette.length;
   }
@@ -244,7 +257,7 @@ function semanticStyle(input: ActivityPresentationInput): "standard" | "hero" | 
   return "standard";
 }
 
-function resolvedStyle(input: ActivityPresentationInput,policy: LiveActivityPresentationPolicy): "standard" | "hero" | "terminal" | "steps" {
+function resolvedStyle(input: ActivityPresentationInput,policy: LiveActivityPresentationPolicy): "standard" | "ring" | "hero" | "terminal" | "steps" {
   if (input.style) return input.style;
   const preset = input.preset && input.preset !== "automatic" ? input.preset : policy.preset;
   if (preset === "terminal" || preset === "steps") return preset;
@@ -271,7 +284,7 @@ function resolvedSymbol(input: ActivityPresentationInput,policy: LiveActivityPre
 function resolvedPresetId(
   input: ActivityPresentationInput,
   policy: LiveActivityPresentationPolicy,
-  style: "standard" | "hero" | "terminal" | "steps",
+  style: "standard" | "ring" | "hero" | "terminal" | "steps",
 ): string {
   if (input.style) return `invocation.style.${input.style}`;
   if (input.preset && input.preset !== "automatic") return `invocation.${input.preset}`;
@@ -338,7 +351,7 @@ function semanticStepsPresentation(
       theme,
       roles: { cardIdentity: "project",componentIdentity: "thread",statusEmphasis: "state" },
     },
-    privacy: "standard",
+    privacy: input.privacy ?? "standard",
   });
   return canonicalPresentation({
     ...requested,
@@ -394,8 +407,9 @@ function semanticPresentation(
     appearance: {
       theme: input.theme ?? (style === "terminal" && policy.theme === "system" ? "dark" : policy.theme),
       roles: { cardIdentity: "project",componentIdentity: "thread",statusEmphasis: "state" },
+      ...(style === "ring" ? { progressDisplay: "ring" as const } : {}),
     },
-    privacy: "standard",
+    privacy: input.privacy ?? "standard",
   });
   return canonicalPresentation({
     ...requested,
@@ -474,9 +488,13 @@ export function preserveActivePresentationPolicy(
   const layoutFields = ["preset","style"] as const;
   const replacesLayout = input.presentation !== undefined
     || layoutFields.some((field) => input[field] !== undefined);
-  if (replacesLayout) return resolved;
-
   const current = presentationFromRow(row);
+  if (replacesLayout) {
+    // A new layout never silently publishes a private activity's content.
+    return input.presentation !== undefined || resolved.presentation.privacy === current.privacy ? resolved
+      : persistedPresentationColumns({ ...resolved.presentation,privacy: current.privacy });
+  }
+
   const cosmeticFields = ["theme","symbol","accentColor"] as const;
   const changesAppearance = cosmeticFields.some((field) => input[field] !== undefined);
   const ownerIdentity = current.identity.project?.provenance === "owner"
@@ -496,7 +514,7 @@ export function preserveActivePresentationPolicy(
           subtitle: input.detail === undefined ? current.content.subtitle : input.detail,
         },
         identity: current.identity.direct ? resolved.presentation.identity : current.identity,
-        privacy: "standard",
+        privacy: current.privacy,
       });
       return persistedPresentationColumns(replacement);
     }
@@ -528,7 +546,7 @@ export function preserveActivePresentationPolicy(
             ...normalizedCurrent.appearance,
             theme: resolved.presentation.appearance.theme,
           },
-      privacy: "standard",
+      privacy: normalizedCurrent.privacy,
       state: generatedPresentationState(input,normalizedCurrent),
     });
     return persistedPresentationColumns(presentation);

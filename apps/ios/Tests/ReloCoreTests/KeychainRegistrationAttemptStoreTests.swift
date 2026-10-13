@@ -1,3 +1,4 @@
+@testable import ReloPersistence
 import Foundation
 import Security
 import XCTest
@@ -63,8 +64,7 @@ final class KeychainRegistrationAttemptStoreTests: XCTestCase {
             errSecItemNotFound
         )
     }
-
-    func testPreflightClearsRetiredKeychainContractBeforeProtectedReads() throws {
+    func testPreflightPreservesIncompatibleProtectedStateWhenMarkerIsRetired() throws {
         let service = "com.example.relo.notifications.tests.\(UUID().uuidString)"
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -95,12 +95,14 @@ final class KeychainRegistrationAttemptStoreTests: XCTestCase {
         )
         try Data("retired-cache".utf8).write(to: staleAccountFile)
 
-        XCTAssertNoThrow(try KeychainLocalStoragePreflight(
+        XCTAssertThrowsError(try KeychainLocalStoragePreflight(
             service: service,
             accountsDirectory: accountsDirectory
-        ).run())
-        XCTAssertNil(try KeychainAccountSessionStore(service: service).load())
-        XCTAssertFalse(FileManager.default.fileExists(atPath: accountsDirectory.path))
+        ).run()) { error in
+            XCTAssertEqual(error as? LocalStoragePreflightError, .protectedAccountSessionUnreadable)
+        }
+        XCTAssertThrowsError(try KeychainAccountSessionStore(service: service).load())
+        XCTAssertEqual(try Data(contentsOf: staleAccountFile), Data("retired-cache".utf8))
         XCTAssertEqual(
             SecItemCopyMatching(
                 keychainQuery(service: service, account: "local-storage-schema") as CFDictionary,
@@ -421,7 +423,11 @@ final class KeychainRegistrationAttemptStoreTests: XCTestCase {
                 errSecItemNotFound
             )
         }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: accountInboxURL.path))
+        XCTAssertEqual(try Data(contentsOf: accountInboxURL), Data("cache".utf8))
+        // Preflight after explicit recovery must not erase the preserved account.
+        try KeychainLocalStoragePreflight(service: service, accountsDirectory: accountsDirectory).run()
+        XCTAssertEqual(try KeychainAccountSessionStore(service: service).load(), session)
+        XCTAssertEqual(try Data(contentsOf: accountInboxURL), Data("cache".utf8))
     }
 
     private func registrationRequest() -> DeviceRegistrationRequest {

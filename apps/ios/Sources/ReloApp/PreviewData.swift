@@ -1,3 +1,5 @@
+import ReloRuntime
+import ReloPersistence
 import Foundation
 import ReloCore
 
@@ -12,10 +14,14 @@ extension AppModel {
         case registrationFailed
         case empty
         case offline
+        case noCacheOffline
         case partialSync
         case reauthenticationRequired
         case disabled
         case signedOut
+        case denseHistory
+        case responseStates
+        case longContent
     }
 
     static func preview(state: PreviewState) -> AppModel {
@@ -44,17 +50,109 @@ extension AppModel {
             accountId: account.accountId,
             credentialVersion: 1
         )
-        let events = [
-            InboxItem(id: "evt_server1234", kind: .notification, sourceName: "Relo server · Relo", title: "Idempotency and activity sync are live.", deliveryState: .acceptedByAPNs, createdAt: .now),
-            InboxItem(id: "evt_codex1234567", kind: .response, sourceName: "Codex · Approval", title: "Deployment was approved.", result: "Responded", createdAt: .now.addingTimeInterval(-180)),
-            InboxItem(id: "evt_backup123456", kind: .notification, sourceName: "Relo server · Backup", title: "Daily PostgreSQL backup completed.", deliveryState: .acceptedByAPNs, createdAt: .now.addingTimeInterval(-420)),
-            InboxItem(id: "evt_agent1234567", kind: .liveActivity, sourceName: "Agent · Research", title: "Reference audit completed in 42 seconds.", result: "Completed", createdAt: .now.addingTimeInterval(-720)),
-            InboxItem(id: "evt_shell1234567", kind: .notification, sourceName: "Relo server · Shell", title: "Command finished successfully.", deliveryState: .acceptedByAPNs, createdAt: .now.addingTimeInterval(-900)),
-            InboxItem(id: "evt_monitor12345", kind: .notification, sourceName: "Relo · Monitor", title: "Private APNs worker is healthy.", deliveryState: .acceptedByAPNs, createdAt: .now.addingTimeInterval(-1_080))
+        let relo = InboxResourceProject(id: "prj_previewrelo", name: "RELO", isDirect: false,
+            palette: .init(slot: 0, generation: 1), icon: "code", revision: 1)
+        let website = InboxResourceProject(id: "prj_previewwebsite", name: "Website", isDirect: false,
+            palette: .init(slot: 1, generation: 1), icon: "folder", revision: 1)
+        let infrastructure = InboxResourceProject(id: "prj_previewinfra", name: "Infrastructure", isDirect: false,
+            palette: .init(slot: 2, generation: 1), icon: "build", revision: 1)
+        let direct = InboxResourceProject(id: "prj_previewdirect", name: "Direct CLI", isDirect: true,
+            palette: .init(slot: 0, generation: 1), icon: "terminal", revision: 1)
+        func links(_ id: String, _ name: String, _ kind: String,
+                   _ project: InboxResourceProject, _ conversation: String?) -> InboxResourceLinks {
+            .init(source: .init(id: id, kind: kind, name: name), project: project, conversationId: conversation)
+        }
+        let context = InboxContext(providerName: "Codex", producerKind: "cli", computer: "MacBook Pro",
+            project: "Relo", providerThreadId: "preview-release", threadName: "Release review")
+        let research = InboxContext(providerName: "Research agent", producerKind: "agent", computer: "MacBook Pro",
+            project: "Relo", providerThreadId: "preview-activity-ui", threadName: "Live Activities")
+        let design = InboxContext(providerName: "Design agent", producerKind: "agent", computer: "MacBook Pro",
+            project: "Website", providerThreadId: "preview-homepage", threadName: "Homepage")
+        let build = InboxContext(providerName: "Build pipeline", producerKind: "webhook", computer: "Build server",
+            project: "Relo", threadName: "Release review")
+        var events = [
+            InboxItem(id: "evt_server1234", kind: .notification, sourceName: "Codex",
+                title: "Idempotency and activity sync are live.", deliveryState: .acceptedByAPNs, createdAt: .now,
+                context: .init(providerName: "Codex", producerKind: "cli", computer: "MacBook Pro",
+                               project: "Relo", threadName: "Inbox sync"),
+                resources: links("src_previewcodex", "Codex", "cli", relo, "cnv_previewsync")),
+            InboxItem(id: "evt_codex1234567", kind: .response, sourceName: "Codex",
+                title: "Deployment was approved.", result: "Responded", createdAt: .now.addingTimeInterval(-180),
+                context: context, resources: links("src_previewcodex", "Codex", "cli", relo, "cnv_previewrelease")),
+            InboxItem(id: "evt_backup123456", kind: .notification, sourceName: "Backup service",
+                title: "Daily PostgreSQL backup completed.", deliveryState: .acceptedByAPNs, createdAt: .now.addingTimeInterval(-420),
+                context: .init(producerKind: "webhook", computer: "Private server", project: "Infrastructure", threadName: "Backups"),
+                resources: links("src_previewbackup", "Backup service", "webhook", infrastructure, "cnv_previewbackup")),
+            InboxItem(id: "evt_agent1234567", kind: .liveActivity, sourceName: "Research agent",
+                title: "Reference audit completed in 42 seconds.", result: "Completed", createdAt: .now.addingTimeInterval(-720),
+                context: research, resources: links("src_previewresearch", "Research agent", "agent", relo, "cnv_previewactivityui"),
+                activityEvent: .init(id: "act_previewaudit", operation: "end", generation: 1, sequence: 5),
+                activity: .init(state: "ended", outcome: "completed", status: "No broken references", progress: 1,
+                    steps: .init(done: 4, total: 4, current: nil), updates: 6,
+                    startedAt: .now.addingTimeInterval(-2700), endedAt: .now.addingTimeInterval(-720))),
+            InboxItem(id: "evt_auditask12345", kind: .liveActivity, sourceName: "Research agent",
+                title: "Reference audit", createdAt: .now.addingTimeInterval(-1500),
+                interaction: InboxInteraction(id: "int_previewaudit", kind: .approval, prompt: "Fix 3 broken links?",
+                    state: .approved, expiresAt: .now.addingTimeInterval(-1200), respondedAt: .now.addingTimeInterval(-1440)),
+                context: research, resources: links("src_previewresearch", "Research agent", "agent", relo, "cnv_previewactivityui"),
+                activityEvent: .init(id: "act_previewaudit", operation: "update", generation: 1, sequence: 3)),
+            InboxItem(id: "evt_shell1234567", kind: .notification, sourceName: "Terminal",
+                title: "Command finished successfully.", deliveryState: .acceptedByAPNs, createdAt: .now.addingTimeInterval(-900),
+                context: .init(producerKind: "cli", computer: "MacBook Pro"),
+                resources: links("src_previewterminal", "Terminal", "cli", direct, nil)),
+            InboxItem(id: "evt_monitor12345", kind: .notification, sourceName: "Monitoring service",
+                title: "Private APNs worker is healthy.", deliveryState: .acceptedByAPNs, createdAt: .now.addingTimeInterval(-1080),
+                context: .init(producerKind: "webhook", computer: "Private server", project: "Infrastructure", threadName: "Service health"),
+                resources: links("src_previewmonitor", "Monitoring service", "webhook", infrastructure, "cnv_previewhealth")),
+            InboxItem(id: "ntf_previewmessage", kind: .notification, sourceName: "Claude Code", title: "Relo CLI updated",
+                content: .init(summary: "CLI 0.7.23 is installed", body: "CLI **0.7.23** is installed: source and project now fill in automatically. Run `relo help` to see the new agent guide.",
+                    format: .markdown, byteLength: 140),
+                deliveryState: .acceptedByAPNs, apnsAcceptedAt: .now.addingTimeInterval(-178), receivedAt: .now.addingTimeInterval(-177),
+                openedAt: .now.addingTimeInterval(-20), createdAt: .now.addingTimeInterval(-180),
+                destinationUrl: URL(string: "https://relo.example.com/dashboard"),
+                context: .init(providerName: "Claude Code", computer: "Mac", project: "relo", threadName: "CLI identity rework",
+                    taskTitle: "Agent-first CLI identity"),
+                resources: links("src_previewclaude", "Claude Code", "agent", relo, "cnv_previewcli")),
+            InboxItem(id: "ntf_previewapproval", kind: .notification, sourceName: "Codex", title: "Approve the release?",
+                detail: "The checks passed. Review the deployment before continuing.", createdAt: .now,
+                interaction: InboxInteraction(id: "int_previewapproval", kind: .approval, prompt: "Approve the release?",
+                    state: .pending, expiresAt: .now.addingTimeInterval(3600)), context: context,
+                resources: links("src_previewcodex", "Codex", "cli", relo, "cnv_previewrelease")),
+            InboxItem(id: "ntf_previewyesno", kind: .notification, sourceName: "Research agent", title: "Continue the research?",
+                createdAt: .now.addingTimeInterval(-60),
+                interaction: InboxInteraction(id: "int_previewyesno", kind: .yesNo, prompt: "Continue?",
+                    state: .pending, expiresAt: .now.addingTimeInterval(7200)), context: research,
+                resources: links("src_previewresearch", "Research agent", "agent", relo, "cnv_previewactivityui")),
+            InboxItem(id: "ntf_previewreply", kind: .notification, sourceName: "Design agent", title: "Which direction should I explore?",
+                createdAt: .now.addingTimeInterval(-90),
+                interaction: InboxInteraction(id: "int_previewreply", kind: .text, prompt: "Share the next step.",
+                    state: .pending, expiresAt: .now.addingTimeInterval(7200)), context: design,
+                resources: links("src_previewdesign", "Design agent", "agent", website, "cnv_previewhomepage")),
+            InboxItem(id: "ntf_previewworking", kind: .liveActivity, sourceName: "Build CI", title: "Preparing the build",
+                createdAt: .now.addingTimeInterval(-120),
+                activitySummary: InboxActivitySummary(id: "act_previewworking", conversationId: "cnv_previewrelease",
+                    generation: 1, sequence: 2, state: "active", title: "Preparing the build", status: "Testing",
+                    progress: 0.42, context: build, staleAt: .now.addingTimeInterval(300), expiresAt: .now.addingTimeInterval(3600)),
+                resources: links("src_previewbuild", "Build CI", "webhook", relo, "cnv_previewrelease"),
+                activity: .init(state: "active", status: "Testing", steps: .init(done: 2, total: 5, current: "Test"),
+                    updates: 3, startedAt: .now.addingTimeInterval(-600)))
         ]
+        if state == .denseHistory {
+            events += (0..<120).map { index in
+                InboxItem(id: "ntf_previewhistory\(index)", kind: .notification, sourceName: "Agent",
+                    title: "Build \(index + 1) finished", createdAt: .now.addingTimeInterval(-Double(index + 1) * 2400), context: context)
+            }
+        }
+        if state == .longContent {
+            let body = String(repeating: "Review the release notes and verify the changes with the team. ", count: 24)
+            events.insert(InboxItem(id: "ntf_previewlong", kind: .notification, sourceName: "Research agent",
+                title: "A long task title that must wrap comfortably at every accessibility text size without shrinking",
+                content: .init(summary: "Review ready", body: body, format: .text, byteLength: body.utf8.count),
+                createdAt: .now, context: .init(computer: "A very long computer name", project: "Research and development", threadName: "A long conversation about the next release")), at: 0)
+        }
         let hasAccount = state != .signedOut && state != .authenticating
         let hasCredential = hasAccount && state != .registering && state != .registrationFailed
-        let hasNoItems = !hasAccount || state == .empty || state == .registering
+        let hasNoItems = !hasAccount || state == .empty || state == .registering || state == .noCacheOffline
         let permission: PermissionState
         switch state {
         case .permissionDenied: permission = .denied
@@ -78,17 +176,17 @@ extension AppModel {
         }
         let syncState: SyncState
         switch state {
-        case .ready, .empty, .permissionDenied, .waitingForAPNs, .reauthenticationRequired, .disabled:
+        case .ready, .denseHistory, .longContent, .responseStates, .empty, .permissionDenied, .waitingForAPNs, .reauthenticationRequired, .disabled:
             syncState = .current
         case .registering: syncState = .syncing
         case .registrationFailed: syncState = .offline("Relo server is offline")
-        case .offline: syncState = .offline("Relo server is offline")
+        case .offline, .noCacheOffline: syncState = .offline("Relo server is offline")
         case .partialSync: syncState = .offline("Sync stopped before the next page")
         case .authenticating, .signedOut: syncState = .idle
         }
         let protectedActions = InMemoryProtectedActionStore()
 
-        return AppModel(
+        let model = AppModel(
             accountState: accountState,
             registrationState: registrationState,
             account: hasAccount ? account : nil,
@@ -97,7 +195,7 @@ extension AppModel {
             permission: permission,
             items: hasNoItems ? [] : events,
             syncState: syncState,
-            lastSyncedAt: state == .offline || state == .partialSync ? .now.addingTimeInterval(-3_600) : .now,
+            lastSyncedAt: state == .noCacheOffline ? nil : state == .offline || state == .partialSync ? .now.addingTimeInterval(-3_600) : .now,
             apnsTokenAvailable: state != .waitingForAPNs,
             serverAcceptedCurrentAPNSToken: state != .waitingForAPNs && state != .registering,
             accountSession: hasAccount ? session : nil,
@@ -116,6 +214,9 @@ extension AppModel {
             accountNotificationCleaner: PreviewAccountNotificationCleaner(),
             serverURL: URL(string: "http://192.168.1.10:8180")!
         )
+        model.configurePreviewAccountScope()
+        if state == .responseStates { model.configurePreviewResponses() }
+        return model
     }
 }
 
@@ -149,7 +250,7 @@ private struct PreviewPushTokenStore: PushTokenStore {
     func delete() {}
 }
 
-private struct PreviewNotificationReceiptStore: PendingNotificationReceiptStoring {
+private struct PreviewNotificationReceiptStore: ScopedNotificationReceiptStoring {
     func pending(limit: Int) -> [String] { [] }
     func remove(notificationIDs: Set<String>) {}
 }
@@ -179,7 +280,6 @@ private actor PreviewAccountScopedCache: AccountScopedInboxCaching {
 }
 
 private struct PreviewMobileAPIClient: MobileAPIClient {
-    func signIn(email: String, password: String) async throws -> AccountSession { throw MobileAPIError.unavailable }
     func validateAccountSession(token: String) async throws -> AccountSession { throw MobileAPIError.unavailable }
     func registerDevice(sessionToken: String, request: DeviceRegistrationRequest, idempotencyKey: String) async throws -> DeviceRegistrationResponse { throw MobileAPIError.unavailable }
     func deviceSelf(credential: DeviceCredential) async throws -> DeviceSelfResponse { throw MobileAPIError.unavailable }
@@ -189,5 +289,82 @@ private struct PreviewMobileAPIClient: MobileAPIClient {
     func revokeDevice(credential: DeviceCredential) async throws { throw MobileAPIError.unavailable }
     func signOutAccount(sessionToken: String) async throws { throw MobileAPIError.unavailable }
     func deleteAccount(sessionToken: String, password: String, confirmation: String) async throws { throw MobileAPIError.unavailable }
+}
+#endif
+
+private extension PreviewNotificationReceiptStore {
+    func pending(scope: ReceiptScope, limit: Int) async throws -> NotificationReceiptBatch { .init(records: []) }
+    func remove(records: Set<NotificationReceiptRecord>) async throws {}
+    func retire(scope: ReceiptScope) async throws {}
+}
+
+#if DEBUG
+extension AppModel {
+    /// Fictional current work for captures: requests, running tasks and recent notices,
+    /// decoded through the same wire types the server sends.
+    func seedPreviewCurrentWork(clear: Bool = false, now: Date = .now) {
+        guard let scope = try? StorageScope(serverOrigin: URL(string: "https://relo.example.test")!,
+                                            accountID: "acc_preview123456", deviceID: "dev_preview123456")
+        else { return }
+        func uuid(_ index: Int) -> String { "11111111-2222-4333-8444-" + String(format: "%012d", index) }
+        let iso = ISO8601DateFormatter()
+        func at(_ minutes: Double) -> String { iso.string(from: now.addingTimeInterval(minutes * 60)) }
+        func subject(_ index: Int, kind: String, title: String, summary: String, source: String,
+                     minutesAgo: Double, progress: Double? = nil) -> [String: Any] {
+            var value: [String: Any] = [
+                "subjectId": "sub_" + uuid(index), "notificationId": "ntf_" + uuid(index), "kind": kind,
+                "version": ["generation": 1, "revision": 1], "title": title, "summary": summary, "source": source,
+                "createdAt": at(-minutesAgo - 5), "updatedAt": at(-minutesAgo), "occurredAt": at(-minutesAgo),
+                "acceptedAt": at(-minutesAgo), "freshUntil": at(20), "deliverUntil": at(60), "freshness": "fresh"]
+            if let progress {
+                value["activity"] = ["id": "act_" + uuid(index), "generation": 1, "sequence": 3,
+                                     "status": "In progress", "progress": progress]
+            }
+            return value
+        }
+        let subjects: [[String: Any]] = clear ? [] : [
+            subject(1, kind: "progress", title: "Deploying release 0.7.55", summary: "Building the server image",
+                    source: "Codex", minutesAgo: 1, progress: 0.64),
+            subject(2, kind: "progress", title: "Indexing the design archive", summary: "1,240 of 3,100 files",
+                    source: "Research agent", minutesAgo: 4, progress: 0.4),
+            subject(3, kind: "notice", title: "Release notes drafted", summary: "", source: "Codex", minutesAgo: 9),
+            subject(4, kind: "notice", title: "Nightly backup verified", summary: "", source: "Backup service", minutesAgo: 26),
+        ]
+        let pending: [[String: Any]] = clear ? [] : [
+            ["subjectId": "sub_" + uuid(11), "notificationId": "ntf_" + uuid(11), "kind": "decision",
+             "version": ["generation": 1, "revision": 1], "title": "Approve the release?",
+             "summary": "All checks passed. Deploy 0.7.55 to production.", "source": "Codex",
+             "createdAt": at(-2), "urgencyRank": 0,
+             "interaction": ["id": "int_" + uuid(11), "type": "approval", "state": "pending", "expiresAt": at(14)]],
+            ["subjectId": "sub_" + uuid(12), "notificationId": "ntf_" + uuid(12), "kind": "decision",
+             "version": ["generation": 1, "revision": 1], "title": "Which direction should I explore?",
+             "summary": "Two homepage concepts are ready for your pick.", "source": "Design agent",
+             "createdAt": at(-6), "urgencyRank": 1,
+             "interaction": ["id": "int_" + uuid(12), "type": "text", "state": "pending", "expiresAt": at(52)]],
+        ]
+        let response: [String: Any] = [
+            "items": subjects, "retired": [], "total": subjects.count, "hasMore": false,
+            "counts": ["actionable": pending.count, "currentUnread": subjects.count], "serverTime": at(0)]
+        let page: [String: Any] = ["items": pending, "total": pending.count, "hasMore": false, "serverTime": at(0)]
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        do {
+            var state = CurrentRuntimeState(scope: SessionScope(storage: scope, credentialVersion: 1))
+            try state.snapshot.apply(decoder.decode(CurrentInboxResponse.self,
+                from: JSONSerialization.data(withJSONObject: response)))
+            try state.snapshot.applyPending(decoder.decode(PendingCurrentPage.self,
+                from: JSONSerialization.data(withJSONObject: page)), limit: 50)
+            state.connection = .current; state.persistence = .available
+            state.timeVerified = true; state.countsAreCurrent = true
+            state.pendingConnection = .current; state.pendingCountsAreCurrent = true
+            state.verifiedVersions = state.snapshot.subjects.mapValues(\.projection.version)
+            for entry in state.snapshot.pending?.entries.values ?? [:].values {
+                state.verifiedPending[entry.item.id] = entry.observedAt
+            }
+            previewAcceptCurrentState(state)
+        } catch {
+            assertionFailure("Preview current work did not decode: \(error)")
+        }
+    }
 }
 #endif

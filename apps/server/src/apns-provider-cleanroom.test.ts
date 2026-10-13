@@ -7,6 +7,7 @@ import { connect as tlsConnect, createServer as createTlsServer, type SecureCont
 import { describe, expect, it } from "vitest";
 import {
   ApnsProviderCleanroom,
+  type AlertSend,
   type ApnsConnection,
   type ApnsProviderConfig,
   type ApnsTransport,
@@ -709,6 +710,29 @@ describe("clean-room APNs provider", () => {
     expect(expiredHorizon.connections).toHaveLength(0);
   });
 
+  it.each([429,503])("durably yields a %s backoff without sleeping or opening an early stream after restart", async (status) => {
+    const clock = new MutableClock();
+    const scheduler = new ImmediateScheduler(clock);
+    const start = clock.value;
+    let persisted: Required<NonNullable<AlertSend["providerAttemptState"]>> | undefined;
+    const persist: NonNullable<AlertSend["persistProviderRetryState"]> = async value => { persisted = value; return value; };
+    const first = new ScriptedTransport([[response(status,status === 429 ? "TooManyRequests" : undefined)]]);
+    const result = await provider(first,clock,scheduler).sendAlert({
+      recipient: recipient(),alert: "same immutable payload",persistProviderRetryState: persist,
+    });
+    expect(result).toMatchObject({ category: "retry-scheduled",attempt: 1,nextAttemptNotBeforeMs: persisted!.nextAttemptNotBeforeMs });
+    expect(clock.value).toBe(start);
+    expect(scheduler.delays).toEqual([]);
+    const restart = new ScriptedTransport([[response(200)]]);
+    const restarted = provider(restart,clock,scheduler);
+    const input: AlertSend = { recipient: recipient(),alert: "same immutable payload",providerAttemptState: persisted!,persistProviderRetryState: persist };
+    expect(await restarted.sendAlert(input)).toMatchObject({ category: "retry-scheduled",attempt: 0 });
+    expect(restart.connections).toHaveLength(0);
+    clock.value = persisted!.nextAttemptNotBeforeMs;
+    expect(await restarted.sendAlert(input)).toMatchObject({ category: "accepted",attempt: 1,firstAttemptAtMs: start });
+    expect(restart.connections[0]!.requests[0]!.body).toEqual(first.connections[0]!.requests[0]!.body);
+  });
+
   it("persists the exact 5xx not-before before waiting and enforces it before restart resolution", async () => {
     const clock = new MutableClock();
     const firstAttemptAt = clock.value;
@@ -769,7 +793,8 @@ describe("clean-room APNs provider", () => {
     const transport = new ScriptedTransport([[
       response(429,"TooManyRequests"),response(500),response(200),
     ]]);
-    const result = await provider(transport,clock).sendAlert({
+    const sender = provider(transport,clock);
+    const input: AlertSend = {
       recipient: recipient(),alert: "class transition",
       persistProviderRetryState: async (proposed) => {
         durable = durable === undefined ? {
@@ -786,7 +811,10 @@ describe("clean-room APNs provider", () => {
         checkpoints.push({ ...proposed,...durable });
         return durable;
       },
-    });
+    };
+    expect(await sender.sendAlert(input)).toMatchObject({ category: "retry-scheduled",attempt: 1 });
+    clock.value = checkpoints[0]!.nextAttemptNotBeforeMs;
+    const result = await sender.sendAlert({ ...input,providerAttemptState: checkpoints[0]! });
     expect(checkpoints).toEqual([
       {
         attemptsUsed: 1,firstAttemptAtMs: 1_800_000_000_000,attemptCap: 4,
@@ -797,7 +825,7 @@ describe("clean-room APNs provider", () => {
         retryHorizonAtMs: 1_800_000_300_000,nextAttemptNotBeforeMs: 1_800_001_801_000,
       },
     ]);
-    expect(result).toMatchObject({ category: "retry-exhausted",attempt: 2,status: 500 });
+    expect(result).toMatchObject({ category: "retry-exhausted",attempt: 1,status: 500 });
     expect(transport.connections[0]!.requests).toHaveLength(2);
   });
 
@@ -810,7 +838,8 @@ describe("clean-room APNs provider", () => {
     const transport = new ScriptedTransport([[
       response(500),response(429,"TooManyRequests"),response(200),
     ]]);
-    const result = await provider(transport,clock).sendAlert({
+    const sender = provider(transport,clock);
+    const input: AlertSend = {
       recipient: recipient(),alert: "reverse class transition",
       persistProviderRetryState: async (proposed) => {
         durable = durable === undefined ? {
@@ -827,6 +856,11 @@ describe("clean-room APNs provider", () => {
         checkpoints.push({ attemptsUsed: proposed.attemptsUsed,...durable });
         return durable;
       },
+    };
+    expect(await sender.sendAlert(input)).toMatchObject({ category: "retry-scheduled",attempt: 1 });
+    clock.value = checkpoints[0]!.nextAttemptNotBeforeMs;
+    const result = await sender.sendAlert({
+      ...input,providerAttemptState: { ...checkpoints[0]!,firstAttemptAtMs: 1_800_000_000_000 },
     });
     expect(checkpoints).toEqual([
       {
@@ -838,7 +872,7 @@ describe("clean-room APNs provider", () => {
         nextAttemptNotBeforeMs: 1_800_000_900_000,
       },
     ]);
-    expect(result).toMatchObject({ category: "retry-exhausted",attempt: 2,status: 429 });
+    expect(result).toMatchObject({ category: "retry-exhausted",attempt: 1,status: 429 });
     expect(transport.connections[0]!.requests).toHaveLength(2);
 
     const blockedRestart = new ScriptedTransport([[response(200)]]);

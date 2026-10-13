@@ -1,15 +1,16 @@
+import { escapeHtml } from "./http.js";
 type DocumentationSection = { title: string; body: string; links?: Array<{ label: string; href: string }> };
 
 const sections: DocumentationSection[] = [
   {
     title: "Send notifications",
     body: "Create a named service, copy its secret webhook URL without rendering it, and POST a JSON body. Ordinary notifications support a public HTTPS image, a validated HTTPS destination, explicit device targeting, and approval, yes/no, or text responses.",
-    links: [{ label: "Manage services", href: "/dashboard/connections/services" }, { label: "Review history", href: "/dashboard/inbox/notifications" }],
+    links: [{ label: "Manage services", href: "/dashboard/connections" }, { label: "Review history", href: "/dashboard/inbox/notifications" }],
   },
   {
     title: "Authorize agents and the CLI",
     body: "A client requests narrowly scoped access. An owner must explicitly approve it; every other outcome denies access. Credentials are shown once and can be revoked from the dashboard.",
-    links: [{ label: "Review approvals", href: "/dashboard" }, { label: "Manage clients", href: "/dashboard/connections/clients" }],
+    links: [{ label: "Review approvals", href: "/dashboard" }, { label: "Manage clients", href: "/dashboard/connections" }],
   },
   {
     title: "Coordinate Live Activities",
@@ -19,15 +20,9 @@ const sections: DocumentationSection[] = [
   {
     title: "Operate safely",
     body: "Use delivery history for target-level APNs status and keep notification content concise enough for phone surfaces.",
-    links: [{ label: "Inspect delivery", href: "/dashboard/inbox/delivery" }, { label: "Inspect phones", href: "/dashboard/connections/phones" }],
+    links: [{ label: "Inspect delivery", href: "/dashboard" }, { label: "Inspect phones", href: "/dashboard/connections" }],
   },
 ];
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g,(character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
-  })[character]!);
-}
 
 export function dashboardDocumentationHtml(): string {
   return `<section class="card"><h2>Documentation</h2><p class="muted">Relo is a coordinated notification workflow: delivery, persistent history, phone interaction, and result retrieval are one lifecycle.</p>${sections.map((section) => `<section class="panel"><h3>${escapeHtml(section.title)}</h3><p>${escapeHtml(section.body)}</p><div class="actions">${(section.links ?? []).map((link) => `<a class="button secondary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`).join("")}</div></section>`).join("")}<p class="callout">Machine-readable guidance is available at <a href="/docs.md">/docs.md</a>, <a href="/agents.md">/agents.md</a>, and <a href="/llms.txt">/llms.txt</a>.</p></section>`;
@@ -37,7 +32,7 @@ const machineProtocolMarkdown = `## Authentication
 
 - Scoped API and CLI routes use \`Authorization: Bearer <access-token>\`. Request only the scopes required by the operation. Tokens are returned once and must never be placed in notification content.
 - Service webhooks use the unguessable \`/hooks/<service-secret>\` path returned once at service creation or rotation. The secret is the credential.
-- Device routes use a device bearer credential issued by pairing or registration. Live Activity response credentials are device-bound capabilities projected into a command and expire with its interaction.
+- Device routes use a device bearer credential issued by registration. Live Activity response credentials are device-bound capabilities projected into a command and expire with its interaction.
 - Dashboard routes use the owner browser session. A phone permission request is authorized only by an explicit approval; deny, no, timeout, cancellation, missing input, and errors do not authorize it.
 
 ## Owner account and dashboard session
@@ -67,14 +62,18 @@ Available client scopes are \`notifications:send\`, \`interactions:create\`, \`i
 
 The signed-in iOS app registers or rotates its device credential with \`POST /api/devices/register\`. Supply an \`Idempotency-Key\` and the stable/installation identifiers, app and OS metadata, APNs environment/token, notification and Live Activity authorization states, and optional push-to-start token. The response contains account metadata, public device metadata, and a device \`accessToken\` shown once. Replaying the same key and body returns the same derived credential; changing the body returns \`idempotency_conflict\`.
 
-The iOS app pairs only through an authenticated connection grant and \`POST /api/devices/register\`. There is no secondary pairing protocol.
+On the iPhone, open Relo and tap Sign in. It opens this server's sign-in page in the browser, and you approve it there. The app then registers with \`POST /api/devices/register\`.
 
 Device credentials use these routes:
 
 - \`GET /api/devices/self\`: confirm the bound account, device identity, registration state, and credential version.
 - \`PUT /api/devices/:deviceId\`: heartbeat and update the calling device's app/OS metadata, authorization state, APNs token, and push-to-start token. A device cannot update another device.
 - \`PUT /api/devices/self/live-activities/:activityId/token\`: register or replace the calling device's native Live Activity update token for an active targeted activity.
-- \`GET /api/inbox?after=<cursor>&limit=<1-100>\`: ordered durable notification/activity synchronization. Persist the returned opaque cursor; \`cursor_expired\` requires a safe resync.
+- \`GET /api/inbox/current\` and \`GET /api/inbox/pending\`: current summaries and independently paged valid decisions. Use canonical counts and original deadlines; do not infer action validity from history.
+- \`GET /api/inbox/events\`: scoped foreground change hints. Reconcile current state immediately after reconnect; hints are not a history replay cursor.
+- \`GET /api/inbox/snapshot\`: replace the local history window with the newest 250 summaries. Rows, whole-history unread counts, total, and server time share one database snapshot. Repeat this bounded repair to discover late commits. Full message bodies and executable activity commands are absent; retrieve an exact original notification through \`GET /api/inbox/:notificationId\` when opened.
+- \`POST /api/inbox/read-items\`: mark 1–250 exact captured notification IDs read. Duplicate IDs coalesce; each result is \`read\`, \`already_read\`, or \`not_found\` under the calling device visibility. Retry the same IDs after reconnect; never expand a saved read intention to newly arrived notifications. Global unread totals accompany the acknowledgments.
+- \`GET /api/inbox?after=<cursor>&limit=<1-100>\` and \`GET /api/inbox/history\`: retained for the installed predecessor client during coordinated iOS rollout. Timestamp deltas are not complete repair and must not determine current relevance or global actionable counts.
 - \`POST /api/notifications/:notificationId/interactions\`: report received/opened state or submit approval, deny, yes, no, or text-answer responses with a device credential.
 - \`POST /api/live-activity-responses/:interactionId\`: submit an App Intent approval/yes-no response with the command's device-bound, expiring capability.
 - \`DELETE /api/devices/:deviceId\`: revoke the calling device, its credentials, delivery jobs, and push tokens.
@@ -93,12 +92,11 @@ A scoped client can list active devices with \`GET /api/devices\` (\`devices:rea
   "imageUrl": "https://images.example.com/result.png",
   "destinationUrl": "https://example.com/builds/42",
   "deviceIds": ["dev_opaque"],
-  "privacy": "standard",
-  "context": { "computer": "Mac", "project": "Relo", "taskTitle": "Verify release" }
+  "context": { "computer": "Mac", "project": "Relo", "threadName": "Releases", "taskTitle": "Verify release" }
 }
 \`\`\`
 
-The public image URL must not resolve syntactically to localhost, a private/reserved IP, a single-label host, or a \`.local\`, \`.internal\`, \`.home\`, or \`.lan\` name. Destination URLs are HTTPS and at most 2048 characters. Private delivery masks title/body and omits context, conversation, avatar, image, and destination metadata before APNs.
+The public image URL must not resolve syntactically to localhost, a private/reserved IP, a single-label host, or a \`.local\`, \`.internal\`, \`.home\`, or \`.lan\` name. Destination URLs are at most 2048 characters and may be an \`https://\` page or universal link, an app's own scheme (\`your-app://incidents/42\`), or a Shortcuts URL (\`shortcuts://run-shortcut?name=Deploy%20Follow-up&input=text&text=done\`). \`http:\`, \`javascript:\`, \`data:\`, \`file:\`, \`blob:\` and \`about:\` are rejected. The phone opens a destination only when the owner taps it; receiving a push never opens anything. Private delivery masks title/body and omits context, conversation, avatar, image, and destination metadata before APNs.
 
 Created response (HTTP 201; an exact replay returns HTTP 200 with \`replayed: true\`):
 
@@ -126,9 +124,32 @@ Created response (HTTP 201; an exact replay returns HTTP 200 with \`replayed: tr
   "primaryLabel": "Ship",
   "secondaryLabel": "Stop",
   "expiresInSeconds": 600,
-  "deviceIds": ["dev_first", "dev_second"]
+  "deviceIds": ["dev_first", "dev_second"],
+  "privacy": "standard",
+  "correlationId": "release-42",
+  "callback": { "url": "https://ci.example.com/relo-answer", "token": "a-private-token-of-16-to-512-chars" }
 }
 \`\`\`
+
+\`privacy: "private"\` (Live Activity presentation only) shows "Private activity" on the phone; the title, prompt and status are never stored or sent.
+
+**Answer callbacks.** With \`callback\`, Relo POSTs the answer to your public HTTPS URL with \`Authorization: Bearer <token>\`, \`Content-Type: application/json\` and a \`Relo-Callbacks/1\` user agent. Redirects are not followed and each attempt times out after 10 seconds. A non-2xx response is retried after 30 seconds, 2 minutes, 10 minutes and 1 hour, then marked failed: treat delivery as at-least-once and key your handler on \`interactionId\`. Only an actual answer calls back; expired or canceled questions never do. The token is stored encrypted and never returned; \`interaction.callback\` reports \`state\`, \`attempts\`, \`lastStatus\`, \`lastError\` and \`deliveredAt\`.
+
+\`\`\`json
+{
+  "type": "notification.response",
+  "eventId": "ntf_opaque",
+  "interactionId": "int_opaque",
+  "correlationId": "release-42",
+  "kind": "approval",
+  "status": "approved",
+  "action": "approve",
+  "text": null,
+  "respondedAt": "2026-08-07T00:03:00.000Z"
+}
+\`\`\`
+
+\`kind\` is \`approval\`, \`yes_no\`, or \`reply\`; for a reply, \`text\` holds the answer.
 
 All targeted devices receive device-bound commands for one canonical interaction. The first valid response wins; later responses return terminal state without changing the result.
 
@@ -173,9 +194,13 @@ Create services with \`POST /api/services\` (\`services:write\`) and list them w
   "imageUrl": "https://images.example.com/deploy.png",
   "url": "https://example.com/deployments/42",
   "deviceIds": ["dev_opaque"],
-  "response": { "type": "approval", "expiresInSeconds": 600, "correlationId": "deploy-42" }
+  "context": { "project": "Deployments", "threadName": "Release 42" },
+  "response": { "type": "approval", "expiresInSeconds": 600, "correlationId": "deploy-42",
+    "callback": { "url": "https://ci.example.com/relo-answer", "token": "a-private-token-of-16-to-512-chars" } }
 }
 \`\`\`
+
+Every new notification, decision, and Live Activity names its project and topic: send \`context.project\` and \`context.threadName\`, or an \`origin\` descriptor. The service, credential, or CLI source is the source. Missing either returns \`422 work_identity_required\`; updates and ends keep the identity stored at creation.
 
 Read the canonical result at \`GET /hooks/<service-secret>/events/:eventId\`. Cancel a pending result with \`POST /hooks/<service-secret>/events/:eventId/cancel\`.
 
@@ -198,7 +223,9 @@ The immediate webhook response reports eligible devices, durable commands, and q
       "text": null,
       "correlationId": "deploy-42",
       "respondedAt": "2026-08-07T00:03:00.000Z",
-      "expiresAt": "2026-08-07T00:10:00.000Z"
+      "expiresAt": "2026-08-07T00:10:00.000Z",
+      "callback": { "state": "delivered", "attempts": 1, "lastStatus": 204, "lastError": null,
+        "deliveredAt": "2026-08-07T00:03:01.000Z" }
     }
   }
 }
@@ -262,6 +289,10 @@ End request:
 \`\`\`
 
 Read and list routes require \`activities:read\`. Mutations require \`activities:write\`.
+
+\`style\` is \`standard\`, \`ring\` (progress drawn as a gauge with the percent inside), \`hero\`, \`terminal\` or \`steps\`, and may change on update. \`privacy: "private"\` shows only "Private activity" on the phone: title, status, detail and progress are never stored or sent, and the activity stays private across updates. An end without \`status\` reads "Complete" with a success icon. Only a start alerts; updates and ends are silent. One activity runs per phone: \`replace: true\` takes the slot. iOS budgets push-to-start, so space fresh starts about a minute apart and prefer updating one activity.
+
+**Rate limits.** Writes count per calendar minute: 60 per CLI login or webhook service and 300 per account. A limited request returns \`429\` with \`Retry-After\` and \`retryAfterSeconds\`.
 
 Lifecycle example:
 

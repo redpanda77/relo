@@ -1,3 +1,4 @@
+import { Page } from "@/components/page"
 import { useRef, useState } from "react"
 import { Copy, Terminal } from "lucide-react"
 
@@ -192,20 +193,8 @@ export function AccountPage({
   }
 
   return (
-    <main
-      id="main-content"
-      tabIndex={-1}
-      className="canvas min-h-[100dvh] px-4 py-7 sm:px-6 lg:px-10 lg:py-10"
-    >
-      <div className="mx-auto w-full max-w-5xl">
-        <header>
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-            {initial.shell.title}
-          </h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-            {initial.shell.description}
-          </p>
-        </header>
+    <Page title={initial.shell.title}>
+      <div>
 
         <div className="mt-8 grid gap-5">
           <Card className="rounded-2xl">
@@ -217,8 +206,6 @@ export function AccountPage({
                 {[
                   ["Name", initial.account.name],
                   ["Email", initial.account.email],
-                  ["Account ID", initial.account.id],
-                  ["Authentication", initial.account.authentication],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-xl bg-muted/45 p-4">
                     <dt className="text-xs text-muted-foreground">{label}</dt>
@@ -276,26 +263,6 @@ export function AccountPage({
                 </p>
               </div>
 
-              <ol className="grid list-decimal gap-2 pl-5 text-sm leading-6 text-muted-foreground">
-                <li>Run the command on the computer you want to connect.</li>
-                <li>
-                  The CLI prints a complete one-time approval link and tries to
-                  open it. If the browser does not open, use the printed
-                  fallback page and code.
-                </li>
-                <li>
-                  Review the client and scopes here, approve it, then run{" "}
-                  <code className="font-mono text-xs text-foreground">
-                    relo doctor --json
-                  </code>
-                  .
-                </li>
-              </ol>
-              <p className="text-sm leading-6 text-muted-foreground">
-                After approval, the CLI stores this server origin and its scoped
-                credential in the protected local config. Future commands use it
-                automatically.
-              </p>
             </CardContent>
           </Card>
 
@@ -494,6 +461,6 @@ export function AccountPage({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </main>
+    </Page>
   )
 }

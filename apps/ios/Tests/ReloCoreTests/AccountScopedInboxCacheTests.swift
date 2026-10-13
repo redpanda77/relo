@@ -1,3 +1,4 @@
+@testable import ReloPersistence
 import Foundation
 import XCTest
 @testable import ReloCore
@@ -52,11 +53,12 @@ final class AccountScopedInboxCacheTests: XCTestCase {
         try await cache.save(InboxSnapshot(items: [item], cursor: "cursor"))
         let loaded = try await cache.load()
 
-        XCTAssertEqual(loaded.items, [item])
-        XCTAssertEqual(loaded.items.first?.activitySummary?.terminalReason, "ended_by_producer")
+        XCTAssertEqual(loaded.items, [item.historySummary()])
+        XCTAssertNil(loaded.items.first?.liveActivity)
+        XCTAssertNil(loaded.items.first?.activitySummary)
         XCTAssertEqual(loaded.items.first?.context?.threadName, "Lifecycle audit")
         let stored = try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
-        XCTAssertEqual(stored?["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(stored?["schemaVersion"] as? Int, LocalStoreSchema.inboxCache)
     }
 
     func testAccountsNeverOpenEachOthersSnapshots() async throws {

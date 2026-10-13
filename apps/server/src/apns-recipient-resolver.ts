@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { relevanceDeliveryGuard } from "./relevance/delivery.js";
 import type pg from "pg";
 import type {
   ApnsEnvironment,
@@ -59,46 +60,68 @@ export class PostgresApnsRecipientResolver implements RecipientResolver {
     const client = await this.options.db.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout='250ms'");
+      await client.query("SET LOCAL statement_timeout='2s'");
       const row = await this.select(client, true);
       if (!row) {
         await client.query("ROLLBACK");
-        client.release();
         return null;
       }
       const resolved = this.resolved(row);
       const stored = this.storedToken(row.ciphertext);
+      // Authorization and revocation serialize here. Network work starts only
+      // after commit; the returned value owns no transaction or connection.
+      const fenced = await client.query(
+        `UPDATE delivery_jobs SET recipient_authorized_at=clock_timestamp(),recipient_generation=$3
+         WHERE id=$1 AND claim_token=$2 AND state='processing' AND claim_phase='dispatch_started'`,
+        [this.options.deliveryJobId,this.options.claimToken,resolved.generation],
+      );
+      if (fenced.rowCount !== 1) throw new Error("APNs recipient authorization lost its delivery claim");
+      await client.query("COMMIT");
       let released = false;
       return {
         ...resolved,
         invalidate: async (details) => {
-          if (released) throw new Error("APNs recipient lease is already released");
+          if (released) throw new Error("APNs recipient snapshot is already released");
           if (details.environment !== this.options.environment) {
-            throw new Error("APNs invalidation environment does not match the leased recipient");
+            throw new Error("APNs invalidation environment does not match the authorized recipient");
           }
-          const cleared = await clearTransportTokenIfUnchanged(client, stored);
-          if (!cleared) throw new Error("Leased APNs recipient generation changed during invalidation");
-          this.invalidations.push({
-            generation: resolved.generation,
-            ...(details.invalidatedAtMs === undefined ? {} : { invalidatedAtMs: details.invalidatedAtMs }),
-          });
+          await this.invalidateSnapshot(stored,resolved.generation,details);
         },
-        release: async (commit) => {
-          if (released) return;
+        release: async () => {
           released = true;
-          try {
-            await client.query(commit ? "COMMIT" : "ROLLBACK");
-          } finally {
-            client.release();
-          }
         },
       };
     } catch (error) {
-      try {
-        await client.query("ROLLBACK");
-      } finally {
-        client.release();
-      }
+      await client.query("ROLLBACK");
       throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async invalidateSnapshot(
+    stored: StoredTransportToken,
+    expectedGeneration: string,
+    details: { invalidatedAtMs?: number },
+  ): Promise<void> {
+    const client = await this.options.db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout='250ms'");
+      await client.query("SET LOCAL statement_timeout='2s'");
+      const cleared = await clearTransportTokenIfUnchanged(client,stored);
+      await client.query("COMMIT");
+      // A replacement token surviving old feedback is a successful no-op.
+      if (cleared) this.invalidations.push({
+        generation: expectedGeneration,
+        ...(details.invalidatedAtMs === undefined ? {} : { invalidatedAtMs: details.invalidatedAtMs }),
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -109,6 +132,8 @@ export class PostgresApnsRecipientResolver implements RecipientResolver {
     const client = await this.options.db.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout='250ms'");
+      await client.query("SET LOCAL statement_timeout='2s'");
       const row = await this.select(client, true);
       if (row && generation(row.ciphertext) === expectedGeneration) {
         if (details.environment !== this.options.environment) {
@@ -139,7 +164,8 @@ export class PostgresApnsRecipientResolver implements RecipientResolver {
   }
 
   private async select(query: Queryable, lock: boolean): Promise<TokenRow | null> {
-    const eventGuard = "e.state='active' AND (e.expires_at IS NULL OR e.expires_at>now())";
+    const eventGuard = `e.state='active' AND (e.expires_at IS NULL OR e.expires_at>clock_timestamp())
+      AND ${relevanceDeliveryGuard("e")}`;
     const bindingGuard = `j.id=$1 AND j.claim_token=$2 AND j.state='processing'
       AND j.claim_phase='dispatch_started'
       AND j.notification_event_id=$3 AND j.device_id=$4

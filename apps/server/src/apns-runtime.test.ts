@@ -162,6 +162,53 @@ function job(overrides: Partial<ApnsRuntimeJob> = {}): ApnsRuntimeJob {
 }
 
 describe("clean-room APNs worker runtime", () => {
+  test.each([
+    ["approval","RELO_APPROVAL"],["yes_no","RELO_YES_NO"],["text","RELO_TEXT"],
+  ] as const)("serializes the %s category through the actual provider",async (kind,category)=>{
+    const transport=new RecordingTransport([{kind:"response",status:200,body:Buffer.alloc(0)}]);
+    const runtime=new CleanroomApnsRuntime(new FakeDatabase() as never,config(),transport);
+    expect((await runtime.send(job({interactionKind:kind,interactionId:"int_123e4567-e89b-42d3-a456-426614174111"}),recipient())).kind).toBe("accepted");
+    const payload=JSON.parse(Buffer.from(transport.connection.requests[0]!.body).toString());
+    expect(payload.aps.category).toBe(category);expect(payload.relo.interactionType).toBe(kind);
+  });
+
+  test.each([-1,1.5,Number.MAX_SAFE_INTEGER+1])("rejects invalid badge %s without opening a provider stream",async badge=>{
+    const transport=new RecordingTransport([]);
+    const runtime=new CleanroomApnsRuntime(new FakeDatabase() as never,config(),transport);
+    expect((await runtime.send(job({badge}),recipient())).kind).toBe("rejected");
+    expect(transport.connection.requests).toHaveLength(0);
+  });
+
+  test("ordinary custom data cannot override categories or carry nested credentials",async()=>{
+    const transport=new RecordingTransport([{kind:"response",status:200,body:Buffer.alloc(0)}]);
+    const runtime=new CleanroomApnsRuntime(new FakeDatabase() as never,config(),transport);
+    await runtime.send(job({badge:0,sourceName:"x".repeat(100),payload:{privacy:"standard",category:"CLIENT_CONTROLLED",
+      credential:"SECRET_SENTINEL",nested:{responseToken:"SECRET_SENTINEL"},items:[{apiSecret:"SECRET_SENTINEL"}],
+      context:{computer:"Mac",unknown:"SECRET_SENTINEL"}}}),recipient());
+    const bytes=Buffer.from(transport.connection.requests[0]!.body).toString(),payload=JSON.parse(bytes);
+    expect(bytes).not.toMatch(/SECRET_SENTINEL|CLIENT_CONTROLLED/);
+    expect(payload.aps).not.toHaveProperty("category");expect(payload.aps.badge).toBe(0);
+    expect(payload.relo.sourceName).toHaveLength(80);expect(payload.relo.context).toEqual({computer:"Mac"});
+    expect(payload.relo).not.toHaveProperty("nested");expect(payload.relo).not.toHaveProperty("items");
+  });
+
+  test.each([undefined,0,-1,1.5])("rejects missing/invalid native generation %s before transport",async generation=>{
+    const transport=new RecordingTransport([]);
+    const runtime=new CleanroomApnsRuntime(new FakeDatabase() as never,config(),transport);
+    await expect(runtime.send(job({transport:"live_activity_update",activityCommand:{generation,operation:"update"}}),recipient())).rejects.toThrow("positive integer");
+    expect(transport.connection.requests).toHaveLength(0);
+  });
+
+  test.each([14_400,20_000])("bounds native dismissal duration %s in provider bytes",async dismissAfterSeconds=>{
+    const transport=new RecordingTransport([{kind:"response",status:200,body:Buffer.alloc(0)}]);
+    const runtime=new CleanroomApnsRuntime(new FakeDatabase() as never,config(),transport);
+    await runtime.send(job({transport:"live_activity_update",activityCommand:{generation:1,sequence:1,operation:"end",
+      providerTimestamp:1_786_060_800,status:"Done",dismissAfterSeconds}}),recipient());
+    const aps=JSON.parse(Buffer.from(transport.connection.requests[0]!.body).toString()).aps;
+    expect(aps.event).toBe("end");expect(aps["content-state"].status).toBe("Done");
+    expect(aps["dismissal-date"]-aps.timestamp).toBe(dismissAfterSeconds<=14_400?dismissAfterSeconds:0);
+  });
+
   test("prewarms and reuses one HTTP/2 session", async () => {
     const db = new FakeDatabase();
     const transport = new RecordingTransport([

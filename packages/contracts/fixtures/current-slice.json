@@ -7,7 +7,8 @@
     "context": {
       "computer": "Mac",
       "project": "Relo",
-      "taskTitle": "Automatic completion hook"
+      "taskTitle": "Automatic completion hook",
+      "threadName": "Test topic"
     }
   },
   "activityStart": {

@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { Database } from "./db.js";
 
-const CURRENT_SCHEMA = "0044_single_delivery_serializer.sql";
+const CURRENT_SCHEMA = "0060_mobile_sign_in_codes.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";
@@ -39,7 +39,7 @@ export async function readDoctorSnapshot(
   db: Database,
   input: { principalId: string; apnsMode: ApnsMode; now?: Date; releaseIdentity?: string | undefined },
 ) {
-  const [migration,worker,devices,pairingStorage] = await Promise.all([
+  const [migration,worker,devices] = await Promise.all([
     db.query<{ version: string }>(
       "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1",
     ),
@@ -52,12 +52,6 @@ export async function readDoctorSnapshot(
          count(*) FILTER (WHERE live_activity_authorization='authorized')::text AS live_activities
        FROM devices WHERE principal_id=$1 AND revoked_at IS NULL`,
       [input.principalId],
-    ),
-    db.query<{ can_select: boolean;can_insert: boolean;can_update: boolean }>(
-      `SELECT
-         COALESCE(has_table_privilege(current_user,to_regclass('public.connection_grants'),'SELECT'),false) AS can_select,
-         COALESCE(has_table_privilege(current_user,to_regclass('public.connection_grants'),'INSERT'),false) AS can_insert,
-         COALESCE(has_table_privilege(current_user,to_regclass('public.connection_grants'),'UPDATE'),false) AS can_update`,
     ),
   ]);
   const latestMigration = migration.rows[0]?.version ?? null;
@@ -80,21 +74,11 @@ export async function readDoctorSnapshot(
     : workerState === "ready" && workerDetails.configured === true
       && workerDetails.mode === input.apnsMode
       ? "configured" : "invalid";
-  const pairingStorageRow = pairingStorage.rows[0];
-  const pairingStorageReady = pairingStorageRow?.can_select === true
-    && pairingStorageRow.can_insert === true
-    && pairingStorageRow.can_update === true;
   const checks = {
     database: {
-      ok: latestMigration === CURRENT_SCHEMA && pairingStorageReady,
+      ok: latestMigration === CURRENT_SCHEMA,
       currentMigration: latestMigration,
       expectedMigration: CURRENT_SCHEMA,
-      pairingStorage: {
-        ok: pairingStorageReady,
-        select: pairingStorageRow?.can_select === true,
-        insert: pairingStorageRow?.can_insert === true,
-        update: pairingStorageRow?.can_update === true,
-      },
     },
     worker: {
       ok: workerState === "ready",

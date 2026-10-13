@@ -104,6 +104,7 @@ services:
       database-role-bootstrap:
         condition: service_completed_successfully
     environment:
+      APP_URL: ${RELO_APP_URL:-http://127.0.0.1:8180}
       DATABASE_URL: postgresql://relo_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/relo
       RELO_RELEASE_IDENTITY: ${RELO_RELEASE_IDENTITY:-development}
       BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret

@@ -6,9 +6,10 @@ options:
   xcodeVersion: "26.0"
 settings:
   base:
-    SWIFT_VERSION: "5.0"
-    CURRENT_PROJECT_VERSION: 24
-    MARKETING_VERSION: 0.9.12
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CURRENT_PROJECT_VERSION: 31
+    MARKETING_VERSION: 0.9.19
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     TARGETED_DEVICE_FAMILY: 1
@@ -27,31 +28,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).core
-        GENERATE_INFOPLIST_FILE: YES
-        SKIP_INSTALL: YES
-  ReloActivityWire:
-    type: framework
-    platform: iOS
-    sources:
-      - path: Sources/SharedActivity/ReloActivityAttributes.swift
-    dependencies:
-      - target: ReloCore
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).activity-wire
-        GENERATE_INFOPLIST_FILE: YES
-        SKIP_INSTALL: YES
-  ReloActivityResponse:
-    type: framework
-    platform: iOS
-    sources:
-      - path: Sources/SharedActivity/ReloLiveActivityResponseIntent.swift
-      - path: Sources/SharedActivity/ReloActivityAttributes.swift
-    dependencies:
-      - target: ReloCore
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).activity-response
+        SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   Relo:
@@ -61,6 +38,10 @@ targets:
       - path: Sources/ReloApp
       - path: Sources/SharedActivity
     dependencies:
+      - target: ReloRuntime
+      - target: ReloPersistence
+      - target: ReloTransport
+      - target: ReloNotificationSupport
       - target: ReloCore
       - target: ReloNotificationService
         embed: true
@@ -77,13 +58,13 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        UIUserInterfaceStyle: Dark
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: false
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: Relo connects to your notification server on the local network.
-        NSCameraUsageDescription: Scan a Relo connection QR to connect this iPhone to your server.
         NSUserActivityTypes:
           - INSendMessageIntent
         RELOAPIOrigin: $(RELO_API_ORIGIN)
@@ -111,6 +92,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Config/Relo.entitlements
+      configs:
+        Debug:
+          OTHER_LDFLAGS[sdk=iphonesimulator*]: $(inherited) $(RELO_SIMULATOR_TEST_ENTITLEMENTS_FLAGS)
   ReloNotificationService:
     type: app-extension
     platform: iOS
@@ -132,6 +116,8 @@ targets:
       properties:
         com.apple.security.application-groups:
           - $(RELO_APP_GROUP)
+    dependencies:
+      - target: ReloCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).service
@@ -144,6 +130,8 @@ targets:
       - path: Sources/LiveActivities
       - path: Sources/SharedActivity
     dependencies:
+      - target: ReloPersistence
+      - target: ReloTransport
       - target: ReloCore
     info:
       path: Config/LiveActivities-Info.plist
@@ -177,6 +165,8 @@ targets:
       - path: Sources/LiveActivities
       - path: Sources/SharedActivity
     dependencies:
+      - target: ReloPersistence
+      - target: ReloTransport
       - target: ReloCore
     info:
       path: Config/NativeReferenceLiveActivities-Info.plist
@@ -205,6 +195,8 @@ targets:
       - path: Sources/NativeReferenceHost
       - path: Sources/SharedActivity
     dependencies:
+      - target: ReloPersistence
+      - target: ReloTransport
       - target: ReloCore
       - target: ReloNativeReferenceLiveActivities
         embed: true
@@ -236,21 +228,102 @@ targets:
     resources:
       - path: Tests/ReloCoreTests/Fixtures
     dependencies:
+      - target: ReloRuntime
+      - target: ReloPersistence
+      - target: ReloTransport
+      - target: ReloNotificationSupport
+      - target: Relo
       - target: ReloCore
-      - target: ReloActivityWire
-      - target: ReloActivityResponse
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Relo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Relo
+        BUNDLE_LOADER: $(TEST_HOST)
   ReloNotificationSupportTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: Sources/NotificationSupport
       - path: Tests/ReloNotificationSupportTests
+    dependencies:
+      - target: ReloNotificationSupport
+      - target: ReloCore
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+  ReloAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/ReloAppTests
+    dependencies:
+      - target: ReloCore
+      - target: ReloRuntime
+      - target: ReloPersistence
+      - target: ReloTransport
+      - target: ReloNotificationSupport
+      - target: Relo
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Relo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Relo
+        BUNDLE_LOADER: $(TEST_HOST)
+  ReloRuntime:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/ReloRuntime
+    dependencies:
+      - target: ReloCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).reloruntime
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+  ReloTransport:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/ReloTransport
+    dependencies:
+      - target: ReloCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).relotransport
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+  ReloPersistence:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/ReloPersistence
+    dependencies:
+      - target: ReloCore
+      - target: ReloNotificationSupport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).relopersistence
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+  ReloNotificationSupport:
+    type: framework
+    platform: iOS
+    sources:
+      - path: Sources/NotificationSupport
+    dependencies:
+      - target: ReloCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RELO_BUNDLE_ID).relonotificationsupport
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
 schemes:
   Relo:
     build:
@@ -258,10 +331,12 @@ schemes:
         Relo: all
         ReloCoreTests: [test]
         ReloNotificationSupportTests: [test]
+        ReloAppTests: [test]
     test:
       targets:
         - ReloCoreTests
         - ReloNotificationSupportTests
+        - ReloAppTests
   ReloNativeReference:
     build:
       targets:

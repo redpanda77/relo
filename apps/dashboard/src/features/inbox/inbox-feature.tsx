@@ -1,7 +1,7 @@
+import { Page } from "@/components/page"
 import { DeliveryHistoryPage } from "@/features/inbox/delivery-history-page"
-import { InboxPage } from "@/features/inbox/inbox-page"
-import { NotificationDetailPage } from "@/features/inbox/notification-detail-page"
-import { NotificationHistoryPage } from "@/features/inbox/notification-history-page"
+import { InboxView } from "@/features/inbox/inbox-view"
+import { NotificationDetailBody } from "@/features/inbox/notification-detail"
 import type { InboxDashboardBootstrap } from "@/features/inbox/types"
 import {
   createHttpInboxService,
@@ -21,18 +21,18 @@ export function InboxFeature({
 }) {
   switch (bootstrap.kind) {
     case "inbox-overview":
-      return (
-        <InboxPage
-          initial={bootstrap}
-          service={service}
-          onApprovalSuccess={onApprovalSuccess}
-        />
-      )
+      return <InboxView overview={bootstrap} service={service} onApprovalSuccess={onApprovalSuccess} />
     case "notification-history":
-      return <NotificationHistoryPage initial={bootstrap} service={service} />
+      return <InboxView history={bootstrap} service={service} />
     case "delivery-history":
       return <DeliveryHistoryPage initial={bootstrap} service={service} />
     case "notification-detail":
-      return <NotificationDetailPage initial={bootstrap} service={service} />
+      return (
+        <Page title="Notification" actions={<a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">Back to Inbox</a>}>
+          <div className="max-w-2xl">
+            <NotificationDetailBody detail={bootstrap} service={service} />
+          </div>
+        </Page>
+      )
   }
 }

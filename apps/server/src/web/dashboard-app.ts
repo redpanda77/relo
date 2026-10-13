@@ -9,6 +9,10 @@ import type { ConnectionsDashboardBootstrap } from "./dashboard-connections.js";
 import type { ActivityHistoryBootstrap } from "./dashboard-activity-history.js";
 import type { SystemDashboardBootstrap } from "./dashboard-system.js";
 import type { ProjectsDashboardBootstrap } from "./dashboard-projects.js";
+import { cardEvidence } from "./run-evidence.js";
+import { isoDate } from "./http.js";
+import type { z } from "zod";
+import { testLabBootstrapSchema } from "@relo/notification-contracts/dashboard/test-lab";
 
 const dashboardDistUrl = new URL("../../../dashboard/dist/",import.meta.url);
 const dashboardAssetsUrl = new URL("assets/",dashboardDistUrl);
@@ -68,81 +72,7 @@ export async function dashboardAppAssetResponse(assetName: string): Promise<Resp
   } });
 }
 
-export type TestLabDashboardBootstrap = {
-  version: 1;
-  kind: "test-lab";
-  route: {
-    path: string;
-    selectedActivityId: string | null;
-    compose: boolean;
-  };
-  shell: {
-    title: "Live Activity Test Lab";
-    description: string;
-    active: "testing";
-    releaseIdentity: string;
-    account: { id: string; initial: string; name: string; email: string };
-  };
-  summary: {
-    total: number;
-    active: number;
-    awaitingProvider: number;
-    awaitingPhone: number;
-    awaitingResponse: number;
-  };
-  devices: Array<{
-    id: string;
-    name: string;
-    model: string | null;
-    appVersion: string | null;
-    osVersion: string | null;
-    notificationAuthorization: string;
-    liveActivityAuthorization: string;
-    lastSeenAt: string | null;
-    ready: boolean;
-  }>;
-  runs: Array<{
-    id: string;
-    title: string;
-    detail: string | null;
-    style: string;
-    status: string;
-    state: string;
-    progress: number | null;
-    generation: number;
-    sequence: number;
-    presentation: LiveActivityPresentation | null;
-    targetDeviceIds: string[];
-    targetDeviceName: string | null;
-    requesterLabel: string;
-    ownerControlled: boolean;
-    ownerKind: ActivityOwnerKind;
-    evidence: {
-      provider: {
-        state: string | null;
-        durableCommands: number;
-        apnsJobs: number;
-      };
-      phone: { expected: number; confirmed: number };
-      response: {
-        kind: string | null;
-        state: string | null;
-        action: string | null;
-        respondedAt: string | null;
-      };
-    };
-    createdAt: string | null;
-    updatedAt: string | null;
-  }>;
-  composer: {
-    defaultPreset: "standard";
-    presets: Array<{
-      id: string;
-      label: string;
-      presentation: LiveActivityPresentation;
-    }>;
-  };
-};
+export type TestLabDashboardBootstrap = z.input<typeof testLabBootstrapSchema>;
 
 export type DashboardBootstrap =
   | DashboardAuthBootstrap
@@ -163,12 +93,6 @@ type TestLabDashboardBootstrapInput = {
   activities: Array<Record<string,any>>;
   presets: Array<{ id: string; label: string; presentation: LiveActivityPresentation }>;
 };
-
-function isoDate(value: unknown): string | null {
-  if (!value) return null;
-  const date = new Date(String(value));
-  return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
-}
 
 function count(value: unknown): number {
   const number = Number(value);
@@ -229,6 +153,7 @@ export function createTestLabDashboardBootstrap(
           expected: count(row.expected_receipts),
           confirmed: count(row.confirmed_receipts),
         },
+        activityKit: cardEvidence(row.card_shown_at),
         response: {
           kind: row.interaction_kind == null ? null : String(row.interaction_kind),
           state: row.interaction_state == null ? null : String(row.interaction_state),

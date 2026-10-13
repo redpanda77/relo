@@ -1,5 +1,6 @@
 import { internalId } from "./ids.js";
 import { canonicalOriginHash } from "./origin-slots.js";
+import type { SubjectTransaction } from "./relevance/commands.js";
 
 export type ActivityLifecycleIdentity = { provider: string; runId: string };
 export type ActivityLifecycleSelector = {
@@ -23,7 +24,7 @@ type ReleasableQueryable = Queryable & { release: () => void };
 type Connectable = { connect: () => Promise<ReleasableQueryable> };
 
 export type ActivityTransaction = {
-  client: Queryable;
+  client: SubjectTransaction;
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
   close: () => Promise<void>;

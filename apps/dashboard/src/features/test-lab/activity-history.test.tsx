@@ -111,14 +111,14 @@ describe("ActivityHistoryPage", () => {
   test("shows generation, sequence, targets, operations, and durable events", () => {
     render(<ActivityHistoryPage bootstrap={bootstrap} />)
     expect(screen.getByText("Generation 2")).toBeInTheDocument()
-    expect(screen.getAllByText("Sequence 3")).toHaveLength(2)
+    expect(screen.getByText("Sequence 3")).toBeInTheDocument()
     expect(screen.getByText("codex lifecycle")).toBeInTheDocument()
     expect(screen.getByText("codex-run-0123456789abcdef")).toBeInTheDocument()
     expect(screen.getByText("Test iPhone")).toBeInTheDocument()
     expect(screen.getByText("Release 41")).toBeInTheDocument()
     expect(screen.getByText("resumed")).toBeInTheDocument()
     expect(
-      screen.getByText("1 durable commands, 1 APNs jobs")
+      screen.getByText("Update #3 · 1 push to Apple")
     ).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /Release 42/i })).toHaveAttribute(
       "href",

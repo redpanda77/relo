@@ -1,5 +1,13 @@
+@testable import ReloTransport
+@testable import ReloRuntime
+@testable import ReloPersistence
 import XCTest
+// SwiftPM builds the shared activity sources as ReloActivityResponse; Xcode compiles them into the app.
+#if canImport(ReloActivityResponse)
 @testable import ReloActivityResponse
+#else
+@testable import Relo
+#endif
 @testable import ReloCore
 
 final class DurableActionCoordinatorTests: XCTestCase {
@@ -619,15 +627,15 @@ final class DurableActionCoordinatorTests: XCTestCase {
         let first = response(action: .approve, idempotencyKey: "first-key")
         let opposite = response(action: .deny, idempotencyKey: "opposite-key")
 
-        let firstResult = await store.enqueue(first)
-        let oppositeResult = await store.enqueue(opposite)
+        let firstResult = try await store.enqueue(first)
+        let oppositeResult = try await store.enqueue(opposite)
         let initiallyPending = await store.pending(now: .now)
         XCTAssertEqual(firstResult, .enqueued)
         XCTAssertEqual(oppositeResult, .alreadyPending(first))
         XCTAssertEqual(initiallyPending, [first])
 
         let expired = response(action: .yes, idempotencyKey: "expired-key", expiresAt: .distantPast, notificationID: "ntf_other123456")
-        let expiredResult = await store.enqueue(expired)
+        let expiredResult = try await store.enqueue(expired)
         let afterPrune = await store.pending(now: .now)
         XCTAssertEqual(expiredResult, .enqueued)
         XCTAssertEqual(afterPrune, [first])
@@ -637,7 +645,7 @@ final class DurableActionCoordinatorTests: XCTestCase {
         let store = InMemoryProtectedActionStore()
         await store.select(accountID: "acc_test123456", deviceID: "dev_test123456")
         let queued = response(action: .answer, idempotencyKey: "invalid-response-key")
-        let enqueueResult = await store.enqueue(queued)
+        let enqueueResult = try await store.enqueue(queued)
         XCTAssertEqual(enqueueResult, .enqueued)
 
         var submissionAttempts = 0
@@ -924,7 +932,7 @@ final class DurableActionCoordinatorTests: XCTestCase {
             widgetPresentation(interaction, now: now),
             LiveActivityResponseWidgetPresentation(
                 mode: .sending,
-                label: "Sending Yes…",
+                label: "Sending response…",
                 symbol: nil,
                 showsProgress: true
             )
@@ -1382,6 +1390,16 @@ final class DurableActionCoordinatorTests: XCTestCase {
         XCTAssertEqual(valid.validatedDestinationURL?.host, "example.test")
         XCTAssertNil(NotificationDestinationPolicy.validatedURL("https://user:secret@example.test/path"))
         XCTAssertNil(NotificationDestinationPolicy.validatedURL("http://example.test/path"))
+    }
+
+    func testDestinationOpensAppLinksAndShortcutsButNotExecutableSchemes() {
+        for link in ["your-app://incidents/INC-42", "shortcuts://run-shortcut?name=Deploy%20Follow-up&input=text&text=done"] {
+            XCTAssertNotNil(NotificationDestinationPolicy.validatedURL(link), link)
+            XCTAssertFalse(NotificationDestinationPolicy.isWebLink(URL(string: link)!))
+        }
+        for link in ["javascript:alert(1)", "data:text/html,hi", "file:///etc/passwd", "about:blank", "blob:https://x", "https://"] {
+            XCTAssertNil(NotificationDestinationPolicy.validatedURL(link), link)
+        }
     }
 
     func testColdRouteResolvesFromCachedInboxWithoutRemoteSync() {

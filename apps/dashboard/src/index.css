@@ -36,48 +36,53 @@
   --color-background: var(--background);
   --radius-sm: 8px;
   --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
 }
 
 :root,
 .dark {
   color-scheme: dark;
-  --background: #100d12;
-  --foreground: #fff9f5;
-  --card: #1a151d;
-  --card-foreground: #fff9f5;
-  --popover: #211a24;
-  --popover-foreground: #fff9f5;
+  /* Ink canvas; every surface above it is translucent glass over the gradient field. */
+  --background: #08080d;
+  --foreground: #f3f3f7;
+  --card: rgb(255 255 255 / 0.035);
+  --card-foreground: #f3f3f7;
+  --popover: #13131b;
+  --popover-foreground: #f3f3f7;
   --primary: #ff6b57;
-  --primary-foreground: #220d0a;
-  --secondary: #2a222d;
-  --secondary-foreground: #fff9f5;
-  --muted: #28212b;
-  --muted-foreground: #c1b5c4;
-  --accent: #35293a;
-  --accent-foreground: #fff9f5;
-  --destructive: #ff5d6c;
-  --border: #423547;
-  --input: #5b485f;
-  --ring: #ff9a83;
+  --primary-foreground: #1b0905;
+  --secondary: rgb(255 255 255 / 0.06);
+  --secondary-foreground: #f3f3f7;
+  --muted: rgb(255 255 255 / 0.05);
+  --muted-foreground: #a4a4b6;
+  --accent: rgb(255 255 255 / 0.07);
+  --accent-foreground: #f3f3f7;
+  --destructive: #f87171;
+  --border: rgb(255 255 255 / 0.08);
+  --input: rgb(255 255 255 / 0.12);
+  --ring: #a796ff;
   --radius: 14px;
-  --sidebar: #151117;
-  --sidebar-foreground: #fff9f5;
+  --sidebar: rgb(13 13 19 / 0.96);
+  --sidebar-foreground: #f3f3f7;
   --sidebar-primary: #ff6b57;
-  --sidebar-primary-foreground: #220d0a;
-  --sidebar-accent: #2a222d;
-  --sidebar-accent-foreground: #fff9f5;
-  --sidebar-border: #3a2e3e;
-  --sidebar-ring: #ff9a83;
-  --sidebar-width: 16rem;
+  --sidebar-primary-foreground: #1b0905;
+  --sidebar-accent: rgb(255 255 255 / 0.07);
+  --sidebar-accent-foreground: #f3f3f7;
+  --sidebar-border: rgb(255 255 255 / 0.07);
+  --sidebar-ring: #a796ff;
+  --sidebar-width: 15rem;
   --sidebar-width-icon: 3rem;
-  --status-success: #42d690;
-  --status-active: #ff8a2b;
-  --status-warning: #4c91ff;
-  --status-danger: #ff4f5e;
-  --status-info: #a6afbf;
-  --status-neutral: #b9acbd;
+  /* Brand gradient: coral to violet to indigo. Used for the primary action and the active marker only. */
+  --brand-gradient: linear-gradient(120deg, #ff6b57 0%, #d65cf0 52%, #7c6bff 100%);
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --glass-shadow: 0 18px 48px -18px rgb(0 0 0 / 0.65);
+  --status-success: #34d399;
+  --status-active: #8b7cff;
+  --status-warning: #fbbf24;
+  --status-danger: #f87171;
+  --status-info: #94a3b8;
+  --status-neutral: #a4a4b6;
 }
 
 @layer base {
@@ -89,7 +94,13 @@
     background: var(--background);
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background:
+      radial-gradient(70rem 46rem at 92% -14%, rgb(214 92 240 / 0.34), transparent 68%),
+      radial-gradient(60rem 42rem at -10% 6%, rgb(124 107 255 / 0.30), transparent 68%),
+      radial-gradient(56rem 38rem at 64% 120%, rgb(255 107 87 / 0.22), transparent 68%),
+      var(--background);
+    background-attachment: fixed;
     margin: 0;
     min-width: 320px;
     overflow-x: clip;
@@ -112,19 +123,41 @@
   }
 }
 
+/* Pages sit directly on the body's gradient field. */
 .canvas {
-  background:
-    radial-gradient(
-      circle at 82% -8%,
-      rgb(255 107 87 / 0.09),
-      transparent 30rem
-    ),
-    radial-gradient(
-      circle at 6% 92%,
-      rgb(64 116 255 / 0.07),
-      transparent 34rem
-    ),
-    linear-gradient(180deg, #151017 0%, #0f0c11 74%);
+  background: transparent;
+}
+
+/* Frosted layer for elements that float above the gradient field. */
+.glass {
+  background: rgb(255 255 255 / 0.04);
+  border: 1px solid var(--border);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+}
+
+[data-slot="sidebar-inner"],
+[data-slot="sidebar"][data-mobile="true"] {
+  border-right: 1px solid var(--sidebar-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Overlays sit above content, so they need a denser frost to keep text legible. */
+.glass-strong,
+[data-slot="sheet-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="dialog-content"] {
+  background: rgb(17 17 25 / 0.96);
+  border-color: var(--border);
+  box-shadow: var(--glass-highlight), 0 24px 64px -16px rgb(0 0 0 / 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.brand-gradient {
+  background-image: var(--brand-gradient);
 }
 
 .route-loading-progress {
@@ -151,15 +184,7 @@
   animation: route-loading-sweep 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
 
-#main-content {
-  view-transition-name: dashboard-route;
-}
 
-::view-transition-old(dashboard-route),
-::view-transition-new(dashboard-route) {
-  animation-duration: 140ms;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
-}
 
 @keyframes route-loading-sweep {
   to {
@@ -174,10 +199,6 @@
     background: var(--primary);
     opacity: 0.86;
     transform: none;
-  }
-  ::view-transition-old(dashboard-route),
-  ::view-transition-new(dashboard-route) {
-    animation: none;
   }
 }
 .nav-link {

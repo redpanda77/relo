@@ -5,17 +5,16 @@ import {
 } from "./activities.js";
 
 describe("credential activity contract", () => {
-  test("canonicalizes yes-no waits and applies the bounded expiry default", () => {
+  test("canonicalizes yes-no waits and applies the five-minute expiry default", () => {
     expect(activityWaitSchema.parse({ type: "yes-no",prompt: "Continue?" })).toEqual({
-      type: "yes_no",prompt: "Continue?",expiresInSeconds: 900,
+      type: "yes_no",prompt: "Continue?",expiresInSeconds: 300,
     });
     expect(activityWaitSchema.parse({
       type: "approval",prompt: "Ship release?",expiresInSeconds: 30,
       primaryLabel: "Approve",secondaryLabel: "Deny",
     })).toMatchObject({ type: "approval",expiresInSeconds: 30 });
-    expect(activityWaitSchema.parse({
-      type: "text",prompt: "Describe the blocker",expiresInSeconds: 28_800,
-    })).toMatchObject({ type: "text",expiresInSeconds: 28_800 });
+    expect(activityWaitSchema.safeParse({ type: "text",prompt: "Describe the blocker" }).success).toBe(false);
+    expect(activityWaitSchema.safeParse({ type: "yes_no",prompt: "Continue?",expiresInSeconds: 301 }).success).toBe(false);
   });
 
   test("rejects overlong Live Activity prompts, text labels, multiline labels, and expiry overflow", () => {
@@ -25,7 +24,7 @@ describe("credential activity contract", () => {
       type: "yes_no",prompt: "Continue?",primaryLabel: "Yes\nnow",
     }).success).toBe(false);
     expect(activityWaitSchema.safeParse({
-      type: "text",prompt: "x".repeat(2_001),expiresInSeconds: 28_801,
+      type: "text",prompt: "x".repeat(2_001),expiresInSeconds: 301,
     }).success).toBe(false);
   });
 
@@ -81,7 +80,7 @@ describe("credential activity contract", () => {
     expect(activityHeartbeatSchema.safeParse({ lifecycle,leaseAfterSeconds: 14_401 }).success).toBe(false);
   });
 
-  test("derives a durable monotonic ActivityKit timestamp from operation sequence", () => {
+  test("keeps observed ActivityKit time independent of operation sequence", () => {
     expect(activityProviderTimestamp({
       created_at: "2026-08-07T12:00:00.900Z",
       updated_at: "2026-08-07T12:00:00.950Z",
@@ -91,7 +90,7 @@ describe("credential activity contract", () => {
       created_at: "2026-08-07T12:00:00.900Z",
       updated_at: "2026-08-07T12:00:00.990Z",
       sequence: 3,
-    })).toBe(1_786_104_003);
+    })).toBe(1_786_104_000);
     expect(() => activityProviderTimestamp({ created_at: "invalid",sequence: 0 }))
       .toThrow("invalid durable Live Activity chronology");
   });

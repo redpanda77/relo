@@ -30,37 +30,20 @@ test("parses commands, repeatable values, and inline values", () => {
   assert.equal(login.options["no-open"], true);
 });
 
-test("parses the stdin, poll, and stable ask selectors exactly", () => {
+test("parses the stdin and stable ask selectors exactly", () => {
   assert.deepEqual(
-    parseArgs(["notify", "ask", "--stdin", "--yes-no", "--poll", "--json"]),
+    parseArgs(["ask", "--stdin", "--yes-no", "--json"]),
     {
-      positionals: ["notify", "ask"],
-      options: {
-        device: [],
-        scope: [],
-        stdin: true,
-        "yes-no": true,
-        poll: true,
-        json: true,
-      },
+      positionals: ["ask"],
+      options: { device: [], scope: [], stdin: true, "yes-no": true, json: true },
     },
   );
-  const live = parseArgs([
-    "notify",
-    "ask",
-    "Deploy?",
-    "--approval",
-    "--live-activity",
-    "--style",
-    "signal",
-    "--primary-label=Deploy",
-    "--secondary-label",
-    "Cancel",
-  ]);
-  assert.equal(live.options["live-activity"], true);
-  assert.equal(live.options.style, "signal");
-  assert.equal(live.options["primary-label"], "Deploy");
-  assert.equal(live.options["secondary-label"], "Cancel");
+  const labelled = parseArgs(["ask", "Deploy?", "--approval", "--primary-label=Deploy", "--secondary-label", "Cancel"]);
+  assert.equal(labelled.options["primary-label"], "Deploy");
+  assert.equal(labelled.options["secondary-label"], "Cancel");
+  for (const removed of ["--poll", "--live-activity", "--text"]) {
+    assert.throws(() => parseArgs(["ask", "Deploy?", removed]), /Unknown option/);
+  }
 });
 
 test("treats values after the separator as positional data", () => {
@@ -78,13 +61,13 @@ test("parses explicit trusted origins and bounded inventory options", () => {
   assert.equal(parsed.options.limit, "10");
   assert.equal(parsed.options["page-size"], "25");
   assert.equal(parsed.options["secret-file"], "hook.url");
-  assert.equal(parseArgs(["activity","status","--origin-file","origin.json"]).options["origin-file"],"origin.json");
+  assert.throws(() => parseArgs(["activity","status","--origin-file","origin.json"]),/Unknown option/);
   assert.equal(parseArgs(["activity","status","--name","release-build"]).options.name,"release-build");
 });
 
 test("forbids credential flags and rejects unknown or duplicate options", () => {
-  assert.throws(() => parseArgs(["auth", "status", "--token", "secret"]), /credentials must come/);
-  assert.throws(() => parseArgs(["auth", "status", "--api-token=secret"]), /credentials must come/);
+  assert.throws(() => parseArgs(["auth", "status", "--token", "secret"]), /forbidden; credentials come from/);
+  assert.throws(() => parseArgs(["auth", "status", "--api-token=secret"]), /forbidden; credentials come from/);
   assert.throws(() => parseArgs(["devices", "list", "--wat"]), /Unknown option/);
   assert.throws(() => parseArgs(["notify", "send", "x", "--title", "a", "--title", "b"]), /only be specified once/);
 });

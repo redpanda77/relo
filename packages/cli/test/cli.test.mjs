@@ -1,11 +1,46 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { execute, EXIT, run } from "../src/cli.mjs";
+import { execute as executeRaw, EXIT, run as runRaw } from "../src/cli.mjs";
 import { ApiError, AuthError, NetworkError } from "../src/errors.mjs";
+
+// Existing behavioral tests use an explicitly grouped fixture; identity omissions have dedicated
+// tests against the raw entry point below.
+const TEST_IDENTITY = { providerName: "Test source",project: "Test project",threadName: "Test topic" };
+function testContext(patch = {}) {
+  const context = { ...TEST_IDENTITY,...patch };
+  return { ...context,providerThreadId: `cli-topic:${createHash("sha256")
+    .update(JSON.stringify([context.providerName,context.project,context.threadName])).digest("hex")}` };
+}
+function groupedArgs(argv, dependencies) {
+  const creates = argv[0] === "notify" && argv[1] !== "withdraw"
+    || argv[0] === "activity" && ["start","ensure"].includes(argv[1]);
+  if (!creates || argv.includes("--help")) return [argv,dependencies];
+  if (argv.includes("--stdin")) {
+    const read = dependencies.readStdinJson;
+    if (!read) return [argv,dependencies];
+    return [argv,{ ...dependencies,readStdinJson: async () => {
+      const input = await read();
+      return input.origin ? input : { ...input,context: { ...TEST_IDENTITY,...input.context } };
+    } }];
+  }
+  const args = [...argv];
+  for (const [flag,key] of [["--source","providerName"],["--project","project"],["--topic","threadName"]]) {
+    if (!args.includes(flag) && !(flag === "--topic" && args.includes("--thread-name"))) args.splice(args.includes("--") ? args.indexOf("--") : args.length,0,flag,TEST_IDENTITY[key]);
+  }
+  return [args,dependencies];
+}
+function execute(argv, dependencies = {}) {
+  return executeRaw(...groupedArgs(argv,dependencies));
+}
+function run(argv, io, dependencies = {}) {
+  const [args, grouped] = groupedArgs(argv,dependencies);
+  return runRaw(args,io,grouped);
+}
 
 const CONFIG = {
   apiUrl: "https://server.example.test",
@@ -19,6 +54,10 @@ const CONFIG = {
 
 function overrides(client) {
   return {
+    // These parsing/presentation fixtures stub the capture port. The raw CLI
+    // durability/retry tests exercise the real file store in an isolated directory.
+    captureActivityCommand: async ({ body }) => ({ target: null,ifSequence: body.ifSequence }),
+    prepareNotificationCommand: async ({ body }) => body,
     configPath: () => CONFIG.path,
     loadConfig: async () => CONFIG,
     clientFactory: () => client,
@@ -86,7 +125,7 @@ test("doctor returns one honest readiness result", async () => {
     ready: async () => ({ status: "ok" }),
     authStatus: async () => ({ authenticated: true,credential: issuedCredential().credential }),
     doctor: async () => ({
-      version: 1,ok: true,releaseIdentity: "0.7.20-test",
+      version: 1,ok: true,releaseIdentity: "0.7.22-test",
       checks: {
         database: { ok: true },worker: { ok: true,state: "ready" },
         apns: { ok: true,state: "configured" },devices: { ok: true,notificationAuthorized: 1 },
@@ -95,7 +134,7 @@ test("doctor returns one honest readiness result", async () => {
   }));
   assert.equal(output.exitCode,EXIT.OK);
   assert.equal(output.data.ok,true);
-  assert.equal(output.data.checks.runtime.releaseIdentity,"0.7.20-test");
+  assert.equal(output.data.checks.runtime.releaseIdentity,"0.7.22-test");
 });
 
 test("doctor rejects activity credentials that cannot inspect delivery evidence", async () => {
@@ -509,43 +548,34 @@ test("auth login maps denial, expiry, and timeout to frozen exit codes", async (
 });
 
 test("public CLI help and command routing omit rejected phone pairing", async () => {
-  const help = await execute(["--help"]);
+  const help = await execute(["help", "all"]);
   assert.equal(help.data.help.includes("pair ios"), false);
   for (const text of [
     "relo notify [BODY...]",
-    "--computer NAME",
     "--project NAME",
-    "--thread-name NAME",
-    "--task-title TEXT",
+    "--topic NAME",
     "--name NAME",
     "--limit 1..100",
-    "relo devices list [--page-size 1..100]",
-    "relo activity wait ACTIVITY_ID",
+    "relo ask QUESTION (--approval|--yes-no)",
+    "relo activity start --title TITLE --status TEXT",
     "--api-url URL",
     "relo interaction cancel ID",
   ]) assert.equal(help.data.help.includes(text), true, text);
-  assert.equal(help.data.help.includes("standard|ring"), false);
+  assert.equal(help.data.help.includes("standard|ring"), true);
   await assert.rejects(execute(["pair", "ios"], overrides({})), /Unknown command/);
 });
 
 test("reports the package version without requiring credentials", async () => {
   const stdout = [];
   assert.equal(await run(["--version"], { stdout: (line) => stdout.push(line) }), EXIT.OK);
-  assert.deepEqual(stdout, ["0.7.17"]);
+  assert.deepEqual(stdout, [JSON.parse(readFileSync(new URL("../package.json",import.meta.url),"utf8")).version]);
 });
 
 test("normalizes yes-no to the API enum and validates activity styles", async () => {
-  let interaction;
-  await execute(
-    ["notify", "ask", "Continue?", "--type", "yes-no"],
-    overrides({
-      createInteraction: async (body) => {
-        interaction = body;
-        return { interaction: { id: "int_1" }, delivery: DELIVERY };
-      },
-    }),
-  );
-  assert.equal(interaction.type, "yes_no");
+  const { fakeCards, cardDependencies } = await import("./fake-cards.mjs");
+  const fake = fakeCards({ answer: "yes" });
+  await execute(["ask", "Continue?", "--type", "yes-no", "--topic", "Release"], cardDependencies(fake.client));
+  assert.equal(fake.calls.find((call) => call.op === "ask").body.type, "yes_no");
   await assert.rejects(
     execute(
       ["activity", "start", "--name", "build-1", "--title", "Build", "--status", "Starting", "--style", "unknown"],
@@ -600,7 +630,7 @@ test("forwards explicit presentation overrides while leaving defaults to the ser
   assert.deepEqual(calls,[{
     key: "build-policy",replace: false,title: "Build",status: "Starting",
     preset: "terminal",theme: "dark",accentColor: "#63B3FF",
-    expiresInSeconds: 28_800,staleAfterSeconds: 14_400,
+    acquireMode: "ensure",expiresInSeconds: 28_800,staleAfterSeconds: 1_200,context: testContext(),
   }]);
 });
 
@@ -651,7 +681,7 @@ test("sends named step facts and an independent measured progress label",async (
         key: "release",replace: false,title: "Release",status: "Building",
         progress: 0.625,progressLabel: "5 of 8",
         steps: { labels: ["Plan","Build","Verify"],current: 2 },
-        expiresInSeconds: 28_800,staleAfterSeconds: 14_400,
+        acquireMode: "ensure",expiresInSeconds: 28_800,staleAfterSeconds: 1_200,context: testContext(),
       },
     },
     {
@@ -713,7 +743,7 @@ test("merges notification stdin with explicit flags taking precedence", async ()
   assert.deepEqual(seen, {
     body: "Flag body",
     title: "Flag title",
-    sourceName: "Relo",
+    sourceName: "Codex",
     imageUrl: "https://example.test/image.png",
     destinationUrl: "https://example.test/details",
     context: {
@@ -721,10 +751,6 @@ test("merges notification stdin with explicit flags taking precedence", async ()
       providerThreadId: "task-42",providerWorkItemId: "turn-7",
       threadName: "Lifecycle audit",taskTitle: "Safe task",
       threadNameSource: "provider",taskTitleSource: "prompt_summary",
-    },
-    origin: {
-      sourceInstance: "codex-install",project: "Workspace abc",
-      thread: "opaque-task",channel: "task-progress",
     },
   });
 });
@@ -794,31 +820,6 @@ test("bounds JSON stdin before parsing for every stdin-enabled command", async (
   );
 });
 
-test("ordinary notification asks accept HTTPS image and destination URLs but Live Activities reject them", async () => {
-  let created;
-  const client = {
-    createInteraction: async (body) => { created = body; return { interaction: { id: "int_media", state: "pending" }, delivery: DELIVERY }; },
-  };
-  await execute([
-    "notify", "ask", "Review", "this", "artifact", "--approval",
-    "--image", "https://example.test/image.png", "--url", "https://example.test/details",
-  ], overrides(client));
-  assert.equal(created.prompt, "Review this artifact");
-  assert.equal(created.imageUrl, "https://example.test/image.png");
-  assert.equal(created.destinationUrl, "https://example.test/details");
-  await assert.rejects(
-    execute(["notify", "ask", "Deploy?", "--approval", "--live-activity", "--image", "https://example.test/a.png"], overrides(client)),
-    /ordinary notification asks/,
-  );
-  await assert.rejects(
-    execute(["notify", "ask", "Review?", "--approval", "--stdin"], {
-      ...overrides(client),
-      readStdinJson: async () => ({ imageUrl: "https://127.0.0.1/private.png" }),
-    }),
-    /public HTTPS/,
-  );
-});
-
 test("activity names and bounded list limits route to canonical client methods", async () => {
   const seen = [];
   const client = {
@@ -837,138 +838,6 @@ test("activity names and bounded list limits route to canonical client methods",
   await assert.rejects(execute(["activity", "list", "--limit", "0"], overrides(client)), /at least 1/);
   await assert.rejects(execute(["activity", "get", "act_1", "--name", "other"], overrides(client)), /Usage:/);
   await assert.rejects(execute(["activity", "get", "--key", "retired"], overrides(client)), /--key is not valid/);
-});
-
-test("activity wait binds an exact parent ID and preserves creation proof through phone wait", async () => {
-  let created;
-  let now = 0;
-  const output = await execute([
-    "activity", "wait", PARENT_ACTIVITY, "Approve", "the", "reviewed", "release?",
-    "--approval", "--primary-label", "Approve", "--secondary-label", "Deny",
-    "--expires-in", "15m", "--idempotency-key", "release-wait-1", "--poll",
-  ], {
-    ...overrides({
-      createActivityWait: async (id, body, key) => {
-        created = { id, body, key };
-        return activityWaitResponse();
-      },
-      waitForInteraction: async (id, timeoutSeconds) => {
-        assert.equal(id, WAIT_INTERACTION);
-        assert.equal(timeoutSeconds, 20);
-        now += timeoutSeconds * 1_000;
-        return {
-          interaction: {
-            ...activityWaitResponse().interaction,
-            state: "approved",
-            action: "approve",
-            respondingDevice: { id: "dev_123456789012", name: "iPhone" },
-            respondedAt: "2026-08-07T12:01:00.000Z",
-          },
-        };
-      },
-    }),
-    now: () => now,
-  });
-  assert.deepEqual(created, {
-    id: PARENT_ACTIVITY,
-    key: "release-wait-1",
-    body: {
-      type: "approval",
-      prompt: "Approve the reviewed release?",
-      expiresInSeconds: 900,
-      primaryLabel: "Approve",
-      secondaryLabel: "Deny",
-    },
-  });
-  assert.equal(output.command, "activity.wait");
-  assert.equal(output.data.parentActivityId, PARENT_ACTIVITY);
-  assert.equal(output.data.companionActivityId, COMPANION_ACTIVITY);
-  assert.equal(output.data.eventId, WAIT_EVENT);
-  assert.equal(output.data.delivery.durableCommands, 1);
-  assert.equal(output.data.deliveryMode, "durable_inbox_refresh_only");
-  assert.equal(output.data.interaction.id, WAIT_INTERACTION);
-  assert.equal(output.data.interaction.state, "approved");
-});
-
-test("activity wait supports canonical text attachment without a companion activity", async () => {
-  let body;
-  const response = activityWaitResponse({
-    companionActivityId: null,
-    interaction: {
-      type: "text",
-      prompt: "Short release note?",
-    },
-    replayed: true,
-    unexpectedSecret: "must-not-reach-stdout",
-  });
-  const output = await execute([
-    "activity", "wait", PARENT_ACTIVITY, "Short", "release", "note?",
-    "--text", "--idempotency-key", "release-text-1",
-  ], overrides({
-    createActivityWait: async (_id, value) => { body = value; return response; },
-  }));
-  assert.deepEqual(body, {
-    type: "text",
-    prompt: "Short release note?",
-    expiresInSeconds: 900,
-  });
-  assert.equal(output.data.parentActivityId, PARENT_ACTIVITY);
-  assert.equal(output.data.companionActivityId, null);
-  assert.equal(output.data.interaction.type, "text");
-  assert.equal(output.data.replayed, true);
-  assert.equal("unexpectedSecret" in output.data, false);
-  assert.equal(JSON.stringify(output).includes("must-not-reach-stdout"), false);
-});
-
-test("activity wait rejects aliases, unsafe request combinations, malformed evidence, and no delivery", async () => {
-  let calls = 0;
-  const client = {
-    createActivityWait: async () => {
-      calls += 1;
-      return activityWaitResponse();
-    },
-  };
-  for (const argv of [
-    ["activity", "wait", "release-main", "Approve?", "--approval"],
-    ["activity", "wait", PARENT_ACTIVITY, "Reply?", "--text", "--primary-label", "Reply"],
-    ["activity", "wait", PARENT_ACTIVITY, "x".repeat(241), "--approval"],
-  ]) {
-    await assert.rejects(execute(argv, overrides(client)), (error) => error.code === "USAGE_ERROR");
-  }
-  assert.equal(calls, 0);
-
-  const malformed = [
-    { parentActivityId: COMPANION_ACTIVITY },
-    { companionActivityId: null },
-    { eventId: "ntf_55555555-5555-4555-8555-555555555555" },
-    { interaction: { type: "yes_no" } },
-    { interaction: { expiresAt: "August 7, 2026" } },
-    { deliveryMode: "queued_for_direct_apns" },
-    { queued: -1 },
-  ];
-  for (const overridesValue of malformed) {
-    await assert.rejects(
-      execute([
-        "activity", "wait", PARENT_ACTIVITY, "Approve", "the", "reviewed", "release?",
-        "--approval",
-      ], overrides({
-        createActivityWait: async () => activityWaitResponse(overridesValue),
-      })),
-      (error) => error.code === "INVALID_API_RESPONSE",
-    );
-  }
-
-  await assert.rejects(
-    execute([
-      "activity", "wait", PARENT_ACTIVITY, "Approve", "the", "reviewed", "release?",
-      "--approval",
-    ], overrides({
-      createActivityWait: async () => activityWaitResponse({
-        delivery: { eligibleDevices: 1, durableCommands: 0, apnsJobs: 0 },
-      }),
-    })),
-    (error) => error.code === "NO_ACCEPTED_DELIVERY" && error.exitCode === EXIT.NO_DELIVERY,
-  );
 });
 
 test("devices list enumerates every page without changing its output contract", async () => {
@@ -1080,322 +949,6 @@ test("target validation reaches later pages and preserves authentication and cur
   }
 });
 
-test("supports stdin ask selectors and a fixed twenty-second poll", async () => {
-  let now = 0;
-  let created;
-  const waits = [];
-  const output = await execute(["notify", "ask", "--stdin", "--yes-no", "--poll"], {
-    ...overrides({
-      createInteraction: async (body) => {
-        created = body;
-        return {
-          interaction: { id: "int_1", state: "pending" },
-          eventId: "ntf_created_123456",
-          delivery: DELIVERY,
-          queued: 0,
-          replayed: false,
-        };
-      },
-      waitForInteraction: async (_id, timeoutSeconds) => {
-        waits.push(timeoutSeconds);
-        now += timeoutSeconds * 1_000;
-        return { interaction: { id: "int_1", state: "yes" } };
-      },
-    }),
-    now: () => now,
-    readStdinJson: async () => ({
-      prompt: "Continue?",
-      type: "approval",
-      title: "Build",
-      expiresInSeconds: 120,
-    }),
-  });
-  assert.deepEqual(created, {
-    prompt: "Continue?",
-    type: "yes_no",
-    title: "Build",
-    expiresInSeconds: 120,
-  });
-  assert.deepEqual(waits, [20]);
-  assert.deepEqual(output.data, {
-    interaction: { id: "int_1", state: "yes" },
-    eventId: "ntf_created_123456",
-    delivery: DELIVERY,
-    queued: 0,
-    replayed: false,
-  });
-});
-
-test("notify ask wait preserves creation proof when the canonical wait response is bare", async () => {
-  let now = 0;
-  const output = await execute(
-    ["notify", "ask", "Continue?", "--approval", "--wait", "--timeout", "1m"],
-    {
-      ...overrides({
-        createInteraction: async () => ({
-          interaction: { id: "int_bare_123456", state: "pending" },
-          eventId: "ntf_bare_123456",
-          delivery: DELIVERY,
-          queued: 0,
-          replayed: true,
-        }),
-        waitForInteraction: async (_id, timeoutSeconds) => {
-          now += timeoutSeconds * 1_000;
-          return { id: "int_bare_123456", state: "approved", respondedAt: "2026-08-07T00:00:00.000Z" };
-        },
-      }),
-      now: () => now,
-    },
-  );
-  assert.deepEqual(output.data, {
-    interaction: {
-      id: "int_bare_123456",
-      state: "approved",
-      respondedAt: "2026-08-07T00:00:00.000Z",
-    },
-    eventId: "ntf_bare_123456",
-    delivery: DELIVERY,
-    queued: 0,
-    replayed: true,
-  });
-});
-
-test("notify ask terminal JSON retains complete creation proof without changing nonzero exits", async () => {
-  const creation = {
-    interaction: { id: "int_terminal_123456", state: "pending" },
-    eventId: "ntf_terminal_123456",
-    liveActivityId: "act_terminal_123456",
-    delivery: DELIVERY,
-    queued: 0,
-    replayed: true,
-  };
-  const cases = [
-    { name: "denial", state: "denied", expectedExit: EXIT.NEGATIVE, argv: ["--wait", "--timeout", "1s"] },
-    { name: "no", state: "no", expectedExit: EXIT.NEGATIVE, argv: ["--wait", "--timeout", "1s"] },
-    { name: "canceled", state: "canceled", expectedExit: EXIT.TERMINAL, argv: ["--wait", "--timeout", "1s"] },
-    { name: "expired", state: "expired", expectedExit: EXIT.TERMINAL, argv: ["--wait", "--timeout", "1s"] },
-    { name: "pending poll", state: "pending", expectedExit: EXIT.TERMINAL, argv: ["--poll"] },
-    { name: "timeout", state: "pending", expectedExit: EXIT.TERMINAL, argv: ["--wait", "--timeout", "1s"] },
-  ];
-  for (const entry of cases) {
-    let now = 0;
-    const stdout = [];
-    const stderr = [];
-    const canonical = {
-      id: creation.interaction.id,
-      state: entry.state,
-      response: entry.state === "no" ? false : null,
-      respondedAt: entry.state === "pending" ? null : "2026-08-07T00:00:00.000Z",
-    };
-    const exitCode = await run(
-      [
-        "notify", "ask", `Terminal ${entry.name}?`, "--approval", "--live-activity",
-        ...entry.argv, "--json",
-      ],
-      { stdout: (line) => stdout.push(line), stderr: (line) => stderr.push(line) },
-      {
-        ...overrides({
-          createInteraction: async () => creation,
-          waitForInteraction: async (_id, timeoutSeconds) => {
-            now += timeoutSeconds * 1_000;
-            return { interaction: canonical };
-          },
-        }),
-        now: () => now,
-      },
-    );
-    assert.equal(exitCode, entry.expectedExit, entry.name);
-    assert.equal(stderr.length, 1, entry.name);
-    const envelope = JSON.parse(stdout[0]);
-    assert.equal(envelope.ok, false, entry.name);
-    assert.deepEqual(envelope.error.details.result, {
-      ...creation,
-      interaction: canonical,
-    }, entry.name);
-    assert.equal(
-      envelope.error.details.state,
-      entry.state === "pending" ? "timeout" : entry.state,
-      entry.name,
-    );
-  }
-});
-
-test("approval is the default interactive Live Activity style", async () => {
-  let created;
-  await execute(
-    ["notify", "ask", "Continue?", "--approval", "--live-activity"],
-    overrides({
-      createInteraction: async (body) => {
-        created = body;
-        return {
-          interaction: { id: "int_default_style_123456", state: "pending" },
-          delivery: DELIVERY,
-        };
-      },
-    }),
-  );
-  assert.equal(created.style, "approval");
-});
-
-test("creates an interactive Live Activity ask and returns its activity ID", async () => {
-  let created;
-  const output = await execute(
-    [
-      "notify",
-      "ask",
-      "Send the prepared release email?",
-      "--approval",
-      "--title",
-      "Release",
-      "--live-activity",
-      "--style",
-      "signal",
-      "--primary-label",
-      "Send",
-      "--secondary-label",
-      "Deny",
-    ],
-    overrides({
-      createInteraction: async (body) => {
-        created = body;
-        return {
-          interaction: { id: "int_live_123456", state: "pending" },
-          liveActivityId: "act_live_123456",
-          delivery: DELIVERY,
-        };
-      },
-    }),
-  );
-  assert.deepEqual(created, {
-    prompt: "Send the prepared release email?",
-    type: "approval",
-    title: "Release",
-    expiresInSeconds: 900,
-    presentation: "live_activity",
-    style: "signal",
-    primaryLabel: "Send",
-    secondaryLabel: "Deny",
-  });
-  assert.equal(output.data.liveActivityId, "act_live_123456");
-});
-
-test("merges stdin Live Activity fields and preserves its activity ID after waiting", async () => {
-  let now = 0;
-  let created;
-  const output = await execute(
-    ["notify", "ask", "--stdin", "--yes-no", "--primary-label", "Proceed", "--wait"],
-    {
-      ...overrides({
-        createInteraction: async (body) => {
-          created = body;
-          return {
-            interaction: { id: "int_live_123456", state: "pending" },
-            liveActivityId: "act_live_123456",
-            delivery: DELIVERY,
-          };
-        },
-        waitForInteraction: async (_id, timeoutSeconds) => {
-          now += timeoutSeconds * 1_000;
-          return { interaction: { id: "int_live_123456", state: "yes" } };
-        },
-      }),
-      now: () => now,
-      readStdinJson: async () => ({
-        prompt: "Continue deployment?",
-        type: "approval",
-        presentation: "live_activity",
-        style: "verdict",
-        primaryLabel: "Allow",
-        secondaryLabel: "Stop",
-        expiresInSeconds: 600,
-      }),
-    },
-  );
-  assert.deepEqual(created, {
-    prompt: "Continue deployment?",
-    type: "yes_no",
-    expiresInSeconds: 600,
-    presentation: "live_activity",
-    style: "verdict",
-    primaryLabel: "Proceed",
-    secondaryLabel: "Stop",
-  });
-  assert.equal(output.data.interaction.state, "yes");
-  assert.equal(output.data.liveActivityId, "act_live_123456");
-  assert.deepEqual(output.data.delivery, DELIVERY);
-});
-
-test("rejects unsupported interactive Live Activity ask shapes before the API call", async () => {
-  const rejects = async (argv, pattern, stdin) => {
-    let called = false;
-    await assert.rejects(
-      execute(argv, {
-        ...overrides({
-          createInteraction: async () => {
-            called = true;
-            return { delivery: DELIVERY };
-          },
-        }),
-        ...(stdin ? { readStdinJson: async () => stdin } : {}),
-      }),
-      pattern,
-    );
-    assert.equal(called, false);
-  };
-  await rejects(
-    ["notify", "ask", "Reply", "--text", "--live-activity"],
-    /supports --approval or --yes-no/,
-  );
-  await rejects(
-    ["notify", "ask", "Deploy?", "--approval", "--style", "signal"],
-    /style requires --live-activity/,
-  );
-  await rejects(
-    ["notify", "ask", "Deploy?", "--approval", "--primary-label", "Deploy"],
-    /labels require --live-activity/,
-  );
-  await rejects(
-    ["notify", "ask", "Deploy?", "--approval", "--live-activity", "--style", "neon"],
-    /approval, shell, verdict, signal/,
-  );
-  await rejects(
-    ["notify", "ask", "Deploy?", "--approval", "--live-activity", "--expires-in", "9h"],
-    /between 30s and 28800s/,
-  );
-  await rejects(
-    ["notify", "ask", "x".repeat(241), "--approval", "--live-activity"],
-    /at most 240 characters/,
-  );
-  await rejects(
-    ["notify", "ask", "Deploy?", "--approval", "--live-activity", "--primary-label", "x".repeat(25)],
-    /at most 24 characters/,
-  );
-  await rejects(
-    ["notify", "ask", "Deploy?", "--approval", "--live-activity", "--primary-label", "Run\nNow"],
-    /single line/,
-  );
-  await rejects(
-    ["notify", "ask", "--approval", "--stdin"],
-    /presentation must be/,
-    { prompt: "Deploy?", presentation: "dynamic_island" },
-  );
-});
-
-test("rejects ambiguous ask selectors and timeout without wait", async () => {
-  await assert.rejects(
-    execute(["notify", "ask", "Question?", "--approval", "--text"], overrides({})),
-    /exactly one ask response selector/,
-  );
-  await assert.rejects(
-    execute(["notify", "ask", "Question?", "--approval", "--timeout", "1m"], overrides({})),
-    /--timeout requires --wait/,
-  );
-  await assert.rejects(
-    execute(["notify", "ask", "Question?", "--approval", "--poll", "--wait"], overrides({})),
-    /--poll cannot be combined/,
-  );
-});
-
 test("merges activity stdin with explicit flags taking precedence", async () => {
   let start;
   let update;
@@ -1440,7 +993,8 @@ test("merges activity stdin with explicit flags taking precedence", async () => 
     progress: 0.1,
     style: "standard",
     expiresInSeconds: 28_800,
-    staleAfterSeconds: 14_400,
+    acquireMode: "ensure",staleAfterSeconds: 1_200,
+    context: testContext(),
   });
   assert.deepEqual(update, {
     status: "Flag status",
@@ -1454,114 +1008,6 @@ test("merges activity stdin with explicit flags taking precedence", async () => 
     symbol: "success",
     dismissAfterSeconds: 15,
   });
-});
-
-test("ensures and reconciles one lifecycle through an opaque origin",async () => {
-  const origin = {
-    sourceInstance: "codex-installation",project: "relo",
-    thread: "opaque-thread",channel: "task-progress",
-  };
-  const activity = { id: "act_123456789012",generation: 2,sequence: 4,state: "active" };
-  const calls = [];
-  const client = {
-    startActivity: async (body,key) => {
-      calls.push(["ensure",body,key]);
-      return { activity,delivery: DELIVERY,replayed: false,reused: true,resumed: false };
-    },
-    resolveActivity: async (value) => {
-      calls.push(["resolve",value]);
-      return { found: true,activity };
-    },
-    updateActivity: async (id,body,key) => {
-      calls.push(["update",id,body,key]);
-      return { activity: { ...activity,sequence: 5 },delivery: DELIVERY };
-    },
-    endActivity: async (id,body,key) => {
-      calls.push(["end",id,body,key]);
-      return { activity: { ...activity,state: "ended",sequence: 5 },delivery: DELIVERY };
-    },
-  };
-  const ensure = await execute(["activity","ensure","--stdin","--idempotency-key","codex-start"],{
-    ...overrides(client),readStdinJson: async () => ({ origin,title: "Codex task",status: "Starting" }),
-  });
-  const status = await execute(["activity","status","--stdin"],{
-    ...overrides(client),readStdinJson: async () => ({ origin }),
-  });
-  await execute(["activity","update","--stdin","--idempotency-key","codex-progress"],{
-    ...overrides(client),readStdinJson: async () => ({ origin,status: "Verifying" }),
-  });
-  await execute(["activity","end","--stdin","--idempotency-key","codex-end"],{
-    ...overrides(client),readStdinJson: async () => ({ origin,status: "Complete" }),
-  });
-  assert.equal(ensure.command,"activity.ensure");
-  assert.equal(status.command,"activity.status");
-  assert.deepEqual(calls,[
-    ["ensure",{
-      acquireMode: "ensure",replace: false,title: "Codex task",status: "Starting",expiresInSeconds: 28_800,
-      staleAfterSeconds: 14_400,origin,
-    },"codex-start"],
-    ["resolve",{ origin }],
-    ["resolve",{ origin }],
-    ["update",activity.id,{ status: "Verifying" },"codex-progress"],
-    ["resolve",{ origin }],
-    ["end",activity.id,{ status: "Complete",symbol: "success",dismissAfterSeconds: 300 },"codex-end"],
-  ]);
-});
-
-test("manual ensure can use server-owned current selection or an explicit stable key",async () => {
-  const calls = [];
-  const client = {
-    startActivity: async (body,key) => {
-      calls.push([body,key]);
-      return { activity: { id: "act_123456789012",sequence: 0,state: "active" },delivery: DELIVERY };
-    },
-  };
-  await execute([
-    "activity","ensure","--name","manual-run","--title","Manual task","--status","Starting",
-    "--thread-name","Release verification","--task-title","Verify manual separation",
-    "--idempotency-key","manual-ensure-key",
-  ],overrides(client));
-  assert.deepEqual(calls,[
-    [{
-      key: "manual-run",replace: false,acquireMode: "ensure",title: "Manual task",status: "Starting",
-      expiresInSeconds: 28_800,staleAfterSeconds: 14_400,
-      context: { threadName: "Release verification",taskTitle: "Verify manual separation" },
-    },"manual-ensure-key"],
-  ]);
-  await execute(
-    ["activity","ensure","--title","Current task","--status","Working"],
-    overrides(client),
-  );
-  assert.deepEqual(calls[1][0],{
-    acquireMode: "ensure",replace: false,title: "Current task",status: "Working",
-    expiresInSeconds: 28_800,staleAfterSeconds: 14_400,
-  });
-  await assert.rejects(
-    execute(["activity","ensure","--name","manual-run","--stdin"],{
-      ...overrides(client),readStdinJson: async () => ({
-        origin: { sourceInstance: "codex",project: "relo",thread: "thread",channel: "task" },
-        title: "Ambiguous",status: "Starting",
-      }),
-    }),
-    /lifecycle origin or a manual key, not both/,
-  );
-  await assert.rejects(
-    execute(["activity","ensure","--name","one","--stdin"],{
-      ...overrides(client),readStdinJson: async () => ({ name: "two",title: "Ambiguous",status: "Starting" }),
-    }),
-    /only one of --name or stdin name/,
-  );
-});
-
-test("activity status accepts a human-readable name while retaining server current as the default",async () => {
-  const calls = [];
-  const client = {
-    getActivity: async (target) => { calls.push(["get",target]); return { activity: { id: "act_named",key: target } }; },
-    resolveActivity: async (resolver) => { calls.push(["resolve",resolver]); return { found: true,activity: { id: "act_current" } }; },
-  };
-  await execute(["activity","status","--name","release-build"],overrides(client));
-  await execute(["activity","status"],overrides(client));
-  assert.deepEqual(calls,[["get","release-build"],["resolve",{ current: true }]]);
 });
 
 test("activity diagnose resolves the current activity and reports the exact failed boundary",async () => {
@@ -1648,66 +1094,6 @@ test("activity diagnose returns actionable unconfirmed data when its bounded wai
   );
 });
 
-test("resolves exact provider-run lifecycle coverage independently of origin history",async () => {
-  const lifecycle = { provider: "codex",runId: "codex-run-123" };
-  const activity = { id: "act_123456789012",generation: 3,sequence: 2,state: "active" };
-  const calls = [];
-  const client = {
-    startActivity: async (body) => { calls.push(["ensure",body]); return { activity,delivery: DELIVERY }; },
-    resolveActivity: async (resolver) => { calls.push(["resolve",resolver]); return { found: true,activity }; },
-    heartbeatActivity: async (id,body) => { calls.push(["heartbeat",id,body]); return { activity,renewed: true }; },
-    updateActivity: async (id,body) => { calls.push(["update",id,body]); return { activity,delivery: DELIVERY }; },
-    endActivity: async (id,body) => { calls.push(["end",id,body]); return { activity,delivery: DELIVERY }; },
-  };
-  await execute(["activity","ensure","--stdin"],{
-    ...overrides(client),readStdinJson: async () => ({
-      lifecycle,origin: {
-        sourceInstance: "codex-installation",project: "relo",thread: "opaque-thread",channel: "task-progress",
-      },title: "Codex task",status: "Planning",
-    }),
-  });
-  await execute(["activity","status","--stdin"],{
-    ...overrides(client),readStdinJson: async () => ({ lifecycle }),
-  });
-  const heartbeat = await execute(["activity","heartbeat","--stdin","--lease-after","2h"],{
-    ...overrides(client),readStdinJson: async () => ({ lifecycle }),
-  });
-  await execute(["activity","update","--stdin"],{
-    ...overrides(client),readStdinJson: async () => ({ lifecycle,status: "Working" }),
-  });
-  await execute(["activity","end","--stdin"],{
-    ...overrides(client),readStdinJson: async () => ({ lifecycle,status: "Complete" }),
-  });
-  assert.deepEqual(calls[0][1].lifecycle,lifecycle);
-  assert.equal(heartbeat.command,"activity.heartbeat");
-  assert.deepEqual(calls.slice(1).map((call) => call[1]),[
-    { lifecycle },{ lifecycle },activity.id,{ lifecycle },activity.id,{ lifecycle },activity.id,
-  ]);
-  assert.deepEqual(calls[3][2],{ lifecycle,leaseAfterSeconds: 7_200 });
-  assert.deepEqual(calls[5][2],{ lifecycle,status: "Working" });
-  assert.deepEqual(calls[7][2],{
-    lifecycle,status: "Complete",symbol: "success",dismissAfterSeconds: 300,
-  });
-});
-
-test("status, update, and end use the server-owned current activity without a local handle",async () => {
-  const calls = [];
-  const activity = { id: "act_123456789012",generation: 1,sequence: 3,state: "active" };
-  const client = {
-    resolveActivity: async (resolver) => { calls.push(["resolve",resolver]); return { found: true,activity }; },
-    updateActivity: async (target,body) => { calls.push(["update",target,body]); return { activity,delivery: DELIVERY }; },
-    endActivity: async (target,body) => { calls.push(["end",target,body]); return { activity,delivery: DELIVERY }; },
-  };
-  await execute(["activity","status"],overrides(client));
-  await execute(["activity","update","--status","Testing","--progress","0.6"],overrides(client));
-  await execute(["activity","end","--dismiss-after","30s"],overrides(client));
-  assert.deepEqual(calls,[
-    ["resolve",{ current: true }],
-    ["update","current",{ status: "Testing",progress: 0.6 }],
-    ["end","current",{ status: "Complete",symbol: "success",dismissAfterSeconds: 30 }],
-  ]);
-});
-
 test("supports full activity fields, key addressing, and clearable progress", async () => {
   const calls = [];
   const client = {
@@ -1768,6 +1154,7 @@ test("supports full activity fields, key addressing, and clearable progress", as
 
   assert.deepEqual(calls[0][1], {
     key: "deploy-main",
+    acquireMode: "ensure",
     replace: true,
     title: "Deploy",
     status: "Starting",
@@ -1778,7 +1165,7 @@ test("supports full activity fields, key addressing, and clearable progress", as
     accentColor: "#aBc123",
     expiresInSeconds: 600,
     staleAfterSeconds: 120,
-    context: { computer: "Mac", project: "Relo", taskTitle: "Deploy task" },
+    context: testContext({ computer: "Mac", project: "Relo", taskTitle: "Deploy task" }),
   });
   assert.deepEqual(calls[1], [
     "update",
@@ -1814,12 +1201,14 @@ test("supports full activity fields, key addressing, and clearable progress", as
         "start",
         "--title",
         "No",
+        "--status",
+        "Working",
         "--privacy",
-        "private",
+        "secret",
       ],
       overrides(client),
     ),
-    /not valid for this command/,
+    /privacy/,
   );
 });
 
@@ -2077,15 +1466,15 @@ test("emits exact machine output and usage errors", async () => {
   const errorStdout = [];
   const errorStderr = [];
   const errorExit = await run(
-    ["notify", "ask", "Continue?", "--approval", "--timeout", "1m", "--json"],
+    ["ask", "Continue?", "--approval", "--no-wait", "--timeout", "1m", "--json"],
     { stdout: (line) => errorStdout.push(line), stderr: (line) => errorStderr.push(line) },
     overrides({}),
   );
   assert.equal(errorExit, EXIT.USAGE);
   assert.deepEqual(errorStdout, [
-    '{"ok":false,"error":{"code":"USAGE_ERROR","message":"--timeout requires --wait"}}',
+    '{"ok":false,"error":{"code":"USAGE_ERROR","message":"--timeout cannot be combined with --no-wait"}}',
   ]);
-  assert.deepEqual(errorStderr, ["USAGE_ERROR: --timeout requires --wait"]);
+  assert.deepEqual(errorStderr, ["USAGE_ERROR: --timeout cannot be combined with --no-wait"]);
 });
 
 test("sends notification fields and preserves an idempotency key", async () => {
@@ -2121,13 +1510,13 @@ test("sends notification fields and preserves an idempotency key", async () => {
   assert.equal(output.exitCode, EXIT.OK);
   assert.equal(seen.idempotencyKey, "build-12345678");
   assert.deepEqual(seen.body.deviceIds, [TARGET_DEVICE]);
-  assert.equal(seen.body.sourceName, "Relo");
+  assert.equal(seen.body.sourceName, "Test source");
   assert.equal(seen.body.title, "CI");
-  assert.deepEqual(seen.body.context, {
+  assert.deepEqual(seen.body.context, testContext({
     computer: "MacBook",
     project: "Relo notifications",
     taskTitle: "Finish notification lifecycle",
-  });
+  }));
 });
 
 test("accepts 1-200 supplied idempotency characters and rejects larger or unsafe keys", async () => {
@@ -2153,7 +1542,7 @@ test("accepts 1-200 supplied idempotency characters and rejects larger or unsafe
     /1-200 safe characters/,
   );
   assert.deepEqual(seen, ["a", "a".repeat(200)]);
-  const help = await execute(["--help"]);
+  const help = await execute(["help", "all"]);
   assert.match(help.data.help, /Supplied idempotency keys use 1-200 characters/);
 });
 
@@ -2313,7 +1702,7 @@ test("enriches the current activity with safe thread and work context", async ()
       },
     }),
   );
-  assert.equal(update.id, "current");
+  assert.match(update.id, /^work-[0-9a-f]{24}$/u);
   assert.deepEqual(update.body.context, {
     computer: "developer-mac-codex",
     project: "Relo notifications",
@@ -2323,47 +1712,17 @@ test("enriches the current activity with safe thread and work context", async ()
   assert.equal(update.body.progress, undefined);
 });
 
-test("keeps interaction expiry independent and repeats capped waits through the caller deadline", async () => {
-  let now = 0;
-  let created;
-  const waits = [];
-  const output = await execute(
-    [
-      "notify",
-      "ask",
-      "Continue?",
-      "--type",
-      "approval",
-      "--expires-in",
-      "2m",
-      "--timeout",
-      "10m",
-      "--wait",
-    ],
-    {
-      ...overrides({
-        createInteraction: async (body) => {
-          created = body;
-          return { interaction: { id: "int_1", state: "pending" }, delivery: DELIVERY };
-        },
-        waitForInteraction: async (_id, timeoutSeconds) => {
-          waits.push(timeoutSeconds);
-          now += timeoutSeconds * 1_000;
-          return {
-            interaction: {
-              id: "int_1",
-              state: waits.length === 2 ? "approved" : "pending",
-            },
-          };
-        },
-      }),
-      now: () => now,
-      generateIdempotencyKey: () => "12345678-1234-1234-1234-123456789abc",
-    },
-  );
-  assert.equal(created.expiresInSeconds, 120);
-  assert.deepEqual(waits, [300, 300]);
-  assert.equal(output.data.interaction.state, "approved");
+test("a question waits at most five minutes, by default and at most", async () => {
+  const { fakeCards, cardDependencies } = await import("./fake-cards.mjs");
+  const fake = fakeCards({ answer: "approved" });
+  await execute(["ask", "Continue?", "--approval", "--topic", "Release"], cardDependencies(fake.client));
+  assert.equal(fake.calls.find((call) => call.op === "ask").body.expiresInSeconds, 300);
+  for (const flags of [["--expires-in", "6m"], ["--timeout", "10m"]]) {
+    await assert.rejects(
+      execute(["ask", "Continue?", "--approval", ...flags, "--topic", "Release"], cardDependencies(fakeCards().client)),
+      (error) => error.exitCode === 2 && /at most 5 minutes/.test(error.message),
+    );
+  }
 });
 
 test("rejects malformed and unknown target devices before a mutation", async () => {
@@ -2511,8 +1870,9 @@ test("emits the frozen notification and activity-update contract shapes", async 
     ],
     overrides(client),
   );
-  assert.deepEqual(notification, CONTRACT_FIXTURE.notification);
-  assert.deepEqual(start, CONTRACT_FIXTURE.activityStart);
+  assert.deepEqual(notification, { ...CONTRACT_FIXTURE.notification,sourceName: "Test source",
+    context: testContext(CONTRACT_FIXTURE.notification.context) });
+  assert.deepEqual(start, { ...CONTRACT_FIXTURE.activityStart,acquireMode: "ensure",context: testContext() });
   assert.deepEqual(update, CONTRACT_FIXTURE.activityUpdate);
   assert.deepEqual(end, CONTRACT_FIXTURE.activityEnd);
   await assert.rejects(
@@ -2522,168 +1882,6 @@ test("emits the frozen notification and activity-update contract shapes", async 
     ),
     /Unknown option: --sequence/,
   );
-});
-
-test("permissions setup, doctor, and uninstall round-trip through an explicit temporary home", async () => {
-  const home = await mkdtemp(join(tmpdir(), "relo-permissions-cli-"));
-  const client = {
-    authStatus: async () => ({
-      authenticated: true,
-      credential: { scopes: CONFIG.principal.scopes },
-    }),
-    ready: async () => ({ ready: true, status: "ready" }),
-  };
-  const options = {
-    ...overrides(client),
-    permissionsHome: home,
-    nodePath: "/test/node",
-    entrypoint: "/test/relo.mjs",
-  };
-  try {
-    const setup = await execute(["permissions", "setup", "codex"], options);
-    assert.equal(setup.exitCode, EXIT.OK);
-    assert.equal(setup.data.targets[0].changed, true);
-
-    const output = await execute(["permissions", "doctor", "codex"], options);
-    assert.equal(output.exitCode, EXIT.OK);
-    assert.equal(output.data.checks.scopes.ok, true);
-    assert.equal(output.data.checks.server.ok, true);
-    assert.equal(output.data.checks.hooks.ok, true);
-    assert.equal(output.data.checks.hooks.targets[0].trust, "manual-review-required");
-
-    const uninstall = await execute(["permissions", "uninstall", "codex"], options);
-    assert.equal(uninstall.data.targets[0].removed, true);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("permissions setup all rolls back earlier adapters when OpenCode startup fails", async () => {
-  const home = await mkdtemp(join(tmpdir(), "relo-permissions-rollback-"));
-  const client = {
-    authStatus: async () => ({ authenticated: true, credential: { scopes: CONFIG.principal.scopes } }),
-    ready: async () => ({ ready: true }),
-  };
-  try {
-    await assert.rejects(
-      execute(["permissions", "setup", "all"], {
-        ...overrides(client),
-        permissionsHome: home,
-        nodePath: "/test/node",
-        entrypoint: "/test/relo.mjs",
-        platform: "darwin",
-        uid: 501,
-        runPermissionCommand: async (_command, args) => {
-          if (args[0] === "bootstrap") throw new Error("launchctl unavailable");
-          if (args[0] === "print") throw new Error("not loaded");
-        },
-      }),
-      (error) => error.code === "OPENCODE_BRIDGE_START_FAILED",
-    );
-    assert.equal(existsSync(join(home, ".codex", "hooks.json")), false);
-    assert.equal(existsSync(join(home, ".claude", "settings.json")), false);
-    assert.equal(
-      existsSync(join(home, ".config", "opencode", "plugin", "relo-permissions-v1.js")),
-      false,
-    );
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("permissions setup and doctor all skip the macOS-only OpenCode bridge on Linux", async () => {
-  const home = await mkdtemp(join(tmpdir(), "relo-permissions-linux-all-"));
-  const client = {
-    authStatus: async () => ({
-      authenticated: true,
-      credential: { scopes: CONFIG.principal.scopes },
-    }),
-    ready: async () => ({ ready: true, status: "ready" }),
-  };
-  const options = {
-    ...overrides(client),
-    permissionsHome: home,
-    nodePath: "/test/node",
-    entrypoint: "/test/relo.mjs",
-    platform: "linux",
-  };
-  try {
-    const setup = await execute(["permissions", "setup", "all"], options);
-    assert.deepEqual(setup.data.targets.map((target) => target.target), ["codex", "claude"]);
-    assert.deepEqual(setup.data.skipped, [
-      {
-        target: "opencode",
-        reason: "OpenCode permission setup currently requires macOS.",
-      },
-    ]);
-    const doctor = await execute(["permissions", "doctor"], options);
-    assert.equal(doctor.exitCode, EXIT.OK);
-    assert.deepEqual(
-      doctor.data.checks.hooks.targets.map((target) => target.state),
-      ["installed", "installed"],
-    );
-    assert.deepEqual(doctor.data.checks.hooks.skipped, setup.data.skipped);
-    assert.equal(existsSync(join(home, "Library", "LaunchAgents")), false);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("permission setup rejects Windows before writing POSIX hook commands", async () => {
-  const home = await mkdtemp(join(tmpdir(), "relo-permissions-windows-"));
-  try {
-    await assert.rejects(
-      execute(["permissions", "setup", "codex"], {
-        ...overrides({}),
-        permissionsHome: home,
-        platform: "win32",
-      }),
-      (error) => error.code === "UNSUPPORTED_PLATFORM",
-    );
-    assert.equal(existsSync(join(home, ".codex", "hooks.json")), false);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
-});
-
-test("permissions setup all preserves a concurrent user edit and reports partial recovery", async () => {
-  const home = await mkdtemp(join(tmpdir(), "relo-permissions-concurrent-rollback-"));
-  const codexPath = join(home, ".codex", "hooks.json");
-  const userUpdate = `${JSON.stringify({ description: "concurrent user replacement" }, null, 2)}\n`;
-  const client = {
-    authStatus: async () => ({ authenticated: true, credential: { scopes: CONFIG.principal.scopes } }),
-    ready: async () => ({ ready: true }),
-  };
-  try {
-    await assert.rejects(
-      execute(["permissions", "setup", "all"], {
-        ...overrides(client),
-        permissionsHome: home,
-        nodePath: "/test/node",
-        entrypoint: "/test/relo.mjs",
-        platform: "darwin",
-        uid: 501,
-        runPermissionCommand: async (_command, args) => {
-          if (args[0] === "bootstrap") {
-            await writeFile(codexPath, userUpdate, { mode: 0o600 });
-            throw new Error("launchctl unavailable");
-          }
-          if (args[0] === "print") throw new Error("not loaded");
-        },
-      }),
-      (error) => {
-        assert.equal(error.code, "PERMISSION_SETUP_ROLLBACK_FAILED");
-        assert.equal(error.details.rollbackErrors[0].target, "codex");
-        assert.equal(error.details.rollbackErrors[0].code, "CONFIGURATION_CHANGED");
-        return true;
-      },
-    );
-    assert.equal(await readFile(codexPath, "utf8"), userUpdate);
-    assert.equal(existsSync(join(home, ".claude", "settings.json")), false);
-    assert.equal(existsSync(join(home, ".config", "opencode", "plugin", "relo-permissions-v1.js")), false);
-  } finally {
-    await rm(home, { recursive: true, force: true });
-  }
 });
 
 test("auth status verifies the live credential and emits safe metadata", async () => {
@@ -2859,5 +2057,41 @@ test("confirmed logout revokes once, removes the credential, and rejects post-lo
     assert.equal(revocations, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("plain help is a short agent guide; the full reference is one topic away", async () => {
+  for (const argv of [[], ["--help"], ["help"]]) {
+    const guide = (await execute(argv)).data.help;
+    assert.match(guide, /relo ask/);
+    assert.match(guide, /relo activity start/);
+    assert.match(guide, /relo help all/);
+    assert.ok(guide.split("\n").length < 45, "the guide stays short enough to read in one pass");
+  }
+  assert.match((await execute(["help", "identity"])).data.help, /first non-empty value wins/);
+  assert.match((await execute(["help", "all"])).data.help, /relo services create/);
+  await assert.rejects(execute(["help", "nope"]), /Unknown help topic/);
+});
+
+test("every recipe in the guide is a valid command", async () => {
+  const { GUIDE } = await import("../src/cli.mjs");
+  const { UsageError } = await import("../src/errors.mjs");
+  const recipes = GUIDE.split("\n").filter((line) => line.startsWith("  relo ")).map((line) =>
+    [...line.trim().matchAll(/"([^"]*)"|(\S+)/gu)].map((match) => match[1] ?? match[2]).slice(1));
+  assert.ok(recipes.length >= 5);
+  const stub = new Proxy({}, { get: () => async () => ({}) });
+  for (const argv of recipes) {
+    try {
+      await execute(argv, {
+        loadConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44) }),
+        clientFactory: () => stub, identityDefaults: () => ({ providerName: "Claude Code", project: "relo" }),
+        prepareNotificationCommand: async ({ body }) => body,
+        captureActivityCommand: async ({ body }) => ({ target: null, ifSequence: body.ifSequence }),
+        readStdinJson: async () => ({}), sleep: async () => {}, readTextFile: async () => "callback-token-0123456789",
+        env: { CLAUDE_CODE_SESSION_ID: "recipe-session" },
+      });
+    } catch (error) {
+      assert.ok(!(error instanceof UsageError), `${argv.join(" ")}: ${error.message}`);
+    }
   }
 });

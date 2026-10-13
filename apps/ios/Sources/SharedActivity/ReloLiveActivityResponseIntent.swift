@@ -1,3 +1,5 @@
+import ReloTransport
+import ReloPersistence
 import Foundation
 import ReloCore
 #if os(iOS)
@@ -120,18 +122,20 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
             )
         }
         if interaction.responsePhase == .accepted {
+            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(interaction: interaction, now: now)
             return Self(
                 mode: .accepted,
-                label: terminalLabel(interaction.state),
-                symbol: "checkmark.circle.fill",
+                label: visual.label,
+                symbol: visual.symbol,
                 showsProgress: false
             )
         }
         guard interaction.state == "pending", interaction.expiresAt > now else {
+            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(interaction: interaction, now: now)
             return Self(
                 mode: .terminal,
-                label: terminalLabel(interaction.state),
-                symbol: terminalSymbol(interaction.state),
+                label: visual.label,
+                symbol: visual.symbol,
                 showsProgress: false
             )
         }
@@ -149,14 +153,14 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
         case .sending:
             return Self(
                 mode: .sending,
-                label: "Sending \(selectedLabel(interaction.selectedAction, primary: primary, secondary: secondary))…",
+                label: "Sending response…",
                 symbol: nil,
                 showsProgress: true
             )
         case .queued:
             return Self(
                 mode: .queued,
-                label: "\(selectedLabel(interaction.selectedAction, primary: primary, secondary: secondary)) queued",
+                label: "\(selectedLabel(interaction.selectedAction, primary: primary, secondary: secondary)) · Waiting to send",
                 symbol: "clock.arrow.circlepath",
                 showsProgress: false
             )
@@ -168,10 +172,11 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
                 showsProgress: false
             )
         case .accepted:
+            let visual = LiveActivitySurfaceProjection.ResponseStatus.make(interaction: interaction, now: now)
             return Self(
                 mode: .accepted,
-                label: terminalLabel(interaction.state),
-                symbol: "checkmark.circle.fill",
+                label: visual.label,
+                symbol: visual.symbol,
                 showsProgress: false
             )
         }
@@ -356,6 +361,7 @@ enum LiveActivityResponseIntentOrchestrator {
 enum LiveActivityResponseReplayCoordinator {
     static func replay(
         _ confirmations: [LiveActivityResponseConfirmation],
+        isolation: isolated (any Actor)? = #isolation,
         clock: () -> Date = Date.init,
         present: (LiveActivityResponseConfirmation, Date) async -> Void
     ) async {
@@ -492,7 +498,9 @@ enum LiveActivityResponseActivityPresenter {
             privacy: presentation.privacy
         )
         state.updatedAt = command.presentedAt
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state,
+            staleDate: command.phase == .accepted ? nil
+                : LiveActivitySurfaceProjection.invalidationDate(staleAt: state.staleAt, interaction: interaction))
         return await LiveActivityResponsePresentationExecutor.execute(
             command,
             activityState: systemState(activity.activityState),
@@ -549,9 +557,9 @@ enum LiveActivityResponseActivityPresenter {
 }
 
 struct ReloLiveActivityResponseIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Respond to Relo"
-    static var description = IntentDescription("Records one response for a Relo Live Activity.")
-    static var openAppWhenRun = false
+    static let title: LocalizedStringResource = "Respond to Relo"
+    static let description = IntentDescription("Records one response for a Relo Live Activity.")
+    static let openAppWhenRun = false
 
     @Parameter(title: "Activity ID") var activityID: String
     @Parameter(title: "Activity Generation") var activityGeneration: Int

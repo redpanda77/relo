@@ -19,22 +19,27 @@ describe("delivery job wakeup", () => {
     client.emit("notification",{ channel: "relo_delivery_jobs",payload: "ready" });
     await expect(wakeup.wait(10_000)).resolves.toBe("notified");
     await wakeup.close();
-    expect(client.queries).toEqual(["LISTEN relo_delivery_jobs","UNLISTEN relo_delivery_jobs"]);
+    expect(client.queries).toEqual(["LISTEN relo_delivery_jobs"]);
     expect(client.released).toBe(true);
   });
 
   test("keeps the bounded poll timeout and shutdown abort as recovery paths", async () => {
     vi.useFakeTimers();
     try {
-      const client = new FakeListener();
-      const wakeup = await DeliveryJobWakeup.listen({ connect: async () => client } as never);
+      const client = new FakeListener(),replacement = new FakeListener();
+      let connects = 0;
+      const wakeup = await DeliveryJobWakeup.listen({ connect: async () => ++connects === 1 ? client : replacement } as never);
       const timed = wakeup.wait(2_000);
       await vi.advanceTimersByTimeAsync(2_000);
       await expect(timed).resolves.toBe("timeout");
       client.emit("error",new Error("listener lost"));
-      const degraded = wakeup.wait(2_000);
-      await vi.advanceTimersByTimeAsync(2_000);
-      await expect(degraded).resolves.toBe("timeout");
+      await expect(wakeup.wait(2_000)).resolves.toBe("notified");
+      const recovered = wakeup.wait(2_000);
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(recovered).resolves.toBe("notified");
+      expect(connects).toBe(2);
+      expect(client.released).toBe(true);
+      expect(replacement.queries).toEqual(["LISTEN relo_delivery_jobs"]);
       const abort = new AbortController();
       const waiting = wakeup.wait(2_000,abort.signal);
       abort.abort();

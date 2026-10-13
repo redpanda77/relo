@@ -10,7 +10,7 @@ export async function runDoctor(options,dependencies,{ isReadyResponse,safeCrede
   let config;
   try {
     config = await dependencies.loadConfig(dependencies.configPath());
-    checks.localConfig = { ok: true,state: "secure" };
+    checks.localConfig = { ok: true,state: config.source === "environment" ? "environment" : "secure" };
   } catch (error) {
     checks.localConfig = { ok: false,state: normalizeError(error).code };
     return {
@@ -76,6 +76,8 @@ export async function runDoctor(options,dependencies,{ isReadyResponse,safeCrede
         title: "Relo doctor smoke test",
         body: "Server accepted the doctor smoke notification.",
         sourceName: "Relo doctor",
+        context: { providerName: "Relo doctor",project: "Relo operations",
+          threadName: "Readiness checks",providerThreadId: "relo-doctor:readiness" },
       },dependencies.generateIdempotencyKey());
       const durableCommands = Number(response?.delivery?.durableCommands ?? response?.durableCommands ?? 0);
       checks.smoke = {

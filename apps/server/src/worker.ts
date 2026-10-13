@@ -1,4 +1,6 @@
 import { writeFile } from "node:fs/promises";
+import { requiredReceiptServerOriginHash } from "./receipt-scope.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { NodeHttp2ApnsTransport } from "./apns-http2-transport.js";
 import {
   apnsOperationalLog,
@@ -24,7 +26,6 @@ import {
   DeliverySerializationMismatchError,
   cancelUnavailableDeliveryClaim,
   claimDeliveryJobs,
-  deferFutureActivityTimestamp,
   deferMissingActivityToken,
   finalizeDeliveryClaim,
   markDeliveryDispatchStarted,
@@ -45,7 +46,11 @@ import { pendingInteractionBadgeCount } from "./badge.js";
 import { loadAccountAuthSecret, loadConfig } from "./config.js";
 import { createDatabase } from "./db.js";
 import { DeliveryJobWakeup } from "./delivery-wakeup.js";
-import { runBoundedWorkerBatch } from "./worker-batch.js";
+import { DeliveryDispatcher } from "./delivery-dispatcher.js";
+import { nextDeliveryWakeDelay } from "./delivery-scheduling.js";
+import { nextInteractionExpiryDelay } from "./interaction-expiry-scheduling.js";
+import { pinOrdinaryDeliveryInputs } from "./delivery-inputs.js";
+import { prepareLatestActivityFrame } from "./activity-delivery-frame.js";
 import { publicId } from "./ids.js";
 import { eventConversationId } from "./communication.js";
 import { cleanupTerminalDeviceAuthorizations } from "./device-authorization.js";
@@ -54,7 +59,6 @@ import { projectLiveActivityCommand } from "./live-activity-interaction.js";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import {
   cancelUndeliverableDeliveryJobs,
-  futureActivityProviderTimestamp,
   shouldRetryMissingActivityToken,
 } from "./delivery-lifecycle.js";
 import {
@@ -62,6 +66,9 @@ import {
   verifyCurrentTransportTokenEnvelopes,
 } from "./token-encryption.js";
 import { recordWorkerHeartbeat } from "./runtime-health.js";
+import { dispatchDueInteractionCallbacks } from "./interaction-callbacks.js";
+import { notifyUnseenQuestionCards } from "./activity-commands/question-fallback.js";
+import { createNotificationContentCipher } from "./notification-content.js";
 
 function projectLiveActivityInteraction(
   job: ClaimedDeliveryJob,
@@ -85,9 +92,11 @@ function projectLiveActivityInteraction(
 }
 
 const config = loadConfig();
+const configuredReceiptOriginHash = requiredReceiptServerOriginHash(process.env.APP_URL);
 const db = createDatabase(config.DATABASE_URL);
 const credentialDerivationSecret = await loadAccountAuthSecret(config);
 const tokenEncryption = createTransportTokenEncryption(credentialDerivationSecret);
+const notificationContentCipher = createNotificationContentCipher(credentialDerivationSecret);
 await verifyCurrentTransportTokenEnvelopes(db);
 await quarantineAbandonedProcessingClaims(db);
 await cleanupTerminalDeviceAuthorizations(db);
@@ -97,6 +106,24 @@ let stopping = false;
 const shutdown = new AbortController();
 process.on("SIGTERM", () => { stopping = true; shutdown.abort(); });
 process.on("SIGINT", () => { stopping = true; shutdown.abort(); });
+
+// Answer callbacks run beside APNs delivery in every mode; a slow endpoint never holds a push.
+const CALLBACK_POLL_MS = 2_000;
+const callbackLoop = (async () => {
+  while (!shutdown.signal.aborted) {
+    try {
+      await dispatchDueInteractionCallbacks(db,{ encryption: tokenEncryption });
+      // A question whose card never appeared on the phone is announced by one plain notification.
+      if (config.APNS_MODE !== "disabled") {
+        await notifyUnseenQuestionCards(db,{ apnsMode: config.APNS_MODE,contentCipher: notificationContentCipher });
+      }
+    } catch (error) {
+      console.warn(JSON.stringify({ event: "interaction_callback_cycle_failed",
+        message: error instanceof Error ? error.message : String(error) }));
+    }
+    await delay(CALLBACK_POLL_MS,undefined,{ signal: shutdown.signal }).catch(() => {});
+  }
+})();
 
 if (config.APNS_MODE === "disabled") {
   console.warn(apnsOperationalLog("apns_worker_started",{
@@ -122,7 +149,7 @@ if (config.APNS_MODE === "disabled") {
     if (Object.values(cycle).some((value) => value > 0)) {
       console.info(apnsOperationalLog("apns_worker_cycle",{ mode: "disabled",...cycle }));
     }
-    await new Promise((resolve) => setTimeout(resolve, config.WORKER_POLL_MS));
+    await delay(await nextInteractionExpiryDelay(db,config.WORKER_POLL_MS), undefined, { signal: shutdown.signal }).catch((error) => { if (!shutdown.signal.aborted) throw error; });
   }
 } else {
   const apnsEnvironment = config.APNS_MODE;
@@ -136,12 +163,14 @@ if (config.APNS_MODE === "disabled") {
     new NodeHttp2ApnsTransport(),
   );
   const wakeup = await DeliveryJobWakeup.listen(db);
+  const concurrency = Math.min(config.APNS_LOCAL_CONCURRENCY_CAP,config.WORKER_BATCH_SIZE);
+  const reservedUrgent = Math.min(config.WORKER_URGENT_RESERVED_SLOTS ?? 2,concurrency-1);
   try {
     await apns.warm(shutdown.signal);
     console.info(apnsOperationalLog("apns_worker_started",{
       mode: config.APNS_MODE,releaseIdentity: config.RELO_RELEASE_IDENTITY ?? null,
       configurationGeneration: validated.configurationGeneration,keyConfigured: true,http2SessionWarm: true,
-      dispatchConcurrencyCap: config.APNS_LOCAL_CONCURRENCY_CAP,
+      dispatchConcurrencyCap: concurrency,reservedUrgentSlots: reservedUrgent,
       workerBatchSize: config.WORKER_BATCH_SIZE,pollFallbackMs: config.WORKER_POLL_MS,
     }));
     await db.query(
@@ -156,29 +185,42 @@ if (config.APNS_MODE === "disabled") {
       releaseIdentity: config.RELO_RELEASE_IDENTITY,
     });
     await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
-    let wakeReason: "startup" | "notification" | "poll" | "busy" = "startup";
-    while (!stopping) {
-    await recordWorkerHeartbeat(db,{
-      mode: config.APNS_MODE,configured: true,pollMs: config.WORKER_POLL_MS,
-      releaseIdentity: config.RELO_RELEASE_IDENTITY,
+    let maintenanceFailure: unknown;
+    const maintenance = (async () => {
+      while (!shutdown.signal.aborted) {
+        await delay(await nextInteractionExpiryDelay(db,config.WORKER_POLL_MS), undefined, { signal: shutdown.signal });
+        await recordWorkerHeartbeat(db,{
+          mode: config.APNS_MODE,configured: true,pollMs: config.WORKER_POLL_MS,
+          releaseIdentity: config.RELO_RELEASE_IDENTITY,
+        });
+        const cycle = emptyApnsWorkerCycle();
+        const swept = await quarantineAbandonedProcessingClaims(db);
+        cycle.safelyRequeued = swept.safelyRequeued;
+        cycle.reconciliationRequired = swept.reconciliationRequired;
+        cycle.expiredActivities = await expireDueActivities(db,config.APNS_MODE);
+        cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
+        cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
+        if (Object.values(cycle).some(value => value > 0)) {
+          console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason: "maintenance",...cycle }));
+        }
+      }
+    })().catch(error => {
+      if (error instanceof Error && error.name === "AbortError" && shutdown.signal.aborted) return;
+      maintenanceFailure = error;
+      shutdown.abort();
     });
-    const cycle = emptyApnsWorkerCycle();
-    const swept = await quarantineAbandonedProcessingClaims(db);
-    cycle.safelyRequeued = swept.safelyRequeued;
-    cycle.reconciliationRequired = swept.reconciliationRequired;
-    cycle.expiredActivities = await expireDueActivities(db,config.APNS_MODE);
-    cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
-    cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
-    const jobs = await claimDeliveryJobs(db,config.WORKER_BATCH_SIZE,apnsCutoverAt);
-    cycle.claimed = jobs.length;
-    cycle.queueToFirstClaimMaxMs = jobs.reduce((maximum,job) => Math.max(
-      maximum,
-      Math.max(0,(job.first_claimed_at ?? job.last_claimed_at ?? job.created_at).getTime()-job.created_at.getTime()),
-    ),0);
-    await runBoundedWorkerBatch(
-      jobs,
-      Math.min(config.APNS_LOCAL_CONCURRENCY_CAP,config.WORKER_BATCH_SIZE),
-      async (job) => {
+    const dispatcher = new DeliveryDispatcher<ClaimedDeliveryJob>({
+      concurrency,
+      reservedUrgent,
+      claim: (limit,lane) => claimDeliveryJobs(db,limit,apnsCutoverAt,lane),
+      wait: async signal => {
+        const timeout = await nextDeliveryWakeDelay(db,config.WORKER_POLL_MS,apnsCutoverAt);
+        await wakeup.wait(timeout,signal);
+      },
+      dispatch: async (job) => {
+      const cycle = emptyApnsWorkerCycle();
+      cycle.claimed = 1;
+      cycle.queueToFirstClaimMaxMs = Math.max(0,(job.first_claimed_at ?? job.last_claimed_at ?? job.created_at).getTime()-job.created_at.getTime());
       let dispatchStarted = false;
       let providerResult: ApnsRuntimeResult | undefined;
       let providerResultObserved = false;
@@ -206,28 +248,12 @@ if (config.APNS_MODE === "disabled") {
         if (job.transport === "live_activity_update" && activityGeneration === undefined) {
           throw new Error("Live Activity update command is missing a positive generation");
         }
-        const providerNotBefore = job.transport === "notification"
-          ? null
-          : futureActivityProviderTimestamp(command);
-        if (providerNotBefore !== null) {
-          await deferFutureActivityTimestamp(db,job,providerNotBefore);
-          return;
-        }
-        const resolver = new PostgresApnsRecipientResolver({
-          db,
-          encryption: tokenEncryption,
-          kind: job.transport,
-          deliveryJobId: job.id,
-          claimToken: job.claim_token,
-          principalId: job.principal_id,
-          deviceId: job.device_id,
-          notificationEventId: job.event_id,
-          environment: apnsEnvironment,
-          ...(job.live_activity_id ? { liveActivityId: job.live_activity_id } : {}),
-          ...(activityGeneration === undefined ? {} : { liveActivityGeneration: activityGeneration }),
-        });
-        const badge = await pendingInteractionBadgeCount(db,job.device_id);
-        const runtimeJob: ApnsRuntimeJob = {
+        const inputs = job.transport === "notification"
+          ? await pinOrdinaryDeliveryInputs(db,job,async () => ({
+            badge: await pendingInteractionBadgeCount(db,job.device_id),avatarUrl: job.service_image_url,
+          }))
+          : { badge: 0,avatarUrl: job.service_image_url };
+        let runtimeJob: ApnsRuntimeJob = {
           id: job.id,
           claimToken: job.claim_token,
           attemptCount: job.attempt_count,
@@ -248,22 +274,58 @@ if (config.APNS_MODE === "disabled") {
             serviceId: job.service_id,credentialId: job.requester_credential_id,
           }),
           collapseId: job.origin_hash,
-          avatarUrl: job.service_image_url,
+          avatarUrl: inputs.avatarUrl,
           imageUrl: job.image_url,
           deepLink: job.deep_link,
           notificationId: publicId("ntf",job.event_id),
           accountId: publicId("acc",job.principal_id),
+          deviceId: publicId("dev",job.device_id),
+          serverOriginHash: configuredReceiptOriginHash,
+          interactionExpiresAt: job.interaction_expires_at,
           interactionKind: job.interaction_kind,
           interactionId: job.interaction_id ? publicId("int",job.interaction_id) : null,
-          badge,
+          badge: inputs.badge,
           payload: job.payload,
           ...(command && typeof command === "object" && !Array.isArray(command)
             ? { activityCommand: command as Record<string,unknown> }
             : {}),
         };
-        await pinDeliverySerializationEvidence(db,job,deliverySerializationEvidence(runtimeJob));
-        await markDeliveryDispatchStarted(db,job.id,job.claim_token,providerPriority);
+        if (job.transport === "notification") {
+          await pinDeliverySerializationEvidence(db,job,deliverySerializationEvidence(runtimeJob));
+          await markDeliveryDispatchStarted(db,job.id,job.claim_token,providerPriority);
+        } else {
+          const frame = await prepareLatestActivityFrame(db,job,command as Record<string,unknown>,providerPriority,
+            (timestamp,transport) => {
+              runtimeJob = { ...runtimeJob,transport,activityCommand: {
+                ...runtimeJob.activityCommand,providerTimestamp: timestamp,
+                ...(transport === "live_activity_start" ? { alertOwner: "apns" } : {}),
+              } };
+              return deliverySerializationEvidence(runtimeJob);
+            });
+          if (frame.kind !== "ready") {
+            if (frame.kind === "deferred" && frame.reason === "clock_rollback") {
+              console.warn(apnsOperationalLog("apns_worker_cycle",{
+                mode: config.APNS_MODE,clockHealth: "rollback",frameOutcome: "deferred",
+              }));
+            }
+            return;
+          }
+        }
         dispatchStarted = true;
+        const resolver = new PostgresApnsRecipientResolver({
+          db,
+          encryption: tokenEncryption,
+          kind: runtimeJob.transport,
+          deliveryJobId: job.id,
+          claimToken: job.claim_token,
+          principalId: job.principal_id,
+          deviceId: job.device_id,
+          notificationEventId: job.event_id,
+          environment: apnsEnvironment,
+          ...(job.live_activity_id ? { liveActivityId: job.live_activity_id } : {}),
+          ...(activityGeneration === undefined ? {} : { liveActivityGeneration: activityGeneration }),
+        });
+
         providerResult = await withJobLeaseHeartbeat(
           db,job.id,job.claim_token,shutdown.signal,
           async (signal) => await apns.send({ ...runtimeJob,signal },resolver),
@@ -327,22 +389,23 @@ if (config.APNS_MODE === "disabled") {
             : "A dispatch crossed its durable fence without a confirmed final state",
           ambiguous?.kind === "accepted" ? ambiguous.providerMessageId : undefined,
         );
+      } finally {
+        console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason: "dispatch",...cycle }));
       }
       },
-    );
-    if (jobs.length || Object.values(cycle).some((value) => value > 0)) {
-      console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason,...cycle }));
+    });
+    try {
+      await dispatcher.run(shutdown.signal);
+    } finally {
+      shutdown.abort();
+      await maintenance;
     }
-      if (!jobs.length) {
-        const result = await wakeup.wait(config.WORKER_POLL_MS,shutdown.signal);
-        wakeReason = result === "notified" ? "notification" : result === "timeout" ? "poll" : "poll";
-      } else {
-        wakeReason = "busy";
-      }
-    }
+    if (maintenanceFailure) throw maintenanceFailure;
   } finally {
     await Promise.allSettled([apns.close(),wakeup.close()]);
   }
 }
+shutdown.abort();
+await callbackLoop;
 console.info(apnsOperationalLog("apns_worker_stopped",{ mode: config.APNS_MODE }));
 await db.end();

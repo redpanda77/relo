@@ -1,12 +1,17 @@
 import { expect, test } from "vitest";
+import { readdirSync } from "node:fs";
 import { readDoctorSnapshot, recordWorkerHeartbeat } from "./runtime-health.js";
+
+// Use the actual packaged migration set so a new migration cannot leave both
+// this fixture and the doctor's expected identity stale while tests stay green.
+const latestMigration = readdirSync(new URL("../migrations/",import.meta.url))
+  .filter(name => /^\d{4}_.+\.sql$/.test(name)).sort().at(-1)!;
 
 test("doctor keeps server, worker, APNs, and phone facts distinct", async () => {
   const now = new Date("2026-08-16T12:00:00.000Z");
   const db = {
     query: async (sql: string) => {
-      if (sql.includes("schema_migrations")) return { rows: [{ version: "0044_single_delivery_serializer.sql" }] };
-      if (sql.includes("has_table_privilege")) return { rows: [{ can_select: true,can_insert: true,can_update: true }] };
+      if (sql.includes("schema_migrations")) return { rows: [{ version: latestMigration }] };
       if (sql.includes("runtime_components")) return { rows: [{
         release_identity: "0.7.23-test",
         started_at: new Date(now.getTime()-60_000),
@@ -20,6 +25,7 @@ test("doctor keeps server, worker, APNs, and phone facts distinct", async () => 
     principalId: "principal",apnsMode: "sandbox",now,releaseIdentity: "0.7.23-test",
   });
   expect(snapshot.ok).toBe(true);
+  expect(snapshot.checks.database.expectedMigration).toBe(latestMigration);
   expect(snapshot.checks.apns.state).toBe("configured");
   expect(snapshot.checks.devices.notificationAuthorized).toBe(1);
   expect(snapshot.checks.devices.liveActivityAuthorized).toBe(0);
@@ -29,8 +35,7 @@ test("doctor reports a stale worker and missing phone independently", async () =
   const now = new Date("2026-08-16T12:00:00.000Z");
   const db = {
     query: async (sql: string) => {
-      if (sql.includes("schema_migrations")) return { rows: [{ version: "0044_single_delivery_serializer.sql" }] };
-      if (sql.includes("has_table_privilege")) return { rows: [{ can_select: true,can_insert: true,can_update: true }] };
+      if (sql.includes("schema_migrations")) return { rows: [{ version: latestMigration }] };
       if (sql.includes("runtime_components")) return { rows: [{
         release_identity: "old",started_at: now,
         last_heartbeat_at: new Date(now.getTime()-31_000),details: { configured: true },
@@ -49,8 +54,7 @@ test("doctor rejects a worker from another release or APNs mode", async () => {
   const now = new Date("2026-08-16T12:00:00.000Z");
   const db = {
     query: async (sql: string) => {
-      if (sql.includes("schema_migrations")) return { rows: [{ version: "0044_single_delivery_serializer.sql" }] };
-      if (sql.includes("has_table_privilege")) return { rows: [{ can_select: true,can_insert: true,can_update: true }] };
+      if (sql.includes("schema_migrations")) return { rows: [{ version: latestMigration }] };
       if (sql.includes("runtime_components")) return { rows: [{
         release_identity: "0.7.19",started_at: now,last_heartbeat_at: now,
         details: { mode: "production",configured: true },
@@ -75,12 +79,11 @@ test("worker heartbeat stores only operational state", async () => {
   expect(values).toEqual(["0.7.23-test",{ mode: "disabled",configured: false,pollMs: 2_000 }]);
 });
 
-test("doctor fails clearly when pairing storage privileges drift",async () => {
+test("doctor fails clearly when the schema is behind",async () => {
   const now = new Date("2026-08-16T12:00:00.000Z");
   const db = {
     query: async (sql: string) => {
-      if (sql.includes("schema_migrations")) return { rows: [{ version: "0044_single_delivery_serializer.sql" }] };
-      if (sql.includes("has_table_privilege")) return { rows: [{ can_select: true,can_insert: false,can_update: true }] };
+      if (sql.includes("schema_migrations")) return { rows: [{ version: "0000_old" }] };
       if (sql.includes("runtime_components")) return { rows: [{
         release_identity: "0.7.24",started_at: now,last_heartbeat_at: now,
         details: { mode: "sandbox",configured: true,pollMs: 2_000 },
@@ -92,8 +95,5 @@ test("doctor fails clearly when pairing storage privileges drift",async () => {
     principalId: "principal",apnsMode: "sandbox",now,releaseIdentity: "0.7.24",
   });
   expect(snapshot.ok).toBe(false);
-  expect(snapshot.checks.database).toMatchObject({
-    ok: false,
-    pairingStorage: { ok: false,select: true,insert: false,update: true },
-  });
+  expect(snapshot.checks.database).toMatchObject({ ok: false,currentMigration: "0000_old" });
 });

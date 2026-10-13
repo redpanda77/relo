@@ -1,7 +1,5 @@
 import type { Database } from "./db.js";
-
-export const DELIVERY_JOB_TTL_SECONDS = 5 * 60;
-export const TERMINAL_DELIVERY_JOB_TTL_SECONDS = 60 * 60;
+import { relevanceDeliveryGuard } from "./relevance/delivery.js";
 
 export function shouldRetryMissingActivityToken(
   job: { attempt_count: number; expires_at: Date | null },
@@ -26,20 +24,16 @@ export async function cancelUndeliverableDeliveryJobs(db: Database): Promise<num
   const result = await db.query(
     `UPDATE delivery_jobs j SET state='canceled',lease_expires_at=NULL,
        last_error_code=CASE WHEN e.state<>'active' THEN 'event_terminal'
-         WHEN e.expires_at IS NOT NULL AND e.expires_at<=now() THEN 'event_expired'
-         ELSE 'delivery_deadline_exceeded' END,
+         WHEN e.expires_at IS NOT NULL AND e.expires_at<=clock_timestamp() THEN 'event_expired'
+         ELSE 'relevance_delivery_closed' END,
        last_error_message=CASE WHEN e.state<>'active' THEN 'Notification event is terminal'
-         WHEN e.expires_at IS NOT NULL AND e.expires_at<=now()
+         WHEN e.expires_at IS NOT NULL AND e.expires_at<=clock_timestamp()
            THEN 'Notification event expired before delivery'
-         ELSE CASE WHEN e.payload#>>'{liveActivity,operation}'='end'
-           THEN 'Terminal Live Activity delivery exceeded its one-hour reconciliation window'
-           ELSE 'Delivery job exceeded its five-minute delivery window' END END,updated_at=now()
+         ELSE 'The relevance delivery window is closed' END,updated_at=clock_timestamp()
      FROM notification_events e WHERE e.id=j.notification_event_id
        AND j.state IN ('pending','retry')
-       AND (e.state<>'active' OR (e.expires_at IS NOT NULL AND e.expires_at<=now())
-         OR j.created_at<=now()-(CASE WHEN e.payload#>>'{liveActivity,operation}'='end'
-           THEN ($2*interval '1 second') ELSE ($1*interval '1 second') END))`,
-    [DELIVERY_JOB_TTL_SECONDS,TERMINAL_DELIVERY_JOB_TTL_SECONDS],
+       AND (e.state<>'active' OR (e.expires_at IS NOT NULL AND e.expires_at<=clock_timestamp())
+         OR NOT ${relevanceDeliveryGuard("e")})`,
   );
   return result.rowCount ?? 0;
 }

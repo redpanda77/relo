@@ -1,14 +1,10 @@
 import type { Handler } from "hono";
 import type { Database } from "../db.js";
+import { secureHtml } from "./http.js";
+import type { z } from "zod";
+import { dashboardAuthSchema } from "@relo/notification-contracts/dashboard/auth";
 
-export type DashboardAuthBootstrap = {
-  version: 1;
-  kind: "auth";
-  route: { path: "/"; nextPath: string };
-  mode: "sign-in" | "sign-up";
-  title: string;
-  description: string;
-};
+export type DashboardAuthBootstrap = z.input<typeof dashboardAuthSchema>;
 
 type DashboardAuthDependencies = {
   db: Database;
@@ -26,16 +22,6 @@ function nextPath(value: string | undefined): string {
   )
     return "/dashboard";
   return value;
-}
-
-function secureHtml(context: any, html: string): Response {
-  context.header(
-    "content-security-policy",
-    "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-  );
-  context.header("cache-control", "private, no-store");
-  context.header("x-content-type-options", "nosniff");
-  return context.html(html);
 }
 
 export function createDashboardAuthHandler(
@@ -57,7 +43,7 @@ export function createDashboardAuthHandler(
       mode: claimed ? "sign-in" : "sign-up",
       title: claimed ? "Sign in to Relo" : "Create the owner account",
       description: claimed
-        ? "Use the same private Relo server account as your iPhone."
+        ? "Use the same account as your iPhone."
         : "This first account claims the bootstrapped private owner.",
     };
 

@@ -8,6 +8,8 @@ export type TransportTokenPurpose =
   | "device.apns_token"
   | "device.live_activity_push_to_start_token"
   | "live_activity_update_token.token";
+/** Other at-rest secrets sealed with the same key under their own AAD. */
+export type SealedSecretPurpose = TransportTokenPurpose | "interaction_callback.token";
 
 export class InvalidTransportTokenError extends Error {
   constructor() {
@@ -17,8 +19,8 @@ export class InvalidTransportTokenError extends Error {
 }
 
 export type TransportTokenEncryption = {
-  encrypt: (token: string | null, purpose: TransportTokenPurpose) => string | null;
-  decrypt: (value: string | null, purpose: TransportTokenPurpose) => string | null;
+  encrypt: (token: string | null, purpose: SealedSecretPurpose) => string | null;
+  decrypt: (value: string | null, purpose: SealedSecretPurpose) => string | null;
 };
 
 export type StoredTransportToken =
@@ -29,7 +31,7 @@ export type StoredTransportToken =
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: any[] }> };
 
-function aad(purpose: TransportTokenPurpose): Buffer {
+function aad(purpose: SealedSecretPurpose): Buffer {
   return Buffer.from(`relo:transport-token:aad:current\n${purpose}`, "utf8");
 }
 

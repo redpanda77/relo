@@ -1,6 +1,7 @@
 import type { Handler } from "hono";
 import type { Database } from "../db.js";
 import { internalId, publicId } from "../ids.js";
+import { isoDate,secureHtml } from "./http.js";
 
 export type ActivityHistoryBootstrap = {
   version: 1;
@@ -96,25 +97,9 @@ type ActivityHistoryDependencies = {
   renderDocument(bootstrap: ActivityHistoryBootstrap): Promise<string>;
 };
 
-function isoDate(value: unknown): string | null {
-  if (!value) return null;
-  const date = new Date(String(value));
-  return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
-}
-
 function count(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
-}
-
-function secureHtml(context: any, html: string): Response {
-  context.header(
-    "content-security-policy",
-    "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-  );
-  context.header("cache-control", "private, no-store");
-  context.header("x-content-type-options", "nosniff");
-  return context.html(html);
 }
 
 export function createDashboardActivityHistoryHandler(

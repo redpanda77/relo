@@ -56,9 +56,9 @@ export interface ResolvedRecipient {
 }
 
 export interface DispatchRecipient extends ResolvedRecipient {
-  /** Invalidates the leased generation in the same atomic store transaction. */
+  /** Compare-and-set invalidation of this immutable authorized generation. */
   invalidate(details: { environment: ApnsEnvironment; invalidatedAtMs?: number }): Promise<void>;
-  /** Releases the dispatch lease, committing only when the attempt inspection succeeded. */
+  /** Releases snapshot resources. The authorization fence is already committed. */
   release(commit: boolean): Promise<void>;
 }
 
@@ -66,8 +66,9 @@ export interface RecipientResolver {
   /** Must atomically return only the latest active registration. */
   resolve(): Promise<ResolvedRecipient | null>;
   /**
-   * Optionally leases the latest registration through stream open and response inspection.
-   * Durable resolvers use this to serialize token rotation with one actual dispatch attempt.
+   * Authorizes the latest registration immediately before stream open. Durable
+   * resolvers commit and release all database resources before returning.
+   * Revocation after this fence cannot guarantee recall of the in-flight attempt.
    */
   acquire?(): Promise<DispatchRecipient | null>;
   /** Must invalidate only expectedGeneration, never a newer replacement. */
@@ -238,6 +239,7 @@ export type OutcomeCategory =
   | "bounded-protocol-failure"
   | "indeterminate-transport"
   | "retryable-not-scheduled"
+  | "retry-scheduled"
   | "retry-exhausted"
   | "pool-quarantined";
 
@@ -254,6 +256,7 @@ export interface ApnsOutcome {
   responseApnsId?: string;
   invalidatedAtMs?: number;
   transportCode?: TransportFailureCode;
+  nextAttemptNotBeforeMs?: number;
 }
 
 type ValidatedConfig = Required<
@@ -806,7 +809,7 @@ export class ApnsProviderCleanroom {
       const aps: Record<string, unknown> = { alert: validateAlert(input.alert) };
       if (input.sound !== undefined) aps.sound = input.sound;
       if (input.badge !== undefined) {
-        if (!Number.isInteger(input.badge)) throw validationError("badge must be an integer");
+        if (!Number.isSafeInteger(input.badge) || input.badge < 0) throw validationError("badge must be a nonnegative safe integer");
         aps.badge = input.badge;
       }
       if (input.category !== undefined) aps.category = requireNonempty(input.category, "category");
@@ -938,6 +941,9 @@ export class ApnsProviderCleanroom {
         if (deadlineReached(logical,nextAttemptNotBeforeMs)
           || (retryHorizonAtMs !== undefined && nextAttemptNotBeforeMs >= retryHorizonAtMs)) {
           return outcome(logical,"retry-exhausted",attempt);
+        }
+        if (logical.persistProviderRetryState) {
+          return { ...outcome(logical, "retry-scheduled", attempt), nextAttemptNotBeforeMs };
         }
         try {
           await this.scheduler.sleep(nextAttemptNotBeforeMs-now,logical.signal);
@@ -1120,6 +1126,13 @@ export class ApnsProviderCleanroom {
           attempt,dispatched.result.status,
           safeReason(dispatched.result,this.config.responseBodyLimitBytes),
         );
+      }
+      if (logical.persistProviderRetryState) {
+        return {
+          ...outcome(logical, "retry-scheduled", attempt, dispatched.result.status,
+            safeReason(dispatched.result, this.config.responseBodyLimitBytes)),
+          nextAttemptNotBeforeMs: retryAt,
+        };
       }
       try {
         await this.scheduler.sleep(Math.max(0,retryAt-this.clock.nowMs()), logical.signal);

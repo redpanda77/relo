@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { authorizationRateLimitBuckets } from "./device-authorization.js";
-import { escapeHtml, safeNextPath } from "./web.js";
+import { safeNextPath } from "./web.js";
+import { escapeHtml } from "./web/http.js";
 
 describe("server-rendered HTML safety", () => {
   test("escapes hostile account names and email-like text before interpolation", () => {

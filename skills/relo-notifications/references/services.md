@@ -38,6 +38,21 @@ controls what opens after a notification; it is not a callback and must not cont
 
 ## Webhook use
 
+Every new webhook notification and Live Activity start must name its project and topic, like every
+other producer: send `context.project` and `context.threadName` (or an `origin` descriptor). The
+service is the source. A request without both returns `422 work_identity_required`. Updates and ends
+keep the identity stored at creation.
+
+```json
+{ "title": "Backup failed", "body": "Nightly dump did not complete.",
+  "context": { "project": "Recovery Collector", "threadName": "Operational status" } }
+```
+
+A webhook question can call your server back instead of being polled: add
+`"callback": {"url": "https://...", "token": "<16-512 chars>"}` inside `response`. Relo POSTs the
+answer with `Authorization: Bearer <token>`, retrying after 30s, 2m, 10m and 1h; only real answers
+call back. `GET /hooks/<secret>/events/:eventId` reports `response.callback.state`.
+
 Treat webhook request content as subject to `security.md`. A service integration must use its own
 stable idempotency key for retries, validate selected device IDs, and retrieve interaction results
 through authenticated/secret-bound documented endpoints. Never infer an answer from webhook HTTP

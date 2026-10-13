@@ -1,7 +1,7 @@
 interface:
   display_name: "Relo Notifications"
-  short_description: "Send self-hosted iPhone notifications and approvals"
-  default_prompt: "Use $relo-notifications to notify my iPhone when this task finishes."
+  short_description: "A live view of your work on the owner's iPhone, with approvals"
+  default_prompt: "Use $relo-notifications to show this task live on my iPhone and ask me before you finish."
 
 policy:
   allow_implicit_invocation: true

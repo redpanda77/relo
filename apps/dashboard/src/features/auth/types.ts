@@ -1,12 +1,3 @@
-import { z } from "zod"
-
-export const dashboardAuthSchema = z.object({
-  version: z.literal(1),
-  kind: z.literal("auth"),
-  route: z.object({ path: z.literal("/"), nextPath: z.string() }),
-  mode: z.enum(["sign-in", "sign-up"]),
-  title: z.string(),
-  description: z.string(),
-})
-
-export type DashboardAuth = z.infer<typeof dashboardAuthSchema>
+// Dashboard bootstrap and API shapes live in @relo/notification-contracts so the server and the
+// React app share one definition.
+export * from "@relo/notification-contracts/dashboard/auth"

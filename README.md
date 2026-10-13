@@ -1,6 +1,8 @@
 # Relo
 
-Relo is a self-hosted developer notification and phone-decision system. Agents, CLIs, and webhooks
+Relo gives the owner a live view of their agents' work on iPhone. Each agent keeps one Live
+Activity card current on the Lock Screen and in the Dynamic Island and asks approval or yes/no
+questions right on it; notifications are reserved for finished outcomes. Agents, CLIs, and webhooks
 send work to one owner-operated server; PostgreSQL stores canonical state; a worker delivers through
 APNs; the Dashboard and native iPhone app show durable history, decisions, and Live Activities.
 
@@ -103,9 +105,8 @@ Open `apps/ios/Relo.xcodeproj` in Xcode. Select the **Relo** scheme and connecte
 automatic signing enabled for all three targets, and press **Run**. Direct Xcode builds use sandbox
 APNs tokens.
 
-In the Dashboard, open **Connections → Connect iPhone** and generate a QR code. Scan it from the
-Relo sign-in screen, confirm the displayed origin, and allow notifications. Confirm that the phone
-appears under **Connections → Phones**.
+On the iPhone, open Relo and tap **Sign in**. Approve in the browser, and you're back in the app.
+Allow notifications, then confirm that the phone appears under **Connections → Phones**.
 
 See [apps/ios/README.md](apps/ios/README.md) if Xcode cannot create the App ID, App Group, or
 profiles.
@@ -158,11 +159,10 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml ps
 
 ### 8. Install and authenticate the CLI
 
-From the repository root, install the reviewed CLI and Codex integration directly from this
-checkout:
+From the repository root, install the reviewed CLI directly from this checkout:
 
 ```sh
-npm install --global ./packages/cli ./packages/codex-notify
+npm install --global ./packages/cli
 relo --version
 ```
 
@@ -229,13 +229,11 @@ npx --yes skills@1.5.22 add ./skills/relo-notifications \
 
 Restart Codex so it discovers the new global skill. Then ask:
 
-> Use Relo to send my iPhone a test notification for this installation check.
+> Use Relo to keep a live view of this task on my iPhone, and ask me before you finish.
 
 The skill requires the independently installed and authenticated `relo` CLI. Installing the skill
-does not deploy the server, create credentials, or alter agent hooks automatically. Optional Codex
-lifecycle and permission-hook setup is documented in
-[packages/codex-notify/README.md](packages/codex-notify/README.md) and
-[packages/cli/README.md](packages/cli/README.md).
+does not deploy the server or create credentials, and Relo installs no agent hooks: the agent keeps
+its own Live Activity card current by running `relo`. See [packages/cli/README.md](packages/cli/README.md).
 
 ## Architecture in one minute
 

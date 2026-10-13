@@ -183,18 +183,10 @@ function testLabBootstrap(html: string): Record<string,any> {
 }
 
 describe("dashboard web routes", () => {
-  test("serves external assets without a database session", async () => {
+  test("serves only the React build's assets and guards the API without a session", async () => {
     const app = routeApp();
-    const css = await app.request("/assets/relo-dashboard.css");
-    const js = await app.request("/assets/relo-dashboard.js");
-
-    expect(css.status).toBe(200);
-    expect(css.headers.get("content-type")).toContain("text/css");
-    expect(css.headers.get("cache-control")).toContain("must-revalidate");
-    expect(await css.text()).toContain("--sidebar-width");
-    expect(js.status).toBe(200);
-    expect(js.headers.get("content-type")).toContain("text/javascript");
-    expect(await js.text()).toContain("mobile-nav-toggle");
+    expect((await app.request("/assets/relo-dashboard.css")).status).toBe(404);
+    expect((await app.request("/assets/relo-dashboard.js")).status).toBe(404);
     expect(await (await app.request("/api/dashboard/snapshot")).json()).toEqual({ error: "unauthorized" });
   });
 
@@ -202,8 +194,7 @@ describe("dashboard web routes", () => {
     const app = routeApp();
     for (const path of [
       "/dashboard", "/dashboard/inbox/notifications", "/dashboard/inbox/delivery",
-      "/dashboard/connections/services", "/dashboard/connections/phones",
-      "/dashboard/connections/clients", "/dashboard/testing",
+      "/dashboard/connections", "/dashboard/testing",
       "/dashboard/testing/runs/act_00000000-0000-0000-0000-000000000000",
       "/dashboard/testing/runs/act_00000000-0000-0000-0000-000000000000/history",
       "/dashboard/account", "/dashboard/docs",
@@ -239,7 +230,7 @@ describe("dashboard web routes", () => {
       "PATCH /api/live-activities/:activityId", "apns_payload_too_large", "idempotency_conflict",
       '"delivery": { "eligibleDevices": 1, "durableCommands": 1, "apnsJobs": 1 }',
       '"ifSequence": 0', '"dismissAfterSeconds": 15', "activities:write", "activities:read",
-      "/api/devices/register", "/api/device-authorizations/start", "/api/inbox", "/api/clients/self",
+      "/api/devices/register", "/api/device-authorizations/start", "/api/inbox/history", "/api/clients/self",
       "/health/ready",
       "300/minute account ceiling", "60/minute client or service ceiling",
       "respondingDevice", "`approval`", "`shell`", "`verdict`", "`signal`",

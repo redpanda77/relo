@@ -93,7 +93,9 @@ function presentationFromDraft(draft: BuilderDraft) {
   const requestedProgressType = "progress_bar"
   const needsProgress =
     draft.visual !== "steps" &&
-    (draft.visual === "progress_bar" || draft.behavior === "progress")
+    (draft.visual === "progress_bar" ||
+      draft.visual === "progress_ring" ||
+      draft.behavior === "progress")
   const components = [
     ...(draft.visual === "steps"
       ? [
@@ -167,6 +169,9 @@ function presentationFromDraft(draft: BuilderDraft) {
         componentIdentity: "thread",
         statusEmphasis: "state",
       },
+      ...(draft.visual === "progress_ring" && needsProgress
+        ? { progressDisplay: "ring" }
+        : {}),
     },
     privacy: "standard",
   }

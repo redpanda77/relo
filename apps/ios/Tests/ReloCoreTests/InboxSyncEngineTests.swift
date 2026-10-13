@@ -1,3 +1,5 @@
+@testable import ReloRuntime
+@testable import ReloPersistence
 import XCTest
 @testable import ReloCore
 
@@ -33,141 +35,60 @@ final class InboxSyncEngineTests: XCTestCase {
         XCTAssertEqual(visible, .offlineCache(items: [refreshed]))
     }
 
-    func testReconnectFetchesEveryEventAfterDurableCursorExactlyOnce() async throws {
-        let old = item(id: "evt_before123456", minutesAgo: 20)
-        let missedOne = item(id: "evt_missed123456", minutesAgo: 10)
-        let missedTwo = item(id: "evt_missed789012", minutesAgo: 5)
-        let cache = InMemoryInboxCache(
-            snapshot: InboxSnapshot(items: [old], cursor: "cursor-before", lastSuccessfulSyncAt: nil)
-        )
-        let remote = FakeRemote(steps: [
-            .page(InboxPage(items: [missedOne], cursor: "cursor-middle", hasMore: true, serverTime: .now)),
-            .page(InboxPage(items: [missedTwo], cursor: "cursor-after", hasMore: false, serverTime: .now))
-        ])
-        let syncedAt = Date(timeIntervalSince1970: 1_800_000_000)
-        let engine = InboxSyncEngine(remote: remote, cache: cache, now: { syncedAt })
-
-        let result = try await engine.synchronize()
-
-        XCTAssertEqual(Set(result.items.map(\.id)), Set([old.id, missedOne.id, missedTwo.id]))
-        XCTAssertEqual(result.items.count, 3)
-        XCTAssertEqual(result.cursor, "cursor-after")
-        XCTAssertEqual(result.lastSuccessfulSyncAt, syncedAt)
-        let cursors = await remote.requestedCursors
-        XCTAssertEqual(cursors, ["cursor-before", "cursor-middle"])
-        let persisted = await cache.load()
-        XCTAssertEqual(persisted, result)
+    func testRepairReplacesWindowAndFindsLateCommitWithoutUsingStoredCursor() async throws {
+        let old = item(id: "old", minutesAgo: 5)
+        let late = item(id: "late", minutesAgo: 10)
+        let cache = InMemoryInboxCache(snapshot: .init(items: [old], cursor: "obsolete-delta"))
+        let remote = FakeRemote(steps: [.page(.init(items: [late], cursor: "ignored", hasMore: false, serverTime: .now))])
+        let result = try await InboxSyncEngine(remote: remote, cache: cache).synchronize()
+        XCTAssertEqual(result.items.map(\.id), [late.id])
+        XCTAssertNil(result.cursor)
+        let requested = await remote.requestedCursors
+        XCTAssertEqual(requested, [nil])
+        XCTAssertEqual(result.total, 1)
     }
 
-    func testPartialSyncCommitsEachPageAndResumesAfterConnectionFailure() async throws {
-        let first = item(id: "evt_first1234567", minutesAgo: 2)
-        let second = item(id: "evt_second123456", minutesAgo: 1)
+    func testFailedRepairPreservesLastCompleteWindowAndRetryReplacesIt() async throws {
+        let old = item(id: "old", minutesAgo: 5), fresh = item(id: "fresh", minutesAgo: 1)
+        let cache = InMemoryInboxCache(snapshot: .init(items: [old]))
+        let remote = FakeRemote(steps: [.failure(.unavailable), .page(.init(items: [fresh], cursor: nil, hasMore: false, serverTime: .now))])
+        let engine = InboxSyncEngine(remote: remote, cache: cache)
+        do { _ = try await engine.synchronize(); XCTFail("Expected failure") } catch InboxRemoteError.unavailable {}
+        let retained = await cache.load()
+        XCTAssertEqual(retained.items, [old])
+        let repaired = try await engine.synchronize()
+        XCTAssertEqual(repaired.items.map(\.id), [fresh.id])
+    }
+
+    func testAuthoritativeRepairReplacesMetadataAndRemovesPrunedRows() async throws {
+        let original = item(id: "same", title: "Queued", minutesAgo: 4)
+        let updated = item(id: "same", title: "Accepted", minutesAgo: 4, state: .acceptedByAPNs)
+        let cache = InMemoryInboxCache(snapshot: .init(items: [original, item(id: "pruned", minutesAgo: 10)]))
+        let remote = FakeRemote(steps: [.page(.init(items: [updated], cursor: nil, hasMore: false, serverTime: .now))])
+        let result = try await InboxSyncEngine(remote: remote, cache: cache).synchronize()
+        XCTAssertEqual(result.items.map(\.title), ["Accepted"])
+        XCTAssertEqual(result.items.first?.deliveryState, .acceptedByAPNs)
+    }
+
+    func testRepairRejectsOversizeAndDuplicateWindowsWithoutSaving() async throws {
+        for incoming in [[item(id: "same", minutesAgo: 1), item(id: "same", minutesAgo: 1)],
+                         (0...250).map { item(id: "id-\($0)", minutesAgo: Double($0)) }] {
+            let cache = InMemoryInboxCache()
+            let remote = FakeRemote(steps: [.page(.init(items: incoming, cursor: nil, hasMore: false, serverTime: .now))])
+            do { _ = try await InboxSyncEngine(remote: remote, cache: cache).synchronize(); XCTFail("Accepted invalid window") }
+            catch InboxRemoteError.incompatibleResponse {}
+            let persisted = await cache.load()
+            XCTAssertEqual(persisted.items, [])
+        }
+    }
+
+    func testRepairHasOneBoundedRequestRegardlessOfServerTotal() async throws {
+        let response = try historyRepairFixture((0..<250).map { item(id: "id-\($0)", minutesAgo: Double($0)) }, total: 12_345)
         let cache = InMemoryInboxCache()
-        let interruptedRemote = FakeRemote(steps: [
-            .page(InboxPage(items: [first], cursor: "cursor-one", hasMore: true, serverTime: .now)),
-            .failure(.unavailable)
-        ])
-        let interruptedEngine = InboxSyncEngine(remote: interruptedRemote, cache: cache)
-
-        do {
-            _ = try await interruptedEngine.synchronize()
-            XCTFail("Expected the second page to fail")
-        } catch InboxRemoteError.unavailable {
-            // Expected.
-        }
-
-        let afterFailure = await cache.load()
-        XCTAssertEqual(afterFailure.items, [first])
-        XCTAssertEqual(afterFailure.cursor, "cursor-one")
-
-        let resumedRemote = FakeRemote(steps: [
-            .page(InboxPage(items: [second], cursor: "cursor-two", hasMore: false, serverTime: .now))
-        ])
-        let resumedEngine = InboxSyncEngine(remote: resumedRemote, cache: cache)
-        let result = try await resumedEngine.synchronize()
-
-        let requested = await resumedRemote.requestedCursors
-        XCTAssertEqual(requested, ["cursor-one"])
-        XCTAssertEqual(Set(result.items.map(\.id)), Set([first.id, second.id]))
-        XCTAssertEqual(result.cursor, "cursor-two")
-    }
-
-    func testDuplicateEventIsReplacedByAuthoritativeServerValue() async throws {
-        let original = item(id: "evt_duplicate1234", title: "Queued", minutesAgo: 4, state: .queued)
-        let updated = item(id: original.id, title: "Accepted", minutesAgo: 4, state: .acceptedByAPNs)
-        let cache = InMemoryInboxCache(snapshot: InboxSnapshot(items: [original], cursor: "old"))
-        let remote = FakeRemote(steps: [
-            .page(InboxPage(items: [updated], cursor: "new", hasMore: false, serverTime: .now))
-        ])
-
-        let result = try await InboxSyncEngine(remote: remote, cache: cache).synchronize()
-
-        XCTAssertEqual(result.items, [updated])
-    }
-
-    func testExpiredCursorRebuildsProjectionFromServer() async throws {
-        let stale = item(id: "evt_stale1234567", minutesAgo: 30)
-        let canonical = item(id: "evt_canonical123", minutesAgo: 1)
-        let cache = InMemoryInboxCache(snapshot: InboxSnapshot(items: [stale], cursor: "expired"))
-        let remote = FakeRemote(steps: [
-            .failure(.cursorExpired),
-            .page(InboxPage(items: [canonical], cursor: "fresh", hasMore: false, serverTime: .now))
-        ])
-
-        let result = try await InboxSyncEngine(remote: remote, cache: cache).synchronize()
-
-        XCTAssertEqual(result.items, [canonical])
-        XCTAssertEqual(result.cursor, "fresh")
-        let cursors = await remote.requestedCursors
-        XCTAssertEqual(cursors, ["expired", nil])
-    }
-
-    func testLargeHistoryKeepsNewestBoundedWindowWhileAdvancingThroughEveryPage() async throws {
-        let itemCount = InboxHistoryRetention.maximumStoredItems + 50
-        let history = (0..<itemCount).map { index in
-            item(
-                id: String(format: "evt_%012d", index),
-                minutesAgo: TimeInterval(itemCount - index)
-            )
-        }
-        var steps: [FakeRemote.Step] = []
-        for lowerBound in stride(from: 0, to: history.count, by: 50) {
-            let upperBound = min(lowerBound + 50, history.count)
-            steps.append(.page(InboxPage(
-                items: Array(history[lowerBound..<upperBound]),
-                cursor: "cursor-\(upperBound)",
-                hasMore: true,
-                serverTime: .now
-            )))
-        }
-        let authoritativeNewest = item(
-            id: history.last!.id,
-            title: "Authoritative newest",
-            minutesAgo: 1
-        )
-        steps.append(.page(InboxPage(
-            items: [authoritativeNewest],
-            cursor: "cursor-final",
-            hasMore: false,
-            serverTime: .now
-        )))
-        let cache = InMemoryInboxCache()
-        let remote = FakeRemote(steps: steps)
-
-        let result = try await InboxSyncEngine(remote: remote, cache: cache).synchronize()
-
-        XCTAssertEqual(result.items.count, InboxHistoryRetention.maximumStoredItems)
-        XCTAssertEqual(Set(result.items.map(\.id)).count, result.items.count)
-        XCTAssertEqual(result.items.first, authoritativeNewest)
-        XCTAssertFalse(result.items.contains { $0.id == history[49].id })
-        XCTAssertTrue(result.items.contains { $0.id == history[50].id })
-        XCTAssertEqual(result.cursor, "cursor-final")
-        let persisted = await cache.load()
-        XCTAssertEqual(persisted, result)
-        let requestedCursors = await remote.requestedCursors
-        XCTAssertEqual(requestedCursors.count, steps.count)
-        XCTAssertNil(requestedCursors.first!)
-        XCTAssertEqual(requestedCursors.last!, "cursor-\(itemCount)")
+        let result = try await InboxSyncEngine(remote: FixedSnapshotRemote(response: response), cache: cache).synchronize()
+        XCTAssertEqual(result.items.count, 250)
+        XCTAssertEqual(result.total, 12_345)
+        XCTAssertEqual(result.unread?.account, 12_345)
     }
 
     func testServerHistoryPagerTraversesMoreThanTwentyOneHundredItemsWithoutCacheTruncation() async throws {
@@ -434,6 +355,24 @@ final class InboxSyncEngineTests: XCTestCase {
         XCTAssertNil(selection.item)
     }
 
+    func testCancelledNetworkResponseCannotOverwriteNewerCache() async throws {
+        let cache = InMemoryInboxCache()
+        let remote = SuspendedInboxRemote()
+        let engine = InboxSyncEngine(remote: remote, cache: cache)
+        let request = Task { try await engine.synchronize() }
+        await remote.waitUntilRequested()
+        request.cancel()
+        let newer = item(id: "evt_newer123456", minutesAgo: 1)
+        try await cache.save(InboxSnapshot(items: [newer], cursor: "newer"))
+        await remote.resume(with: .init(items: [item(id: "evt_obsolete1234", minutesAgo: 10)],
+            cursor: "obsolete", hasMore: false, serverTime: .now))
+        do { _ = try await request.value; XCTFail("Cancelled refresh succeeded") }
+        catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+        let snapshot = try await cache.load()
+        XCTAssertEqual(snapshot.items, [newer])
+        XCTAssertEqual(snapshot.cursor, "newer")
+    }
+
     func testSuspendedOldAccountRefreshWritesOnlyItsImmutableBoundCache() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -462,8 +401,8 @@ final class InboxSyncEngineTests: XCTestCase {
         XCTAssertEqual(accountB.cursor, "b-cursor")
         try await scoped.select(accountId: "account-a")
         let accountA = try await scoped.load()
-        XCTAssertEqual(accountA.items, [accountAItem])
-        XCTAssertEqual(accountA.cursor, "a-cursor")
+        XCTAssertEqual(accountA.items.map(\.id), [accountAItem.id])
+        XCTAssertNil(accountA.cursor)
     }
 
     func testSeparateHistoryPagersDoNotShareDeviceOrSessionState() async throws {
@@ -505,7 +444,10 @@ final class InboxSyncEngineTests: XCTestCase {
     }
 }
 
-private actor FakeRemote: InboxRemoteDataSource {
+private actor FakeRemote: InboxSnapshotRemoteDataSource {
+    func fetchSnapshot() throws -> InboxRepairResponse {
+        try historyRepairFixture(fetchPage(after: nil).items)
+    }
     enum Step: Sendable {
         case page(InboxPage)
         case failure(InboxRemoteError)
@@ -551,7 +493,10 @@ private actor FakeHistoryRemote: InboxHistoryRemoteDataSource {
     }
 }
 
-private actor SuspendedInboxRemote: InboxRemoteDataSource {
+private actor SuspendedInboxRemote: InboxSnapshotRemoteDataSource {
+    func fetchSnapshot() async throws -> InboxRepairResponse {
+        try await historyRepairFixture(fetchPage(after: nil).items)
+    }
     private var continuation: CheckedContinuation<InboxPage, Error>?
 
     func fetchPage(after cursor: String?) async throws -> InboxPage {
@@ -568,4 +513,9 @@ private actor SuspendedInboxRemote: InboxRemoteDataSource {
         continuation?.resume(returning: page)
         continuation = nil
     }
+}
+
+private struct FixedSnapshotRemote: InboxSnapshotRemoteDataSource {
+    let response: InboxRepairResponse
+    func fetchSnapshot() -> InboxRepairResponse { response }
 }

@@ -1,3 +1,5 @@
+@testable import ReloTransport
+@testable import ReloPersistence
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -6,58 +8,111 @@ import XCTest
 @testable import ReloCore
 
 final class MobileAPIClientTests: XCTestCase {
+    func testDecisionRequestCarriesExactIDAndValidatesCanonicalAcknowledgement() async throws {
+        let credential = DeviceCredential(deviceId: "device", installationId: UUID(), accessToken: "test",
+            issuedAt: .now, accountId: "account", credentialVersion: 1)
+        let pending = PendingNotificationResponse(accountID: "account", deviceID: "device", notificationID: "event",
+            action: .approve, value: [:], idempotencyKey: "original", expiresAt: .now.addingTimeInterval(300),
+            interactionID: "request-original", serverOrigin: baseURL)
+        StubURLProtocol.handler = { request in
+            let body = try XCTUnwrap(Self.bodyData(request))
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(object["expectedInteractionId"] as? String, "request-original")
+            XCTAssertEqual(object["idempotencyKey"] as? String, "original")
+            XCTAssertEqual(request.timeoutInterval, 5)
+            return Self.response(request, status: 201,
+                body: #"{"decision":{"id":"request-original","state":"approved","respondedAt":"2026-09-30T12:00:00.000Z"}}"#)
+        }
+        let client = HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
+        let accepted = try await client.submitDecision(credential: credential, response: pending)
+        XCTAssertEqual(accepted.id, "request-original"); XCTAssertEqual(accepted.state, "approved")
+        for body in [#"{}"#,
+                     #"{"decision":{"id":"newer-request","state":"approved","respondedAt":"2026-09-30T12:00:00Z"}}"#,
+                     #"{"decision":{"id":"request-original","state":"denied","respondedAt":"2026-09-30T12:00:00Z"}}"#] {
+            StubURLProtocol.handler = { Self.response($0, status: 200, body: body) }
+            do {
+                _ = try await client.submitDecision(credential: credential, response: pending)
+                XCTFail("Unrelated or malformed acknowledgement must not confirm the reply")
+            } catch { XCTAssertEqual(error as? MobileAPIError, .invalidResponse) }
+        }
+        StubURLProtocol.handler = { Self.response($0, status: 409, body: #"{"error":"interaction_superseded"}"#) }
+        do { _ = try await client.submitDecision(credential: credential, response: pending); XCTFail("Expected rejection") }
+        catch { XCTAssertEqual(error as? MobileAPIError, .decisionRejected(.superseded)) }
+    }
+
+    func testHistorySnapshotUsesOneNoCacheRequestAndRejectsFullContent() async throws {
+        let body = #"{"items":[{"id":"ntf_exact","kind":"notification","sourceName":"Source","title":"Title","privacy":"standard","createdAt":"2026-09-30T12:00:00.123456Z","updatedAt":"2026-09-30T12:00:00.123456Z","contentSummary":{"summary":"Preview","format":"markdown","byteLength":65536}}],"total":9000,"serverTime":"2026-09-30T12:00:00.123456Z","unread":{"account":8000,"projects":{}}}"#
+        StubURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/inbox/snapshot")
+            XCTAssertNil(request.url?.query)
+            XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture")
+            return Self.response(request, status: 200, body: body)
+        }
+        let remote = HTTPInboxDataSource(baseURL: baseURL, token: "fixture", session: makeSession())
+        let result = try await remote.fetchSnapshot()
+        XCTAssertEqual(result.total, 9000)
+        XCTAssertEqual(result.items[0].item.detail, "Preview")
+        XCTAssertNil(result.items[0].item.content)
+        XCTAssertEqual(result.items[0].item.createdAt, result.serverTime)
+        StubURLProtocol.handler = { request in
+            Self.response(request, status: 200, body: body.replacingOccurrences(of: "\"title\":", with: "\"content\":null,\"title\":"))
+        }
+        do { _ = try await remote.fetchSnapshot(); XCTFail("Full-content key crossed summary boundary") }
+        catch { XCTAssertEqual(error as? InboxRemoteError, .incompatibleResponse) }
+    }
+
     override func tearDown() {
         StubURLProtocol.handler = nil
         super.tearDown()
     }
 
-    func testEmailSignInStoresHeaderTokenOnlyAfterSessionValidation() async throws {
-        let lock = NSLock()
-        var requests: [URLRequest] = []
-        var signInBody: [String: Any]?
+    func testBrowserSignInExchangePostsCodeAndVerifier() async throws {
+        let captured = LockedTestValue<URLRequest?>(nil)
+        let body = LockedTestValue<Data?>(nil)
         StubURLProtocol.handler = { request in
-            lock.lock()
-            requests.append(request)
-            let index = requests.count
-            if index == 1, let data = Self.bodyData(request) {
-                signInBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            }
-            lock.unlock()
-
-            if index == 1 {
-                return Self.response(
-                    request,
-                    status: 200,
-                    headers: ["set-auth-token": "account-session-secret"],
-                    body: #"{"user":{"id":"ignored","name":"Ignored","email":"ignored@example.com"}}"#
-                )
-            }
+            captured.value = request
+            body.value = Self.bodyData(request)
             return Self.response(
                 request,
                 status: 200,
-                body: #"{"session":{"id":"session-id","expiresAt":"2026-08-13T12:00:00.000Z"},"user":{"id":"better-auth-subject","name":"Developer","email":"owner@example.com","image":null}}"#
+                body: #"{"sessionToken":"account-session-secret","session":{"id":"session-id","expiresAt":"2026-08-13T12:00:00.000Z"},"user":{"id":"better-auth-subject","name":"Developer","email":"owner@example.com"}}"#
             )
         }
 
         let client = HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
-        let session = try await client.signIn(email: " owner@example.com ", password: "unique-password")
+        let session = try await client.exchangeBrowserSignIn(code: "relo_signin_x", codeVerifier: "verifier", installationId: "install")
 
         XCTAssertEqual(session.accessToken, "account-session-secret")
+        XCTAssertEqual(session.sessionId, "session-id")
         XCTAssertEqual(session.user.id, "better-auth-subject")
-        XCTAssertEqual(requests.map { $0.url?.path }, ["/api/auth/sign-in/email", "/api/auth/get-session"])
-        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
-        let object = try XCTUnwrap(signInBody)
-        XCTAssertEqual(object["email"] as? String, "owner@example.com")
-        XCTAssertEqual(object["rememberMe"] as? Bool, true)
+        XCTAssertEqual(captured.value?.url?.path, "/api/mobile/sign-in/token")
+        XCTAssertEqual(captured.value?.httpMethod, "POST")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(body.value)) as? [String: Any])
+        XCTAssertEqual(object["code"] as? String, "relo_signin_x")
+        XCTAssertEqual(object["codeVerifier"] as? String, "verifier")
+        XCTAssertEqual(object["installationId"] as? String, "install")
+    }
+
+    func testBrowserSignInExchangeMapsFailures() async throws {
+        let cases: [(Int, MobileAPIError)] = [(400, .invalidRequest), (403, .accountDisabled), (500, .unavailable)]
+        for (status, expected) in cases {
+            StubURLProtocol.handler = { request in Self.response(request, status: status, body: #"{"error":"x"}"#) }
+            let client = HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
+            do {
+                _ = try await client.exchangeBrowserSignIn(code: "c", codeVerifier: "v", installationId: "i")
+                XCTFail("Expected \(expected)")
+            } catch { XCTAssertEqual(error as? MobileAPIError, expected) }
+        }
     }
 
     func testRegisterDeviceUsesAccountBearerAndIdempotencyKey() async throws {
-        var captured: URLRequest?
-        var capturedBody: [String: Any]?
+        let captured = LockedTestValue<URLRequest?>(nil)
+        let capturedBody = LockedTestValue<Data?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             if let data = Self.bodyData(request) {
-                capturedBody = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                capturedBody.value = data
             }
             return Self.response(
                 request,
@@ -76,13 +131,13 @@ final class MobileAPIClientTests: XCTestCase {
 
         XCTAssertEqual(result.account.accountId, "acc_0123456789ab")
         XCTAssertEqual(result.device.credentialVersion, 2)
-        XCTAssertEqual(captured?.url?.path, "/api/devices/register")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
+        XCTAssertEqual(captured.value?.url?.path, "/api/devices/register")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
         XCTAssertEqual(
-            captured?.value(forHTTPHeaderField: "Idempotency-Key"),
+            captured.value?.value(forHTTPHeaderField: "Idempotency-Key"),
             "ios-register:\(request.installationId.uuidString.lowercased()):1"
         )
-        let object = try XCTUnwrap(capturedBody)
+        let object = try XCTUnwrap(capturedBody.jsonObject)
         XCTAssertNil(object["pairingCode"])
         XCTAssertEqual(object["bundleIdentifier"] as? String, "com.example.relo.notifications")
         XCTAssertNil(object["mobileContractVersion"])
@@ -111,9 +166,9 @@ final class MobileAPIClientTests: XCTestCase {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let body = try XCTUnwrap(String(data: encoder.encode(responseBody), encoding: .utf8))
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(request, status: 200, body: body)
         }
 
@@ -123,16 +178,16 @@ final class MobileAPIClientTests: XCTestCase {
             session: makeSession()
         ).fetchActiveLiveActivities()
 
-        XCTAssertEqual(captured?.url?.path, "/api/inbox/live-activities/active")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(captured.value?.url?.path, "/api/inbox/live-activities/active")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
         XCTAssertEqual(page.activities.first?.recoveryEnvelope?.eventID, "ntf_0123456789ab")
         XCTAssertEqual(page.activities.first?.recoveryEnvelope?.command.sequence, 4)
     }
 
     func testDeviceSelfUsesDeviceCredential() async throws {
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(
                 request,
                 status: 200,
@@ -152,14 +207,14 @@ final class MobileAPIClientTests: XCTestCase {
             .deviceSelf(credential: credential)
 
         XCTAssertEqual(result.account.accountId, "acc_0123456789ab")
-        XCTAssertEqual(captured?.url?.path, "/api/devices/self")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(captured.value?.url?.path, "/api/devices/self")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
     }
 
     func testDeliveryStatusUsesAccountSessionBearerAndPreservesTransportTruth() async throws {
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(
                 request,
                 status: 200,
@@ -170,8 +225,8 @@ final class MobileAPIClientTests: XCTestCase {
         let status = try await HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
             .deliveryTransportStatus(sessionToken: "account-session-secret")
 
-        XCTAssertEqual(captured?.url?.path, "/api/account/deliveries/status")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
+        XCTAssertEqual(captured.value?.url?.path, "/api/account/deliveries/status")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
         XCTAssertEqual(status.apns.mode, .sandbox)
         XCTAssertTrue(status.apns.remoteEnqueueEnabled)
         XCTAssertNil(status.apns.providerCredentialActive)
@@ -238,9 +293,9 @@ final class MobileAPIClientTests: XCTestCase {
     }
 
     func testHistoryPageUsesBackwardCursorAndDeviceBearer() async throws {
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(
                 request,
                 status: 200,
@@ -254,15 +309,15 @@ final class MobileAPIClientTests: XCTestCase {
             session: makeSession()
         ).fetchHistoryPage(before: "previous opaque cursor")
 
-        XCTAssertEqual(captured?.url?.path, "/api/inbox/history")
+        XCTAssertEqual(captured.value?.url?.path, "/api/inbox/history")
         XCTAssertEqual(
-            URLComponents(url: try XCTUnwrap(captured?.url), resolvingAgainstBaseURL: false)?.queryItems,
+            URLComponents(url: try XCTUnwrap(captured.value?.url), resolvingAgainstBaseURL: false)?.queryItems,
             [
                 URLQueryItem(name: "limit", value: "100"),
                 URLQueryItem(name: "before", value: "previous opaque cursor"),
             ]
         )
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
         XCTAssertEqual(page.total, 2_101)
         XCTAssertNil(page.cursor)
         XCTAssertFalse(page.hasMore)
@@ -302,9 +357,9 @@ final class MobileAPIClientTests: XCTestCase {
     }
 
     func testNotificationDetailDecodesLongContentAndOrderedEvidence() async throws {
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(
                 request,
                 status: 200,
@@ -319,10 +374,10 @@ final class MobileAPIClientTests: XCTestCase {
         ).fetchDetail(notificationID: "ntf_01234567-89ab-4cde-8fab-0123456789ab")
 
         XCTAssertEqual(
-            captured?.url?.path,
+            captured.value?.url?.path,
             "/api/inbox/ntf_01234567-89ab-4cde-8fab-0123456789ab"
         )
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
         XCTAssertEqual(detail.item.content?.body, "# Full detail")
         XCTAssertEqual(detail.evidence.deliveries.first?.state, "accepted")
         XCTAssertEqual(detail.evidence.interactions.first?.kind, "opened")
@@ -337,7 +392,7 @@ final class MobileAPIClientTests: XCTestCase {
 
         StubURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
         do {
-            _ = try await client.fetchPage(after: nil)
+            _ = try await client.fetchHistoryPage(before: nil)
             XCTFail("A tailnet transport failure must not be reported as a server or cache failure")
         } catch let error as InboxRemoteError {
             XCTAssertEqual(error, .tailnetUnavailable)
@@ -348,7 +403,7 @@ final class MobileAPIClientTests: XCTestCase {
             Self.response(request, status: 200, body: #"{"items":[{"invalid":true}]}"#)
         }
         do {
-            _ = try await client.fetchPage(after: nil)
+            _ = try await client.fetchHistoryPage(before: nil)
             XCTFail("An incompatible successful response must be identified at the decode boundary")
         } catch let error as InboxRemoteError {
             XCTAssertEqual(error, .incompatibleResponse)
@@ -372,12 +427,12 @@ final class MobileAPIClientTests: XCTestCase {
     }
 
     func testLiveActivityTokenRegistrationUsesFrozenDeviceEndpointAndBody() async throws {
-        var captured: URLRequest?
-        var body: [String: Any]?
+        let captured = LockedTestValue<URLRequest?>(nil)
+        let body = LockedTestValue<Data?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             if let data = Self.bodyData(request) {
-                body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                body.value = data
             }
             return Self.response(request, status: 204, body: "")
         }
@@ -402,13 +457,13 @@ final class MobileAPIClientTests: XCTestCase {
                 )
             )
 
-        XCTAssertEqual(captured?.httpMethod, "PUT")
+        XCTAssertEqual(captured.value?.httpMethod, "PUT")
         XCTAssertEqual(
-            captured?.url?.path,
+            captured.value?.url?.path,
             "/api/devices/self/live-activities/act_abcdefghijkl/token"
         )
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
-        let object = try XCTUnwrap(body)
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        let object = try XCTUnwrap(body.jsonObject)
         XCTAssertEqual(Set(object.keys), Set(["token", "nativeActivityId", "environment", "generation"]))
         XCTAssertEqual(object["token"] as? String, "000fa5ff")
         XCTAssertEqual(object["nativeActivityId"] as? String, "native-activity-id")
@@ -452,9 +507,9 @@ final class MobileAPIClientTests: XCTestCase {
     }
 
     func testLiveActivityDismissalUsesDeviceBearerAndExactActivityEndpoint() async throws {
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(request, status: 200, body: #"{"status":"dismissed","changed":true}"#)
         }
         let credential = DeviceCredential(
@@ -472,22 +527,22 @@ final class MobileAPIClientTests: XCTestCase {
                 activityId: "act_abcdefghijkl"
             )
 
-        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured.value?.httpMethod, "POST")
         XCTAssertEqual(
-            captured?.url?.path,
+            captured.value?.url?.path,
             "/api/devices/self/live-activities/act_abcdefghijkl/dismissed"
         )
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
-        XCTAssertNil(Self.bodyData(try XCTUnwrap(captured)))
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertNil(Self.bodyData(try XCTUnwrap(captured.value)))
     }
 
     func testInteractionSubmissionUsesDeviceBearerAndIdempotencyBody() async throws {
-        var captured: URLRequest?
-        var body: [String: Any]?
+        let captured = LockedTestValue<URLRequest?>(nil)
+        let body = LockedTestValue<Data?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             if let data = Self.bodyData(request) {
-                body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                body.value = data
             }
             return Self.response(request, status: 201, body: #"{"interactionId":"int_abcdefghijkl","replayed":false}"#)
         }
@@ -508,17 +563,17 @@ final class MobileAPIClientTests: XCTestCase {
             idempotencyKey: "ios:approve:ntf_abcdefghijkl"
         )
 
-        XCTAssertEqual(captured?.url?.path, "/api/notifications/ntf_abcdefghijkl/interactions")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
-        XCTAssertEqual(body?["kind"] as? String, "approve")
-        XCTAssertEqual(body?["idempotencyKey"] as? String, "ios:approve:ntf_abcdefghijkl")
+        XCTAssertEqual(captured.value?.url?.path, "/api/notifications/ntf_abcdefghijkl/interactions")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(body.jsonObject?["kind"] as? String, "approve")
+        XCTAssertEqual(body.jsonObject?["idempotencyKey"] as? String, "ios:approve:ntf_abcdefghijkl")
     }
 
     func testLiveActivityReceivedReceiptUsesGenericInteractionContract() async throws {
-        var body: [String: Any]?
+        let body = LockedTestValue<Data?>(nil)
         StubURLProtocol.handler = { request in
             if let data = Self.bodyData(request) {
-                body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                body.value = data
             }
             return Self.response(request, status: 201, body: #"{"interactionId":"int_abcdefghijkl","replayed":false}"#)
         }
@@ -539,9 +594,9 @@ final class MobileAPIClientTests: XCTestCase {
             idempotencyKey: "ios:6FCBFEF0-19CA-42C4-B931-EEBE1F520DF8:ntf_liveactivity12:received"
         )
 
-        XCTAssertEqual(body?["kind"] as? String, "received")
+        XCTAssertEqual(body.jsonObject?["kind"] as? String, "received")
         XCTAssertEqual(
-            body?["idempotencyKey"] as? String,
+            body.jsonObject?["idempotencyKey"] as? String,
             "ios:6FCBFEF0-19CA-42C4-B931-EEBE1F520DF8:ntf_liveactivity12:received"
         )
     }
@@ -574,12 +629,9 @@ final class MobileAPIClientTests: XCTestCase {
     }
 
     func testTwoCredentialSignOutUsesIndependentBearersAndAcceptsAlreadyRevoked() async throws {
-        let lock = NSLock()
-        var requests: [URLRequest] = []
+        let requests = LockedTestValue<[URLRequest]>([])
         StubURLProtocol.handler = { request in
-            lock.lock()
-            requests.append(request)
-            lock.unlock()
+            requests.update { $0.append(request) }
             return Self.response(request, status: 401, body: #"{"error":"already_revoked"}"#)
         }
         let credential = DeviceCredential(
@@ -595,19 +647,19 @@ final class MobileAPIClientTests: XCTestCase {
         try await client.revokeDevice(credential: credential)
         try await client.signOutAccount(sessionToken: "account-session-secret")
 
-        XCTAssertEqual(requests.map { $0.httpMethod }, ["DELETE", "POST"])
-        XCTAssertEqual(requests.map { $0.url?.path }, ["/api/devices/dev_0123456789ab", "/api/auth/sign-out"])
-        XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
-        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
+        XCTAssertEqual(requests.value.map { $0.httpMethod }, ["DELETE", "POST"])
+        XCTAssertEqual(requests.value.map { $0.url?.path }, ["/api/devices/dev_0123456789ab", "/api/auth/sign-out"])
+        XCTAssertEqual(requests.value[0].value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(requests.value[1].value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
     }
 
     func testAccountDeletionUsesSessionBearerAndFrozenConfirmationBody() async throws {
-        var captured: URLRequest?
-        var body: [String: Any]?
+        let captured = LockedTestValue<URLRequest?>(nil)
+        let body = LockedTestValue<Data?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             if let data = Self.bodyData(request) {
-                body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                body.value = data
             }
             return Self.response(request, status: 200, body: #"{"ok":true}"#)
         }
@@ -618,18 +670,18 @@ final class MobileAPIClientTests: XCTestCase {
             confirmation: "DELETE"
         )
 
-        XCTAssertEqual(captured?.httpMethod, "POST")
-        XCTAssertEqual(captured?.url?.path, "/api/account/delete")
-        XCTAssertEqual(captured?.value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
-        XCTAssertEqual(Set(body?.keys.map { $0 } ?? []), Set(["password", "confirmation"]))
-        XCTAssertEqual(body?["password"] as? String, "unique-password")
-        XCTAssertEqual(body?["confirmation"] as? String, "DELETE")
+        XCTAssertEqual(captured.value?.httpMethod, "POST")
+        XCTAssertEqual(captured.value?.url?.path, "/api/account/delete")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer account-session-secret")
+        XCTAssertEqual(Set(body.jsonObject?.keys.map { $0 } ?? []), Set(["password", "confirmation"]))
+        XCTAssertEqual(body.jsonObject?["password"] as? String, "unique-password")
+        XCTAssertEqual(body.jsonObject?["confirmation"] as? String, "DELETE")
     }
 
     func testNotificationWithdrawalUsesAccountBearerAndEncodedIdentifier() async throws {
-        var captured: URLRequest?
+        let captured = LockedTestValue<URLRequest?>(nil)
         StubURLProtocol.handler = { request in
-            captured = request
+            captured.value = request
             return Self.response(
                 request,
                 status: 200,
@@ -643,13 +695,13 @@ final class MobileAPIClientTests: XCTestCase {
                 notificationID: "ntf_01234567-89ab-4cde-8fab-0123456789ab"
             )
 
-        XCTAssertEqual(captured?.httpMethod, "POST")
+        XCTAssertEqual(captured.value?.httpMethod, "POST")
         XCTAssertEqual(
-            captured?.url?.path,
+            captured.value?.url?.path,
             "/api/account/notifications/ntf_01234567-89ab-4cde-8fab-0123456789ab/withdraw"
         )
         XCTAssertEqual(
-            captured?.value(forHTTPHeaderField: "Authorization"),
+            captured.value?.value(forHTTPHeaderField: "Authorization"),
             "Bearer account-session-secret"
         )
     }
@@ -823,7 +875,12 @@ final class MobileAPIClientTests: XCTestCase {
 }
 
 private final class StubURLProtocol: URLProtocol {
-    static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    typealias Handler = @Sendable (URLRequest) throws -> (HTTPURLResponse, Data)
+    private static let handlers = LockedTestValue<Handler?>(nil)
+    static var handler: Handler? {
+        get { handlers.value }
+        set { handlers.value = newValue }
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -844,4 +901,25 @@ private final class StubURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+/// XCTest callbacks and URLProtocol run on different executors. Every mutable
+/// access is locked; only Sendable snapshots leave the lock. Never expose inout.
+private final class LockedTestValue<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+    @discardableResult func update<Result>(_ body: (inout Value) -> Result) -> Result {
+        lock.withLock { body(&stored) }
+    }
+}
+private extension LockedTestValue where Value == Data? {
+    var jsonObject: [String: Any]? {
+        guard let data = value else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
 }

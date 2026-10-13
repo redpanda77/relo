@@ -1,7 +1,7 @@
-import { ClientsPage } from "@/features/connections/clients-page"
-import { PhonesPage } from "@/features/connections/phones-page"
-import { ServicesPage } from "@/features/connections/services-page"
-import { PairingPage } from "@/features/connections/pairing-page"
+import { Page } from "@/components/page"
+import { ClientsSection } from "@/features/connections/clients-page"
+import { PhonesSection } from "@/features/connections/phones-page"
+import { WebhooksSection } from "@/features/connections/services-page"
 import type { ConnectionsDashboardBootstrap } from "@/features/connections/types"
 import {
   createHttpConnectionsService,
@@ -18,13 +18,13 @@ export function ConnectionsFeature({
   service?: ConnectionsService
 }) {
   switch (bootstrap.kind) {
-    case "connections-pairing":
-      return <PairingPage initial={bootstrap} />
-    case "connections-services":
-      return <ServicesPage initial={bootstrap} api={service} />
-    case "connections-phones":
-      return <PhonesPage initial={bootstrap} api={service} />
-    case "connections-clients":
-      return <ClientsPage initial={bootstrap} api={service} />
+    case "connections":
+      return (
+        <Page title="Connections">
+          <PhonesSection initial={bootstrap.phones} total={bootstrap.summary.phones} api={service} />
+          <ClientsSection initial={bootstrap.clients} total={bootstrap.summary.clients} api={service} />
+          <WebhooksSection initial={bootstrap.services} total={bootstrap.summary.services} api={service} />
+        </Page>
+      )
   }
 }

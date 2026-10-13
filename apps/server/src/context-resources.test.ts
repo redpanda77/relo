@@ -23,7 +23,11 @@ function application(kind: "principal" | "device", query: ReturnType<typeof vi.f
     });
     await next();
   });
-  registerContextResourceRoutes(app,{ query } as never);
+  // First pages snapshot the database clock; answer that here so each test's mock sees only its query.
+  const clockAware = async (sql: string, values?: unknown[]) => sql.startsWith("SELECT clock_timestamp()")
+    ? { rows: [{ now: new Date() }] }
+    : query(sql, values);
+  registerContextResourceRoutes(app,{ query: clockAware } as never);
   return app;
 }
 

@@ -1,5 +1,4 @@
 import type { Handler } from "hono";
-import type { DeliveryEvidenceItem } from "@relo/notification-contracts";
 import type { Database } from "../db.js";
 import { loadDeliveryEvidence } from "../delivery-evidence.js";
 import { allowedDeliveryReconciliationActions } from "../delivery-reconciliation.js";
@@ -8,6 +7,9 @@ import {
   decryptedNotificationBody,
   type NotificationContentCipher,
 } from "../notification-content.js";
+import { accountOrRedirect,isoDate,pageNumber,secureHtml } from "./http.js";
+import type { z } from "zod";
+import { inboxDashboardBootstrapSchema,inboxOverviewSchema,notificationHistorySchema,deliveryHistorySchema,notificationDetailSchema,inboxShellSchema } from "@relo/notification-contracts/dashboard/inbox";
 
 const pageSize = 25;
 const notificationKinds = [
@@ -26,14 +28,7 @@ const notificationStates = [
   "canceled",
 ] as const;
 
-export type DashboardInboxShell = {
-  title: string;
-  description: string;
-  active: "inbox" | "inbox-notifications" | "inbox-delivery";
-  releaseIdentity: string;
-  account: { id: string; initial: string; name: string; email: string };
-  counts: { pending: number; notifications: number; deliveries: number };
-};
+export type DashboardInboxShell = z.input<typeof inboxShellSchema>;
 
 export type DashboardPagination = {
   page: number;
@@ -121,65 +116,6 @@ export type DashboardActivitySummary = {
   presentationPolicySource: string | null;
 };
 
-export type DashboardActivityDetail = DashboardActivitySummary & {
-  threadHistory: Array<{
-    id: string;
-    generation: number;
-    state: string;
-    title: string;
-    status: string;
-    taskTitle: string | null;
-    createdAt: string | null;
-    updatedAt: string | null;
-    endedAt: string | null;
-    terminalReason: string | null;
-    current: boolean;
-  }>;
-  timeline: Array<{
-    operation: string;
-    sequence: number;
-    state: string | null;
-    status: string | null;
-    createdAt: string | null;
-  }>;
-  presentationLeases: Array<{
-    deviceId: string;
-    deviceName: string;
-    state: string;
-    reason: string;
-    relevanceScore: number;
-    lastCommandSequence: number | null;
-    selectedAt: string | null;
-    lastAppliedAt: string | null;
-    endedAt: string | null;
-  }>;
-  relationships: Array<{
-    id: string;
-    kind: string;
-    direction: "predecessor" | "successor";
-    relatedActivity: {
-      id: string;
-      title: string;
-      state: string;
-      generation: number;
-    };
-    actor: string;
-    reason: string;
-    provenance: string;
-    createdAt: string | null;
-  }>;
-  correlationDecisions: Array<{
-    id: string;
-    outcome: string;
-    matchedBy: string;
-    actor: string;
-    reason: string;
-    provenance: string;
-    relationshipId: string | null;
-    createdAt: string | null;
-  }>;
-};
-
 export type DashboardDeliverySummary = {
   id: string;
   notificationId: string;
@@ -206,121 +142,15 @@ export type DashboardDeliverySummary = {
   updatedAt: string | null;
 };
 
-export type InboxOverviewBootstrap = {
-  version: 1;
-  kind: "inbox-overview";
-  route: { path: string; page: number };
-  shell: DashboardInboxShell;
-  summary: {
-    pendingResponses: number;
-    pendingApprovals: number;
-    notifications: number;
-    deliveries: number;
-  };
-  pendingResponses: Array<{
-    notificationId: string;
-    title: string;
-    source: string;
-    kind: string;
-    state: string;
-    prompt: string;
-    targetDeviceNames: string[];
-    createdAt: string | null;
-    expiresAt: string | null;
-  }>;
-  approvalRequests: Array<{
-    userCode: string;
-    clientName: string;
-    requestedScopes: string[];
-    approvalExpiresAt: string | null;
-    credentialExpiresAt: string | null;
-  }>;
-  approvalPagination: DashboardPagination;
-  recentNotifications: DashboardNotificationSummary[];
-};
+export type InboxOverviewBootstrap = z.input<typeof inboxOverviewSchema>;
 
-export type NotificationHistoryBootstrap = {
-  version: 1;
-  kind: "notification-history";
-  route: {
-    path: string;
-    page: number;
-    filters: {
-      kind: (typeof notificationKinds)[number] | null;
-      state: (typeof notificationStates)[number] | null;
-      project: string | null;
-    };
-  };
-  filterOptions: { projects: string[] };
-  shell: DashboardInboxShell;
-  unread: {
-    total: number;
-    byProject: Array<{ project: string; count: number }>;
-  };
-  notifications: DashboardNotificationSummary[];
-  pagination: DashboardPagination;
-};
+export type NotificationHistoryBootstrap = z.input<typeof notificationHistorySchema>;
 
-export type DeliveryHistoryBootstrap = {
-  version: 1;
-  kind: "delivery-history";
-  route: { path: string; page: number };
-  shell: DashboardInboxShell;
-  deliveries: DashboardDeliverySummary[];
-  pagination: DashboardPagination;
-};
+export type DeliveryHistoryBootstrap = z.input<typeof deliveryHistorySchema>;
 
-export type NotificationDetailBootstrap = {
-  version: 1;
-  kind: "notification-detail";
-  route: { path: string; backHref: "/dashboard/inbox/notifications" };
-  shell: DashboardInboxShell;
-  notification: {
-    id: string;
-    source: string;
-    serviceTitle: string | null;
-    kind: string;
-    title: string;
-    body: string;
-    bodyFormat: "text" | "markdown";
-    readAt: string | null;
-    withdrawnAt: string | null;
-    state: string;
-    privacy: string;
-    targetMode: string;
-    createdAt: string | null;
-    updatedAt: string | null;
-    expiresAt: string | null;
-    destination:
-      | { state: "safe"; href: string }
-      | { state: "unsafe" | "not-set"; href: null };
-  };
-  activity: DashboardActivityDetail | null;
-  interaction: null | {
-    kind: string;
-    state: string;
-    action: string | null;
-    prompt: string;
-    responseText: string | null;
-    respondingDevice: { id: string; name: string } | null;
-    createdAt: string | null;
-    expiresAt: string | null;
-    respondedAt: string | null;
-  };
-  deliveries: DashboardDeliverySummary[];
-  evidenceTimeline: DeliveryEvidenceItem[];
-  receipts: Array<{
-    kind: string;
-    deviceName: string;
-    createdAt: string | null;
-  }>;
-};
+export type NotificationDetailBootstrap = z.input<typeof notificationDetailSchema>;
 
-export type InboxDashboardBootstrap =
-  | InboxOverviewBootstrap
-  | NotificationHistoryBootstrap
-  | DeliveryHistoryBootstrap
-  | NotificationDetailBootstrap;
+export type InboxDashboardBootstrap = z.input<typeof inboxDashboardBootstrapSchema>;
 
 export type InboxDashboardAccount = {
   principalId: string;
@@ -344,21 +174,9 @@ type DashboardCounts = {
   deliveries: number;
 };
 
-function isoDate(value: unknown): string | null {
-  if (!value) return null;
-  const date = new Date(String(value));
-  return Number.isFinite(date.valueOf()) ? date.toISOString() : null;
-}
-
 function number(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
-}
-
-function pageNumber(value: string | undefined): number {
-  if (!value || !/^\d+$/.test(value)) return 1;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
 }
 
 function pagination(
@@ -660,27 +478,6 @@ async function loadCounts(
       deliveries: 0,
     }
   );
-}
-
-async function accountOrRedirect(
-  context: any,
-  getAccount: InboxHandlerDependencies["getAccount"],
-): Promise<InboxDashboardAccount | Response> {
-  const account = await getAccount(context.req.raw.headers);
-  return (
-    account ??
-    context.redirect(`/?next=${encodeURIComponent(context.req.path)}`)
-  );
-}
-
-function secureHtml(context: any, html: string): Response {
-  context.header(
-    "content-security-policy",
-    "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-  );
-  context.header("cache-control", "private, no-store");
-  context.header("x-content-type-options", "nosniff");
-  return context.html(html);
 }
 
 const activityProjectionSql = `a.id AS live_activity_id,

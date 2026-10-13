@@ -1,3 +1,4 @@
+import { Page } from "@/components/page"
 import { ArrowUpRight, FileCode2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -16,20 +17,8 @@ export function DocumentationPage({
   initial: DocumentationDashboardBootstrap
 }) {
   return (
-    <main
-      id="main-content"
-      tabIndex={-1}
-      className="canvas min-h-[100dvh] px-4 py-7 sm:px-6 lg:px-10 lg:py-10"
-    >
-      <div className="mx-auto w-full max-w-6xl">
-        <header>
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-            {initial.shell.title}
-          </h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-            {initial.shell.description}
-          </p>
-        </header>
+    <Page title={initial.shell.title}>
+      <div>
 
         <Card className="mt-8 rounded-2xl">
           <CardHeader>
@@ -94,6 +83,6 @@ export function DocumentationPage({
           </div>
         </aside>
       </div>
-    </main>
+    </Page>
   )
 }

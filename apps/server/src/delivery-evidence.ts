@@ -7,6 +7,7 @@ import { z } from "zod";
 import { safeDiagnosticCode } from "./apns-observability.js";
 import type { Database } from "./db.js";
 import { internalId,publicId } from "./ids.js";
+import { decodeCursor,encodeCursor } from "./cursor.js";
 
 type EvidenceCursor = {
   occurredAt: string;
@@ -234,7 +235,7 @@ function evidenceSql(limit: number): string {
     ORDER BY page.occurred_at DESC,page.stage_order DESC,page.sort_key DESC`;
 }
 
-function shortHash(value: unknown): string | null {
+export function shortHash(value: unknown): string | null {
   return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value)
     ? `sha256:${value.slice(0,12)}` : null;
 }
@@ -254,22 +255,16 @@ function nullableNumber(value: unknown): number | null {
   return value === null || value === undefined ? null : number(value);
 }
 
+const evidenceCursorSchema = z.tuple([
+  z.literal("delivery-evidence-v1"),z.iso.datetime(),z.number().int().positive(),
+  z.string().min(1).max(200),z.string().nullable(),
+]);
+
 function encodeEvidenceCursor(value: EvidenceCursor): string {
-  return Buffer.from(JSON.stringify([
-    "delivery-evidence-v1",value.occurredAt,value.stageOrder,value.sortKey,value.notificationId,
-  ]),"utf8").toString("base64url");
+  return encodeCursor(["delivery-evidence-v1",value.occurredAt,value.stageOrder,value.sortKey,value.notificationId]);
 }
 
 function decodeEvidenceCursor(value: string | undefined): EvidenceCursor | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = z.tuple([
-      z.literal("delivery-evidence-v1"),z.iso.datetime(),z.number().int().positive(),
-      z.string().min(1).max(200),z.string().nullable(),
-    ]).safeParse(JSON.parse(Buffer.from(value,"base64url").toString("utf8")));
-    return parsed.success ? {
-      occurredAt: parsed.data[1],stageOrder: parsed.data[2],sortKey: parsed.data[3],
-      notificationId: parsed.data[4],
-    } : undefined;
-  } catch { return undefined; }
+  const parsed = decodeCursor(value,evidenceCursorSchema);
+  return parsed && { occurredAt: parsed[1],stageOrder: parsed[2],sortKey: parsed[3],notificationId: parsed[4] };
 }

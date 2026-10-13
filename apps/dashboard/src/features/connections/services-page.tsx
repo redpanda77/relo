@@ -11,22 +11,15 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Empty, Section } from "@/components/page"
 import {
   ConnectionDisclosure,
-  ConnectionIconTile,
   ConnectionList,
-  ConnectionState,
-  ConnectionsPageFrame,
-  ConnectionsPager,
-  ConnectionsSectionHeader,
   ConfirmationAction,
   DestructiveAction,
   OperationStatus,
 } from "@/features/connections/components"
-import type {
-  ConnectionService,
-  ConnectionsServices,
-} from "@/features/connections/types"
+import type { ConnectionService } from "@/features/connections/types"
 import { formatConnectionDate } from "@/features/connections/utils"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
 import { systemPresentationPolicy } from "@/features/presentation-policy/types"
@@ -218,39 +211,17 @@ function ServiceRow({
   }
 
   return (
-    <article
-      aria-busy={pending !== null}
-      className="border-b border-border last:border-b-0"
-    >
-      <div className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] gap-3 px-4 py-4 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:items-center sm:px-5">
-        <ConnectionIconTile icon={Webhook} tone="info" />
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="truncate text-[15px] font-semibold">
-              {service.title}
-            </h3>
-            <ConnectionState label="Active" tone="success" />
-          </div>
-          <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <code className="font-mono text-foreground/80">
-              {service.prefix}
-            </code>
-            <span aria-hidden="true">·</span>
-            <span>Created {formatConnectionDate(service.createdAt)}</span>
-          </p>
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {service.destinationUrl
-              ? `Opens ${service.destinationUrl}`
-              : "No default tap destination"}
+    <li aria-busy={pending !== null}>
+      <div className="flex min-w-0 items-center gap-3 px-4 py-3.5">
+        <Webhook className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{service.title}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {service.destinationUrl ? `Opens ${service.destinationUrl}` : `Created ${formatConnectionDate(service.createdAt)}`}
           </p>
         </div>
-        <span className="col-start-2 text-xs text-muted-foreground sm:col-start-auto">
-          {service.liveActivityPolicySource === "service"
-            ? "Custom presentation"
-            : "Inherited presentation"}
-        </span>
       </div>
-      <ConnectionDisclosure label="Configure service">
+      <ConnectionDisclosure label="Manage">
         <div className="space-y-5">
           <form
             className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_auto] lg:items-end"
@@ -332,56 +303,40 @@ function ServiceRow({
           </div>
         </div>
       </ConnectionDisclosure>
-    </article>
+    </li>
   )
 }
 
-export function ServicesPage({
+export function WebhooksSection({
   initial,
+  total,
   api,
 }: {
-  initial: ConnectionsServices
+  total: number
+  initial: ConnectionService[]
   api: ConnectionsService
 }) {
-  const [services, setServices] = React.useState(initial.services)
+  const [services, setServices] = React.useState(initial)
+  const [creating, setCreating] = React.useState(false)
   const [secret, setSecret] = React.useState<string | null>(null)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   return (
-    <ConnectionsPageFrame bootstrap={initial}>
-      <section className="mt-7 space-y-5" aria-labelledby="services-heading">
-        <ConnectionsSectionHeader
-          id="services-heading"
-          title="Webhook services"
-          description="Named senders, tap destinations, and Live Activity presentation. Secret URLs are shown only when created or rotated."
-        />
-
+    <Section
+      title="Webhooks"
+      action={
+        <Button size="sm" variant="secondary" onClick={() => setCreating((value) => !value)}>
+          <Plus aria-hidden="true" /> New webhook
+        </Button>
+      }
+    >
+      <div className="space-y-4">
         {secret ? (
           <OneTimeSecret value={secret} onDismiss={() => setSecret(null)} />
         ) : null}
-
-        <details className="group/create overflow-hidden rounded-xl bg-card/80 ring-1 ring-foreground/10">
-          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 outline-none hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5 [&::-webkit-details-marker]:hidden">
-            <span className="flex items-center gap-3">
-              <ConnectionIconTile icon={Plus} tone="info" />
-              <span>
-                <strong className="block text-sm font-medium">
-                  Create service
-                </strong>
-                <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Issue a new one-time webhook URL
-                </span>
-              </span>
-            </span>
-            <span className="text-xs font-medium text-primary group-open/create:hidden">
-              Open
-            </span>
-            <span className="hidden text-xs font-medium text-muted-foreground group-open/create:block">
-              Close
-            </span>
-          </summary>
-          <div className="border-t border-border bg-background/25 px-4 py-5 sm:px-5">
+        {creating ? (
+          <div className="glass rounded-2xl p-4 sm:p-5">
             <form
               aria-busy={pending}
               className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_auto] lg:items-end"
@@ -417,6 +372,7 @@ export function ServicesPage({
                       ...current,
                     ])
                     setSecret(result.webhookUrl)
+                    setCreating(false)
                     form.reset()
                   })
                   .catch((cause) =>
@@ -430,7 +386,7 @@ export function ServicesPage({
               <ServiceFields disabled={pending} />
               <Button type="submit" className="min-h-11" disabled={pending}>
                 <Webhook aria-hidden="true" />
-                {pending ? "Creating…" : "Create service"}
+                {pending ? "Creating…" : "Create webhook"}
               </Button>
             </form>
             <div className="mt-3">
@@ -441,45 +397,28 @@ export function ServicesPage({
               />
             </div>
           </div>
-        </details>
+        ) : null}
 
         {services.length ? (
-          <ConnectionList ariaLabel="Webhook services">
+          <ConnectionList ariaLabel="Webhooks">
             {services.map((service) => (
               <ServiceRow
                 key={service.id}
                 service={service}
                 api={api}
-                onChange={(next) =>
-                  setServices((current) =>
-                    current.map((item) => (item.id === next.id ? next : item))
-                  )
-                }
-                onDelete={(id) =>
-                  setServices((current) =>
-                    current.filter((item) => item.id !== id)
-                  )
-                }
+                onChange={(next) => setServices((current) => current.map((item) => (item.id === next.id ? next : item)))}
+                onDelete={(id) => setServices((current) => current.filter((item) => item.id !== id))}
                 onSecret={setSecret}
               />
             ))}
           </ConnectionList>
-        ) : (
-          <Card>
-            <CardContent className="flex min-h-32 flex-col items-center justify-center text-center">
-              <Webhook
-                className="size-6 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <p className="mt-3 font-medium">No webhook services yet</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Create a named service to receive a one-time secret URL.
-              </p>
-            </CardContent>
-          </Card>
+        ) : creating ? null : (
+          <Empty title="No webhooks yet" description="Create one to let a service send notifications with a secret URL." />
         )}
-        <ConnectionsPager pagination={initial.pagination} />
-      </section>
-    </ConnectionsPageFrame>
+      </div>
+      {total > initial.length ? (
+        <p className="mt-3 text-xs text-muted-foreground">Showing {initial.length} of {total}.</p>
+      ) : null}
+    </Section>
   )
 }

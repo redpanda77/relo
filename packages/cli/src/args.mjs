@@ -4,19 +4,18 @@ const BOOLEAN_OPTIONS = new Set([
   "help",
   "json",
   "wait",
-  "poll",
   "stdin",
   "open",
   "no-open",
   "clear-detail",
   "approval",
   "yes-no",
-  "text",
-  "live-activity",
   "replace",
   "clear-progress",
   "version",
   "smoke",
+  "markdown",
+  "no-wait",
 ]);
 const VALUE_OPTIONS = new Set([
   "client-name",
@@ -47,20 +46,23 @@ const VALUE_OPTIONS = new Set([
   "symbol",
   "accent-color",
   "stale-after",
-  "lease-after",
   "if-sequence",
   "dismiss-after",
   "computer",
+  "source",
   "project",
+  "topic",
   "thread-name",
   "task-title",
   "primary-label",
   "secondary-label",
+  "correlation-id",
+  "callback-url",
+  "callback-token-file",
   "api-url",
   "limit",
   "page-size",
   "secret-file",
-  "origin-file",
   "notification",
   "cursor",
 ]);
@@ -89,7 +91,7 @@ export function parseArgs(argv) {
     const name = argument.slice(2, equalsAt === -1 ? undefined : equalsAt);
     const inlineValue = equalsAt === -1 ? undefined : argument.slice(equalsAt + 1);
     if (FORBIDDEN_SECRET_OPTIONS.has(name)) {
-      throw new UsageError(`--${name} is forbidden; credentials must come from the mode-0600 config file`);
+      throw new UsageError(`--${name} is forbidden; credentials come from relo auth login (mode-0600 config file) or the RELO_TOKEN environment variable`);
     }
     if (BOOLEAN_OPTIONS.has(name)) {
       if (inlineValue !== undefined) throw new UsageError(`--${name} does not accept a value`);
@@ -161,6 +163,34 @@ export function validateHttpsUrl(value, name) {
   if (parsed.protocol !== "https:") throw new UsageError(`--${name} must use HTTPS`);
   if (parsed.toString().length > 2_048) throw new UsageError(`--${name} must be at most 2048 characters`);
   return parsed.toString();
+}
+
+const BLOCKED_DESTINATION_SCHEMES = new Set([
+  "http", "javascript", "vbscript", "data", "file", "blob", "about", "filesystem", "content",
+]);
+
+/** Tap destinations: https:// links, an app's own scheme (your-app://...), or shortcuts://. */
+export function validateDestinationUrl(value, name) {
+  if (value === undefined) return undefined;
+  const text = String(value).trim();
+  let parsed;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new UsageError(`--${name} must be a valid URL`, {
+      hint: "Use https://..., an app link such as your-app://path, or shortcuts://run-shortcut?name=...",
+    });
+  }
+  const scheme = parsed.protocol.slice(0, -1).toLowerCase();
+  if (!/^[a-z][a-z0-9+.-]{0,31}$/.test(scheme) || BLOCKED_DESTINATION_SCHEMES.has(scheme)
+    || parsed.username || parsed.password || (scheme === "https" && !parsed.hostname)
+    || text.length <= scheme.length + 1) {
+    throw new UsageError(`--${name} cannot use ${scheme}: links`, {
+      hint: "Use https://..., an app link such as your-app://path, or shortcuts://run-shortcut?name=...",
+    });
+  }
+  if (text.length > 2_048) throw new UsageError(`--${name} must be at most 2048 characters`);
+  return scheme === "https" ? parsed.toString() : text;
 }
 
 export function validatePublicHttpsUrl(value, name) {

@@ -41,6 +41,46 @@ function job(overrides: Partial<ApnsRuntimeJob> = {}): ApnsRuntimeJob {
 }
 
 describe("current delivery serialization", () => {
+  test("decision pushes retain their original action deadline and opaque recipient scope", () => {
+    const input = job({
+      interactionKind: "yes_no", interactionId: "int_22222222-2222-4222-8222-222222222222",
+      expiresAt: new Date("2026-08-13T00:01:00Z"),
+      ...{ deviceId: "dev_33333333-3333-4333-8333-333333333333",
+        interactionExpiresAt: new Date("2026-08-13T00:15:00Z") },
+      payload: { privacy: "private", context: { project: "PRIVATE-PROJECT" } },
+    });
+    const projection = deliveryProjection(input);
+    expect(projection).toMatchObject({ customData: { relo: {
+      accountId: input.accountId, deviceId: "dev_33333333-3333-4333-8333-333333333333",
+      interactionId: input.interactionId, interactionType: "yes_no",
+      interactionExpiresAt: "2026-08-13T00:15:00.000Z",
+    } } });
+    expect(JSON.stringify(projection)).not.toContain("PRIVATE-PROJECT");
+  });
+
+  test("a question answered in Relo carries no answer buttons on the notification", () => {
+    const withButtons = deliveryProjection(job({ interactionKind: "approval",
+      interactionId: "int_22222222-2222-4222-8222-222222222222" }));
+    const inApp = deliveryProjection(job({ interactionKind: "approval",
+      interactionId: "int_22222222-2222-4222-8222-222222222222", payload: { answerInApp: true } }));
+    if (withButtons.kind !== "alert" || inApp.kind !== "alert") throw new Error("Expected ordinary projections");
+    expect(withButtons.category).toBe("RELO_APPROVAL");
+    expect(inApp.category).toBeUndefined();
+  });
+
+  test("interactive admission reserves recipient metadata before its device is known", () => {
+    const admission = job({ interactionKind: "approval", interactionId: "int_22222222-2222-4222-8222-222222222222" });
+    const actual = { ...admission, deviceId: "dev_33333333-3333-4333-8333-333333333333",
+      interactionExpiresAt: new Date("2026-08-13T00:15:00Z") };
+    const projection = deliveryProjection(actual);
+    if (projection.kind !== "alert") throw new Error("Expected ordinary projection");
+    expect(ordinaryDeliveryPayloadSize({ ...admission, badge: undefined })).toBeGreaterThanOrEqual(Buffer.byteLength(JSON.stringify({
+      ...projection.customData, aps: { alert: projection.alert, sound: projection.sound,
+        badge: Number.MAX_SAFE_INTEGER, "mutable-content": 1, category: projection.category,
+        "thread-id": projection.threadId },
+    })));
+  });
+
   test("is deterministic across object key order and repeated evaluation", () => {
     const first = deliverySerializationEvidence(job());
     const reordered = deliverySerializationEvidence(job({

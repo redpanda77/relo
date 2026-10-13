@@ -1,28 +1,22 @@
+@testable import ReloPersistence
 import CryptoKit
 import Foundation
 import XCTest
+// SwiftPM builds the shared activity sources as ReloActivityWire; Xcode compiles them into the app.
+#if canImport(ReloActivityWire)
 @testable import ReloActivityWire
+#else
+@testable import Relo
+#endif
 @testable import ReloCore
 
 final class ContractCodingTests: XCTestCase {
-    func testConnectionDocumentRequiresSupportedTypeOriginAndFutureExpiry() throws {
-        let future = ISO8601DateFormatter().string(from: Date().addingTimeInterval(600))
-        let value = """
-        {"type":"relo.connection","origin":"https://relo.example.test","grant":"relo_pair_abcdefghijklmnopqrstuvwxyz0123456789","expiresAt":"\(future)"}
-        """
-        let document = try ReloConnectionDocument.decode(scannedValue: value)
-        XCTAssertEqual(document.origin.absoluteString, "https://relo.example.test")
-        XCTAssertThrowsError(try ReloConnectionDocument.decode(
-            scannedValue: value.replacingOccurrences(of: "relo.connection", with: "other.connection")
-        ))
-    }
     func testDeliveryEvidenceGoldenFixtureUsesTheSharedOrderedVocabulary() throws {
         let url = try XCTUnwrap(Bundle.module.url(
             forResource: "delivery-evidence-v1",
             withExtension: "json"
         ))
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = ReloWireJSON.decoder()
         let evidence = try decoder.decode(
             DeliveryEvidenceResponse.self,
             from: Data(contentsOf: url)
@@ -189,10 +183,23 @@ final class ContractCodingTests: XCTestCase {
         ))
     }
 
+    func testWireDatesDecodeWholeMillisecondAndMicrosecondPrecision() throws {
+        struct Stamped: Decodable { let at: Date }
+        let decoder = ReloWireJSON.decoder()
+        for (text, expected) in [
+            ("2026-10-06T16:16:10Z", 1_791_303_370.0),
+            ("2026-10-06T16:16:10.324Z", 1_791_303_370.324),
+            ("2026-10-06T16:16:10.324123Z", 1_791_303_370.324123),
+        ] {
+            let value = try decoder.decode(Stamped.self, from: Data(#"{"at":"\#(text)"}"#.utf8))
+            XCTAssertEqual(value.at.timeIntervalSince1970, expected, accuracy: 0.000_01, text)
+        }
+        XCTAssertThrowsError(try decoder.decode(Stamped.self, from: Data(#"{"at":"yesterday"}"#.utf8)))
+    }
+
     func testInboxPageDecodesSharedContract() throws {
         let json = #"{"items":[{"id":"evt_abcdefghijkl","kind":"notification","sourceName":"Codex","sourceImageUrl":null,"title":"Done","detail":null,"result":null,"deliveryState":"accepted_by_apns","apnsAcceptedAt":"2027-01-15T12:00:00Z","receivedAt":null,"openedAt":null,"createdAt":"2027-01-15T11:59:00Z"}],"cursor":"opaque-cursor","hasMore":false,"serverTime":"2027-01-15T12:00:01Z"}"#
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = ReloWireJSON.decoder()
 
         let page = try decoder.decode(InboxPage.self, from: Data(json.utf8))
 
@@ -308,8 +315,7 @@ final class ContractCodingTests: XCTestCase {
 
     func testInboxPageDecodesPendingInteraction() throws {
         let json = #"{"items":[{"id":"ntf_abcdefghijkl","kind":"notification","sourceName":"Relo","sourceImageUrl":"https://images.example.test/approval.png","title":"Approval needed","detail":"Deploy to Relo server?","result":null,"deliveryState":"queued","apnsAcceptedAt":null,"receivedAt":null,"openedAt":null,"createdAt":"2027-01-15T11:59:00Z","destinationUrl":"https://example.test/deploy/123","privacy":"standard","liveActivity":null,"interaction":{"id":"int_abcdefghijkl","kind":"approval","prompt":"Deploy to Relo server?","state":"pending","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null}}],"cursor":"opaque-cursor","hasMore":false,"serverTime":"2027-01-15T12:00:01Z"}"#
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let decoder = ReloWireJSON.decoder()
 
         let page = try decoder.decode(InboxPage.self, from: Data(json.utf8))
         let interaction = try XCTUnwrap(page.items.first?.interaction)
@@ -673,27 +679,31 @@ final class ContractCodingTests: XCTestCase {
 
         DispatchQueue.concurrentPerform(iterations: 200) { index in
             let identifier = String(format: "ntf_%012d", index)
-            (index.isMultiple(of: 2) ? first : second).add(notificationID: identifier)
+            do { try (index.isMultiple(of: 2) ? first : second).add(notificationID: identifier) }
+            catch { XCTFail("Receipt append failed: \(error)") }
         }
-        XCTAssertEqual(Set(first.pending(limit: 500)).count, 200)
+        XCTAssertEqual(Set(try first.pending(limit: 500)).count, 200)
 
         let group = DispatchGroup()
         let queue = DispatchQueue(label: "relo.receipts.concurrent", attributes: .concurrent)
         group.enter()
         queue.async {
-            first.remove(notificationIDs: Set((0..<100).map { String(format: "ntf_%012d", $0) }))
+            // A bounded lock attempt may yield to writers; replay the same removal below.
+            _ = Result { try first.remove(notificationIDs: Set((0..<100).map { String(format: "ntf_%012d", $0) })) }
             group.leave()
         }
         for index in 200..<300 {
             group.enter()
             queue.async {
-                second.add(notificationID: String(format: "ntf_%012d", index))
+                do { try second.add(notificationID: String(format: "ntf_%012d", index)) }
+                catch { XCTFail("Receipt append failed: \(error)") }
                 group.leave()
             }
         }
         group.wait()
+        try first.remove(notificationIDs: Set((0..<100).map { String(format: "ntf_%012d", $0) }))
 
-        let pending = Set(first.pending(limit: 500))
+        let pending = Set(try first.pending(limit: 500))
         XCTAssertEqual(pending.count, 200)
         XCTAssertTrue(pending.contains("ntf_000000000299"))
         XCTAssertFalse(pending.contains("ntf_000000000000"))

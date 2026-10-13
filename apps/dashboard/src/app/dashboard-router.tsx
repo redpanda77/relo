@@ -51,20 +51,12 @@ function isClientOwnedTestLabRoute(url: URL) {
   return /^\/dashboard\/testing(?:\/runs\/[^/]+)?$/u.test(url.pathname)
 }
 
+/** Swap pages instantly: a crossfade over frosted layers reads as lag, not polish. */
 function commitBootstrap(
   bootstrap: DashboardBootstrap,
   update: (value: DashboardBootstrap) => void
 ) {
-  const documentWithTransitions = document as Document & {
-    startViewTransition?: (callback: () => void) => unknown
-  }
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  const commit = () => flushSync(() => update(bootstrap))
-  if (!reduceMotion && documentWithTransitions.startViewTransition) {
-    documentWithTransitions.startViewTransition(commit)
-  } else {
-    commit()
-  }
+  flushSync(() => update(bootstrap))
 }
 
 function settleViewport(url: URL, mode: NavigationMode, scrollY = 0) {

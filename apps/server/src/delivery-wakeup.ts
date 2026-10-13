@@ -1,43 +1,27 @@
-import type { Notification,PoolClient } from "pg";
 import type { Database } from "./db.js";
-
-const deliveryChannel = "relo_delivery_jobs";
+import { PostgresListener } from "./postgres-listener.js";
 
 export class DeliveryJobWakeup {
   private pending = false;
   private waiter: ((result: "notified" | "aborted") => void) | undefined;
   private closed = false;
-  private degraded = false;
+  private listener: PostgresListener | undefined;
 
-  private readonly notified = (message: Notification) => {
-    if (message.channel !== deliveryChannel || this.closed) return;
-    this.pending = true;
-    this.waiter?.("notified");
-  };
-
-  private readonly failed = () => {
-    if (this.closed) return;
-    this.degraded = true;
-    this.waiter?.("notified");
-  };
-
-  private constructor(private readonly client: PoolClient) {
-    client.on("notification",this.notified);
-    client.on("error",this.failed);
-  }
+  private constructor() {}
 
   static async listen(db: Database): Promise<DeliveryJobWakeup> {
-    const client = await db.connect();
-    try {
-      await client.query(`LISTEN ${deliveryChannel}`);
-      return new DeliveryJobWakeup(client);
-    } catch (error) {
-      client.release();
-      throw error;
-    }
+    const wakeup = new DeliveryJobWakeup();
+    wakeup.listener = await PostgresListener.listen(db,"relo_delivery_jobs",() => {
+      if (wakeup.closed) return;
+      wakeup.pending = true;
+      wakeup.waiter?.("notified");
+    });
+    return wakeup;
   }
 
   async wait(timeoutMs: number, signal?: AbortSignal): Promise<"notified" | "timeout" | "aborted"> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("Invalid delivery wait timeout");
+    if (this.waiter) throw new Error("Delivery wakeup already has an owner");
     if (signal?.aborted || this.closed) return "aborted";
     if (this.pending) {
       this.pending = false;
@@ -56,7 +40,7 @@ export class DeliveryJobWakeup {
       };
       const aborted = () => finish("aborted");
       const timer = setTimeout(() => finish("timeout"),timeoutMs);
-      if (!this.degraded) this.waiter = finish;
+      this.waiter = finish;
       signal?.addEventListener("abort",aborted,{ once: true });
     });
   }
@@ -65,12 +49,6 @@ export class DeliveryJobWakeup {
     if (this.closed) return;
     this.closed = true;
     this.waiter?.("aborted");
-    this.client.off("notification",this.notified);
-    this.client.off("error",this.failed);
-    try {
-      await this.client.query(`UNLISTEN ${deliveryChannel}`);
-    } finally {
-      this.client.release();
-    }
+    await this.listener?.close();
   }
 }

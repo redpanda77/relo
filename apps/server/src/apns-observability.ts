@@ -35,7 +35,7 @@ export function observeApnsRuntimeResult(
   result: ApnsRuntimeResult,
 ): void {
   if (result.kind === "accepted") cycle.acceptedByApns += 1;
-  else if (result.kind === "retry") cycle.retryScheduled += 1;
+  else if (result.kind === "retry" || result.kind === "retry_scheduled") cycle.retryScheduled += 1;
   else if (result.kind === "invalid_token") cycle.tokenInvalid += 1;
   else if (result.kind === "unavailable") cycle.recipientUnavailable += 1;
   else if (result.kind === "reconcile") cycle.reconciliationFenced += 1;

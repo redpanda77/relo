@@ -1,7 +1,10 @@
-import { httpsUrlSchema, publicHttpsUrlSchema } from "./url-policy.js";
+import { destinationUrlSchema, publicHttpsUrlSchema } from "./url-policy.js";
 import { z } from "zod";
 import { originDescriptorSchema } from "./origin-slots.js";
 import { MAX_NOTIFICATION_BODY_BYTES } from "./notification-content.js";
+import { decisionSubjectCommandSchema, notificationSubjectCommandSchema } from "./relevance/admission.js";
+import { subjectVersionSchema } from "@relo/notification-contracts";
+import { questionExpirySchema } from "./question-policy.js";
 
 const notificationLongBodySchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value,"utf8") <= MAX_NOTIFICATION_BODY_BYTES,
@@ -13,13 +16,14 @@ const notificationSummarySchema = z.string().trim().min(1).refine(
 );
 
 export const notificationRequestSchema = z.object({
+  relevance: notificationSubjectCommandSchema.optional(),
   title: z.string().trim().min(1).max(80),
   body: notificationLongBodySchema,
   summary: notificationSummarySchema.optional(),
   bodyFormat: z.enum(["text","markdown"]).optional(),
   sourceName: z.string().trim().min(1).max(80),
   imageUrl: publicHttpsUrlSchema.optional(),
-  destinationUrl: httpsUrlSchema.optional(),
+  destinationUrl: destinationUrlSchema.optional(),
   deviceIds: z.array(z.string()).min(1).max(50).optional(),
   context: z.object({
     providerName: z.string().trim().min(1).max(80).optional(),
@@ -82,6 +86,8 @@ export const createNotificationSchema = z.object({
 });
 
 export const interactionSchema = z.object({
+  expectedSubject: subjectVersionSchema.optional(),
+  expectedInteractionId: z.string().regex(/^int_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i).optional(),
   kind: z.enum(["approve", "deny", "yes", "no", "answer", "opened", "received"]),
   value: z.record(z.string(), z.unknown()).default({}),
   idempotencyKey: z.string().trim().min(1).max(200),
@@ -108,32 +114,52 @@ export const interactionSchema = z.object({
   ? { ...input,value: { ...input.value,response: input.value.response.trim() } }
   : input);
 
+/** Where Relo POSTs the answer. The token is returned as a bearer token so the receiver can verify Relo. */
+export const interactionCallbackSchema = z.object({
+  url: publicHttpsUrlSchema,
+  token: z.string().min(16).max(512).refine((value) => !/[\s]/.test(value), "Callback tokens cannot contain whitespace"),
+}).strict();
+
 const interactionActionLabelSchema = z.string().trim().min(1).max(24)
   .refine((value) => !/[\r\n]/.test(value), "Action labels must use one line");
 
 export const createInteractionSchema = z.object({
+  relevance: decisionSubjectCommandSchema.optional(),
+  context: notificationRequestSchema.shape.context,
+  origin: originDescriptorSchema.optional(),
   prompt: z.string().min(1).max(2000),
+  // Questions take tappable answers only; typed replies were removed for new questions.
   type: z
-    .enum(["approval", "yes-no", "yes_no", "text"])
+    .enum(["approval", "yes-no", "yes_no"],{ message: "Questions take tappable answers only: approval or yes_no" })
     .transform((value) => (value === "yes-no" ? "yes_no" : value)),
   title: z.string().min(1).max(80).default("Response requested"),
-  expiresInSeconds: z.number().int().min(30).max(86400).default(900),
+  expiresInSeconds: questionExpirySchema,
   deviceIds: z.array(z.string()).min(1).max(50).optional(),
   presentation: z.enum(["notification","live_activity"]).default("notification"),
   style: z.enum(["approval","shell","verdict","signal"]).optional(),
   primaryLabel: interactionActionLabelSchema.optional(),
   secondaryLabel: interactionActionLabelSchema.optional(),
   imageUrl: publicHttpsUrlSchema.optional(),
-  destinationUrl: httpsUrlSchema.optional(),
+  destinationUrl: destinationUrlSchema.optional(),
+  privacy: z.enum(["standard","private"]).optional(),
+  correlationId: z.string().trim().min(1).max(100).optional(),
+  callback: interactionCallbackSchema.optional(),
+  /** The phone cannot show a card: notify without answer buttons; the owner answers in Relo. */
+  answerInApp: z.boolean().optional(),
 }).strict().superRefine((input,context) => {
+  if (input.relevance?.policy.kind === "decision" && input.relevance.policy.actionSeconds !== undefined
+    && input.relevance.policy.actionSeconds !== input.expiresInSeconds) {
+    context.addIssue({ code: "custom",path: ["relevance","policy","actionSeconds"],
+      message: "Decision actionSeconds must match expiresInSeconds" });
+  }
   if (input.presentation === "notification") {
+    if (input.privacy !== undefined) {
+      context.addIssue({ code: "custom", path: ["privacy"], message: "Private prompts require presentation=live_activity" });
+    }
     if (input.style !== undefined || input.primaryLabel !== undefined || input.secondaryLabel !== undefined) {
       context.addIssue({ code: "custom", message: "Live Activity fields require presentation=live_activity" });
     }
     return;
-  }
-  if (input.type === "text") {
-    context.addIssue({ code: "custom", path: ["type"], message: "Live Activities support approval and yes/no only" });
   }
   if (input.prompt.length > 240) {
     context.addIssue({ code: "custom", path: ["prompt"], message: "Live Activity prompts are limited to 240 characters" });

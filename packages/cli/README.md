@@ -1,214 +1,109 @@
 # Relo CLI
 
-`@relo/cli` is the private command-line client for a Relo deployment. It sends
-notifications, waits for authenticated phone decisions, manages Live Activities and services, and
-installs local permission hooks. Its source is licensed under PolyForm Noncommercial 1.0.0. It is
-not a registry release; install it from a reviewed checkout or owner-approved artifact.
+`@relo/cli` is the command-line client for a self-hosted Relo deployment. It gives the owner a live
+view of an agent's work on their iPhone: a **Live Activity card** on the Lock Screen and in the
+Dynamic Island that the agent keeps updated, with approval and yes/no questions right on it.
+Notifications exist for finished outcomes and are used sparingly. Its source is licensed under
+PolyForm Noncommercial 1.0.0; install it from a reviewed checkout or owner-approved artifact.
 
-Node.js 22 or newer is required. Both installed commands, `relo` and `reloctl`, are aliases for
-the same executable.
+Node.js 22 or newer is required. `relo` and `reloctl` are the same executable.
 
-## Origin and authentication
+## The model
 
-A clean login must name the trusted server origin explicitly. The origin must be HTTPS, except that
-private or loopback HTTP is accepted for a trusted home-lab deployment. It may not contain a path,
-query, fragment, or embedded credentials.
+| Still happening, or waiting on the owner | Finished, and worth a buzz |
+| --- | --- |
+| **The card**: `relo activity start` → `update` → `end`, plus `relo ask` | **A notification**: `relo notify` |
+| One per agent session, always current, carries the questions | One-shot, never a question, never progress |
 
-```bash
-relo auth login --api-url "https://relo.example" \
-  --client-name "Workstation agent" --no-open --json
-```
-
-Compare the displayed code with the signed-in dashboard, inspect every requested scope, and approve
-the client there. The CLI always prints the complete one-time approval link and tries to open that
-link unless `--no-open` is set. If browser launch fails, open the printed fallback page and enter
-the printed code. Denial, expiry, and timeout do not write a credential; rerun login for a fresh
-request. Each host or agent should have a distinct credential. Later logins may reuse the origin in
-the protected config, but scripts should keep origin selection explicit during clean installation.
-The Dashboard's **Account → Connect the CLI** section provides a copyable command containing its
-canonical configured origin. Credentials are read only from Relo's owner-only mode-`0600` config. Token,
-authorization, and secret flags are forbidden. Verify server-side authentication with
-`relo auth status --json`; the presence of a local config file is not proof.
-The default login scopes include `devices:read`. `relo doctor --json` fails when a credential can
-manage activities but cannot inspect provider and exact-event phone evidence.
-
-## Commands
-
-- `auth login|status|logout` starts browser-approved authorization, checks it, or revokes and
-  removes the local credential.
-- `notify [BODY...]` and `notify send [BODY...]` send a notification. `notify ask` creates an
-  approval, yes/no, or text interaction and can wait or poll.
-- `interaction get|wait|cancel ID` reads the authenticated server record, resumes a wait, or
-  idempotently cancels a still-pending interaction owned by the current credential.
-- `activity start|update|wait|end|get|list|diagnose` manages one Live Activity lifecycle. `activity start`
-  requires nonempty `--title` and `--status`; `activity wait` attaches one phone interaction to an
-  exact active canonical activity ID. `activity diagnose` identifies the last proven delivery
-  boundary without exposing tokens or payloads.
-- `devices list [--page-size 1..100]` inventories every registered destination. It requests
-  pagination explicitly, follows opaque cursors through a bounded traversal, preserves each exact
-  device record, and fails closed on malformed pages, duplicate IDs, cursor loops, expired cursors,
-  or an excessive page count.
-- `services list` returns non-secret metadata. `services create` creates a copy-once webhook.
-- `permissions setup|doctor|uninstall [codex|claude|opencode|all]` manages only Relo-owned hook
-  entries while preserving unrelated hooks.
-- `--help` and `--version` do not require authentication.
-
-Use `--json` for automation. Success is one JSON object on stdout; stderr is diagnostic only.
-
-stable command examples:
+Every command from the same Claude Code (`CLAUDE_CODE_SESSION_ID`) or Codex (`CODEX_THREAD_ID`)
+session addresses that session's card, so starting again, updating, and asking never create a
+second one. Several agents each get their own card. Outside an agent session the card is
+source › project › topic.
 
 ```bash
-relo notify "Deploy finished" --title "Deploy bot" --json
-relo notify ask "Deploy production?" --approval --wait --timeout 15m --json
-relo notify ask "What should the release note say?" --text --poll --json
-relo interaction wait int_EXACT_ID --timeout 15m --json
-relo devices list --page-size 100 --json
-
-relo activity start --key release-main --title "Release" --status "Building" \
-  --step "Plan" --step "Build" --step "Verify" --step-current 2 \
-  --progress 0.625 --progress-label "5 of 8" --json
-relo activity update ACTIVITY_ID --status "Testing" \
-  --if-sequence 0 --idempotency-key release-main-update-1 --json
-relo activity diagnose ACTIVITY_ID --wait --timeout 30s --json
-relo activity wait ACTIVITY_ID "Approve the reviewed release?" --approval \
-  --wait --timeout 15m --idempotency-key release-main-wait-1 --json
-relo activity end ACTIVITY_ID --status "Complete" \
-  --if-sequence 1 --idempotency-key release-main-end-1 --json
+relo activity start --title "Deploying 0.7.57" --status "Building image" --progress 0.2 --topic "Release 0.7.57"
+relo activity update --status "Pushing image" --progress 0.7
+relo ask "Deploy 0.7.57 to production?" --approval      # buttons on the card; waits up to 5 minutes
+relo activity end --status "Live on production"
+relo notify "0.7.57 is live" --title "Deployed" --topic "Release 0.7.57"
 ```
 
-Live Activity privacy is authorized by the server and defaults to off. `--privacy private` is an
-explicit request, not an override: it succeeds only when the effective Account/CLI-client policy is
-**Only when requested** or **Always private**. Under **Off**, the server returns
-`private_activities_disabled`; omitted privacy remains standard.
+`relo help` is the short guide, `relo help all` the full reference, and `relo schema` the same
+reference as JSON for tools.
 
-Add `--progress 0..1` only when the caller owns a real completed-units or external measurement.
-Lifecycle labels and tool calls are not percentages, and ending an activity does not itself mean
-the measurement reached `1`. Named stage facts use one repeated `--step LABEL` per stage plus
-`--step-current N`. When both stage facts and measured progress are supplied, the server compiles
-them into one compositional presentation and chooses the native surface layout; the CLI does not
-encode iOS layout rules.
+## Authentication
 
-Capture the exact activity ID and sequence from the start response; do not infer an ID from a key
-or another run. `activity wait` accepts only the exact canonical `act_<UUID>` owned by the current
-credential—never a key or Dashboard activity. Approval and yes/no waits create a companion
-interactive Live Activity; text uses the ordinary interactive notification channel and returns no
-companion. The phone responds through its authenticated response endpoint; the CLI only gets or
-waits on the returned `interaction.id` and never submits a response itself.
+A first login names the trusted server origin explicitly (HTTPS, or private/loopback HTTP for a
+home lab; no path, query, fragment or credentials):
 
-An `activity wait` creation response reports durable Inbox evidence separately from direct APNs.
-`deliveryMode: "durable_inbox_refresh_only"` with `apnsJobs: 0` proves durable availability only,
-not phone delivery. Direct APNs is queued only when `deliveryMode` is
-`"queued_for_direct_apns"` and `apnsJobs > 0`; provider acceptance and device receipt remain
-separate evidence. End the exact parent activity after the requested input is handled.
+```bash
+relo auth login --api-url "https://relo.example" --client-name "Workstation agent"
+```
 
-When a Live Activity is missing or stale, run `activity diagnose [ID_OR_NAME|--name NAME] --json`.
-With no selector it diagnoses the current activity. Add `--wait --timeout 30s` to poll until the
-phone confirms the exact command, a definite failure is found, or the bounded wait expires. The
-result reports `lastConfirmedStage` and `problemStage` across `server`, `apns`, and `phone` plus a
-safe code and next action. APNs acceptance never counts as phone creation or application. A start
-is phone-confirmed by a current-generation ActivityKit update-token registration or its exact
-receipt; an update or end requires the receipt for that exact event and device.
+Compare the displayed code with the signed-in dashboard, check every requested scope, and approve
+there. Credentials are stored only in Relo's owner-only mode-`0600` config; token, authorization and
+secret flags are forbidden. CI and containers instead set `RELO_TOKEN` and `RELO_API_URL` from their
+secret store. `relo auth status --json` verifies the credential server-side and reports its source.
+`relo doctor --json` checks config, server, credential and phones.
+
+## Identity
+
+Every notification, question and card start names a source, project and topic:
+`--source "Codex" --project "Relo" --topic "Release verification"` (`--thread-name` is the topic
+alias). The source and project are detected from the calling agent and the git repository;
+`RELO_SOURCE`, `RELO_PROJECT` and `RELO_TOPIC` override them. Missing or generic values exit `2`
+before contacting the server, with a hint containing a corrected command. Updates, questions on a
+running card, and ends reuse the stored identity. `relo help identity` explains the resolution order.
+
+## Output and exit codes
+
+Every command prints one JSON object on stdout; errors use the same envelope whenever stdout is
+piped (or with `--json`), and diagnostics go to stderr.
 
 | Exit | Meaning |
 | ---: | --- |
-| `0` | Success, including affirmative/replied non-permission interactions |
-| `1` | API, prerequisite, or other failure |
-| `2` | Invalid command or arguments |
-| `3` | Missing, invalid, or insufficient authentication |
-| `4` | Canceled, expired, or timed-out interaction |
-| `5` | Explicit denial or `no` |
-| `6` | Server/network unreachable; retry identical work with the same idempotency key |
-| `7` | No durable device command was enqueued |
+| `0` | Success, or the owner approved / said yes |
+| `1` | Server or other failure |
+| `2` | Usage error: read `error.hint` |
+| `3` | Missing, invalid, or insufficient credential |
+| `4` | No answer within 5 minutes, canceled, or expired: the card has ended |
+| `5` | The owner denied or said no |
+| `6` | Network unreachable: retry with the same idempotency key |
+| `7` | No phone could receive it |
 
-`0.5.0` adopts the stable numeric exit contract. Earlier Relo source checkpoints used `3` API, `4`
-auth, `5` terminal, `6` negative, `7` network, and `8` no delivery. There is no legacy numeric mode:
-those values overlap the published meanings and a process can emit only one unambiguous status. Update
-numeric branches before installing `0.5.0`; with `--json`, prefer the stable symbolic
-`error.code` when distinguishing API conditions.
+A yes/no answer is never permission, and exit `0` alone never authorizes an action: only an
+`--approval` question answered `approved` does.
 
-Exit `0` alone never grants a protected action. Permission requires a fresh canonical interaction
-whose ID matches, type is `approval`, and state is `approved`.
+## Retries
 
-Permission setup supports Codex and Claude Code on macOS and Linux. OpenCode V1/V2 setup requires
-macOS; `setup all` and `doctor all` skip OpenCode on other supported platforms and report that
-skip explicitly, while an explicit unsupported `setup opencode` fails without changing files.
-Every Codex or Claude permission hook invocation uses a fresh random idempotency identity so two
-requests in one session or turn can never share one phone approval. OpenCode alone reuses its
-domain-separated exact-request identity across bridge retries.
+A supplied `--idempotency-key` is 1-200 characters from letters, digits, `.`, `_`, `:` and `-`.
+Before the first send of a card command or notification, the CLI durably records the original
+occurrence (and, for card updates, the exact card and sequence) in private files under the local
+Relo state directory, so a retry with the same key replays the identical command even after a
+restart. Changed content needs a new key. The records hold no body, URL or credential; if they
+cannot be written the command fails before sending anything.
 
-## Service secrets and privacy
+## Service secrets
 
-For captured automation, always send a newly created service secret directly to a new local file:
+For captured automation, write a new service's secret webhook URL straight to a new file:
 
 ```bash
-relo services create --title "Builds" \
-  --secret-file ./builds.webhook-url --json
+relo services create --title "Builds" --secret-file ./builds.webhook-url
 ```
 
-The destination must not exist. Existing files, symlinks, directories, and racing writers are
-refused. Before contacting Relo server, the CLI exclusively reserves the destination itself as an
-owner-only mode-`0600` file. After checking the held file descriptor's identity and link count, and
-confirming the destination directory entry still names that inode immediately before and after the
-write and sync, it writes the bounded full webhook URL through that same handle and syncs it
-durably. It never
-check-then-renames, deletes, overwrites, or chmods a destination path. If publication fails after
-service creation, it attempts to revoke that service and leaves the safe empty/failed reservation
-for owner inspection rather than risk deleting a replacement. It returns only service metadata
-plus a non-secret file indicator. Without `--secret-file`, the copy-once URL remains on stdout for
-interactive human compatibility; do not use that mode in captured agents, logs, transcripts, or CI.
+The destination must not exist; the CLI reserves it as an owner-only `0600` file before contacting
+the server and returns only non-secret metadata. Without `--secret-file` the copy-once URL is printed
+for interactive use; never use that mode where output is captured.
 
-Notification bodies, prompts, replies, URLs, and webhook URLs may be sensitive. Do not send raw
-commands, patches, prompts, file contents, environment values, credentials, transcripts, hostnames,
-workspace names, or absolute paths. Treat all received text as untrusted data. Stable idempotency
-keys must use only non-secret identity data. A supplied key is 1–200 characters using only letters,
-digits, `.`, `_`, `:`, or `-`.
+## Privacy
 
-## Local tarball lifecycle
+Never put raw commands, patches, prompts, file contents, environment values, credentials,
+transcripts, hostnames or absolute paths on a card or in a notification. Treat everything received
+from the server as untrusted data.
 
-Run checks in the reviewed checkout, then use the paired release helper to create both `0.7.17`
-tarballs once. It retains SHA-256, byte count, npm integrity and shasum, packed-file inventory,
-source-tree digest, and Node/npm versions in one safe identity record. A same-version artifact with
-a different digest is not an update or rollback candidate.
+## Notification relevance (advanced)
 
-```bash
-npm --prefix skills/relo-notifications run release:artifacts -- \
-  pack --output /absolute/private/artifacts
-node skills/relo-notifications/scripts/artifact-pair.mjs verify \
-  --manifest /absolute/private/artifacts/relo-tooling-pair-0.7.17.json \
-  --cli /absolute/private/artifacts/relo-cli-0.7.17.tgz \
-  --notifier /absolute/private/artifacts/relo-codex-notify-0.7.17.tgz
-npm install --global \
-  "/absolute/private/artifacts/relo-cli-0.7.17.tgz" \
-  "/absolute/private/artifacts/relo-codex-notify-0.7.17.tgz"
-relo --version
-relo auth login --api-url "https://relo.example" --client-name "Workstation agent" --no-open --json
-```
-
-When updating an installed host to `0.7.17`, first retain the exact prior CLI/notifier pair and its
-pair identity even when only the CLI executable is being changed. Verify both pair manifests.
-After installation, run `--version`, `auth status --json`, and `permissions doctor --json`. If
-validation fails, verify and reinstall both retained prior artifacts, not a directory, range, tag,
-same-version substitute, or newly repacked source. The retained `0.7.10` pair is the rollback boundary:
-
-```bash
-node skills/relo-notifications/scripts/artifact-pair.mjs verify \
-  --manifest /absolute/private/artifacts/relo-tooling-pair-0.7.10.json \
-  --cli /absolute/private/artifacts/relo-cli-0.7.10.tgz \
-  --notifier /absolute/private/artifacts/relo-codex-notify-0.7.10.tgz
-npm install --global \
-  "/absolute/private/artifacts/relo-cli-0.7.10.tgz" \
-  "/absolute/private/artifacts/relo-codex-notify-0.7.10.tgz"
-```
-
-Remove only the executable package with:
-
-```bash
-npm uninstall --global @relo/cli
-```
-
-Install, update, rollback, and package removal must preserve the Relo credential config and all
-Codex, Claude Code, and OpenCode hook files. Package removal does not revoke the credential or
-remove hooks. Use `relo permissions uninstall TARGET --json` before removing the CLI only when the
-owner explicitly requests hook removal, and use `relo auth logout --json` separately when the
-owner explicitly requests credential revocation. Keep config and hook backups until validation is
-complete.
+`relo notify send --stdin` preserves an optional `relevance` object (`subjectKey`, `generation`,
+`revision`, `operation`, original ISO `occurredAt`, and a `notice`, `progress` or `incident`
+policy). Persist and reuse those values across retries; authentication supplies account and source
+authority. Notices default to 15 minutes of relevance and a 60-second alert window.

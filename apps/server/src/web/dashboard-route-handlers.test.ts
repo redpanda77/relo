@@ -27,10 +27,7 @@ describe("dashboard React route composition", () => {
       "overview",
     ]);
     expect(Object.keys(handlers.connections).sort()).toEqual([
-      "clients",
-      "pairing",
-      "phones",
-      "services",
+      "overview",
     ]);
     expect(Object.keys(handlers.system).sort()).toEqual(["account", "docs"]);
   });

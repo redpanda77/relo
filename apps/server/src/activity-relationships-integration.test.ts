@@ -7,6 +7,7 @@ import {
   recordActivityStartEvidence,
 } from "./activity-relationships.js";
 import { currentTestPresentationRecord } from "./test-current-presentation.js";
+import { deleteFixtureOwner } from "./test-support/delete-fixture-owner.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -172,7 +173,7 @@ suite("activity relationship evidence persistence", () => {
       reason: "same_origin_generation",
     });
 
-    await db.query("DELETE FROM owner_principals WHERE id=$1",[principalId]);
+    await deleteFixtureOwner(db,principalId);
 
     const remaining = await db.query<{ relationships: number; decisions: number }>(
       `SELECT

@@ -1,9 +1,5 @@
 import {
-  Cable,
   ChevronRight,
-  KeyRound,
-  Link2,
-  Smartphone,
   type LucideIcon,
 } from "lucide-react"
 import type * as React from "react"
@@ -27,6 +23,7 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
+import { Page } from "@/components/page"
 import type {
   ConnectionsDashboardBootstrap,
   ConnectionsPagination,
@@ -42,114 +39,9 @@ export function ConnectionsPageFrame({
   children: React.ReactNode
 }) {
   return (
-    <main
-      id="main-content"
-      tabIndex={-1}
-      className="canvas min-h-[100dvh] px-4 py-7 sm:px-6 lg:px-10 lg:py-10"
-    >
-      <div className="mx-auto w-full max-w-6xl">
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-              {bootstrap.shell.title}
-            </h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground">
-              {bootstrap.shell.description}
-            </p>
-          </div>
-          {actions}
-        </header>
-        <ConnectionsTabs bootstrap={bootstrap} />
-        {children}
-      </div>
-    </main>
-  )
-}
-
-function ConnectionsTabs({
-  bootstrap,
-}: {
-  bootstrap: ConnectionsDashboardBootstrap
-}) {
-  const items = [
-    {
-      id: "connections-pairing",
-      label: "Pair iPhone",
-      description: "Secure QR setup",
-      href: "/dashboard/connections/pairing",
-      icon: Link2,
-      value: "Setup",
-    },
-    {
-      id: "connections-services",
-      label: "Services",
-      description: "Webhook senders",
-      href: "/dashboard/connections/services",
-      icon: Cable,
-      value: String(bootstrap.summary.services),
-    },
-    {
-      id: "connections-phones",
-      label: "Phones",
-      description: "Registered devices",
-      href: "/dashboard/connections/phones",
-      icon: Smartphone,
-      value: String(bootstrap.summary.phones),
-    },
-    {
-      id: "connections-clients",
-      label: "CLI clients",
-      description: "Agent credentials",
-      href: "/dashboard/connections/clients",
-      icon: KeyRound,
-      value: String(bootstrap.summary.clients),
-    },
-  ] as const
-  return (
-    <nav aria-label="Connections views" className="mt-7">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-        {items.map((item) => {
-          const active = bootstrap.shell.active === item.id
-          const Icon = item.icon
-          return (
-            <a
-              key={item.id}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`group grid min-h-[76px] grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-3 py-2.5 ring-1 transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
-                active
-                  ? "bg-accent text-foreground ring-primary/35"
-                  : "bg-card/65 text-muted-foreground ring-foreground/10 hover:bg-card hover:text-foreground"
-              }`}
-            >
-              <span
-                className={`grid size-9 place-items-center rounded-[10px] ${
-                  active
-                    ? "bg-primary/15 text-primary"
-                    : "bg-muted text-muted-foreground group-hover:text-foreground"
-                }`}
-                aria-hidden="true"
-              >
-                <Icon className="size-4.5" />
-              </span>
-              <span className="min-w-0">
-                <strong className="block truncate text-sm font-medium text-foreground">
-                  {item.label}
-                </strong>
-                <span className="mt-0.5 block truncate text-xs">
-                  {item.description}
-                </span>
-              </span>
-              <span
-                className={`hidden text-xs font-medium tabular-nums sm:inline ${active ? "text-primary" : "text-muted-foreground"}`}
-              >
-                {item.value}
-              </span>
-            </a>
-          )
-        })}
-      </div>
-    </nav>
+    <Page title={bootstrap.shell.title} actions={actions}>
+      {children}
+    </Page>
   )
 }
 
@@ -187,12 +79,12 @@ export function ConnectionList({
   ariaLabel: string
 }) {
   return (
-    <div
-      className="overflow-hidden rounded-xl bg-card/80 ring-1 ring-foreground/10"
+    <ul
+      className="glass divide-y divide-border overflow-hidden rounded-2xl"
       aria-label={ariaLabel}
     >
       {children}
-    </div>
+    </ul>
   )
 }
 
@@ -254,17 +146,15 @@ export function ConnectionDisclosure({
   open?: boolean
 }) {
   return (
-    <details className="group/disclosure border-t border-border" open={open}>
-      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 text-sm font-medium text-muted-foreground outline-none hover:bg-accent/35 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5 [&::-webkit-details-marker]:hidden">
+    <details className="group/disclosure" open={open}>
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 px-4 pb-3 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground [&::-webkit-details-marker]:hidden">
         {label}
         <ChevronRight
           className="size-4 transition-transform group-open/disclosure:rotate-90"
           aria-hidden="true"
         />
       </summary>
-      <div className="border-t border-border bg-background/25 px-4 py-5 sm:px-5">
-        {children}
-      </div>
+      <div className="px-4 pb-5">{children}</div>
     </details>
   )
 }

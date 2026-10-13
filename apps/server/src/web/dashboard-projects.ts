@@ -16,6 +16,8 @@ import {
   splitProjectConversations,
   updateProjectResource,
 } from "../project-resource-lifecycle.js";
+import { secureHtml } from "./http.js";
+import { projectsDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/projects";
 
 const projectPublicIdSchema = z.string().regex(/^prj_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
@@ -35,39 +37,7 @@ export type DashboardProject = {
   counts: { conversations: number; notifications: number; activities: number };
 };
 
-export type ProjectsDashboardBootstrap = {
-  version: 1;
-  kind: "projects";
-  route: { path: string; selectedProjectId: string | null };
-  shell: {
-    title: "Projects";
-    description: string;
-    active: "projects";
-    releaseIdentity: string;
-    account: { id: string; initial: string; name: string; email: string };
-    counts: { pending: number; notifications: number; deliveries: number };
-  };
-  summary: { active: number; direct: number; archived: number; conversations: number };
-  projects: DashboardProject[];
-  selected: null | {
-    project: DashboardProject;
-    aliases: Array<{ id: string; name: string; provenance: string; createdAt: string }>;
-    conversations: Array<{
-      id: string;
-      name: string;
-      producerKind: string;
-      assignmentSource: "producer" | "owner";
-      lastSeenAt: string;
-    }>;
-    recent: Array<{
-      id: string;
-      kind: "notification" | "activity";
-      title: string;
-      state: string;
-      occurredAt: string;
-    }>;
-  };
-};
+export type ProjectsDashboardBootstrap = z.input<typeof projectsDashboardBootstrapSchema>;
 
 type DashboardProjectAccount = {
   principalId: string;
@@ -117,13 +87,6 @@ function projectFromRow(row: Record<string,any>): DashboardProject {
       activities: number(row.activity_count),
     },
   };
-}
-
-function secureHtml(context: any,html: string): Response {
-  context.header("content-security-policy","default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
-  context.header("cache-control","private, no-store");
-  context.header("x-content-type-options","nosniff");
-  return context.html(html);
 }
 
 function mutationError(context: any,error: unknown): Response {

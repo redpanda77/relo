@@ -182,3 +182,19 @@ export function publicConfig(config) {
     configPath: config.path,
   };
 }
+
+/**
+ * CI and containers: RELO_TOKEN (with RELO_API_URL) overrides the config file.
+ * Environment variables, never flags, so the token stays out of argv and shell history.
+ */
+export function environmentConfig(env = process.env) {
+  if (env.RELO_TOKEN === undefined || env.RELO_TOKEN === "") return null;
+  if (!env.RELO_API_URL) {
+    throw new AuthError("RELO_TOKEN is set but RELO_API_URL is not.", {
+      code: "INVALID_CONFIG",
+      details: { hint: "Set RELO_API_URL to your Relo server origin, e.g. https://relo.example.com" },
+    });
+  }
+  return { ...validateConfig({ apiUrl: env.RELO_API_URL, token: env.RELO_TOKEN.trim() }),
+    path: null, revision: null, source: "environment" };
+}

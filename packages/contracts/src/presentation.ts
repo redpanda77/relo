@@ -187,6 +187,8 @@ export const presentationStateSchema = z.object({
 }).strict();
 export const presentationAppearanceSchema = z.object({
   theme: presentationThemeSchema.default("system"),
+  /** How a progress component draws. Absent means the linear bar, so existing hashes are unchanged. */
+  progressDisplay: z.enum(["bar", "ring"]).optional(),
   roles: z.object({
     cardIdentity: presentationIdentityRoleSchema.default("project"),
     componentIdentity: presentationIdentityRoleSchema.default("thread"),
@@ -306,7 +308,7 @@ export function projectLiveActivityPresentationToActivityKitContentState(
 }
 
 export const LIVE_ACTIVITY_PRESET_IDS = [
-  "standard", "hero", "terminal", "steps", "approval", "shell", "verdict", "signal",
+  "standard", "ring", "hero", "terminal", "steps", "approval", "shell", "verdict", "signal",
 ] as const;
 export const liveActivityPresetIdSchema = z.enum(LIVE_ACTIVITY_PRESET_IDS);
 export type LiveActivityPresetId = z.infer<typeof liveActivityPresetIdSchema>;

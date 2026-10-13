@@ -1,57 +1,17 @@
+import ReloTransport
+import ReloRuntime
+import ReloPersistence
 import ActivityKit
 import Combine
-import CryptoKit
+import OSLog
 import ReloCore
 import SwiftUI
 import UIKit
 import UserNotifications
 
-private struct SystemAccountNotificationCleaner: AccountNotificationClearing, @unchecked Sendable {
-    private let center = UNUserNotificationCenter.current()
-
-    func clearAllDeliveredAndPendingNotifications() async throws {
-        center.removeAllDeliveredNotifications()
-        center.removeAllPendingNotificationRequests()
-        try await center.setBadgeCount(0)
-    }
-}
-
-private struct LiveActivityContentDigestPayload: Encodable {
-    let headline: String
-    let detail: String?
-    let progress: Double?
-    let status: String
-    let sequence: Int
-    let style: ReloActivityAttributes.Style
-    let symbol: LiveActivitySymbol
-    let privacy: ReloActivityAttributes.Privacy
-    let accentColor: String
-    let expiresAt: Date?
-    let staleAt: Date?
-    let primaryLabel: String?
-    let secondaryLabel: String?
-    let interaction: ReloActivityAttributes.Interaction?
-
-    init(_ state: ReloActivityAttributes.ContentState) {
-        headline = state.headline
-        detail = state.detail
-        progress = state.progress
-        status = state.status
-        sequence = state.sequence
-        style = state.style
-        symbol = state.symbol
-        privacy = state.privacy
-        accentColor = state.accentColor
-        expiresAt = state.expiresAt
-        staleAt = state.staleAt
-        primaryLabel = state.primaryLabel
-        secondaryLabel = state.secondaryLabel
-        interaction = state.interaction
-    }
-}
-
 @MainActor
-final class AppModel: ObservableObject {
+@Observable
+final class AppModel {
     enum PermissionState: Equatable {
         case unknown
         case allowed
@@ -84,36 +44,122 @@ final class AppModel: ObservableObject {
         case offline(String)
     }
 
-    @Published var accountState: AccountState = .restoring
-    @Published var registrationState: RegistrationState = .idle
-    @Published var account: AccountSummary?
-    @Published var accountUser: AccountUser?
-    @Published var credential: DeviceCredential?
-    @Published var permission: PermissionState = .unknown
-    @Published var items: [InboxItem] = []
-    @Published private(set) var historySnapshot = InboxHistorySnapshot.offlineCache(items: [])
-    @Published private(set) var historyLoadState: HistoryLoadState = .idle
-    @Published var syncState: SyncState = .idle
-    @Published var lastSyncedAt: Date?
-    @Published var authenticationError: String?
-    @Published var signOutError: String?
-    @Published var accountDeletionError: String?
-    @Published private(set) var isDeletingAccount = false
-    @Published var pushRegistrationError: String?
-    @Published private(set) var apnsTokenState = APNSTokenSessionState()
-    @Published var serverAcceptedCurrentAPNSToken = false
-    @Published private(set) var deliveryTransportStatus: DeliveryTransportStatus?
-    @Published private(set) var deliveryTransportStatusError: String?
-    @Published private(set) var protectedRegistrationResetAvailable = false
-    @Published var selectedNotificationID: String?
-    @Published var respondingNotificationID: String?
-    @Published var interactionError: String?
-    @Published private(set) var queuedResponseNotificationIDs = Set<String>()
-    @Published private(set) var responseFeedbackByNotificationID: [String: NotificationResponseFeedback] = [:]
-    @Published private(set) var unreadCount = 0
-    @Published private(set) var unreadByProject: [String: Int] = [:]
-    @Published private(set) var withdrawingNotificationID: String?
-    @Published private(set) var selectedNotificationDetail: InboxNotificationDetail?
+    var accountState: AccountState = .restoring {
+        didSet {
+            if oldValue != accountState,
+               accountState != .signedIn, accountState != .restoring {
+                invalidateSelectionScope()
+            }
+        }
+    }
+    private(set) var hasRestoredLocalAccount = false
+    var registrationState: RegistrationState = .idle
+    var account: AccountSummary?
+    var accountUser: AccountUser?
+    var credential: DeviceCredential? {
+        didSet { if oldValue != credential { invalidateSelectionScope() } }
+    }
+    var permission: PermissionState = .unknown
+    var items: [InboxItem] = []
+    private(set) var currentNavigationRevision = 0
+    private(set) var currentState: CurrentRuntimeState? { didSet { currentStateSubject.send(currentState) } }
+    private var decisionDrafts: [String: CurrentDecisionDraft] = [:]
+    private(set) var historySnapshot = InboxHistorySnapshot.offlineCache(items: [])
+    private(set) var historyLoadState: HistoryLoadState = .idle
+    var syncState: SyncState = .idle
+    var lastSyncedAt: Date?
+    var authenticationError: String?
+    var signOutError: String?
+    var accountDeletionError: String?
+    private(set) var isDeletingAccount = false
+    var pushRegistrationError: String?
+    private(set) var apnsTokenState = APNSTokenSessionState()
+    var serverAcceptedCurrentAPNSToken = false
+    private(set) var deliveryTransportStatus: DeliveryTransportStatus?
+    private(set) var deliveryTransportStatusError: String?
+    private(set) var protectedRegistrationResetAvailable = false
+    private(set) var selectedNotificationID: String? {
+        didSet { if oldValue != selectedNotificationID { selectedNotificationDetail = nil } }
+    }
+    var respondingNotificationID: String?
+    var interactionError: String?
+    private(set) var queuedResponseNotificationIDs = Set<String>()
+    private(set) var responseFeedbackByNotificationID: [String: NotificationResponseFeedback] = [:] {
+        didSet { responseFeedbackSubject.send(responseFeedbackByNotificationID) }
+    }
+    private(set) var unreadCount = 0
+    private(set) var unreadByProject: [String: Int] = [:]
+    private(set) var withdrawingNotificationID: String?
+    private(set) var selectedNotificationDetail: InboxNotificationDetail? {
+        didSet { selectedNotificationDetailSubject.send(selectedNotificationDetail) }
+    }
+    /// Every assignment, including transient ones, for race tests and non-SwiftUI observers.
+    @ObservationIgnored private let currentStateSubject = CurrentValueSubject<CurrentRuntimeState?, Never>(nil)
+    @ObservationIgnored private let responseFeedbackSubject =
+        CurrentValueSubject<[String: NotificationResponseFeedback], Never>([:])
+    @ObservationIgnored private let selectedNotificationDetailSubject =
+        CurrentValueSubject<InboxNotificationDetail?, Never>(nil)
+    var currentStateChanges: AnyPublisher<CurrentRuntimeState?, Never> { currentStateSubject.eraseToAnyPublisher() }
+    var responseFeedbackChanges: AnyPublisher<[String: NotificationResponseFeedback], Never> {
+        responseFeedbackSubject.eraseToAnyPublisher()
+    }
+    var selectedNotificationDetailChanges: AnyPublisher<InboxNotificationDetail?, Never> {
+        selectedNotificationDetailSubject.eraseToAnyPublisher()
+    }
+
+    private let system: AppSystemServices
+    private(set) var attentionDate = Date.now
+    @ObservationIgnored private var replyDraftState = ReplyDraftState()
+
+    var attention: InboxAttentionProjection.Snapshot {
+        InboxAttentionProjection.make(items: items + [selectedNotificationDetail?.item].compactMap { $0 }, now: attentionDate,
+            acceptedNotificationIDs: Set(responseFeedbackByNotificationID.filter { $0.value.phase == .accepted }.keys),
+            queuedNotificationIDs: queuedResponseNotificationIDs)
+    }
+
+    func updateAttentionClock() { attentionDate = .now }
+    func draft(for requestID: String) -> String {
+        replyDraftState.transition(to: historyScopeIdentity)
+        return replyDraftState.text(requestID: requestID)
+    }
+    func saveDraft(_ text: String, for requestID: String) {
+        replyDraftState.transition(to: historyScopeIdentity)
+        replyDraftState.set(text, requestID: requestID)
+    }
+    var serverOrigin: String { serverURL.absoluteString }
+    /// Origin changes are offered only before authentication; a connected account uses sign-out.
+    func selectServerOrigin(_ value: String) -> Bool {
+        guard !hasLocalAccountAccess, !isAuthenticating,
+              let components = URLComponents(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.path.isEmpty || components.path == "/",
+              let url = components.url, ServerEndpointPolicy.accepts(url)
+        else {
+            authenticationError = "Enter an HTTPS server origin, or HTTP on your local network."
+            return false
+        }
+        serverURL = url
+        apiClient = HTTPMobileAPIClient(baseURL: url)
+        RuntimeServerOrigin.persist(url)
+        authenticationError = nil
+        return true
+    }
+
+    #if DEBUG
+    /// In-memory preview models skip restoration; establish their fictional account scope.
+    func configurePreviewAccountScope() {
+        selectedAccountId = credential?.accountId
+    }
+
+    func configurePreviewResponses() {
+        queuedResponseNotificationIDs = ["ntf_previewapproval"]
+        responseFeedbackByNotificationID = [
+            "ntf_previewapproval": .init(phase: .queued, action: .approve),
+            "ntf_previewyesno": .init(phase: .rejected, action: .yes, message: "Response not recorded. Try again.")
+        ]
+    }
+    #endif
 
     private let credentialStore: any DeviceCredentialStore
     private let accountSessionStore: any AccountSessionStore
@@ -125,39 +171,88 @@ final class AppModel: ObservableObject {
     private let signOutProgressStore: any SignOutProgressStore
     private let storagePreflight: any LocalStoragePreflighting
     private let cache: any AccountScopedInboxCaching
-    private var apiClient: any MobileAPIClient
+    @ObservationIgnored private(set) var apiClient: any MobileAPIClient
     private let liveActivityCoordinator: LiveActivityCommandCoordinator
-    private let pendingResponseStore: any AccountScopedPendingResponseStoring
-    private let notificationReceiptStore: any PendingNotificationReceiptStoring
+    let pendingResponseStore: any AccountScopedPendingResponseStoring
+    let diagnostics: any DiagnosticStoring
+    private(set) var diagnosticResponseStatus: RecoveryStatus = .pending
+    private(set) var diagnosticResponseConfirmedAt: Date?
+    private(set) var diagnosticQueueDepths: [OperationDiagnostic.Operation: Int] = [:]
+    private(set) var diagnosticQueuesCheckedAt: Date?
+    private(set) var diagnosticQueueIssues: [OperationDiagnostic.Operation: RecoveryStatus] = [:]
+    @ObservationIgnored private lazy var responseSubmitter = PendingResponseSubmitter(host: self)
+    private let notificationReceiptStore: any ScopedNotificationReceiptStoring
+    private let receiptCoordinator = ReceiptCoordinator()
+    @ObservationIgnored private var boundReceiptScopeIdentity: String?
+    @ObservationIgnored private var reportedLegacyReceiptRetirements = 0
+    @ObservationIgnored private var reportedNotFoundReceiptRetirements = 0
     private let accountNotificationCleaner: any AccountNotificationClearing
-    private var serverURL: URL
-    private var accountSession: AccountSession?
-    private var syncEngine: InboxSyncEngine?
-    private var inboxRemote: HTTPInboxDataSource?
-    private var inboxReadWatermark: String?
-    private var configuredSyncScopeIdentity: String?
-    private var historyPager: InboxHistoryPager?
-    private var historyScopeRevision = 0
-    private var historyRequestRevision = 0
-    private var selectedAccountId: String?
-    private var registrationInProgress = false
-    private var registrationPending = false
-    private var registrationRecoveryTask: Task<Void, Never>?
-    private var hasStarted = false
-    private var refreshTask: Task<Bool, Never>?
-    private var refreshGeneration = 0
-    private var refreshRequestedWhileRunning = false
-    private var pendingNotificationID: String?
-    private var pendingActivityIdentity: LiveActivityIdentity?
-    private var pushToStartTokenTask: Task<Void, Never>?
-    private var activityUpdatesTask: Task<Void, Never>?
-    private var activityPushTokenTasks: [String: Task<Void, Never>] = [:]
-    private var activityContentUpdateTasks: [String: Task<Void, Never>] = [:]
-    private var activityStateUpdateTasks: [String: Task<Void, Never>] = [:]
-    private var activityObservationScopeByNativeID: [String: String] = [:]
-    private var deliveryStatusScopeIdentity: String?
-    private var deliveryStatusLastAttemptAt: Date?
+    var serverURL: URL {
+        didSet { if oldValue != serverURL { invalidateSelectionScope() } }
+    }
+    private var accountSession: AccountSession? {
+        didSet { if oldValue != accountSession { invalidateSelectionScope() } }
+    }
+    private let makeInboxDataSource: (URL, String) -> any InboxDataSource
+    private let makeCurrentDataSource: (URL, String) -> any CurrentStateSource
+    private let makeCurrentCache: (StorageScope) -> any CurrentStateCaching
+    @ObservationIgnored private var runtimeReady = false
+    private let currentBadge: CurrentBadgeController
+    @ObservationIgnored private lazy var sessionController = SessionController(
+        makeSource: makeCurrentDataSource, makeCache: makeCurrentCache
+    ) { [weak self] state in
+        self?.acceptCurrentState(state)
+    }
+    @ObservationIgnored private var selectionRevision: UInt64 = 0
+    @ObservationIgnored private(set) var selectionScopeRevision: UInt64 = 0
+
+    /// True while the task that captured `revision` is uncancelled and still serves the current
+    /// account/device selection. Every async step re-checks this before publishing results.
+    func isCurrentSelection(_ revision: UInt64) -> Bool {
+        !Task.isCancelled && revision == selectionScopeRevision
+    }
+    private(set) var readState = PendingReadState()
+    private let makePendingReadStore: (StorageScope) -> any PendingReadStoring
+    @ObservationIgnored private var pendingReadStores: [StorageScope: any PendingReadStoring] = [:]
+    @ObservationIgnored private var boundReadScopeIdentity: String?
+    @ObservationIgnored private lazy var readCoordinator = PendingReadCoordinator(
+        changed: { [weak self] state in
+            self?.readState = state
+            self?.recordDiagnostic(.init(operation: .readReplay, phase: .completed,
+                outcome: RecoveryStatusPolicy.reads(state), priority: .maintenance, queueDepth: state.pendingIDs.count))
+        },
+        confirmed: { [weak self] in self?.acceptReadConfirmation($0) })
+    private let makeDetailCache: (StorageScope) -> any NotificationDetailCaching
+    @ObservationIgnored private var detailCache: (any NotificationDetailCaching)?
+    private(set) var notificationDetailError: String?
+    @ObservationIgnored private var syncEngine: InboxSyncEngine?
+    @ObservationIgnored private(set) var inboxRemote: (any InboxDataSource)?
+    @ObservationIgnored private var inboxReadWatermark: String?
+    @ObservationIgnored private var configuredSyncScopeIdentity: String?
+    @ObservationIgnored private var historyPager: InboxHistoryPager?
+    @ObservationIgnored private var historyScopeRevision = 0
+    @ObservationIgnored private var historyRequestRevision = 0
+    private var selectedAccountId: String? {
+        didSet { if oldValue != selectedAccountId { invalidateSelectionScope() } }
+    }
+    @ObservationIgnored private var registrationInProgress = false
+    @ObservationIgnored private var registrationPending = false
+    @ObservationIgnored private var registrationRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var hasStarted = false
+    private let historyRepair = HistoryRepairCoordinator()
+    private let maintenance = ScopedMaintenanceCoordinator()
+    @ObservationIgnored private var isForeground = true
+    @ObservationIgnored private var historyRequested = false
+    @ObservationIgnored private var pendingNotificationID: String?
+    @ObservationIgnored private var pendingActivityIdentity: LiveActivityIdentity?
+    @ObservationIgnored private var activityUpdatesTask: Task<Void, Never>?
+    @ObservationIgnored private var activityContentUpdateTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var activityStateUpdateTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var activityObservationScopeByNativeID: [String: String] = [:]
+    @ObservationIgnored private var deliveryStatusScopeIdentity: String?
+    @ObservationIgnored private var deliveryStatusLastAttemptAt: Date?
     private var selectedItemSnapshot = InboxSelectedItemSnapshot()
+    @ObservationIgnored private var selectedCachedDetail = false
 
     var isRegistered: Bool { credential != nil && registrationState == .registered }
     var hasLocalAccountAccess: Bool { credential != nil || accountSession != nil }
@@ -183,6 +278,10 @@ final class AppModel: ObservableObject {
     }
     var dashboardURL: URL { serverURL.appendingPathComponent("dashboard") }
     var signedInEmail: String? { account?.email ?? accountSession?.user.email ?? accountUser?.email }
+    var presentationScopeIdentity: String {
+        ReloPresentationScope(serverOrigin: serverOrigin, account: account, session: accountSession,
+                              credential: credential, user: accountUser).identity
+    }
     var historyScopeIdentity: String {
         let phase = switch accountState {
         case .restoring: "restoring"
@@ -202,14 +301,15 @@ final class AppModel: ObservableObject {
         let credentialVersion = credential?.credentialVersion ?? 0
         return "\(phase)|\(accountID)|\(accountUser?.id ?? "none")|\(sessionID)|\(deviceID)|\(credentialVersion)"
     }
-    private var currentSyncScopeIdentity: String? {
+    var currentSyncScopeIdentity: String? {
         guard
             let credential,
+            accountState != .signedOut, accountState != .signingOut, accountState != .disabled,
             credential.accountId == selectedAccountId,
-            accountSession?.account?.accountId == nil || accountSession?.account?.accountId == credential.accountId
+            accountSession?.account?.accountId == nil || accountSession?.account?.accountId == credential.accountId,
+            let storage = try? StorageScope(serverOrigin: serverURL, accountID: credential.accountId, deviceID: credential.deviceId)
         else { return nil }
-        let accountID = credential.accountId
-        return "\(accountID)|\(accountSession?.sessionId ?? "device-only")|\(credential.deviceId)|\(credential.credentialVersion)"
+        return "\(storage.fileKey)|\(accountSession?.sessionId ?? "device-only")|\(credential.credentialVersion)|\(selectionScopeRevision)"
     }
     var requiresReauthentication: Bool { accountState == .reauthenticationRequired }
     var isAuthenticating: Bool { accountState == .signingIn }
@@ -299,11 +399,31 @@ final class AppModel: ObservableObject {
         apiClient: any MobileAPIClient,
         liveActivityCoordinator: LiveActivityCommandCoordinator,
         pendingResponseStore: any AccountScopedPendingResponseStoring,
-        notificationReceiptStore: any PendingNotificationReceiptStoring,
+        notificationReceiptStore: any ScopedNotificationReceiptStoring,
         accountNotificationCleaner: any AccountNotificationClearing,
-        serverURL: URL
+        serverURL: URL,
+        diagnostics: any DiagnosticStoring = NoopDiagnosticStore(),
+        system: AppSystemServices? = nil,
+        makeInboxDataSource: @escaping (URL, String) -> any InboxDataSource = {
+            HTTPInboxDataSource(baseURL: $0, token: $1)
+        },
+        makeCurrentDataSource: @escaping (URL, String) -> any CurrentStateSource = {
+            HTTPCurrentStateSource(baseURL: $0, token: $1)
+        },
+        makeCurrentCache: @escaping (StorageScope) -> any CurrentStateCaching = { _ in InMemoryCurrentStateCache() },
+        makePendingReadStore: @escaping (StorageScope) -> any PendingReadStoring = { _ in InMemoryPendingReadStore() },
+        makeDetailCache: @escaping (StorageScope) -> any NotificationDetailCaching = { _ in InMemoryNotificationDetailCache() }
     ) {
+        let resolvedSystem = system ?? .live
+        self.system = resolvedSystem
+        self.currentBadge = CurrentBadgeController { count in await resolvedSystem.setBadgeCount(count) }
+        self.makeInboxDataSource = makeInboxDataSource
+        self.makeCurrentDataSource = makeCurrentDataSource
+        self.makeCurrentCache = makeCurrentCache
+        self.makeDetailCache = makeDetailCache
+        self.makePendingReadStore = makePendingReadStore
         self.accountState = accountState
+        self.hasRestoredLocalAccount = accountState != .restoring
         self.registrationState = registrationState
         self.account = account
         self.accountUser = accountUser
@@ -336,47 +456,97 @@ final class AppModel: ObservableObject {
         self.notificationReceiptStore = notificationReceiptStore
         self.accountNotificationCleaner = accountNotificationCleaner
         self.serverURL = serverURL
+        self.diagnostics = diagnostics
+    }
+
+    convenience init(dependencies: AppDependencies) {
+        self.init(
+            credentialStore: dependencies.credentialStore,
+            accountSessionStore: dependencies.accountSessionStore,
+            installationIDStore: dependencies.installationIDStore,
+            stableDeviceIDStore: dependencies.stableDeviceIDStore,
+            pushTokenStore: dependencies.pushTokenStore,
+            liveActivityPushToStartTokenStore: dependencies.liveActivityPushToStartTokenStore,
+            registrationAttemptStore: dependencies.registrationAttemptStore,
+            signOutProgressStore: dependencies.signOutProgressStore,
+            storagePreflight: dependencies.storagePreflight,
+            cache: dependencies.cache,
+            apiClient: dependencies.apiClient,
+            liveActivityCoordinator: dependencies.liveActivityCoordinator,
+            pendingResponseStore: dependencies.pendingResponseStore,
+            notificationReceiptStore: dependencies.notificationReceiptStore,
+            accountNotificationCleaner: dependencies.accountNotificationCleaner,
+            serverURL: dependencies.serverURL,
+            diagnostics: dependencies.diagnostics,
+            system: dependencies.system,
+            makeInboxDataSource: dependencies.makeInboxDataSource,
+            makeCurrentDataSource: dependencies.makeCurrentDataSource,
+            makeCurrentCache: dependencies.makeCurrentCache,
+            makePendingReadStore: dependencies.makePendingReadStore,
+            makeDetailCache: dependencies.makeDetailCache
+        )
+    }
+
+    var recoveryQueues: [RecoveryQueueStatus] {
+        [
+            .init(operation: .currentSync, status: RecoveryStatus(outcome: RecoveryStatusPolicy.current(currentState)),
+                  depth: nil, lastConfirmedAt: currentState?.snapshot.metadata?.serverTime),
+            .init(operation: .responseSubmission, status: requiresReauthentication ? .pausedForAuth : diagnosticQueueIssues[.responseSubmission]
+                    ?? ((diagnosticQueueDepths[.responseSubmission] ?? 0) > 0 && diagnosticResponseStatus == .confirmed ? .pending : diagnosticResponseStatus),
+                  depth: diagnosticQueueDepths[.responseSubmission], lastConfirmedAt: diagnosticResponseConfirmedAt),
+            .init(operation: .readReplay, status: diagnosticQueueIssues[.readReplay] ?? RecoveryStatus(outcome: RecoveryStatusPolicy.reads(readState)),
+                  depth: diagnosticQueueDepths[.readReplay], lastConfirmedAt: nil),
+            .init(operation: .receiptUpload, status: diagnosticQueueIssues[.receiptUpload] ?? RecoveryStatus(outcome: RecoveryStatusPolicy.receipts(receiptCoordinator.state)),
+                  depth: diagnosticQueueDepths[.receiptUpload], lastConfirmedAt: nil)
+        ]
+    }
+
+    func refreshDiagnosticQueues() async {
+        let revision = selectionScopeRevision
+        guard let credential,
+              let scope = try? StorageScope(serverOrigin: serverURL, accountID: credential.accountId, deviceID: credential.deviceId)
+        else { diagnosticQueueDepths = [:]; return }
+        var depths: [OperationDiagnostic.Operation: Int] = [:]
+        var issues: [OperationDiagnostic.Operation: RecoveryStatus] = [:]
+        var lastConfirmedResponse: Date?
+        do {
+            let responses = try await pendingResponseStore.pending(now: .now)
+            depths[.responseSubmission] = responses.filter { $0.accountID == scope.accountID && $0.deviceID == scope.deviceID }.count
+            let confirmations = try await pendingResponseStore.notificationConfirmations(now: .now)
+            lastConfirmedResponse = confirmations.filter { $0.accountID == scope.accountID && $0.deviceID == scope.deviceID }
+                .map(\.confirmedAt).max()
+        } catch { issues[.responseSubmission] = .pausedForStorage }
+        do { depths[.readReplay] = try await makePendingReadStore(scope).pending(limit: 1_000).count }
+        catch { issues[.readReplay] = .pausedForStorage }
+        do {
+            let receiptScope = try ReceiptScope(serverOrigin: scope.serverOrigin, accountId: scope.accountID, deviceId: scope.deviceID)
+            let receipts = try await notificationReceiptStore.pending(scope: receiptScope, limit: 200)
+            depths[.receiptUpload] = receipts.records.count
+        } catch { issues[.receiptUpload] = .pausedForStorage }
+        guard revision == selectionScopeRevision else { return }
+        diagnosticQueueDepths = depths; diagnosticQueueIssues = issues; diagnosticQueuesCheckedAt = .now
+        if let lastConfirmedResponse {
+            diagnosticResponseConfirmedAt = max(lastConfirmedResponse, diagnosticResponseConfirmedAt ?? lastConfirmedResponse)
+        }
+    }
+
+    func recordDiagnostic(_ event: OperationDiagnostic) {
+        if event.operation == .responseSubmission {
+            diagnosticResponseStatus = RecoveryStatus(outcome: event.outcome)
+            diagnosticQueueIssues.removeValue(forKey: .responseSubmission)
+            diagnosticQueueDepths.removeValue(forKey: .responseSubmission)
+            if event.outcome == .confirmed { diagnosticResponseConfirmedAt = event.timestamp }
+        }
+        Task { [diagnostics] in await diagnostics.record(event) }
+    }
+
+    static func diagnosticMilliseconds(since start: ContinuousClock.Instant) -> Double {
+        let elapsed = start.duration(to: .now).components
+        return Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15
     }
 
     static func live() -> AppModel {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let reloDirectory = support.appendingPathComponent("Relo", isDirectory: true)
-        let origin = RuntimeServerOrigin.current()
-            ?? URL(string: "https://relo.invalid")!
-        let protectedActions = AccountScopedProtectedActionStore(
-            baseDirectory: reloDirectory.appendingPathComponent("accounts", isDirectory: true)
-        )
-        let appGroup = Bundle.main.object(forInfoDictionaryKey: "RELOAppGroup") as? String
-        let sharedRoot = appGroup.flatMap {
-            FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0)
-        } ?? reloDirectory.appendingPathComponent("shared", isDirectory: true)
-        let responseStore = AccountScopedCrossProcessResponseStore(
-            baseDirectory: sharedRoot.appendingPathComponent("protected-actions", isDirectory: true)
-        )
-        return AppModel(
-            credentialStore: KeychainDeviceCredentialStore(),
-            accountSessionStore: KeychainAccountSessionStore(),
-            installationIDStore: KeychainInstallationIDStore(),
-            stableDeviceIDStore: KeychainStableDeviceIDStore(),
-            pushTokenStore: KeychainPushTokenStore(),
-            liveActivityPushToStartTokenStore: KeychainPushTokenStore(
-                account: "live-activity-push-to-start-token"
-            ),
-            registrationAttemptStore: KeychainRegistrationAttemptStore(),
-            signOutProgressStore: KeychainSignOutProgressStore(),
-            storagePreflight: KeychainLocalStoragePreflight(
-                accountsDirectory: reloDirectory.appendingPathComponent("accounts", isDirectory: true)
-            ),
-            cache: AccountScopedInboxCache(
-                baseDirectory: reloDirectory.appendingPathComponent("accounts", isDirectory: true)
-            ),
-            apiClient: HTTPMobileAPIClient(baseURL: origin),
-            liveActivityCoordinator: LiveActivityCommandCoordinator(store: protectedActions),
-            pendingResponseStore: responseStore,
-            notificationReceiptStore: FilePendingNotificationReceiptStore(baseDirectory: sharedRoot),
-            accountNotificationCleaner: SystemAccountNotificationCleaner(),
-            serverURL: origin
-        )
+        AppModel(dependencies: .live())
     }
 
     func start() async {
@@ -384,6 +554,7 @@ final class AppModel: ObservableObject {
         hasStarted = true
         protectedRegistrationResetAvailable = false
         accountState = .restoring
+        hasRestoredLocalAccount = false
         do {
             try storagePreflight.run()
         } catch LocalStoragePreflightError.protectedAccountSessionUnreadable {
@@ -419,9 +590,7 @@ final class AppModel: ObservableObject {
             syncState = .offline("Local storage migration failed")
             return
         }
-        startLiveActivityObservation()
-        await updatePermission()
-        pushRegistrationError = UserDefaults.standard.string(forKey: "relo.apnsRegistrationError")
+        pushRegistrationError = system.pushRegistrationError()
         apnsTokenState = .restored(cachedTokenAvailable: (try? pushTokenStore.load()) != nil)
 
         do {
@@ -440,16 +609,30 @@ final class AppModel: ObservableObject {
             return
         }
 
+        runtimeReady = true
+        accountState = credential != nil || accountSession != nil ? .signedIn : .signedOut
+        synchronizeCurrentSession()
+        system.startActivityObservation(self)
+        var revision = selectionScopeRevision
+        await updatePermission()
+        guard isCurrentSelection(revision) else { return }
+
         if let accountId = accountSession?.account?.accountId {
-            await selectAndLoadCache(accountId: accountId)
+            guard await selectAndLoadCache(accountId: accountId) else { return }
         } else if accountSession == nil, let accountId = credential?.accountId {
-            await selectAndLoadCache(accountId: accountId)
+            guard await selectAndLoadCache(accountId: accountId) else { return }
         }
+
+        revision = selectionScopeRevision
+        // Mount the account's content once local restoration finishes. Remote validation
+        // must neither gate saved content nor first mount an empty feed before its cache.
+        hasRestoredLocalAccount = true
 
         var accountSessionIsValid = false
         if let storedSession = accountSession {
             do {
                 var validated = try await apiClient.validateAccountSession(token: storedSession.accessToken)
+                guard isCurrentSelection(revision) else { return }
                 if let account = storedSession.account {
                     validated = validated.attaching(account: account)
                 }
@@ -460,10 +643,13 @@ final class AppModel: ObservableObject {
                 accountState = .signedIn
                 accountSessionIsValid = true
             } catch MobileAPIError.reauthenticationRequired {
+                guard isCurrentSelection(revision) else { return }
                 accountState = .reauthenticationRequired
             } catch MobileAPIError.accountDisabled {
+                guard isCurrentSelection(revision) else { return }
                 accountState = .disabled
             } catch {
+                guard isCurrentSelection(revision) else { return }
                 // Keep the last authenticated account usable with its cached inbox
                 // when Relo server is temporarily unreachable. Only an authoritative
                 // 401/403 above may require authentication again.
@@ -473,15 +659,20 @@ final class AppModel: ObservableObject {
             accountState = credential == nil ? .signedOut : .reauthenticationRequired
         }
 
+        revision = selectionScopeRevision
         // A valid existing device credential remains usable while registration
         // reconciliation is delayed. Registration convergence must not gate the
         // cached Inbox or a healthy device bearer on cold start.
         if credential != nil {
             registrationState = .registered
             await configureSyncEngine()
+            guard isCurrentSelection(revision) else { return }
             await synchronizeLiveActivityTokens()
+            guard isCurrentSelection(revision) else { return }
             await sendHeartbeat()
+            guard isCurrentSelection(revision) else { return }
             await refresh()
+            guard isCurrentSelection(revision) else { return }
         }
         if accountSessionIsValid {
             await registerDevice()
@@ -502,22 +693,37 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func signIn(email: String, password: String) async -> Bool {
+    /// Opens the server's sign-in page in the system browser (PKCE) and exchanges the returned code.
+    func signInWithBrowser() async -> Bool {
+        guard !isAuthenticating else { return false }
         authenticationError = nil
         signOutError = nil
         deliveryTransportStatus = nil
         deliveryTransportStatusError = nil
         deliveryStatusScopeIdentity = nil
         deliveryStatusLastAttemptAt = nil
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty, (8...128).contains(password.count) else {
-            authenticationError = "Enter your Relo server account email and an 8–128 character password."
+
+        let flow = BrowserSignIn()
+        guard let url = flow.authorizationURL(origin: serverURL) else {
+            authenticationError = authenticationMessage(for: MobileAPIError.invalidRequest)
             return false
         }
-
         accountState = .signingIn
         do {
-            let session = try await apiClient.signIn(email: trimmedEmail, password: password)
+            let callback: URL
+            do { callback = try await BrowserSignInSession.authenticate(url: url) }
+            catch BrowserSignInSession.Failure.cancelled {
+                accountState = credential == nil ? .signedOut : .reauthenticationRequired
+                return false
+            }
+            guard case .code(let code) = try flow.parse(callback: callback) else {
+                accountState = credential == nil ? .signedOut : .reauthenticationRequired
+                return false
+            }
+            let installationId = try installationIDStore.loadOrCreate().uuidString.lowercased()
+            let session = try await apiClient.exchangeBrowserSignIn(
+                code: code, codeVerifier: flow.verifier, installationId: installationId
+            )
             try await retireCurrentDeviceBinding()
             try accountSessionStore.save(session)
             accountSession = session
@@ -528,39 +734,6 @@ final class AppModel: ObservableObject {
             await updateApplicationBadge()
             lastSyncedAt = nil
             syncEngine = nil
-            configuredSyncScopeIdentity = nil
-            selectedAccountId = nil
-            accountState = .signedIn
-            await registerDevice(force: true)
-            return accountSession != nil
-        } catch {
-            accountState = credential == nil ? .signedOut : .reauthenticationRequired
-            authenticationError = authenticationMessage(for: error)
-            return false
-        }
-    }
-
-    func connect(scannedValue: String) async -> Bool {
-        authenticationError = nil
-        accountState = .signingIn
-        do {
-            let document = try ReloConnectionDocument.decode(scannedValue: scannedValue)
-            let installationId = try installationIDStore.loadOrCreate().uuidString.lowercased()
-            let client = HTTPMobileAPIClient(baseURL: document.origin)
-            let session = try await client.consumeConnectionGrant(
-                document: document, installationId: installationId
-            )
-            try await retireCurrentDeviceBinding()
-            RuntimeServerOrigin.persist(document.origin)
-            apiClient = client
-            serverURL = document.origin
-            try accountSessionStore.save(session)
-            accountSession = session
-            accountUser = session.user
-            account = nil
-            items = []
-            clearHistory()
-            syncEngine = nil
             inboxRemote = nil
             configuredSyncScopeIdentity = nil
             selectedAccountId = nil
@@ -569,7 +742,7 @@ final class AppModel: ObservableObject {
             return accountSession != nil
         } catch {
             accountState = credential == nil ? .signedOut : .reauthenticationRequired
-            authenticationError = "That Relo connection code is invalid, expired, already used, or the server is unavailable. Generate a fresh code in Dashboard → Connections."
+            authenticationError = authenticationMessage(for: error)
             return false
         }
     }
@@ -659,58 +832,108 @@ final class AppModel: ObservableObject {
 
     @discardableResult
     func refresh() async -> Bool {
-        if let refreshTask {
-            refreshRequestedWhileRunning = true
-            return await refreshTask.value
+        guard !Task.isCancelled else { return false }
+        sessionController.receive(.reconcile)
+        requestMaintenance()
+        guard let scope = currentSyncScopeIdentity else { return false }
+        return await historyRepair.repair(scope: scope) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return false }
+            return await self.performRefresh()
         }
-        let task = Task<Bool, Never> { @MainActor [weak self] in
-            guard let self else { return false }
-            var refreshed = await self.performRefresh()
-            while !Task.isCancelled && self.refreshRequestedWhileRunning {
-                self.refreshRequestedWhileRunning = false
-                refreshed = await self.performRefresh() || refreshed
+    }
+
+    #if DEBUG
+    /// Capture and preview hosts only: stage a current-work snapshot without a server.
+    func previewAcceptCurrentState(_ state: CurrentRuntimeState) { acceptCurrentState(state) }
+    #endif
+
+    private func acceptCurrentState(_ state: CurrentRuntimeState?) {
+        func nativeVersions(_ value: CurrentRuntimeState?) -> [String: CurrentVersion] {
+            guard let value else { return [:] }
+            return value.snapshot.subjects.reduce(into: [:]) { result, element in
+                if element.value.projection.activity != nil { result[element.key] = element.value.projection.version }
             }
-            return refreshed
         }
-        refreshGeneration += 1
-        let generation = refreshGeneration
-        refreshTask = task
-        let refreshed = await task.value
-        if refreshGeneration == generation {
-            refreshTask = nil
+        let previous = nativeVersions(currentState)
+        if currentState?.connection != state?.connection || currentState?.persistence != state?.persistence
+            || currentState?.snapshot.metadata?.serverTime != state?.snapshot.metadata?.serverTime {
+            recordDiagnostic(.init(operation: .currentSync, phase: state?.connection == .connecting ? .started : .completed,
+                outcome: RecoveryStatusPolicy.current(state), priority: .current))
         }
-        return refreshed
+        currentState = state
+        if state == nil {
+            decisionDrafts = [:]; diagnosticQueueDepths = [:]; diagnosticQueuesCheckedAt = nil; diagnosticQueueIssues = [:]
+            diagnosticResponseStatus = .pending; diagnosticResponseConfirmedAt = nil
+        }
+        let count = state.map { CurrentInboxPresentation(state: $0, now: $0.snapshot.evaluatedAt ?? Date()).actionableCount } ?? 0
+        if let count { currentBadge.set(count) }
+        if state?.connection == .current, previous != nativeVersions(state),
+           let scope = currentSyncScopeIdentity, configuredSyncScopeIdentity == scope {
+            scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope)
+        }
+    }
+
+    private func requestMaintenance() {
+        guard !Task.isCancelled, isForeground, let scope = currentSyncScopeIdentity, configuredSyncScopeIdentity == scope else { return }
+        maintenance.bind(scope: scope)
+        requestReadRecovery()
+        scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope)
+        maintenance.request(.commands) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            await self.responseSubmitter.flushPending()
+        }
+        maintenance.request(.receipts) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            await self.flushLiveActivityDismissals()
+            guard self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            await self.flushLiveActivityReceipts()
+        }
+        maintenance.request(.notificationReceipts) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            await self.flushNotificationReceipts()
+        }
+        maintenance.request(.health) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            await self.refreshDeliveryTransportStatus()
+        }
+        maintenance.startPolling(delay: { [weak self] attempt in
+            .seconds(self?.foregroundRefreshDelaySeconds(afterAttempt: attempt) ?? 60)
+        }, tick: { [weak self] in self?.requestMaintenance() })
+    }
+
+    func historyViewed() async {
+        guard !Task.isCancelled, isForeground else { return }
+        historyRequested = true
+        guard historyLoadState != .current, let scope = currentSyncScopeIdentity else { return }
+        maintenance.bind(scope: scope)
+        maintenance.request(.history) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            try? await self.reloadHistoryFromServer()
+        }
+        await maintenance.wait(for: .history)
     }
 
     private func performRefresh() async -> Bool {
         guard
-            let syncEngine,
+            !Task.isCancelled, let syncEngine,
             let expectedScope = configuredSyncScopeIdentity,
             expectedScope == currentSyncScopeIdentity
         else { return false }
         syncState = .syncing
         do {
-            await flushLiveActivityDismissals()
-            await flushLiveActivityReceipts()
-            await flushPendingResponses()
             let snapshot = try await syncEngine.synchronize()
             guard
-                expectedScope == configuredSyncScopeIdentity,
+                !Task.isCancelled, expectedScope == configuredSyncScopeIdentity,
                 expectedScope == currentSyncScopeIdentity
             else { return false }
             items = snapshot.items.filter { $0.withdrawnAt == nil }
             inboxReadWatermark = snapshot.readWatermark
             unreadCount = snapshot.unread?.account ?? items.filter { $0.readAt == nil }.count
             unreadByProject = snapshot.unread?.projects ?? [:]
-            let visibleHistory = InboxHistoryRefreshPolicy.visibleSnapshot(
-                current: historySnapshot,
-                refreshedCacheItems: snapshot.items
-            )
-            if visibleHistory != historySnapshot {
-                historySnapshot = visibleHistory
-                historyLoadState = .idle
-                reconcileSelectedItem()
-            }
+            historySnapshot = InboxHistorySnapshot(items: snapshot.items, cursor: nil, hasMore: false,
+                total: snapshot.total ?? snapshot.items.count, source: .server)
+            historyLoadState = .current
+            readCoordinator.reconcileHistory(snapshot.items)
             lastSyncedAt = snapshot.lastSuccessfulSyncAt
             syncState = .current
             resolvePendingNotification()
@@ -718,37 +941,19 @@ final class AppModel: ObservableObject {
             reconcileSelectedItem()
             await updateApplicationBadge()
             guard
-                expectedScope == configuredSyncScopeIdentity,
+                !Task.isCancelled, expectedScope == configuredSyncScopeIdentity,
                 expectedScope == currentSyncScopeIdentity
             else { return false }
-            let authoritativeLiveActivities = await fetchAuthoritativeLiveActivities()
-            await applyPendingLiveActivityCommands(
-                from: snapshot.items,
-                authoritativeLiveActivities: authoritativeLiveActivities
-            )
-            if let authoritativeLiveActivities {
-                await convergeLiveActivitiesWithServerTruth(
-                    Set(authoritativeLiveActivities.activities.map(\.identity))
-                )
-            }
-            await flushNotificationReceipts(
-                authoritativeNotificationIDs: Set(snapshot.items.map(\.id))
-            )
-            await flushLiveActivityReceipts()
-            await refreshDeliveryTransportStatus()
-            guard
-                expectedScope == configuredSyncScopeIdentity,
-                expectedScope == currentSyncScopeIdentity
-            else { return false }
-            try await reloadHistoryFromServer()
+            scheduleNativeReconciliation(snapshot: snapshot, scope: expectedScope)
+            requestMaintenance()
             return true
         } catch InboxRemoteError.unauthorized {
-            if expectedScope == configuredSyncScopeIdentity,
+            if !Task.isCancelled, expectedScope == configuredSyncScopeIdentity,
                expectedScope == currentSyncScopeIdentity {
                 await handleRevokedDeviceCredential()
             }
         } catch {
-            if expectedScope == configuredSyncScopeIdentity,
+            if !Task.isCancelled, expectedScope == configuredSyncScopeIdentity,
                expectedScope == currentSyncScopeIdentity {
                 syncState = .offline(InboxRefreshErrorGuidance.message(for: error))
                 resolvePendingNotification()
@@ -756,6 +961,21 @@ final class AppModel: ObservableObject {
             }
         }
         return false
+    }
+
+    private func scheduleNativeReconciliation(snapshot: InboxSnapshot, scope: String) {
+        guard isForeground else { return }
+        maintenance.bind(scope: scope)
+        maintenance.request(.nativeActivities) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            let authoritative = await self.fetchAuthoritativeLiveActivities()
+            guard self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            await self.applyPendingLiveActivityCommands(from: snapshot.items, authoritativeLiveActivities: authoritative)
+            guard self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
+            if let authoritative {
+                await self.convergeLiveActivitiesWithServerTruth(Set(authoritative.activities.map(\.identity)))
+            }
+        }
     }
 
     func loadOlderHistory() async {
@@ -789,34 +1009,104 @@ final class AppModel: ObservableObject {
     }
 
     func openNotification(notificationID: String) async {
-        interactionError = nil
-        selectedNotificationDetail = nil
-        pendingNotificationID = notificationID
-        if NotificationRouteResolver.contains(
-            notificationID: notificationID,
-            in: items + historySnapshot.items
-        ) {
-            resolvePendingNotification()
+        dismissNotification()
+        let requestRevision = selectionRevision
+        let scopeRevision = selectionScopeRevision
+        let scopeIdentity = currentSyncScopeIdentity
+        guard let scopeIdentity, let credential else { return }
+        // Capture the current credential directly; a delayed history configuration
+        // must never leave detail using a predecessor account's remote adapter.
+        let inboxRemote = makeInboxDataSource(serverURL, credential.accessToken)
+        let cache = configuredSyncScopeIdentity == scopeIdentity ? detailCache : nil
+        selectedNotificationID = notificationID
+        if let item = (items + historySnapshot.items).first(where: { $0.id == notificationID }) {
+            selectedItemSnapshot.select(item, scopeIdentity: scopeIdentity)
         }
-        if pendingNotificationID != nil {
-            await refresh()
+        @MainActor func ownsSelection() -> Bool {
+            !Task.isCancelled && requestRevision == selectionRevision
+                && scopeRevision == selectionScopeRevision && scopeIdentity == currentSyncScopeIdentity
+                && selectedNotificationID == notificationID
         }
-        await markNotificationRead(notificationID)
+        // Neither disk nor read bookkeeping gates the exact detail request.
+        @MainActor @Sendable func restoreCachedSelection() async {
+            guard let cached = try? await cache?.load(notificationID: notificationID),
+                  ownsSelection(), self.selectedNotificationDetail == nil else { return }
+            self.selectedCachedDetail = true
+            self.selectedItemSnapshot.select(cached, scopeIdentity: scopeIdentity)
+        }
+        async let cachedRead: Void = restoreCachedSelection()
+        async let read: Void = markNotificationRead(notificationID, remote: inboxRemote, scopeRevision: scopeRevision)
+        Task {
+            guard scopeRevision == selectionScopeRevision, scopeIdentity == currentSyncScopeIdentity else { return }
+            await recordOpened(notificationID: notificationID)
+        }
         do {
-            selectedNotificationDetail = try await inboxRemote?.fetchDetail(
-                notificationID: notificationID
-            )
-        } catch { /* The cached/list projection remains usable offline. */ }
+            let detail = try await inboxRemote.fetchDetail(notificationID: notificationID)
+            guard ownsSelection(), detail.item.id == notificationID else { return }
+            selectedItemSnapshot.select(detail.item, scopeIdentity: scopeIdentity)
+            selectedNotificationDetail = detail
+            try? await cache?.save(detail.item)
+        } catch {
+            guard ownsSelection() else { return }
+            notificationDetailError = "Full notification details are unavailable. Try again when connected."
+        }
+        await cachedRead
+        await read
     }
 
-    func markAllNotificationsRead() async {
-        guard let inboxRemote, let watermark = inboxReadWatermark else { return }
-        do {
-            let response = try await inboxRemote.markAllRead(watermark: watermark)
-            unreadCount = response.unread.account
-            unreadByProject = response.unread.projects
-            _ = await refresh()
-        } catch { interactionError = "Read state could not be synchronized." }
+    func markAllNotificationsRead(notificationIDs: [String]? = nil) async {
+        let captured = notificationIDs ?? historySnapshot.items.filter { $0.readAt == nil }.map(\.id)
+        await queueReadIntent(captured)
+    }
+
+    var readRecoveryMessage: String? {
+        switch readState.issue {
+        case .full: return "Read queue is full. Connect to sync before marking more items."
+        case .storage: return "Read status could not be saved on this iPhone. Try again after unlocking."
+        case .authorization: return "Reconnect this iPhone to synchronize read status."
+        case .invalidResponse: return "Read confirmation was incomplete. Saved changes will be retried."
+        case .offline: return "Read status is saved on this iPhone and will sync when connected."
+        case nil: return readState.pendingIDs.isEmpty ? nil : "Read status saved; waiting to sync."
+        }
+    }
+
+    func isRead(_ item: InboxItem) -> Bool { item.readAt != nil || readState.locallyReadIDs.contains(item.id) }
+
+    private func bindReadCoordinator() {
+        guard let identity = currentSyncScopeIdentity, identity != boundReadScopeIdentity, let credential,
+              let storage = try? StorageScope(serverOrigin: serverURL, accountID: credential.accountId, deviceID: credential.deviceId) else { return }
+        let store: any PendingReadStoring
+        if let existing = pendingReadStores[storage] { store = existing }
+        else { store = makePendingReadStore(storage); pendingReadStores[storage] = store }
+        readCoordinator.activate(scope: SessionScope(storage: storage, credentialVersion: credential.credentialVersion),
+            store: store, remote: makeInboxDataSource(serverURL, credential.accessToken))
+        boundReadScopeIdentity = identity
+    }
+
+    private func queueReadIntent(_ ids: [String]) async {
+        guard !ids.isEmpty, let identity = currentSyncScopeIdentity else { return }
+        bindReadCoordinator()
+        guard await readCoordinator.enqueue(ids), currentSyncScopeIdentity == identity else { return }
+        requestReadRecovery()
+    }
+
+    private func requestReadRecovery() {
+        guard isForeground, let identity = currentSyncScopeIdentity else { return }
+        bindReadCoordinator(); maintenance.bind(scope: identity)
+        maintenance.request(.reads) { [weak self] in
+            guard let self, !Task.isCancelled, self.currentSyncScopeIdentity == identity else { return }
+            await self.readCoordinator.flush()
+        }
+    }
+
+    private func acceptReadConfirmation(_ unread: InboxUnreadSummary) {
+        guard let identity = currentSyncScopeIdentity, boundReadScopeIdentity == identity else { return }
+        unreadCount = unread.account; unreadByProject = unread.projects
+        guard isForeground, configuredSyncScopeIdentity == identity else { return }
+        maintenance.request(.history) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == identity, !Task.isCancelled else { return }
+            try? await self.reloadHistoryFromServer()
+        }
     }
 
     func withdrawNotification(_ notificationID: String) async {
@@ -843,14 +1133,11 @@ final class AppModel: ObservableObject {
             && item.activitySummary == nil && item.withdrawnAt == nil
     }
 
-    private func markNotificationRead(_ notificationID: String) async {
-        guard let inboxRemote else { return }
-        do {
-            let response = try await inboxRemote.markRead(notificationID: notificationID)
-            unreadCount = response.unread.account
-            unreadByProject = response.unread.projects
-            _ = await refresh()
-        } catch { /* Opening remains available offline; the next refresh may retry. */ }
+    private func markNotificationRead(
+        _ notificationID: String, remote: any InboxDataSource, scopeRevision: UInt64
+    ) async {
+        guard isCurrentSelection(scopeRevision) else { return }
+        await queueReadIntent([notificationID])
     }
 
     private func fetchAuthoritativeLiveActivities() async -> ActiveLiveActivityIdentityPage? {
@@ -876,16 +1163,129 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func invalidateSelectionScope() {
+        selectionScopeRevision &+= 1
+        detailCache = nil
+        boundReadScopeIdentity = nil; readCoordinator.stop()
+        boundReceiptScopeIdentity = nil; receiptCoordinator.stop()
+        historyRepair.stop(); maintenance.stop(); historyRequested = false
+        historyScopeRevision += 1; historyRequestRevision += 1
+        dismissNotification()
+        synchronizeCurrentSession()
+    }
+
+    private func synchronizeCurrentSession() {
+        guard runtimeReady, let credential,
+              accountState != .signedOut, accountState != .signingOut, accountState != .disabled,
+              accountSession?.account?.accountId == nil || accountSession?.account?.accountId == credential.accountId
+        else {
+            sessionController.stop()
+            if runtimeReady { system.configureActivityTokens(nil) }
+            return
+        }
+        do { try sessionController.ensure(origin: serverURL, credential: credential) }
+        catch { sessionController.stop() }
+        configureLiveActivityTokenContext()
+    }
+
+    private func configureLiveActivityTokenContext() {
+        guard runtimeReady, let credential, sessionController.state != nil else {
+            if runtimeReady { system.configureActivityTokens(nil) }
+            return
+        }
+        let heartbeat = (try? pushTokenStore.load()).flatMap { try? makeHeartbeat(credential: credential, apnsToken: $0) }
+        system.configureActivityTokens(.init(origin: serverURL, credential: credential, client: apiClient,
+                                             environment: Self.apnsEnvironment, heartbeat: heartbeat))
+    }
+
+    var currentPresentation: CurrentInboxPresentation {
+        CurrentInboxPresentation(state: currentState, now: currentTime)
+    }
+
+    var currentTime: Date { sessionController.currentTime() ?? currentState?.snapshot.evaluatedAt ?? Date() }
+
+    func decisionAvailability(_ identity: CurrentDecisionIdentity) -> CurrentActionAvailability {
+        let now = currentTime
+        return CurrentInboxPresentation.availability(for: identity, state: sessionController.state, now: now)
+    }
+
+    func currentDecision(notificationID: String) -> CurrentDecisionDraft? {
+        guard let state = currentState,
+              let item = state.snapshot.pending?.entries.values.first(where: { $0.item.notificationId == notificationID })?.item else { return nil }
+        let identity = CurrentDecisionIdentity(pending: item, scope: state.scope.storage)
+        return decisionDrafts[identity.id] ?? CurrentDecisionDraft(identity: identity, title: item.title, prompt: item.summary)
+    }
+
+    var retainedDecisionDrafts: [CurrentDecisionDraft] {
+        decisionDrafts.values.filter { $0.identity.scope == currentState?.scope.storage }
+            .sorted { $0.identity.expiresAt < $1.identity.expiresAt }
+    }
+
+    func retainDecisionDraft(_ draft: CurrentDecisionDraft) {
+        guard draft.identity.scope == currentState?.scope.storage else { return }
+        if draft.text.isEmpty || responseIsAccepted(for: draft.identity.notificationID) { decisionDrafts.removeValue(forKey: draft.id) }
+        else { decisionDrafts[draft.id] = draft }
+    }
+
+    func verifyCurrentDecision(_ identity: CurrentDecisionIdentity) async {
+        guard identity.scope == currentState?.scope.storage, decisionAvailability(identity) == .unverified else { return }
+        await sessionController.refresh(subjectIDs: [identity.subjectID])
+    }
+
+    func showCurrentWork() {
+        dismissNotification()
+        currentNavigationRevision &+= 1
+    }
+
+    func retryCurrentStorage() { sessionController.retryStorage() }
+    func refreshCurrent() async { await sessionController.refresh() }
+    func loadMoreCurrent() async { await sessionController.loadMoreCurrent() }
+    func loadMorePending() async { await sessionController.loadMorePending() }
+
+    func currentChangeReceived() { sessionController.receive(.reconcile) }
+
+    func backgrounded() {
+        isForeground = false
+        sessionController.setForeground(false)
+        historyRepair.stop(); maintenance.stop(); readCoordinator.suspend(); receiptCoordinator.suspend()
+    }
+
+    func backgroundCurrentRefresh(
+        waitForDeadline: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(5)) }
+    ) async -> Bool {
+        await BoundedDecisionAttempt.run(waitForDeadline: waitForDeadline) { [weak self] in
+            guard let self else { return false }
+            if !self.runtimeReady {
+                do {
+                    guard try self.signOutProgressStore.load() == nil,
+                          let restored = try self.credentialStore.load() else { return false }
+                    self.accountSession = try self.accountSessionStore.load()
+                    self.credential = restored
+                    self.runtimeReady = true
+                    self.isForeground = false
+                    self.sessionController.setForeground(false)
+                    self.synchronizeCurrentSession()
+                } catch { return false }
+            }
+            return await self.sessionController.reconcileInBackground()
+        }
+    }
+
     func dismissNotification() {
+        selectionRevision &+= 1
+        pendingNotificationID = nil
+        pendingActivityIdentity = nil
         selectedNotificationID = nil
         selectedNotificationDetail = nil
+        notificationDetailError = nil
+        selectedCachedDetail = false
         selectedItemSnapshot.dismiss()
         interactionError = nil
     }
 
     func openActivity(identity: LiveActivityIdentity) async {
         guard identity.isValid else { return }
-        interactionError = nil
+        dismissNotification()
         pendingActivityIdentity = identity
         resolvePendingActivity()
         if pendingActivityIdentity != nil {
@@ -899,25 +1299,55 @@ final class AppModel: ObservableObject {
         text: String? = nil
     ) async {
         guard
+            respondingNotificationID == nil,
+            !responseIsQueued(for: item.id),
+            !responseIsAccepted(for: item.id),
             let credential,
             let interaction = item.interaction,
-            interaction.state == .pending,
-            interaction.expiresAt > .now,
             NotificationResponsePolicy.supports(action, kind: interaction.kind)
         else { return }
+        guard interaction.state == .pending, interaction.expiresAt > .now else {
+            responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
+                phase: .rejected, action: action,
+                message: interaction.expiresAt <= .now ? "Request expired — nothing sent" : "Request already answered or replaced")
+            return
+        }
+        await protectAndSendResponse(notificationID: item.id, interactionID: interaction.id,
+            expiresAt: interaction.expiresAt, credential: credential, action: action, text: text)
+    }
+
+    /// Current UI submits the immutable request without fetching history or full details first.
+    func respond(to identity: CurrentDecisionIdentity, action: NotificationInteractionAction, text: String? = nil) async {
+        let availability = decisionAvailability(identity)
+        guard availability.permitsSubmission, let credential,
+              let kind = InboxInteraction.Kind(rawValue: identity.kind.rawValue),
+              NotificationResponsePolicy.supports(action, kind: kind) else {
+            responseFeedbackByNotificationID[identity.notificationID] = NotificationResponseFeedback(
+                phase: .rejected, action: action, message: availability.explanation ?? "This action is unavailable.")
+            return
+        }
+        await protectAndSendResponse(notificationID: identity.notificationID, interactionID: identity.interactionID,
+            expiresAt: identity.expiresAt, credential: credential, action: action, text: text)
+    }
+
+    private func protectAndSendResponse(notificationID: String, interactionID: String, expiresAt: Date,
+                                        credential: DeviceCredential, action: NotificationInteractionAction, text: String?) async {
+        let diagnosticID = UUID()
+        let diagnosticStart = ContinuousClock.now
         let accountID = credential.accountId
-        respondingNotificationID = item.id
-        responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
+        let responseScopeRevision = selectionScopeRevision
+        respondingNotificationID = notificationID
+        responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
             phase: .sending,
             action: action
         )
         interactionError = nil
-        defer { respondingNotificationID = nil }
+        defer { if respondingNotificationID == notificationID { respondingNotificationID = nil } }
 
         let trimmedText = NotificationReplyPolicy.normalized(text)
         if action == .answer, !NotificationReplyPolicy.isValid(trimmedText) {
             interactionError = NotificationReplyPolicy.validationMessage
-            responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
+            responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
                 phase: .rejected,
                 action: action,
                 message: NotificationReplyPolicy.validationMessage
@@ -928,71 +1358,18 @@ final class AppModel: ObservableObject {
         let pending = PendingNotificationResponse(
             accountID: accountID,
             deviceID: credential.deviceId,
-            notificationID: item.id,
-            action: action,
-            value: value,
-            idempotencyKey: "ios:\(credential.installationId):\(item.id):\(action.rawValue)",
-            expiresAt: interaction.expiresAt
-        )
-        do {
-            let enqueue = try await pendingResponseStore.enqueue(pending)
-            switch enqueue {
-            case .enqueued:
-                responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
-                    phase: .queued,
-                    action: action
-                )
-            case .alreadyPending(let existing):
-                responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
-                    phase: .queued,
-                    action: existing.action
-                )
-            case .alreadyNotificationConfirmed(let confirmation):
-                responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
-                    phase: .accepted,
-                    action: confirmation.action,
-                    canonicalState: confirmation.canonicalState
-                )
-                return
-            case .alreadyConfirmed:
-                throw LiveActivityResponseConfirmationError.responseMismatch
-            }
-            await flushPendingResponses()
-            await refresh()
-        } catch {
-            interactionError = "The response could not be protected locally. Nothing was sent or assumed."
-            responseFeedbackByNotificationID[item.id] = NotificationResponseFeedback(
-                phase: .rejected,
-                action: action,
-                message: "Nothing was sent or assumed — retry"
-            )
-        }
-    }
-
-    func respond(notificationID: String, action: NotificationInteractionAction, text: String? = nil) async {
-        await openNotification(notificationID: notificationID)
-        if let item = (items + historySnapshot.items).first(where: { $0.id == notificationID }) {
-            await respond(to: item, action: action, text: text)
-            return
-        }
-        guard let credential else { return }
-        let accountID = credential.accountId
-        let trimmedText = NotificationReplyPolicy.normalized(text)
-        if action == .answer, !NotificationReplyPolicy.isValid(trimmedText) {
-            interactionError = NotificationReplyPolicy.validationMessage
-            return
-        }
-        let pending = PendingNotificationResponse(
-            accountID: accountID,
-            deviceID: credential.deviceId,
             notificationID: notificationID,
             action: action,
-            value: trimmedText.map { ["response": $0] } ?? [:],
+            value: value,
             idempotencyKey: "ios:\(credential.installationId):\(notificationID):\(action.rawValue)",
-            expiresAt: .now.addingTimeInterval(86_400)
+            expiresAt: expiresAt,
+            interactionID: interactionID,
+            serverOrigin: serverURL
         )
+        var selectedResponse = pending
         do {
             let enqueue = try await pendingResponseStore.enqueue(pending)
+            guard selectionScopeRevision == responseScopeRevision, self.credential?.accessToken == credential.accessToken else { return }
             switch enqueue {
             case .enqueued:
                 responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
@@ -1000,11 +1377,14 @@ final class AppModel: ObservableObject {
                     action: action
                 )
             case .alreadyPending(let existing):
+                selectedResponse = existing
                 responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
                     phase: .queued,
                     action: existing.action
                 )
             case .alreadyNotificationConfirmed(let confirmation):
+                recordDiagnostic(.init(operation: .responseSubmission, phase: .completed,
+                    timestamp: confirmation.confirmedAt, outcome: .confirmed, priority: .immediate))
                 responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
                     phase: .accepted,
                     action: confirmation.action,
@@ -1014,8 +1394,23 @@ final class AppModel: ObservableObject {
             case .alreadyConfirmed:
                 throw LiveActivityResponseConfirmationError.responseMismatch
             }
-            await flushPendingResponses()
+            recordDiagnostic(.init(operation: .responseSubmission, phase: .persisted, correlationID: diagnosticID,
+                durationMilliseconds: Self.diagnosticMilliseconds(since: diagnosticStart), outcome: .pending, priority: .immediate))
+            _ = await responseSubmitter.submit(selectedResponse, credential: credential)
+        } catch let failure as NotificationResponseFailure {
+            if selectionScopeRevision == responseScopeRevision {
+                recordDiagnostic(.init(operation: .responseSubmission, phase: .completed, correlationID: diagnosticID,
+                    outcome: OperationDiagnostic.outcome(for: MobileAPIError.decisionRejected(failure.reason)), priority: .immediate))
+            }
+            guard selectionScopeRevision == responseScopeRevision, self.credential?.accessToken == credential.accessToken else { return }
+            responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
+                phase: .rejected, action: failure.response.action, message: failure.reason.message)
         } catch {
+            if selectionScopeRevision == responseScopeRevision {
+                recordDiagnostic(.init(operation: .responseSubmission, phase: .completed, correlationID: diagnosticID,
+                    outcome: .storageUnavailable, priority: .immediate))
+            }
+            guard selectionScopeRevision == responseScopeRevision, self.credential?.accessToken == credential.accessToken else { return }
             interactionError = "The response could not be protected locally. Nothing was sent or assumed."
             responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
                 phase: .rejected,
@@ -1025,22 +1420,60 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func notificationResponseQueued(notificationID: String) async {
-        await openNotification(notificationID: notificationID)
-        await flushPendingResponses()
+    func respond(notificationID: String, action: NotificationInteractionAction, text: String? = nil) async {
+        if let item = (items + historySnapshot.items).first(where: { $0.id == notificationID }) {
+            await respond(to: item, action: action, text: text)
+            return
+        }
+        // An identifier alone carries no deadline. Resolve only this exact event;
+        // never invent validity or fetch the whole inbox before responding.
+        let revision = selectionScopeRevision
+        if let detail = try? await inboxRemote?.fetchDetail(notificationID: notificationID),
+           revision == selectionScopeRevision, detail.item.id == notificationID {
+            await respond(to: detail.item, action: action, text: text)
+            return
+        }
+        guard revision == selectionScopeRevision else { return }
+        responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
+            phase: .rejected, action: action, message: "Request details unavailable — open Relo to retry")
     }
 
-    func notificationResponseFailed(
-        notificationID: String,
-        action: NotificationInteractionAction
-    ) async {
-        await openNotification(notificationID: notificationID)
-        responseFeedbackByNotificationID[notificationID] = NotificationResponseFeedback(
-            phase: .rejected,
-            action: action,
-            message: "The action could not be protected locally — retry in Relo"
-        )
-        interactionError = "The notification action could not be protected locally. Nothing was sent or assumed."
+    /// Called from the notification delegate, including a launch without a scene.
+    /// Only the protected response scope is restored; no sync, health, or token work.
+    func respondToNotificationAction(_ request: NotificationActionRequest) async {
+        if credential == nil, accountState == .restoring, !hasStarted {
+            do {
+                guard let restored = try credentialStore.load() else { return }
+                if let metadata = request.metadata,
+                   (restored.accountId != metadata.accountID || restored.deviceId != metadata.deviceID) { return }
+                credential = restored
+                selectedAccountId = restored.accountId
+                try await pendingResponseStore.select(accountID: restored.accountId, deviceID: restored.deviceId)
+            } catch { return }
+        }
+        guard !Task.isCancelled, let credential else { return }
+        guard let metadata = request.metadata else {
+            // Bounded transition for already-delivered notifications. Resolve the
+            // immutable event with the captured credential; never grant fresh TTL.
+            let revision = selectionScopeRevision
+            let remote = inboxRemote ?? makeInboxDataSource(serverURL, credential.accessToken)
+            if let detail = try? await remote.fetchDetail(notificationID: request.notificationID),
+               isCurrentSelection(revision), self.credential == credential,
+               detail.item.id == request.notificationID {
+                await respond(to: detail.item, action: request.action, text: request.text)
+            } else if isCurrentSelection(revision) {
+                responseFeedbackByNotificationID[request.notificationID] = NotificationResponseFeedback(
+                    phase: .rejected, action: request.action,
+                    message: "Original request details unavailable — open Relo to retry")
+            }
+            return
+        }
+        guard credential.accountId == metadata.accountID, credential.deviceId == metadata.deviceID else { return }
+        let item = InboxItem(id: request.notificationID, kind: .notification, sourceName: "Relo",
+            title: "Notification response", createdAt: .now,
+            interaction: InboxInteraction(id: metadata.interactionID, kind: metadata.kind, prompt: "",
+                state: .pending, expiresAt: metadata.expiresAt))
+        await respond(to: item, action: request.action, text: request.text)
     }
 
     private func resolvePendingNotification() {
@@ -1081,689 +1514,96 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private var liveActivityApplier: LiveActivityApplier {
+        LiveActivityApplier(
+            coordinator: liveActivityCoordinator,
+            observe: { [weak self] in self?.observeActivityKitUpdates(for: $0) },
+            reconnectActivityTokens: { [weak self] in self?.system.reconnectActivityTokens() }
+        )
+    }
+
     private func applyPendingLiveActivityCommands(
         from items: [InboxItem],
         authoritativeLiveActivities: ActiveLiveActivityIdentityPage? = nil
     ) async {
+        guard let scope = currentSyncScopeIdentity else { return }
+        await liveActivityApplier.applyPending(
+            from: items,
+            authoritativeLiveActivities: authoritativeLiveActivities,
+            context: LiveActivityApplicationContext(
+                isCurrent: { [weak self] in self?.currentSyncScopeIdentity == scope && !Task.isCancelled },
+                deviceID: { [weak self] in self?.credential?.deviceId },
+                accountID: { [weak self] in self?.credential?.accountId },
+                selectedAccountID: { [weak self] in self?.selectedAccountId },
+                selectionRevision: { [weak self] in self?.selectionScopeRevision ?? .max }
+            )
+        )
+    }
+
+    private func flushNotificationReceipts() async {
+        guard !Task.isCancelled, let credential, let expectedScope = currentSyncScopeIdentity else { return }
+        do {
+            if boundReceiptScopeIdentity != expectedScope {
+                let storage = try StorageScope(serverOrigin: serverURL, accountID: credential.accountId, deviceID: credential.deviceId)
+                let remote = try HTTPNotificationReceiptSource(scope: storage, credential: credential)
+                try receiptCoordinator.activate(scope: SessionScope(storage: storage, credentialVersion: credential.credentialVersion),
+                    store: notificationReceiptStore, remote: remote)
+                boundReceiptScopeIdentity = expectedScope
+                reportedNotFoundReceiptRetirements = 0
+            }
+            await receiptCoordinator.flush()
+            guard !Task.isCancelled, expectedScope == currentSyncScopeIdentity else { return }
+            let state = receiptCoordinator.state
+            recordDiagnostic(.init(operation: .receiptUpload, phase: .completed,
+                outcome: RecoveryStatusPolicy.receipts(state), priority: .maintenance))
+            let logger = Logger(subsystem: "relo.app", category: "receipts")
+            if state.retiredUnscoped > reportedLegacyReceiptRetirements {
+                logger.notice("Retired \(state.retiredUnscoped) unscoped predecessor receipts without reassignment")
+                reportedLegacyReceiptRetirements = state.retiredUnscoped
+            }
+            if state.retiredNotFound > reportedNotFoundReceiptRetirements {
+                logger.notice("Retired \(state.retiredNotFound) exact-scope receipts after server not-found acknowledgement")
+                reportedNotFoundReceiptRetirements = state.retiredNotFound
+            }
+            if state.issue == .unauthorized { await handleRevokedDeviceCredential() }
+            else if state.issue != nil { logger.notice("Receipt replay paused with records retained") }
+        } catch { Logger(subsystem: "relo.app", category: "receipts").error("Receipt scope could not be configured") }
+    }
+
+    private func retireNotificationReceipts(credential: DeviceCredential?) async throws {
         guard let credential else { return }
-        do {
-            let pending = try await liveActivityCoordinator.pending(
-                items: items,
-                targetDeviceID: credential.deviceId
-            )
-            let locallyActive = Set(
-                Activity<ReloActivityAttributes>.activities
-                    .filter { $0.attributes.accountID == selectedAccountId }
-                    .map { $0.attributes.identity }
-            )
-            let recoveryPlan = LiveActivityReinstallationRecoveryPolicy.plan(
-                pending: pending,
-                authoritativeCommands: authoritativeLiveActivities?.activities.compactMap(\.recoveryEnvelope) ?? [],
-                authoritativeActiveIdentities: Set(
-                    authoritativeLiveActivities?.activities.map(\.identity) ?? []
-                ),
-                locallyActiveIdentities: locallyActive,
-                now: .now
-            )
-            var blockedActivities = Set<LiveActivityIdentity>()
-            for envelope in recoveryPlan.commands {
-                guard !blockedActivities.contains(envelope.command.identity) else { continue }
-                let isAuthoritativeRecovery = recoveryPlan.recoveryCommandKeys.contains(envelope.commandKey)
-                    && !Activity<ReloActivityAttributes>.activities.contains {
-                        $0.attributes.accountID == selectedAccountId
-                            && $0.attributes.identity == envelope.command.identity
-                    }
-                let outcome = await applyLiveActivityCommand(
-                    envelope,
-                    allowsAuthoritativeRecovery: isAuthoritativeRecovery
-                )
-                guard outcome != .failed else {
-                    blockedActivities.insert(envelope.command.identity)
-                    continue
-                }
-                if outcome == .ignored {
-                    try await liveActivityCoordinator.acknowledge(envelope)
-                    continue
-                }
-                let alertScheduled = try await liveActivityCoordinator.isAlertScheduled(for: envelope)
-                if !isAuthoritativeRecovery && envelope.command.requiresAppAlert && !alertScheduled {
-                    guard await scheduleCompanionAlert(
-                        envelope.command,
-                        companionNotificationID: envelope.eventID
-                    ) else {
-                        blockedActivities.insert(envelope.command.identity)
-                        continue
-                    }
-                    try await liveActivityCoordinator.acknowledgeAlertScheduled(for: envelope)
-                }
-                try await liveActivityCoordinator.acknowledge(envelope)
-            }
-        } catch {
-            // The Inbox remains authoritative; an unacknowledged command is retried.
-        }
-    }
-
-    private func applyLiveActivityCommand(
-        _ envelope: LiveActivityCommandEnvelope,
-        allowsAuthoritativeRecovery: Bool = false
-    ) async -> LiveActivityApplicationOutcome {
-        let command = envelope.command
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return .failed }
-        guard let accountID = credential?.accountId else { return .failed }
-        let presentation = command.presentation
-        let display = command.lockScreenDisplay
-
-        let state = ReloActivityAttributes.ContentState(
-            generation: command.generation,
-            updatedAt: envelope.createdAt,
-            sequence: command.sequence ?? 0,
-            expiresAt: command.expiresAt,
-            staleAt: command.staleAt,
-            interaction: display.allowsInteraction ? command.interaction.map {
-                ReloActivityAttributes.Interaction(
-                    id: $0.id,
-                    notificationID: $0.notificationId,
-                    targetDeviceID: command.targetDeviceId,
-                    accountID: accountID,
-                    kind: $0.kind.rawValue,
-                    state: $0.state.rawValue,
-                    credential: $0.credential,
-                    expiresAtUnixSeconds: Int64($0.expiresAt.timeIntervalSince1970.rounded(.down))
-                )
-            } : nil,
-            presentation: presentation
-        )
-        let fallbackStaleDate = Date().addingTimeInterval(600)
-        let staleDate = command.staleAt
-            ?? command.expiresAt.map { min($0, fallbackStaleDate) }
-            ?? fallbackStaleDate
-        let content = ActivityContent(
-            state: state,
-            staleDate: staleDate,
-            relevanceScore: command.relevanceScore
-        )
-        guard let expected = liveActivitySnapshot(
-            activityID: command.activityId,
-            generation: command.generation,
-            state: state,
-            isTerminal: command.operation == .end
-        ) else { return .failed }
-        do {
-            let activities = Activity<ReloActivityAttributes>.activities
-            let existing = activities.first {
-                $0.attributes.identity == command.identity
-            }
-            if existing == nil,
-               activities.contains(where: {
-                   $0.attributes.eventID == command.activityId
-                       && $0.attributes.generation > command.generation
-               }) {
-                return .ignored
-            }
-            let observed = existing.flatMap(liveActivitySnapshot)
-            if try await liveActivityCoordinator.applicationJournal(for: envelope) == nil {
-                switch command.operation {
-                case .start:
-                    if existing != nil {
-                        guard let observed else { return .failed }
-                        let incomingSequence = command.sequence ?? 0
-                        if incomingSequence == observed.sequence, observed == expected {
-                            try await liveActivityCoordinator.recordExactConvergenceSuccess(
-                                for: envelope,
-                                observed: observed,
-                                expected: expected
-                            )
-                            return .alreadyCurrent
-                        }
-                        switch LiveActivityCommandOrderingPolicy.evaluate(
-                            operation: command.operation,
-                            incomingSequence: incomingSequence,
-                            incomingTimestamp: envelope.createdAt,
-                            expiresAt: command.expiresAt,
-                            observedSequence: observed.sequence,
-                            observedTimestamp: existing?.content.state.updatedAt ?? .distantPast,
-                            now: .now
-                        ) {
-                        case .apply: break
-                        case .stale: return .ignored
-                        case .conflict: return .failed
-                        }
-                    } else {
-                        if try await liveActivityCoordinator.recordObservedSystemConvergenceSuccess(
-                            for: envelope,
-                            expected: expected
-                        ) {
-                            return .alreadyCurrent
-                        }
-                        guard allowsAuthoritativeRecovery || command.permitsLocalStart else { return .failed }
-                        guard LiveActivityCommandOrderingPolicy.permitsInitialStart(
-                            sequence: command.sequence ?? 0,
-                            timestamp: envelope.createdAt,
-                            expiresAt: command.expiresAt,
-                            now: .now
-                        ) else { return .ignored }
-                    }
-                case .update:
-                    guard existing != nil else {
-                        if try await liveActivityCoordinator.recordObservedSystemConvergenceSuccess(
-                            for: envelope,
-                            expected: expected
-                        ) {
-                            return .alreadyCurrent
-                        }
-                        guard allowsAuthoritativeRecovery || command.permitsLocalRecovery else { return .failed }
-                        guard LiveActivityCommandOrderingPolicy.permitsInitialStart(
-                            sequence: command.sequence ?? 0,
-                            timestamp: envelope.createdAt,
-                            expiresAt: command.expiresAt,
-                            now: .now
-                        ) else { return .ignored }
-                        break
-                    }
-                    guard let observed else { return .failed }
-                    let incomingSequence = command.sequence ?? 0
-                    if incomingSequence == observed.sequence, observed == expected {
-                        try await liveActivityCoordinator.recordExactConvergenceSuccess(
-                            for: envelope,
-                            observed: observed,
-                            expected: expected
-                        )
-                        return .alreadyCurrent
-                    }
-                    switch LiveActivityCommandOrderingPolicy.evaluate(
-                        operation: command.operation,
-                        incomingSequence: incomingSequence,
-                        incomingTimestamp: envelope.createdAt,
-                        expiresAt: command.expiresAt,
-                        observedSequence: observed.sequence,
-                        observedTimestamp: existing?.content.state.updatedAt ?? .distantPast,
-                        now: .now
-                    ) {
-                    case .apply: break
-                    case .stale: return .ignored
-                    case .conflict: return .failed
-                    }
-                case .end:
-                    guard existing != nil else {
-                        if try await liveActivityCoordinator.recordObservedSystemConvergenceSuccess(
-                            for: envelope,
-                            expected: expected
-                        ) {
-                            return .alreadyCurrent
-                        }
-                        return .ignored
-                    }
-                    guard let observed else { return .failed }
-                    if observed == expected, observed.isTerminal {
-                        try await liveActivityCoordinator.recordExactConvergenceSuccess(
-                            for: envelope,
-                            observed: observed,
-                            expected: expected
-                        )
-                        return .alreadyCurrent
-                    }
-                    if observed.isTerminal { return .ignored }
-                    switch LiveActivityCommandOrderingPolicy.evaluate(
-                        operation: command.operation,
-                        incomingSequence: command.sequence ?? 0,
-                        incomingTimestamp: envelope.createdAt,
-                        expiresAt: command.expiresAt,
-                        observedSequence: observed.sequence,
-                        observedTimestamp: existing?.content.state.updatedAt ?? .distantPast,
-                        now: .now
-                    ) {
-                    case .apply: break
-                    case .stale: return .ignored
-                    case .conflict: return .failed
-                    }
-                }
-            }
-            return await performJournaledLiveActivityMutation(
-                envelope,
-                accountID: accountID,
-                existing: existing,
-                content: content,
-                expected: expected,
-                priorActive: command.operation == .end ? observed : nil,
-                observed: observed,
-                allowsAuthoritativeRecovery: allowsAuthoritativeRecovery
-            )
-        } catch {
-            return .failed
-        }
-    }
-
-    private func performJournaledLiveActivityMutation(
-        _ envelope: LiveActivityCommandEnvelope,
-        accountID: String,
-        existing: Activity<ReloActivityAttributes>?,
-        content: ActivityContent<ReloActivityAttributes.ContentState>,
-        expected: LiveActivitySystemSnapshot,
-        priorActive: LiveActivitySystemSnapshot?,
-        observed: LiveActivitySystemSnapshot?,
-        allowsAuthoritativeRecovery: Bool
-    ) async -> LiveActivityApplicationOutcome {
-        let command = envelope.command
-        return await LiveActivityApplicationOrchestrator.apply(
-            coordinator: liveActivityCoordinator,
-            envelope: envelope,
-            expected: expected,
-            priorActive: priorActive,
-            observed: observed
-        ) {
-            switch command.operation {
-            case .start:
-                if let existing {
-                    await existing.update(content)
-                } else {
-                    let display = command.lockScreenDisplay
-                    let style = ReloActivityAttributes.Style(rawValue: display.style) ?? .standard
-                    let attributes = ReloActivityAttributes(
-                        eventID: command.activityId,
-                        generation: command.generation,
-                        sourceName: display.sourceName,
-                        style: style,
-                        accountID: accountID
-                    )
-                    let activity = try Activity<ReloActivityAttributes>.request(
-                        attributes: attributes,
-                        content: content,
-                        pushType: .token
-                    )
-                    observePushTokenUpdates(for: activity)
-                    observeActivityKitUpdates(for: activity)
-                    await registerCurrentPushToken(for: activity)
-                }
-            case .update:
-                if let existing {
-                    await existing.update(content)
-                } else if allowsAuthoritativeRecovery || command.permitsLocalRecovery {
-                    let display = command.lockScreenDisplay
-                    let style = ReloActivityAttributes.Style(rawValue: display.style) ?? .standard
-                    let attributes = ReloActivityAttributes(
-                        eventID: command.activityId,
-                        generation: command.generation,
-                        sourceName: display.sourceName,
-                        style: style,
-                        accountID: accountID
-                    )
-                    let activity = try Activity<ReloActivityAttributes>.request(
-                        attributes: attributes,
-                        content: content,
-                        pushType: .token
-                    )
-                    observePushTokenUpdates(for: activity)
-                    observeActivityKitUpdates(for: activity)
-                    await registerCurrentPushToken(for: activity)
-                } else {
-                    throw LiveActivityCommandCoordinatorError.missingActivity
-                }
-            case .end:
-                guard let existing else { throw LiveActivityCommandCoordinatorError.missingActivity }
-                let dismissal: ActivityUIDismissalPolicy = if let seconds = command.dismissAfterSeconds, seconds > 0 {
-                    .after(.now.addingTimeInterval(TimeInterval(seconds)))
-                } else {
-                    .immediate
-                }
-                await existing.end(content, dismissalPolicy: dismissal)
-            }
-        }
-    }
-
-    private func liveActivitySnapshot(
-        _ activity: Activity<ReloActivityAttributes>
-    ) -> LiveActivitySystemSnapshot? {
-        liveActivitySnapshot(
-            activityID: activity.attributes.eventID,
-            generation: activity.attributes.generation,
-            state: activity.content.state,
-            isTerminal: activity.activityState == .ended || activity.activityState == .dismissed
-        )
-    }
-
-    private func liveActivitySnapshot(
-        activityID: String,
-        generation: Int,
-        state: ReloActivityAttributes.ContentState,
-        isTerminal: Bool
-    ) -> LiveActivitySystemSnapshot? {
-        guard state.generation == generation else { return nil }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(LiveActivityContentDigestPayload(state)) else { return nil }
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        return LiveActivitySystemSnapshot(
-            activityID: activityID,
-            generation: generation,
-            sequence: state.sequence,
-            contentDigest: digest,
-            isTerminal: isTerminal
-        )
-    }
-
-    private func scheduleCompanionAlert(
-        _ command: LiveActivityCommand,
-        companionNotificationID: String
-    ) async -> Bool {
-        let display = command.lockScreenDisplay
-        let notification = UNMutableNotificationContent()
-        notification.title = display.headline
-        notification.body = [display.status, display.detail].compactMap { $0 }.joined(separator: " · ")
-        notification.sound = .default
-        notification.threadIdentifier = "relo-live-activities"
-        if display.allowsInteraction, let interaction = command.interaction {
-            notification.categoryIdentifier = switch interaction.kind {
-            case .approval: "RELO_APPROVAL"
-            case .yesNo: "RELO_YES_NO"
-            case .text: "RELO_TEXT"
-            }
-        }
-        notification.userInfo = [
-            "relo": ["notificationId": command.interaction?.notificationId ?? companionNotificationID]
-        ]
-        let request = UNNotificationRequest(
-            identifier: "\(companionNotificationID).live-activity-companion",
-            content: notification,
-            trigger: nil
-        )
-        do {
-            try await UNUserNotificationCenter.current().add(request)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    private func flushPendingResponses() async {
-        guard let credential else { return }
-        let expectedAccessToken = credential.accessToken
-        let accountID = credential.accountId
-        let liveActivityResponseFile = try? LiveActivityResponseStorage.responseQueue()
-        if
-            let confirmations = try? liveActivityResponseFile?.confirmations(
-                accountID: accountID,
-                deviceID: credential.deviceId,
-                now: .now
-            )
-        {
-            await LiveActivityResponseReplayCoordinator.replay(confirmations) { confirmation, presentedAt in
-                _ = await LiveActivityResponseActivityPresenter.present(
-                    confirmation,
-                    presentedAt: presentedAt
-                )
-            }
-        }
-        let pending: [PendingNotificationResponse]
-        do {
-            let confirmations = try await pendingResponseStore.notificationConfirmations(now: .now)
-            for confirmation in confirmations where confirmation.deviceID == credential.deviceId
-                && confirmation.accountID == credential.accountId {
-                responseFeedbackByNotificationID[confirmation.notificationID] = NotificationResponseFeedback(
-                    phase: .accepted,
-                    action: confirmation.action,
-                    canonicalState: confirmation.canonicalState
-                )
-            }
-            pending = try await pendingResponseStore.pending(now: .now)
-            queuedResponseNotificationIDs = Set(
-                pending.compactMap { response in
-                    response.deviceID == credential.deviceId && response.accountID == credential.accountId
-                        ? response.notificationID
-                        : nil
-                }
-            )
-            for response in pending where response.deviceID == credential.deviceId
-                && response.accountID == credential.accountId {
-                responseFeedbackByNotificationID[response.notificationID] = NotificationResponseFeedback(
-                    phase: .queued,
-                    action: response.action
-                )
-            }
-        } catch {
-            interactionError = "Protected queued responses could not be opened."
-            return
-        }
-        for response in pending where response.deviceID == credential.deviceId
-            && response.accountID == credential.accountId {
-            guard self.credential?.accessToken == expectedAccessToken else { return }
-            do {
-                switch response.endpoint {
-                case .notification:
-                    try await apiClient.submitInteraction(
-                        credential: credential,
-                        notificationId: response.notificationID,
-                        action: response.action,
-                        value: response.value,
-                        idempotencyKey: response.idempotencyKey
-                    )
-                    guard self.credential?.accessToken == expectedAccessToken else { return }
-                    let confirmation = try await pendingResponseStore.confirmNotification(
-                        response,
-                        confirmedAt: .now
-                    )
-                    responseFeedbackByNotificationID[response.notificationID] = NotificationResponseFeedback(
-                        phase: .accepted,
-                        action: confirmation.action,
-                        canonicalState: confirmation.canonicalState
-                    )
-                    interactionError = nil
-                case .liveActivity:
-                    guard let liveActivityResponseFile else {
-                        throw LiveActivityResponseTransport.SubmissionError.invalidConfiguration
-                    }
-                    let outcome = await LiveActivityResponseIntentOrchestrator.retry(
-                        response,
-                        queue: liveActivityResponseFile,
-                        submit: LiveActivityResponseTransport.submit,
-                        present: LiveActivityResponseActivityPresenter.present
-                    )
-                    switch outcome {
-                    case .accepted, .duplicateConfirmed:
-                        break
-                    case .queued, .duplicatePending:
-                        interactionError = "Response queued securely. Relo will retry when Relo server is reachable."
-                        return
-                    case .rejected:
-                        queuedResponseNotificationIDs.remove(response.notificationID)
-                        interactionError = "A queued Live Activity response expired or was rejected."
-                    }
-                }
-                queuedResponseNotificationIDs.remove(response.notificationID)
-            } catch LiveActivityResponseTransport.SubmissionError.rejected {
-                try? await pendingResponseStore.remove(id: response.id)
-                queuedResponseNotificationIDs.remove(response.notificationID)
-                if response.endpoint == .liveActivity {
-                    await LiveActivityResponseActivityPresenter.present(
-                        LiveActivityResponsePresentationCommand(
-                            phase: .rejected,
-                            response: response,
-                            canonicalState: nil,
-                            presentedAt: .now
-                        )
-                    )
-                }
-                interactionError = "A queued Live Activity response expired or was rejected."
-            } catch MobileAPIError.idempotencyConflict {
-                try? await pendingResponseStore.remove(id: response.id)
-                queuedResponseNotificationIDs.remove(response.notificationID)
-                responseFeedbackByNotificationID[response.notificationID] = NotificationResponseFeedback(
-                    phase: .rejected,
-                    action: response.action,
-                    message: "Already answered or expired — refresh before retrying"
-                )
-                interactionError = "This request was already answered or has expired."
-            } catch MobileAPIError.invalidRequest {
-                let resolution = await PendingResponseQueueFailureHandler.handle(
-                    .invalidRequest,
-                    response: response,
-                    store: pendingResponseStore
-                )
-                if resolution == .discardedInvalidResponse {
-                    queuedResponseNotificationIDs.remove(response.notificationID)
-                    responseFeedbackByNotificationID[response.notificationID] = NotificationResponseFeedback(
-                        phase: .rejected,
-                        action: response.action,
-                        message: "Invalid response — retry in Relo"
-                    )
-                    interactionError = "This queued response was rejected as invalid and will not be retried."
-                } else {
-                    interactionError = "The rejected response could not be removed from the protected queue. Relo will try again."
-                    return
-                }
-            } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
-                try? await pendingResponseStore.remove(id: response.id)
-                await handleRevokedDeviceCredential()
-                interactionError = "This iPhone must be registered again before responding."
-                return
-            } catch {
-                if response.endpoint == .liveActivity {
-                    await LiveActivityResponseActivityPresenter.present(
-                        LiveActivityResponsePresentationCommand(
-                            phase: .queued,
-                            response: response,
-                            canonicalState: nil,
-                            presentedAt: .now
-                        )
-                    )
-                }
-                responseFeedbackByNotificationID[response.notificationID] = NotificationResponseFeedback(
-                    phase: .queued,
-                    action: response.action
-                )
-                interactionError = "Response queued securely. Relo will retry when Relo server is reachable."
-                return
-            }
-        }
-    }
-
-    private func flushNotificationReceipts(authoritativeNotificationIDs: Set<String>) async {
-        guard let credential, let expectedScope = currentSyncScopeIdentity else { return }
-        let notificationIDs = NotificationReceiptScopePolicy.eligible(
-            pendingNotificationIDs: notificationReceiptStore.pending(limit: 200),
-            authoritativeNotificationIDs: authoritativeNotificationIDs
-        ).prefix(25)
-        var completed = Set<String>()
-
-        for notificationID in notificationIDs {
-            guard expectedScope == currentSyncScopeIdentity,
-                  self.credential?.accessToken == credential.accessToken
-            else { return }
-            do {
-                try await apiClient.submitInteraction(
-                    credential: credential,
-                    notificationId: notificationID,
-                    action: .received,
-                    value: [:],
-                    idempotencyKey: "ios:\(credential.installationId):\(notificationID):received"
-                )
-                completed.insert(notificationID)
-            } catch MobileAPIError.idempotencyConflict {
-                completed.insert(notificationID)
-            } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
-                notificationReceiptStore.remove(notificationIDs: completed)
-                guard self.credential?.accessToken == credential.accessToken else { return }
-                await handleRevokedDeviceCredential()
-                return
-            } catch {
-                break
-            }
-        }
-
-        guard expectedScope == currentSyncScopeIdentity,
-              self.credential?.accessToken == credential.accessToken
-        else { return }
-        notificationReceiptStore.remove(notificationIDs: completed)
+        let scope = try ReceiptScope(serverOrigin: serverURL, accountId: credential.accountId, deviceId: credential.deviceId)
+        try await notificationReceiptStore.retire(scope: scope)
     }
 
     private func flushLiveActivityReceipts() async {
-        guard
-            let credential,
-            let expectedScope = currentSyncScopeIdentity
-        else { return }
-        let eventIDs: [String]
-        do {
-            eventIDs = try await liveActivityCoordinator.pendingReceivedEventIDs(limit: 25)
-        } catch {
-            return
-        }
-        var completed = Set<String>()
-
-        for eventID in eventIDs {
-            guard
-                expectedScope == currentSyncScopeIdentity,
-                self.credential?.accessToken == credential.accessToken
-            else { return }
-            do {
-                try await apiClient.submitInteraction(
-                    credential: credential,
-                    notificationId: eventID,
-                    action: .received,
-                    value: [:],
-                    idempotencyKey: "ios:\(credential.installationId):\(eventID):received"
-                )
-                completed.insert(eventID)
-            } catch MobileAPIError.idempotencyConflict {
-                completed.insert(eventID)
-            } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
-                if expectedScope == currentSyncScopeIdentity {
-                    try? await liveActivityCoordinator.removeReceivedEventIDs(completed)
-                }
-                guard self.credential?.accessToken == credential.accessToken else { return }
-                await handleRevokedDeviceCredential()
-                return
-            } catch {
-                break
-            }
-        }
-
-        guard
-            expectedScope == currentSyncScopeIdentity,
-            self.credential?.accessToken == credential.accessToken
-        else { return }
-        try? await liveActivityCoordinator.removeReceivedEventIDs(completed)
+        guard !Task.isCancelled, let credential, let expectedScope = currentSyncScopeIdentity else { return }
+        let result = await acknowledgementUploader.uploadReceived(
+            credential: credential,
+            isCurrent: { !Task.isCancelled && expectedScope == currentSyncScopeIdentity },
+            credentialUnchanged: { self.credential?.accessToken == credential.accessToken }
+        )
+        if result == .credentialRevoked { await handleRevokedDeviceCredential() }
     }
 
     private func flushLiveActivityDismissals() async {
-        guard
-            let credential,
-            let expectedScope = currentSyncScopeIdentity
-        else { return }
-        let identities: [LiveActivityIdentity]
-        do {
-            identities = try await liveActivityCoordinator.pendingDismissedActivityIdentities(limit: 25)
-        } catch {
-            return
-        }
-        var completed = Set<LiveActivityIdentity>()
-        for identity in identities {
-            guard
-                expectedScope == currentSyncScopeIdentity,
-                self.credential?.accessToken == credential.accessToken
-            else { return }
-            do {
-                try await apiClient.reportLiveActivityDismissed(
-                    credential: credential,
-                    activityId: identity.activityID
-                )
-                completed.insert(identity)
-            } catch MobileAPIError.invalidRequest {
-                completed.insert(identity)
-            } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
-                try? await liveActivityCoordinator.removeDismissedActivityIdentities(completed)
-                guard self.credential?.accessToken == credential.accessToken else { return }
-                await handleRevokedDeviceCredential()
-                return
-            } catch {
-                break
-            }
-        }
-        guard expectedScope == currentSyncScopeIdentity else { return }
-        try? await liveActivityCoordinator.removeDismissedActivityIdentities(completed)
+        guard !Task.isCancelled, let credential, let expectedScope = currentSyncScopeIdentity else { return }
+        let result = await acknowledgementUploader.uploadDismissals(
+            credential: credential,
+            isCurrent: { !Task.isCancelled && expectedScope == currentSyncScopeIdentity },
+            credentialUnchanged: { self.credential?.accessToken == credential.accessToken }
+        )
+        if result == .credentialRevoked { await handleRevokedDeviceCredential() }
+    }
+
+    private var acknowledgementUploader: LiveActivityAcknowledgementUploader {
+        LiveActivityAcknowledgementUploader(coordinator: liveActivityCoordinator, client: apiClient)
     }
 
     func sendHeartbeat() async {
-        guard let credential else { return }
+        guard let credential, !Task.isCancelled else { return }
+        let revision = selectionScopeRevision, client = apiClient
+        func ownsHeartbeat() -> Bool { isCurrentSelection(revision) && self.credential == credential }
         if let prerequisite = registrationPrerequisite(hasAuthenticatedAccount: true) {
             registrationState = prerequisite
             return
@@ -1777,16 +1617,19 @@ final class AppModel: ObservableObject {
         if !wasReady { registrationState = .registering }
 
         do {
-            try await apiClient.heartbeat(
+            try await client.heartbeat(
                 credential: credential,
                 heartbeat: try makeHeartbeat(credential: credential, apnsToken: apnsToken)
             )
+            guard ownsHeartbeat() else { return }
             serverAcceptedCurrentAPNSToken = apnsTokenAvailable
                 && (try? pushTokenStore.load()) == apnsToken
             registrationState = serverAcceptedCurrentAPNSToken ? .registered : .waitingForAPNSToken
         } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
+            guard ownsHeartbeat() else { return }
             await handleRevokedDeviceCredential()
         } catch {
+            guard ownsHeartbeat() else { return }
             if !wasReady {
                 registrationState = .failed("Relo server could not confirm this iPhone's current Apple Push token. Retry when connected.")
             }
@@ -1794,6 +1637,7 @@ final class AppModel: ObservableObject {
     }
 
     func pushRegistrationChanged() async {
+        configureLiveActivityTokenContext()
         pushRegistrationError = UserDefaults.standard.string(forKey: "relo.apnsRegistrationError")
         let cachedTokenAvailable = (try? pushTokenStore.load()) != nil
         if pushRegistrationError == nil {
@@ -1814,15 +1658,25 @@ final class AppModel: ObservableObject {
     }
 
     func foregrounded() async {
+        isForeground = true
+        // Leftover cards are ended before anything else, and without needing the network.
+        _ = await LiveActivityApplier.endAbandonedActivities(now: .now)
+        sessionController.setForeground(true)
+        synchronizeCurrentSession()
+        sessionController.receive(.reconcile)
+        requestMaintenance()
         await updatePermission()
+        guard !Task.isCancelled, isForeground else { return }
         await synchronizeLiveActivityTokens()
+        guard !Task.isCancelled, isForeground else { return }
         if accountSession != nil {
             await registerDevice()
         } else {
             await sendHeartbeat()
             await refresh()
         }
-        await refreshDeliveryTransportStatus()
+        guard !Task.isCancelled, isForeground else { return }
+        requestMaintenance()
     }
 
     private func refreshDeliveryTransportStatus(force: Bool = false) async {
@@ -1833,7 +1687,8 @@ final class AppModel: ObservableObject {
             deliveryStatusLastAttemptAt = nil
             return
         }
-        let expectedScope = "\(accountSession.sessionId)|\(accountSession.user.id)"
+        let expectedRevision = selectionScopeRevision, client = apiClient
+        let expectedScope = "\(serverURL.absoluteString)|\(accountSession.sessionId)|\(accountSession.user.id)"
         if deliveryStatusScopeIdentity != expectedScope {
             deliveryTransportStatus = nil
             deliveryTransportStatusError = nil
@@ -1848,10 +1703,11 @@ final class AppModel: ObservableObject {
         }
         deliveryStatusLastAttemptAt = now
         do {
-            let status = try await apiClient.deliveryTransportStatus(
+            let status = try await client.deliveryTransportStatus(
                 sessionToken: accountSession.accessToken
             )
             guard
+                isCurrentSelection(expectedRevision),
                 self.accountSession?.sessionId == accountSession.sessionId,
                 self.accountSession?.user.id == accountSession.user.id,
                 deliveryStatusScopeIdentity == expectedScope
@@ -1860,6 +1716,7 @@ final class AppModel: ObservableObject {
             deliveryTransportStatusError = nil
         } catch {
             guard
+                isCurrentSelection(expectedRevision),
                 self.accountSession?.sessionId == accountSession.sessionId,
                 self.accountSession?.user.id == accountSession.user.id,
                 deliveryStatusScopeIdentity == expectedScope
@@ -1905,6 +1762,8 @@ final class AppModel: ObservableObject {
             if selectedAccountId != nil, selectedAccountId == currentAccountId {
                 try await cache.clearSelectedAccount()
             }
+            // Complete receipt cleanup before erasing the identity needed to resume this journal.
+            try await retireNotificationReceipts(credential: credential)
             try credentialStore.delete()
             try accountSessionStore.delete()
             try registrationAttemptStore.delete()
@@ -1934,8 +1793,6 @@ final class AppModel: ObservableObject {
             self.accountState = .signedOut
             try? await liveActivityCoordinator.clearSelectedAccount()
             try? await pendingResponseStore.clearSelectedAccount()
-            let pendingReceipts = Set(notificationReceiptStore.pending(limit: Int.max))
-            notificationReceiptStore.remove(notificationIDs: pendingReceipts)
             try signOutProgressStore.delete()
             return true
         } catch {
@@ -2001,8 +1858,9 @@ final class AppModel: ObservableObject {
         do { try credentialStore.delete() } catch { localCleanupFailed = true }
         do { try accountSessionStore.delete() } catch { localCleanupFailed = true }
         do { try registrationAttemptStore.delete() } catch { localCleanupFailed = true }
-        let pendingReceipts = Set(notificationReceiptStore.pending(limit: Int.max))
-        notificationReceiptStore.remove(notificationIDs: pendingReceipts)
+        do {
+            try await retireNotificationReceipts(credential: credential)
+        } catch { localCleanupFailed = true }
         do {
             try await AccountDeletionNotificationCleanup.perform(using: accountNotificationCleaner)
         } catch {
@@ -2043,26 +1901,26 @@ final class AppModel: ObservableObject {
     }
 
     private func performRegistration() async {
-        enum Stage {
-            case localRegistrationData
-            case network
-            case credentialStore
-            case accountSessionStore
-        }
-        guard let accountSession else { return }
+        guard let accountSession, !Task.isCancelled,
+              accountState != .signedOut, accountState != .signingOut, accountState != .disabled else { return }
+        var expectedRevision = selectionScopeRevision
+        func ownsRegistration() -> Bool { isCurrentSelection(expectedRevision) }
+        let client = apiClient
         authenticationError = nil
         if let prerequisite = registrationPrerequisite(hasAuthenticatedAccount: true) {
             registrationState = prerequisite
             return
         }
         registrationState = .registering
-        var stage = Stage.localRegistrationData
+        var stage = DeviceRegistrationStage.localRegistrationData
 
         do {
             if let sessionAccountID = accountSession.account?.accountId,
                let credentialAccountID = credential?.accountId,
                sessionAccountID != credentialAccountID {
                 try await retireCurrentDeviceBinding()
+                guard self.accountSession == accountSession, !Task.isCancelled else { return }
+                expectedRevision = selectionScopeRevision
             }
             let request = try makeRegistrationRequest()
             let attempt = try registrationAttemptStore.attempt(
@@ -2070,12 +1928,14 @@ final class AppModel: ObservableObject {
                 minimumRevision: (credential?.credentialVersion ?? 0) + 1
             )
             stage = .network
-            let response = try await apiClient.registerDevice(
+            let response = try await client.registerDevice(
                 sessionToken: accountSession.accessToken,
                 request: request,
                 idempotencyKey: attempt.idempotencyKey(installationId: request.installationId)
             )
+            guard ownsRegistration() else { return }
             await quiesceRefresh()
+            guard ownsRegistration() else { return }
             serverAcceptedCurrentAPNSToken = apnsTokenAvailable
                 && request.apnsToken != nil
                 && (try? pushTokenStore.load()) == request.apnsToken
@@ -2105,32 +1965,43 @@ final class AppModel: ObservableObject {
             self.account = response.account
             self.accountUser = updatedSession.user
             self.accountState = .signedIn
+            expectedRevision = selectionScopeRevision
 
             let switchedAccounts = previousAccountId != nil && previousAccountId != response.account.accountId
             do {
                 try await cache.select(accountId: response.account.accountId)
+                guard ownsRegistration() else { return }
                 try await liveActivityCoordinator.select(
                     accountID: response.account.accountId,
                     deviceID: response.device.deviceId
                 )
+                guard ownsRegistration() else { return }
                 try await pendingResponseStore.select(
                     accountID: response.account.accountId,
                     deviceID: response.device.deviceId
                 )
+                guard ownsRegistration() else { return }
                 selectedAccountId = response.account.accountId
+                expectedRevision = selectionScopeRevision
                 let snapshot = try await cache.load()
+                guard ownsRegistration() else { return }
                 items = snapshot.items
                 useCachedHistory(snapshot.items)
                 await updateApplicationBadge()
+                guard ownsRegistration() else { return }
                 lastSyncedAt = snapshot.lastSuccessfulSyncAt
                 resolvePendingNotification()
                 resolvePendingActivity()
             } catch {
-                try? await cache.clearSelectedAccount()
-                items = []
-                clearHistory()
-                lastSyncedAt = nil
-                syncState = .offline("Local cache migration failed; history will resynchronize from Relo server")
+                guard ownsRegistration() else { return }
+                // Cache access can fail while protected data is unavailable. Never
+                // erase valid bytes or same-account presentation to recover it.
+                if switchedAccounts {
+                    items = []
+                    clearHistory()
+                    lastSyncedAt = nil
+                }
+                syncState = .offline("Protected history is temporarily unavailable; Relo will retry")
             }
             if switchedAccounts {
                 syncState = .idle
@@ -2146,55 +2017,48 @@ final class AppModel: ObservableObject {
             registrationRecoveryTask = nil
             registrationState = .registered
             await configureSyncEngine()
+            guard ownsRegistration() else { return }
             await synchronizeLiveActivityTokens()
+            guard ownsRegistration() else { return }
             await refresh()
-        } catch MobileAPIError.reauthenticationRequired {
-            accountState = .reauthenticationRequired
-            registrationState = .failed("Sign in again to register this iPhone.")
-        } catch MobileAPIError.accountDisabled {
-            accountState = .disabled
-            registrationState = .failed("This Relo server account is disabled.")
-        } catch MobileAPIError.tailnetUnavailable {
-            registrationState = .failed("Tailnet unavailable. Connect Tailscale, then retry device registration.")
-            scheduleRegistrationRecoveryAfterFailure()
-        } catch MobileAPIError.idempotencyConflict {
-            try? registrationAttemptStore.advanceCurrentAttempt()
-            registrationState = .failed("Registration changed while it was being saved. Relo will retry automatically.")
-            scheduleRegistrationRecoveryAfterFailure()
-        } catch MobileAPIError.invalidRequest {
-            registrationState = .failed("Registration rejected. Relo server did not accept this device's registration details.")
-        } catch MobileAPIError.invalidResponse {
-            registrationState = .failed("Registration rejected because Relo server returned an unreadable response.")
-        } catch MobileAPIError.rateLimited(let seconds) {
-            let suffix = seconds.map { " Try again in \($0) seconds." } ?? " Try again shortly."
-            registrationState = .failed("Relo server is limiting registration requests.\(suffix)")
-            scheduleRegistrationRecoveryAfterFailure(retryAfter: seconds.map(TimeInterval.init))
-        } catch MobileAPIError.unavailable {
-            registrationState = .failed("Relo server is reachable by configuration, but the registration server is unavailable.")
-            scheduleRegistrationRecoveryAfterFailure()
         } catch {
-            switch stage {
-            case .localRegistrationData, .credentialStore:
-                registrationState = .failed("The local device credential store is unreadable. Registration was not completed.")
-            case .accountSessionStore:
-                registrationState = .failed("The protected account session store is unreadable. Sign in again before registering.")
-            case .network:
-                registrationState = .failed("The registration server failed unexpectedly.")
-                scheduleRegistrationRecoveryAfterFailure()
-            }
+            guard ownsRegistration() else { return }
+            applyRegistrationFailure(DeviceRegistrationPolicy.failure(for: error, at: stage))
+        }
+    }
+
+    private func applyRegistrationFailure(_ failure: DeviceRegistrationFailure) {
+        switch failure.accountEffect {
+        case .reauthenticationRequired: accountState = .reauthenticationRequired
+        case .disabled: accountState = .disabled
+        case .none: break
+        }
+        if failure.advancesAttempt { try? registrationAttemptStore.advanceCurrentAttempt() }
+        registrationState = .failed(failure.message)
+        if case .scheduled(let seconds) = failure.retry {
+            scheduleRegistrationRecoveryAfterFailure(retryAfter: seconds.map(TimeInterval.init))
         }
     }
 
     private func retireCurrentDeviceBinding() async throws {
         guard let credential else { return }
+        let revision = selectionScopeRevision, client = apiClient
+        func requireScope() throws {
+            guard isCurrentSelection(revision), self.credential == credential else { throw CancellationError() }
+        }
         await quiesceRefresh()
-        try await apiClient.revokeDevice(credential: credential)
+        try requireScope()
+        try await client.revokeDevice(credential: credential)
+        try requireScope()
         await endAllLiveActivities()
-        try credentialStore.delete()
+        try requireScope()
         try? await liveActivityCoordinator.clearSelectedAccount()
+        try requireScope()
         try? await pendingResponseStore.clearSelectedAccount()
-        let pendingReceipts = Set(notificationReceiptStore.pending(limit: Int.max))
-        notificationReceiptStore.remove(notificationIDs: pendingReceipts)
+        try requireScope()
+        try await retireNotificationReceipts(credential: credential)
+        try requireScope()
+        try credentialStore.delete()
         self.credential = nil
         queuedResponseNotificationIDs = []
         responseFeedbackByNotificationID = [:]
@@ -2219,24 +2083,35 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func selectAndLoadCache(accountId: String) async {
+    private func selectAndLoadCache(accountId: String) async -> Bool {
+        var revision = selectionScopeRevision
+        func ownsCacheRead() -> Bool { isCurrentSelection(revision) }
         do {
             try await cache.select(accountId: accountId)
+            guard ownsCacheRead() else { return false }
             selectedAccountId = accountId
+            revision = selectionScopeRevision
             if let credential {
                 try await liveActivityCoordinator.select(accountID: accountId, deviceID: credential.deviceId)
+                guard ownsCacheRead() else { return false }
                 try await pendingResponseStore.select(accountID: accountId, deviceID: credential.deviceId)
+                guard ownsCacheRead() else { return false }
             }
             let snapshot = try await cache.load()
+            guard ownsCacheRead() else { return false }
             items = snapshot.items
             useCachedHistory(snapshot.items)
             await updateApplicationBadge()
+            guard ownsCacheRead() else { return false }
             lastSyncedAt = snapshot.lastSuccessfulSyncAt
             resolvePendingNotification()
             resolvePendingActivity()
             if credential != nil { registrationState = .registered }
+            return true
         } catch {
+            guard ownsCacheRead() else { return false }
             syncState = .offline("Protected activity history could not be opened")
+            return true
         }
     }
 
@@ -2259,11 +2134,15 @@ final class AppModel: ObservableObject {
             selectedNotificationID = nil
             selectedItemSnapshot.dismiss()
         }
-        let remote = HTTPInboxDataSource(baseURL: serverURL, token: credential.accessToken)
+        let remote = makeInboxDataSource(serverURL, credential.accessToken)
         inboxRemote = remote
         syncEngine = InboxSyncEngine(remote: remote, cache: boundCache)
         configuredSyncScopeIdentity = scopeIdentity
-        historyPager = InboxHistoryPager(remote: remote)
+        bindReadCoordinator()
+        historyPager = nil
+        if let scope = try? StorageScope(serverOrigin: serverURL, accountID: credential.accountId, deviceID: credential.deviceId) {
+            detailCache = makeDetailCache(scope)
+        }
         historyScopeRevision += 1
         historyRequestRevision += 1
         historySnapshot = .offlineCache(items: items)
@@ -2271,37 +2150,14 @@ final class AppModel: ObservableObject {
     }
 
     private func reloadHistoryFromServer() async throws {
-        guard let historyPager else { return }
-        let expectedRevision = historyScopeRevision
-        historyRequestRevision += 1
-        let expectedRequest = historyRequestRevision
+        guard let scope = currentSyncScopeIdentity else { return }
         historyLoadState = .loading
-        do {
-            let snapshot = try await historyPager.reload()
-            guard
-                expectedRevision == historyScopeRevision,
-                expectedRequest == historyRequestRevision
-            else { return }
-            historySnapshot = snapshot
-            historyLoadState = .current
-            reconcileSelectedItem()
-        } catch InboxRemoteError.unauthorized {
-            throw InboxRemoteError.unauthorized
-        } catch {
-            guard
-                expectedRevision == historyScopeRevision,
-                expectedRequest == historyRequestRevision
-            else { return }
-            let visibleHistory = InboxHistoryRefreshPolicy.visibleSnapshot(
-                current: historySnapshot,
-                refreshedCacheItems: items
-            )
-            if visibleHistory != historySnapshot {
-                historySnapshot = visibleHistory
-            }
-            historyLoadState = .offline("Server history is unavailable; showing retained activity")
-            reconcileSelectedItem()
+        let repaired = await historyRepair.repair(scope: scope) { [weak self] in
+            guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return false }
+            return await self.performRefresh()
         }
+        guard !Task.isCancelled, currentSyncScopeIdentity == scope else { return }
+        if !repaired { historyLoadState = .offline("Server history is unavailable; showing retained activity") }
     }
 
     private func useCachedHistory(_ cachedItems: [InboxItem]) {
@@ -2311,14 +2167,14 @@ final class AppModel: ObservableObject {
     }
 
     private func reconcileSelectedItem() {
+        guard !selectedCachedDetail, selectedNotificationDetail == nil else { return }
         guard let scopeIdentity = currentSyncScopeIdentity else { return }
         selectedItemSnapshot.reconcile(
             scopeIdentity: scopeIdentity,
             availableItems: items + historySnapshot.items
         )
-        if selectedItemSnapshot.item == nil {
-            selectedNotificationID = nil
-        }
+        // Exact detail may be loading outside the retained history window.
+        // Only explicit dismissal or a scope transition clears its selection.
     }
 
     private func clearHistory() {
@@ -2332,23 +2188,17 @@ final class AppModel: ObservableObject {
     }
 
     private func quiesceRefresh() async {
-        guard let refreshTask else {
-            refreshRequestedWhileRunning = false
-            return
-        }
-        refreshGeneration += 1
-        refreshTask.cancel()
-        _ = await refreshTask.value
-        self.refreshTask = nil
-        refreshRequestedWhileRunning = false
+        historyRepair.stop(); maintenance.stop()
+        readCoordinator.suspend(); receiptCoordinator.suspend()
     }
 
     private func updateApplicationBadge() async {
-        let count = InboxBadgeProjection.pendingInteractionCount(in: items)
-        try? await UNUserNotificationCenter.current().setBadgeCount(count)
+        guard let count = currentPresentation.actionableCount else { return }
+        currentBadge.set(count)
+        await currentBadge.waitForUpdate()
     }
 
-    private func handleRevokedDeviceCredential() async {
+    func handleRevokedDeviceCredential() async {
         do {
             try credentialStore.delete()
         } catch {
@@ -2380,16 +2230,7 @@ final class AppModel: ObservableObject {
     }
 
     private func updatePermission() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        switch settings.authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            permission = .allowed
-            UIApplication.shared.registerForRemoteNotifications()
-        case .denied:
-            permission = .denied
-        default:
-            permission = .unknown
-        }
+        permission = await system.notificationPermission()
     }
 
     private func registrationPrerequisite(hasAuthenticatedAccount: Bool) -> RegistrationState? {
@@ -2437,55 +2278,26 @@ final class AppModel: ObservableObject {
         )
     }
 
-    private func startLiveActivityObservation() {
-        if #available(iOS 17.2, *), pushToStartTokenTask == nil {
-            pushToStartTokenTask = Task { @MainActor [weak self] in
-                for await tokenData in Activity<ReloActivityAttributes>.pushToStartTokenUpdates {
-                    guard !Task.isCancelled, let self else { return }
-                    await self.receivedPushToStartToken(tokenData)
-                }
-            }
-        }
-
+    func startLiveActivityObservation() {
         if activityUpdatesTask == nil {
             activityUpdatesTask = Task { @MainActor [weak self] in
                 for await activity in Activity<ReloActivityAttributes>.activityUpdates {
                     guard !Task.isCancelled, let self else { return }
-                    self.observePushTokenUpdates(for: activity)
                     self.observeActivityKitUpdates(for: activity)
-                    _ = await self.refresh()
-                    self.observeActivityKitUpdates(for: activity)
-                    await self.registerCurrentPushToken(for: activity)
+                    self.currentChangeReceived()
                 }
             }
         }
-
         for activity in Activity<ReloActivityAttributes>.activities {
-            observePushTokenUpdates(for: activity)
             observeActivityKitUpdates(for: activity)
-        }
-    }
-
-    private func receivedPushToStartToken(_ tokenData: Data) async {
-        let token = ActivityKitTokenCodec.hex(tokenData)
-        guard !token.isEmpty else { return }
-        do {
-            try liveActivityPushToStartTokenStore.save(token)
-        } catch {
-            return
-        }
-        if credential != nil {
-            await sendHeartbeat()
-        } else if accountSession != nil {
-            await registerDevice(force: true)
         }
     }
 
     private func synchronizeLiveActivityTokens() async {
+        configureLiveActivityTokenContext()
+        system.reconnectActivityTokens()
         for activity in Activity<ReloActivityAttributes>.activities {
-            observePushTokenUpdates(for: activity)
             observeActivityKitUpdates(for: activity)
-            await registerCurrentPushToken(for: activity)
         }
     }
 
@@ -2549,7 +2361,7 @@ final class AppModel: ObservableObject {
     ) async {
         guard expectedScope == currentSyncScopeIdentity else { return }
         let isTerminal = state == .ended || state == .dismissed
-        guard let snapshot = liveActivitySnapshot(
+        guard let snapshot = LiveActivityApplier.snapshot(
             activityID: activity.attributes.eventID,
             generation: activity.attributes.generation,
             state: content.state,
@@ -2573,65 +2385,14 @@ final class AppModel: ObservableObject {
             await flushLiveActivityDismissals()
         }
         guard expectedScope == currentSyncScopeIdentity else { return }
-        _ = await refresh()
+        currentChangeReceived()
     }
 
     private func stopObservingActivity(nativeActivityID: String) {
-        activityPushTokenTasks[nativeActivityID]?.cancel()
         activityContentUpdateTasks[nativeActivityID]?.cancel()
-        activityPushTokenTasks[nativeActivityID] = nil
         activityContentUpdateTasks[nativeActivityID] = nil
         activityStateUpdateTasks[nativeActivityID] = nil
         activityObservationScopeByNativeID[nativeActivityID] = nil
-    }
-
-    private func observePushTokenUpdates(for activity: Activity<ReloActivityAttributes>) {
-        guard activityPushTokenTasks[activity.id] == nil else { return }
-        activityPushTokenTasks[activity.id] = Task { @MainActor [weak self] in
-            for await tokenData in activity.pushTokenUpdates {
-                guard !Task.isCancelled, let self else { return }
-                await self.registerPushToken(tokenData, for: activity)
-            }
-        }
-    }
-
-    private func registerCurrentPushToken(for activity: Activity<ReloActivityAttributes>) async {
-        guard let tokenData = activity.pushToken else { return }
-        await registerPushToken(tokenData, for: activity)
-    }
-
-    private func registerPushToken(
-        _ tokenData: Data,
-        for activity: Activity<ReloActivityAttributes>
-    ) async {
-        guard
-            let credential,
-            ReloDeepLink.activityURL(identity: activity.attributes.identity) != nil,
-            (items + historySnapshot.items).contains(where: {
-                $0.liveActivity?.identity == activity.attributes.identity
-                    && $0.liveActivity?.targetDeviceId == credential.deviceId
-            })
-        else { return }
-        let token = ActivityKitTokenCodec.hex(tokenData)
-        guard !token.isEmpty else { return }
-
-        do {
-            try await apiClient.registerLiveActivityToken(
-                credential: credential,
-                activityId: activity.attributes.eventID,
-                registration: LiveActivityTokenRegistration(
-                    token: token,
-                    nativeActivityId: activity.id,
-                    environment: Self.apnsEnvironment,
-                    generation: activity.attributes.generation
-                )
-            )
-        } catch MobileAPIError.reauthenticationRequired, MobileAPIError.forbidden {
-            guard self.credential?.accessToken == credential.accessToken else { return }
-            await handleRevokedDeviceCredential()
-        } catch {
-            // Foreground synchronization retries the current token without logging it.
-        }
     }
 
     private var notificationAuthorization: AuthorizationState {
@@ -2644,10 +2405,8 @@ final class AppModel: ObservableObject {
 
     private func authenticationMessage(for error: Error) -> String {
         switch error {
-        case MobileAPIError.invalidRequest:
-            "Check the email and password fields."
-        case MobileAPIError.invalidCredentials:
-            "The email or password is incorrect."
+        case MobileAPIError.invalidRequest, is BrowserSignIn.CallbackError:
+            "That sign-in expired. Tap Sign in to try again."
         case MobileAPIError.accountDisabled, MobileAPIError.forbidden:
             "This Relo server account cannot sign in. Open the dashboard for account recovery."
         case MobileAPIError.rateLimited(let seconds):
@@ -2673,4 +2432,14 @@ final class AppModel: ObservableObject {
         "production"
         #endif
     }
+}
+
+extension AppModel: PendingResponseHost {
+    func setResponseFeedback(for notificationID: String, _ feedback: NotificationResponseFeedback) {
+        responseFeedbackByNotificationID[notificationID] = feedback
+    }
+    func setQueuedResponseNotificationIDs(_ ids: Set<String>) { queuedResponseNotificationIDs = ids }
+    func removeQueuedResponse(_ notificationID: String) { queuedResponseNotificationIDs.remove(notificationID) }
+    func responseConfirmed(at date: Date?) { diagnosticResponseConfirmedAt = date }
+    func reconcileCurrentState() { sessionController.receive(.reconcile) }
 }

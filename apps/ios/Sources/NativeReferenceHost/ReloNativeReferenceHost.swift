@@ -1,6 +1,7 @@
 import ActivityKit
 import ReloCore
 import SwiftUI
+import UIKit
 
 @main
 struct ReloNativeReferenceHost: App {
@@ -38,8 +39,9 @@ struct ReloNativeReferenceHost: App {
         do {
             let state = ReloActivityAttributes.ContentState(
                 generation: 1,
-                updatedAt: Date(timeIntervalSince1970: 1_786_060_800),
+                updatedAt: .now,
                 sequence: 1,
+                staleAt: sample.staleAt,
                 interaction: sample.interaction,
                 presentation: sample.presentation
             )
@@ -50,12 +52,26 @@ struct ReloNativeReferenceHost: App {
                 style: .standard,
                 accountID: "acc_reference123456"
             )
-            _ = try Activity<ReloActivityAttributes>.request(
+            let activity = try Activity<ReloActivityAttributes>.request(
                 attributes: attributes,
-                content: ActivityContent(state: state, staleDate: nil),
+                content: ActivityContent(state: state,
+                    staleDate: LiveActivitySurfaceProjection.invalidationDate(staleAt: sample.staleAt, interaction: state.interaction)),
                 pushType: nil
             )
             status = "Reference active: \(name)"
+            if arguments.contains("--reference-alert") {
+                status = "Alert update in 5 seconds. Return to the Home Screen."
+                let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Reference alert")
+                defer { if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) } }
+                try await Task.sleep(for: .seconds(5))
+                var update = state
+                update.sequence += 1
+                update.updatedAt = .now
+                await activity.update(ActivityContent(state: update,
+                    staleDate: LiveActivitySurfaceProjection.invalidationDate(staleAt: sample.staleAt, interaction: update.interaction)),
+                    alertConfiguration: .init(title: "Relo reference", body: "Live Activity alert layout", sound: .default))
+                status = "Alert update requested. System presentation must be captured separately."
+            }
         } catch {
             status = "ActivityKit could not start the reference"
         }
@@ -65,8 +81,14 @@ struct ReloNativeReferenceHost: App {
 struct NativeReferenceSample {
     let presentation: LiveActivityPresentation
     let interaction: LiveActivityContentInteraction?
+    var staleAt: Date? = nil
 
     static func named(_ name: String) -> NativeReferenceSample? {
+        #if DEBUG
+        if let fixture = ReloLiveActivityReferenceFixtures.state(named: name) {
+            return .init(presentation: fixture.presentation, interaction: fixture.interaction, staleAt: fixture.staleAt)
+        }
+        #endif
         switch name {
         case "information":
             return sample(title: "Release prepared", subtitle: "Ready for review", status: "Complete")
@@ -94,6 +116,32 @@ struct NativeReferenceSample {
                   "altText": "A Relo report preview", "contentMode": "fit"]])
         case "approval": return binarySample(kind: "approval")
         case "yes-no": return binarySample(kind: "yes_no")
+        case "appearance-light", "appearance-dark", "appearance-system":
+            return sample(title: "Appearance reference", subtitle: "Readable on the host surface", status: "Working",
+                          theme: String(name.dropFirst("appearance-".count)))
+        case "long-text":
+            return sample(title: "Preparing a release with a long title and essential context", subtitle: "Review the result in Relo", status: "In progress")
+        case "mixed-identity":
+            return sample(title: "Release review", subtitle: "Build and test progress", status: "Testing",
+                components: [
+                    ["id": "steps", "type": "steps", "colorRole": "thread", "items": [
+                        ["id": "build", "label": "Build", "state": "complete"],
+                        ["id": "test", "label": "Test", "state": "current"],
+                        ["id": "ship", "label": "Ship", "state": "pending"]]],
+                    ["id": "progress", "type": "progress_bar", "colorRole": "project", "value": 0.42, "label": "Tests"]
+                ], behavior: "progress", contextual: true)
+        case "response-sending", "response-queued", "response-accepted", "response-rejected":
+            var interaction = binarySample(kind: "approval").interaction!
+            interaction.responsePhase = LiveActivityResponsePhase(rawValue: String(name.dropFirst("response-".count)))
+            interaction.selectedAction = .approve
+            if interaction.responsePhase == .accepted { interaction.state = "approved" }
+            return sample(title: "Release approval", subtitle: "Response state reference", status: "Waiting",
+                          behavior: "approval", interaction: interaction)
+        case "response-expired":
+            let interaction = LiveActivityContentInteraction(id: "int_reference123456", notificationID: "ntf_reference123456",
+                targetDeviceID: "dev_reference123456", accountID: "acc_reference123456", kind: "approval",
+                state: "pending", credential: String(repeating: "x", count: 43), expiresAtUnixSeconds: 1)
+            return sample(title: "Release approval", subtitle: "Expired reference", status: "Expired", behavior: "approval", interaction: interaction)
         default: return nil
         }
     }
@@ -120,10 +168,14 @@ struct NativeReferenceSample {
         components: [[String: Any]] = [],
         behavior: String = "informational",
         theme: String = "system",
-        interaction: LiveActivityContentInteraction? = nil
+        interaction: LiveActivityContentInteraction? = nil,
+        contextual: Bool = false
     ) -> NativeReferenceSample {
         let componentIDs = components.compactMap { $0["id"] as? String }
-        let identity: [String: Any] = ["project": NSNull(), "thread": NSNull(), "direct": true]
+        let identity: [String: Any] = contextual
+            ? ["project": ["label": "Relo", "color": "#A78BFA", "icon": "project", "revision": 1, "provenance": "reference"],
+               "thread": ["label": "Release review", "color": "#38BDF8", "icon": "thread", "revision": 1, "provenance": "reference"], "direct": false]
+            : ["project": NSNull(), "thread": NSNull(), "direct": true]
         let surfaces: [String: Any] = [
             "lock_screen": componentIDs, "expanded_leading": [], "expanded_trailing": [],
             "expanded_bottom": componentIDs, "compact_leading": [], "compact_trailing": componentIDs,

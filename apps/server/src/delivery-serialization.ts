@@ -47,6 +47,10 @@ export type OrdinaryDeliveryIntent = {
   notificationId: string;
   interactionKind?: ApnsRuntimeJob["interactionKind"];
   interactionId?: string | null;
+  accountId?: string;
+  deviceId?: string;
+  serverOriginHash?: string;
+  interactionExpiresAt?: Date | null;
   badge?: number;
   payload: Record<string, unknown>;
 };
@@ -109,6 +113,14 @@ export function assertOrdinaryDeliveryIntentWithinBudget(input: OrdinaryDelivery
 export function ordinaryDeliveryPayloadSize(input: OrdinaryDeliveryIntent): number {
   const projection = ordinaryDeliveryProjection({
     ...input,
+    // Every ordinary alert carries receipt scope, including private/noninteractive alerts.
+    // Admission runs before exact recipients exist, so reserve their full opaque IDs.
+    accountId: input.accountId ?? "acc_00000000-0000-4000-8000-000000000000",
+    deviceId: input.deviceId ?? "dev_00000000-0000-4000-8000-000000000000",
+    serverOriginHash: input.serverOriginHash ?? "0".repeat(64),
+    ...(input.interactionKind ? {
+      interactionExpiresAt: input.interactionExpiresAt ?? new Date("9999-12-31T23:59:59.999Z"),
+    } : {}),
     badge: input.badge ?? Number.MAX_SAFE_INTEGER,
   });
   const aps: Record<string, unknown> = {
@@ -256,7 +268,12 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
     };
   }
   const staleDate = isoEpochSeconds(command.staleAt);
-  return { ...common, ...(staleDate === undefined ? {} : { staleDate }) };
+  // An update alerts only when a question lands on the card; routine progress stays silent.
+  const alert = command.alertOwner === "apns" && privacy === "standard"
+    ? { title: stringValue(command.title, stringValue(command.headline, "Relo")),
+      body: stringValue(command.subtitle, stringValue(command.status, "Needs you")) }
+    : undefined;
+  return { ...common, ...(staleDate === undefined ? {} : { staleDate }), ...(alert ? { alert } : {}) };
 }
 
 function interactionCategory(kind: ApnsRuntimeJob["interactionKind"]): string | undefined {
@@ -266,7 +283,9 @@ function interactionCategory(kind: ApnsRuntimeJob["interactionKind"]): string | 
 }
 
 function ordinaryDeliveryProjection(input: OrdinaryDeliveryIntent): AlertProjection {
-  const categoryName = interactionCategory(input.interactionKind ?? null);
+  // Questions answered in Relo (the phone could not show a card) carry no answer buttons.
+  const answerInApp = Boolean((input.payload as Record<string,unknown> | null | undefined)?.answerInApp);
+  const categoryName = answerInApp ? undefined : interactionCategory(input.interactionKind ?? null);
   return {
     kind: "alert",
     alert: ordinaryAlert(input),
@@ -289,6 +308,14 @@ function ordinaryAlert(input: OrdinaryDeliveryIntent): { title: string; body: st
 function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unknown> {
   const privacy = isPrivate(input.payload) ? "private" : "standard";
   const data: Record<string, unknown> = { privacy };
+  if (input.serverOriginHash !== undefined) {
+    if (!/^[0-9a-f]{64}$/.test(input.serverOriginHash)
+        || !/^acc_[A-Za-z0-9-]{8,}$/.test(input.accountId ?? "")
+        || !/^dev_[A-Za-z0-9-]{8,}$/.test(input.deviceId ?? "")) {
+      throw new DeliverySerializationValidationError();
+    }
+    data.receiptScope = { serverOriginHash: input.serverOriginHash, accountId: input.accountId, deviceId: input.deviceId };
+  }
   const interactionId = typeof input.interactionId === "string"
     ? input.interactionId
     : typeof input.payload.interactionId === "string" ? input.payload.interactionId : null;
@@ -296,6 +323,11 @@ function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unkno
     data.interactionId = interactionId;
   }
   if (input.interactionKind) data.interactionType = input.interactionKind;
+  if (input.interactionKind && interactionId) {
+    if (input.accountId) data.accountId = input.accountId;
+    if (input.deviceId) data.deviceId = input.deviceId;
+    if (input.interactionExpiresAt) data.interactionExpiresAt = input.interactionExpiresAt.toISOString();
+  }
   if (privacy === "standard") {
     const context = plainObject(input.payload.context);
     if (context) {

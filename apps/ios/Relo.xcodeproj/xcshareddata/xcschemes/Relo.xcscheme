@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "B3ECCDEACD49C2FFFA36B362"
+               BuildableName = "ReloAppTests.xctest"
+               BlueprintName = "ReloAppTests"
+               ReferencedContainer = "container:Relo.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "C8E8A57A58B58B21C45544EB"
                BuildableName = "ReloCoreTests.xctest"
                BlueprintName = "ReloCoreTests"
@@ -86,6 +100,17 @@
                BlueprintIdentifier = "7E9BF9C879EF2F24B3210E83"
                BuildableName = "ReloNotificationSupportTests.xctest"
                BlueprintName = "ReloNotificationSupportTests"
+               ReferencedContainer = "container:Relo.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "B3ECCDEACD49C2FFFA36B362"
+               BuildableName = "ReloAppTests.xctest"
+               BlueprintName = "ReloAppTests"
                ReferencedContainer = "container:Relo.xcodeproj">
             </BuildableReference>
          </TestableReference>

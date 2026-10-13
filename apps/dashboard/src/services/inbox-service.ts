@@ -68,7 +68,7 @@ export function createHttpInboxService(): InboxService {
     },
     async withdrawNotification(notificationId) {
       await jsonRequest(
-        `/api/dashboard/notifications/${encodeURIComponent(notificationId)}/withdraw`,
+        `/api/account/notifications/${encodeURIComponent(notificationId)}/withdraw`,
         { method: "POST" }
       )
     },

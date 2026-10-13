@@ -79,6 +79,26 @@ suite("secret-bound service Live Activities", () => {
     expect(await replay.json()).toMatchObject({ state: "withdrawn",idempotent: true });
   });
 
+  test("webhook notifications and activity starts require a project and topic", async () => {
+    const raw = { "x-relo-test-raw-identity": "1" };
+    const missing = await request(serviceA,"",{ method: "POST",headers: { ...raw,"idempotency-key": "identity-missing" },
+      body: JSON.stringify({ title: "Incident",body: "Disk full" }) });
+    expect(missing.status).toBe(422);
+    expect(await missing.json()).toMatchObject({ ok: false,error: "work_identity_required",missing: ["project","topic"] });
+    const activity = await request(serviceA,"/live-activities",{ method: "POST",headers: { ...raw,"idempotency-key": "identity-missing-activity" },
+      body: JSON.stringify({ key: "no-identity",title: "Build",status: "Running",deviceIds: [devicePublicId] }) });
+    expect(activity.status).toBe(422);
+    expect(await activity.json()).toMatchObject({ error: "work_identity_required" });
+
+    const accepted = await request(serviceA,"",{ method: "POST",headers: { ...raw,"idempotency-key": "identity-present" },
+      body: JSON.stringify({ title: "Incident",body: "Disk full",context: { project: "Recovery",threadName: "Operational status" } }) });
+    expect(accepted.status).toBe(201);
+    const eventId = ((await accepted.json()) as any).eventId.slice(4);
+    const stored = (await db.query<any>("SELECT payload FROM notification_events WHERE id=$1",[eventId])).rows[0].payload;
+    expect(stored.context).toEqual({ producerKind: "webhook",project: "Recovery",threadName: "Operational status",
+      providerThreadId: expect.stringMatching(/^topic:[0-9a-f]{64}$/) });
+  });
+
   test("namespaces start idempotency, propagates APNs mode, and prevents cross-service disclosure", async () => {
     const body = JSON.stringify({
       key: "build-release", title: "Build release", status: "Compiling", progress: 0.2,
@@ -91,7 +111,8 @@ suite("secret-bound service Live Activities", () => {
     expect(firstBody).toMatchObject({
       ok: true, replayed: false,
       delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 },
-      activity: { key: "build-release", style: "terminal", symbol: "build", accentColor: "#12ABEF" },
+      // The required project/topic identity supplies the accent color.
+      activity: { key: "build-release", style: "terminal", symbol: "build" },
     });
     expect(JSON.stringify(firstBody)).not.toContain("hook_");
 

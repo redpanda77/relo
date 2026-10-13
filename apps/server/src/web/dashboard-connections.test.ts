@@ -33,7 +33,7 @@ function testDatabase() {
         ]);
       }
       if (sql.includes("FROM webhook_services WHERE")) {
-        expect(params).toEqual([principalId, 25, 25]);
+        expect(params).toEqual([principalId, 200]);
         return rows([
           {
             id: serviceId,
@@ -94,9 +94,7 @@ function app(authenticated = true) {
         : null,
     renderDocument: async (bootstrap) => JSON.stringify(bootstrap),
   });
-  application.get("/dashboard/connections/services", handlers.services);
-  application.get("/dashboard/connections/phones", handlers.phones);
-  application.get("/dashboard/connections/clients", handlers.clients);
+  application.get("/dashboard/connections", handlers.overview);
   return application;
 }
 
@@ -114,72 +112,34 @@ async function bootstrap(
 }
 
 describe("dashboard Connections handlers", () => {
-  test("redirects anonymous requests back to the requested Connections route", async () => {
-    const response = await app(false).request("/dashboard/connections/phones");
+  test("redirects anonymous requests back to Connections", async () => {
+    const response = await app(false).request("/dashboard/connections");
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(
-      "/?next=%2Fdashboard%2Fconnections%2Fphones",
-    );
+    expect(response.headers.get("location")).toBe("/?next=%2Fdashboard%2Fconnections");
   });
 
-  test("serializes paginated account-scoped services without a secret", async () => {
-    const result = await bootstrap(
-      await app().request("/dashboard/connections/services?page=99"),
-    );
-    expect(result.kind).toBe("connections-services");
-    if (result.kind !== "connections-services") return;
-    expect(result.route.page).toBe(2);
-    expect(result.pagination).toMatchObject({
-      page: 2,
-      pageCount: 2,
-      total: 26,
-      previousHref: "/dashboard/connections/services?page=1",
-      nextHref: null,
-    });
-    expect(result.services[0]).toMatchObject({
-      id: `svc_${serviceId}`,
-      title: "Deploy bot",
-      prefix: "kwh_••••42",
-      liveActivityPolicy: null,
-      liveActivityPolicySource: "system",
-      effectiveLiveActivityPolicy: {
-        preset: "automatic",
-        colorStrategy: "thread",
-      },
-    });
-    expect(JSON.stringify(result)).not.toMatch(
-      /webhookUrl|secretHash|rawSecret/i,
-    );
-  });
-
-  test("serializes typed phone readiness fields", async () => {
-    const result = await bootstrap(
-      await app().request("/dashboard/connections/phones"),
-    );
-    expect(result.kind).toBe("connections-phones");
-    if (result.kind !== "connections-phones") return;
+  test("serves phones, clients, and webhooks in one page without secrets or credential material", async () => {
+    const result = await bootstrap(await app().request("/dashboard/connections"));
+    expect(result.kind).toBe("connections");
+    if (result.kind !== "connections") return;
+    expect(result.shell.active).toBe("connections");
     expect(result.phones[0]).toMatchObject({
       id: `dev_${phoneId}`,
       notificationAuthorization: "authorized",
       liveActivityAuthorization: "authorized",
     });
-  });
-
-  test("serializes client scopes without credential material", async () => {
-    const result = await bootstrap(
-      await app().request("/dashboard/connections/clients"),
-    );
-    expect(result.kind).toBe("connections-clients");
-    if (result.kind !== "connections-clients") return;
     expect(result.clients[0]).toMatchObject({
       id: `key_${clientId}`,
       label: "Codex Mac",
       scopes: ["notifications:send", "activities:write"],
-      liveActivityPolicy: null,
       liveActivityPolicySource: "system",
     });
-    expect(JSON.stringify(result)).not.toMatch(
-      /tokenHash|accessToken|credentialHash/i,
-    );
+    expect(result.services[0]).toMatchObject({
+      id: `svc_${serviceId}`,
+      title: "Deploy bot",
+      liveActivityPolicySource: "system",
+      effectiveLiveActivityPolicy: { preset: "automatic", colorStrategy: "thread" },
+    });
+    expect(JSON.stringify(result)).not.toMatch(/webhookUrl|secretHash|rawSecret|tokenHash|accessToken|credentialHash/i);
   });
 });

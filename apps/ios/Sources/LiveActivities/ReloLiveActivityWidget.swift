@@ -11,23 +11,25 @@ struct ReloLiveActivityWidget: Widget {
             PresentationCardView(
                 presentation: context.state.presentation, context: context, surface: .lockScreen
             )
-                .activityBackgroundTint(.black)
-                .activitySystemActionForegroundColor(.white)
-                .widgetURL(ReloDeepLink.activityURL(identity: context.attributes.identity))
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(accessibilitySummary(for: context).label)
-                .accessibilityValue(accessibilitySummary(for: context).value)
-                .accessibilityHint(accessibilitySummary(for: context).hint)
+            .activityBackgroundTint(PresentationBackdrop.base)
+            .activitySystemActionForegroundColor(.white)
+            .widgetURL(ReloDeepLink.activityURL(identity: context.attributes.identity))
+            .accessibilityElement(children: .contain)
+            .accessibilityHint(accessibilitySummary(for: context).hint)
         } dynamicIsland: { context in
             let presentation = context.state.presentation
             let palette = PresentationPalette(presentation: presentation)
             return DynamicIsland {
-                DynamicIslandExpandedRegion(.leading, priority: 1) {
-                    PresentationSourceMark(presentation: presentation, palette: palette)
-                }
-                DynamicIslandExpandedRegion(.trailing) {
-                    PresentationIslandStatusMark(presentation: presentation, palette: palette)
-                    .dynamicIsland(verticalPlacement: .belowIfTooWide)
+                // The system insets each expanded region differently, so the header lives in
+                // the bottom card with the content it labels: one column, one inset. The corner
+                // regions carry only components a sender assigns to them explicitly.
+                DynamicIslandExpandedRegion(.leading) {
+                    if !presentation.components(for: .expandedLeading).isEmpty {
+                        PresentationCompactSurface(
+                            presentation: presentation, surface: .expandedLeading,
+                            palette: palette, interaction: context.state.displayInteraction,
+                            isStale: context.isStale)
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     PresentationCardView(
@@ -35,23 +37,35 @@ struct ReloLiveActivityWidget: Widget {
                     )
                 }
             } compactLeading: {
-                Image(systemName: presentation.identity.project?.icon.systemImageName
-                    ?? presentation.state.icon.systemImageName)
-                    .foregroundStyle(palette.accent)
+                if presentation.components(for: .compactLeading).isEmpty {
+                    Image(
+                        systemName: presentation.privacy == .private
+                            ? "lock.fill"
+                            : presentation.identity.project?.icon.systemImageName
+                                ?? presentation.state.icon.systemImageName
+                    )
+                    .foregroundStyle(presentation.privacy == .private ? palette.primaryText : palette.accent)
                     .accessibilityLabel(accessibilitySummary(for: context).label)
+                } else {
+                    PresentationCompactSurface(
+                        presentation: presentation, surface: .compactLeading,
+                        palette: palette, interaction: context.state.displayInteraction,
+                        isStale: context.isStale)
+                }
             } compactTrailing: {
                 PresentationCompactSurface(
-                    presentation: presentation, surface: .compactTrailing, palette: palette
+                    presentation: presentation, surface: .compactTrailing, palette: palette,
+                    interaction: context.state.displayInteraction, isStale: context.isStale
                 )
-                    .accessibilityLabel(accessibilitySummary(for: context).value)
             } minimal: {
                 PresentationCompactSurface(
-                    presentation: presentation, surface: .minimal, palette: palette
+                    presentation: presentation, surface: .minimal, palette: palette,
+                    interaction: context.state.displayInteraction, isStale: context.isStale
                 )
-                    .accessibilityLabel(accessibilitySummary(for: context).label)
             }
-            .keylineTint(palette.accent)
-            .contentMargins(.horizontal, 14, for: .expanded)
+            .keylineTint(
+                presentation.privacy == .private ? palette.primaryText.opacity(0.5) : palette.cyan
+            )
             .widgetURL(ReloDeepLink.activityURL(identity: context.attributes.identity))
         }
     }
@@ -67,317 +81,225 @@ struct PresentationCardView: View {
     let context: ActivityViewContext<ReloActivityAttributes>
     let surface: PresentationCardSurface
 
-    private var palette: PresentationPalette { .init(presentation: presentation) }
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    private var palette: PresentationPalette {
+        // Lock Screen and Island share one dark, brand-tinted surface in every appearance.
+        .init(presentation: presentation, surface: surface, hostColorScheme: .dark)
+    }
     private var componentSurface: LiveActivityPresentation.Surface {
         surface == .lockScreen ? .lockScreen : .expandedBottom
     }
-    private var lockScreenComponents: [LiveActivityPresentation.Component] {
-        presentation.components(for: .lockScreen)
-    }
-    private var lockScreenStepItems: [LiveActivityDisplayPresentation.Step]? {
-        for component in lockScreenComponents {
-            if case let .steps(_, _, items) = component { return items }
-        }
-        return nil
-    }
-    private var lockScreenHasMeasuredProgress: Bool {
-        lockScreenComponents.contains { component in
-            if case .progressBar = component { return true }
-            return false
-        }
-    }
-    private var lockScreenUsesCombinedProgress: Bool {
-        lockScreenStepItems != nil && lockScreenHasMeasuredProgress
+    private var projection: LiveActivitySurfaceProjection {
+        .make(
+            presentation: presentation, surface: componentSurface,
+            interaction: context.state.displayInteraction, isStale: context.isStale, now: .now)
     }
 
     var body: some View {
-        Group {
+        // Select within the surface budget, then report the selected content's height.
+        // A flexible max-height frame here would inflate even the smallest fallback.
+        VStack(alignment: .leading, spacing: 6) {
+            if presentation.privacy != .private {
+                header
+            }
+            fittedContent
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        // Apple's Lock Screen guidance: one even margin that matches the card's corner radius.
+        // In the island the system already clears the curve; a small inset keeps text off it.
+        .padding(surface == .lockScreen ? 16 : 0)
+        .padding(.horizontal, surface == .lockScreen ? 0 : 8)
+        .padding(.bottom, surface == .lockScreen ? 0 : 6)
+        .background {
             if surface == .lockScreen {
-                ZStack {
-                    PresentationBackdrop(palette: palette)
-                    lockScreenContent.padding(.horizontal, 14).padding(.vertical, 10)
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                content.padding(.top, 4).frame(maxWidth: .infinity, alignment: .leading)
+                PresentationBackdrop(palette: palette, isLuminanceReduced: isLuminanceReduced)
             }
-        }
-        .modifier(PresentationThemeModifier(theme: presentation.appearance.theme))
-    }
-
-    private var lockScreenContent: some View {
-        ViewThatFits(in: .vertical) {
-            lockScreenLayout(
-                spacing: 7, titleFont: .headline, detailFont: .caption,
-                componentCompact: false
-            )
-            lockScreenLayout(
-                spacing: 4, titleFont: .subheadline.weight(.semibold), detailFont: .caption2,
-                componentCompact: true
-            )
-            lockScreenLayout(
-                spacing: 2, titleFont: .caption.weight(.semibold), detailFont: .caption2,
-                componentCompact: true
-            )
         }
     }
 
-    private func lockScreenLayout(
-        spacing: CGFloat, titleFont: Font, detailFont: Font, componentCompact: Bool
-    ) -> some View {
-        VStack(alignment: .leading, spacing: spacing) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 8) {
-                    PresentationSourceMark(
-                        presentation: presentation, palette: palette, lineLimit: 1
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if let stepItems = lockScreenStepItems {
-                        PresentationPhaseMark(items: stepItems, palette: palette)
-                    } else {
-                        PresentationStatusMark(
-                            presentation: presentation, palette: palette, lineLimit: 1
-                        )
-                        .multilineTextAlignment(.trailing)
+    /// Source on the leading edge; in the island, the state glyph or fact on the trailing edge.
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            PresentationSourceMark(presentation: presentation, palette: palette)
+            Spacer(minLength: 0)
+            if let deadline = questionDeadline {
+                PresentationCountdown(deadline: deadline, palette: palette)
+            } else if surface == .expanded {
+                PresentationIslandStatusMark(
+                    presentation: presentation, palette: palette,
+                    interaction: context.state.displayInteraction, isStale: context.isStale)
+            }
+        }
+    }
+
+    /// The answer deadline while a question can still be answered on the card.
+    private var questionDeadline: Date? {
+        guard projection.permitsInlineResponse, let interaction = context.state.displayInteraction else { return nil }
+        return interaction.expiresAt
+    }
+
+    private var fittedContent: some View {
+        LiveActivityFittingLayout(maximumHeight: surface == .lockScreen ? 110 : 84) {
+            ViewThatFits(in: .vertical) {
+                if presentation.privacy == .private {
+                    privateCard
+                } else if projection.isDecision {
+                    // The answer buttons are never dropped: the text around them shrinks instead,
+                    // and tapping the card opens the full question in Relo.
+                    questionCard(showsTitle: true, questionLines: 2)
+                    questionCard(showsTitle: true, questionLines: 1)
+                    questionCard(showsTitle: false, questionLines: 2)
+                    questionCard(showsTitle: false, questionLines: 1)
+                    questionCard(showsTitle: false, questionLines: 0)
+                } else {
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        card(showComponents: true)
+                            .fixedSize(horizontal: false, vertical: true)
+                        card(showComponents: false)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    PresentationSourceMark(
-                        presentation: presentation, palette: palette, lineLimit: 1
-                    )
-                    if let stepItems = lockScreenStepItems {
-                        PresentationPhaseMark(items: stepItems, palette: palette)
-                    } else {
-                        PresentationStatusMark(
-                            presentation: presentation, palette: palette, lineLimit: 1
-                        )
-                    }
+                    compactCard
+                        .fixedSize(horizontal: false, vertical: true)
+                    conciseFact.font(.caption).foregroundStyle(palette.secondaryText).lineLimit(1)
                 }
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(presentation.title)
-                    .font(titleFont)
-                    .foregroundStyle(palette.primaryText)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.68)
-                    .allowsTightening(true)
-                    .layoutPriority(3)
-                if lockScreenUsesCombinedProgress {
-                    PresentationStatusMark(
-                        presentation: presentation, palette: palette, lineLimit: 1
-                    )
-                }
-            }
-            PresentationComponentStack(
-                presentation: presentation, surface: .lockScreen, palette: palette,
-                accountID: context.attributes.accountID, compact: componentCompact
-            )
+        }
+    }
+
+    private var privateCard: some View {
+        Label("Private activity", systemImage: "lock.fill")
+            .font(.caption).foregroundStyle(palette.primaryText)
+    }
+
+    private func card(showComponents: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(presentation.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
             if let subtitle = presentation.subtitle {
-                Text(subtitle)
-                    .font(detailFont)
-                    .foregroundStyle(palette.secondaryText)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.68)
-                    .allowsTightening(true)
-                    .layoutPriority(2)
+                Text(subtitle).font(.caption).foregroundStyle(palette.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            PresentationBehaviorModule(
-                activityID: context.attributes.eventID,
-                activityGeneration: context.attributes.generation,
-                behavior: presentation.behavior,
-                interaction: context.state.displayInteraction,
-                fallbackStatus: context.state.displayStatus,
-                palette: palette
-            )
+            if showComponents {
+                PresentationComponentStack(
+                    presentation: presentation, components: projection.components, palette: palette,
+                    accountID: context.attributes.accountID
+                )
+            }
+            if !(showComponents && componentsCarryFact) {
+                // A rendered bar or step track already states progress; repeat it only when
+                // the condensed variant drops the components.
+                conciseFact
+                    .font(.caption).foregroundStyle(palette.secondaryText)
+                    .lineLimit(1)
+            }
         }
     }
 
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if surface == .lockScreen {
-                HStack(spacing: 8) {
-                    PresentationSourceMark(presentation: presentation, palette: palette)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    PresentationStatusMark(presentation: presentation, palette: palette)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
+    private var componentsCarryFact: Bool {
+        switch projection.fact {
+        case .percentage, .stages: !projection.components.isEmpty
+        case .symbol: false
+        }
+    }
+
+    /// A question with its answer buttons. Every variant keeps the buttons.
+    private func questionCard(showsTitle: Bool, questionLines: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if showsTitle {
                 Text(presentation.title)
-                    .font(surface == .lockScreen ? .headline : .subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(palette.primaryText)
-                    .lineLimit(2)
-                if let subtitle = presentation.subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(palette.secondaryText)
-                        .lineLimit(1)
-                }
-                if surface == .expanded && !hasStepComponent(on: componentSurface) {
-                    Text(presentation.status)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(palette.state)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                    .lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
             }
-            PresentationComponentStack(
-                presentation: presentation, surface: componentSurface, palette: palette,
-                accountID: context.attributes.accountID, compact: true
-            )
+            if questionLines > 0, let question = presentation.subtitle {
+                Text(question)
+                    .font(showsTitle ? .caption : .subheadline.weight(.semibold))
+                    .foregroundStyle(showsTitle ? palette.secondaryText : palette.primaryText)
+                    .lineLimit(questionLines)
+            }
             PresentationBehaviorModule(
                 activityID: context.attributes.eventID,
                 activityGeneration: context.attributes.generation,
                 behavior: presentation.behavior,
                 interaction: context.state.displayInteraction,
-                fallbackStatus: context.state.displayStatus,
-                palette: palette
+                fallbackStatus: projection.status, palette: palette,
+                permitsSubmission: projection.permitsInlineResponse
             )
+            .padding(.horizontal, 4)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Work that does not fit in full: the title and one line of status.
+    private var compactCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(presentation.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.primaryText)
+                .lineLimit(surface == .lockScreen ? 2 : 1)
+            conciseFact.font(.caption).foregroundStyle(palette.secondaryText).lineLimit(1)
         }
     }
 
-    private func hasStepComponent(on surface: LiveActivityPresentation.Surface) -> Bool {
-        presentation.components(for: surface).contains { component in
-            if case .steps = component { return true }
-            return false
+    @ViewBuilder private var conciseFact: some View {
+        switch projection.fact {
+        case .percentage(let value, let role):
+            HStack(spacing: 6) {
+                Text(value, format: .percent.precision(.fractionLength(0)))
+                    .fontWeight(.semibold).monospacedDigit()
+                    .foregroundStyle(palette.cyan)
+                Text(projection.status)
+            }
+            .accessibilityElement(children: .combine)
+        case .stages(let completed, let total):
+            Text("\(completed) of \(total) stages complete")
+        case .symbol(let symbol, let label):
+            Label(label, systemImage: symbol)
         }
     }
-}
 
-private struct PresentationStepProgressPair {
-    let stepID: String
-    let stepRole: LiveActivityPresentation.IdentityRole
-    let items: [LiveActivityDisplayPresentation.Step]
-    let progressID: String
-    let progressRole: LiveActivityPresentation.IdentityRole
-    let value: Double
-    let label: String?
+    private var statusSymbol: String {
+        if case .symbol(let symbol, _) = projection.fact { return symbol }
+        return presentation.state.icon.systemImageName
+    }
 }
 
 struct PresentationComponentStack: View {
     let presentation: LiveActivityPresentation
-    let surface: LiveActivityPresentation.Surface
+    let components: [LiveActivityPresentation.Component]
     let palette: PresentationPalette
     let accountID: String?
-    let compact: Bool
-
-    private var components: [LiveActivityPresentation.Component] {
-        presentation.components(for: surface)
-    }
-
-    private var pairedStepProgress: PresentationStepProgressPair? {
-        var step: (id: String, role: LiveActivityPresentation.IdentityRole,
-                   items: [LiveActivityDisplayPresentation.Step])?
-        var progress: (id: String, role: LiveActivityPresentation.IdentityRole,
-                       value: Double, label: String?)?
-        for component in components {
-            switch component {
-            case let .steps(id, role, items): step = (id, role, items)
-            case let .progressBar(id, role, value, label): progress = (id, role, value, label)
-            case .image: continue
-            }
-        }
-        guard let step, let progress else { return nil }
-        return PresentationStepProgressPair(
-            stepID: step.id, stepRole: step.role, items: step.items,
-            progressID: progress.id, progressRole: progress.role,
-            value: progress.value, label: progress.label
-        )
-    }
-
-    private var standaloneComponents: [LiveActivityPresentation.Component] {
-        guard let pair = pairedStepProgress else { return components }
-        return components.filter { $0.id != pair.stepID && $0.id != pair.progressID }
-    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 5) {
-            if let pair = pairedStepProgress {
-                PresentationStepProgressView(
-                    presentation: presentation, pair: pair, palette: palette,
-                    compact: compact
-                )
+        VStack(alignment: .leading, spacing: 4) {
+            if let step = components.first(where: { if case .steps = $0 { true } else { false } }),
+                case .steps(_, _, let items) = step,
+                components.contains(where: { if case .progressBar = $0 { true } else { false } })
+            {
+                let phase = LiveActivitySurfaceProjection.Phase(items: items)
+                Text(phase.label).font(.caption).foregroundStyle(palette.secondaryText)
+                    .lineLimit(1)
+                    .accessibilityLabel(
+                        phase.current.map { "Phase \($0) of \(phase.total), \(phase.label)" } ?? phase.label)
             }
-            ForEach(standaloneComponents) { component in
-                PresentationComponentView(
-                    presentation: presentation, component: component, palette: palette,
-                    accountID: accountID, compact: compact
-                )
-            }
-        }
-    }
-}
-
-private struct PresentationStepProgressView: View {
-    let presentation: LiveActivityPresentation
-    let pair: PresentationStepProgressPair
-    let palette: PresentationPalette
-    let compact: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var stepColor: Color {
-        Color.presentationHex(presentation.color(for: pair.stepRole)) ?? palette.secondary
-    }
-    private var progressColor: Color {
-        Color.presentationHex(presentation.color(for: pair.progressRole)) ?? palette.accent
-    }
-    private var currentPhase: Int {
-        if let index = pair.items.firstIndex(where: { $0.state == .current }) { return index + 1 }
-        return pair.items.filter { $0.state == .complete }.count
-    }
-    private var phaseLabel: String {
-        pair.label ?? "Phase \(currentPhase) of \(pair.items.count)"
-    }
-    private var percentageText: some View {
-        Text(pair.value, format: .percent.precision(.fractionLength(0)))
-            .font(.caption2.weight(.semibold).monospacedDigit())
-            .foregroundStyle(progressColor)
-    }
-    private var segmentTrack: some View {
-        HStack(spacing: 5) {
-            ForEach(pair.items) { item in
-                Capsule()
-                    .fill(segmentColor(item.state))
-                    .frame(height: compact ? 4 : 5)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .layoutPriority(1)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 3 : 4) {
-            if let label = pair.label {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(label)
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(palette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                        .allowsTightening(true)
-                    Spacer(minLength: 0)
-                    percentageText
-                }
-                segmentTrack
-            } else {
-                HStack(spacing: 8) {
-                    segmentTrack
-                    percentageText
+            ForEach(components) { component in
+                if case .steps = component,
+                    components.contains(where: { if case .progressBar = $0 { true } else { false } })
+                {
+                    EmptyView()
+                } else {
+                    PresentationComponentView(
+                        presentation: presentation, component: component, palette: palette,
+                        accountID: accountID
+                    )
                 }
             }
-            ProgressView(value: pair.value)
-                .controlSize(.mini)
-                .tint(progressColor)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: pair.value)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(phaseLabel)
-        .accessibilityValue("\(Int((pair.value * 100).rounded())) percent")
-    }
-
-    private func segmentColor(_ state: LiveActivityDisplayPresentation.Step.State) -> Color {
-        switch state {
-        case .complete: stepColor
-        case .current: palette.secondary
-        case .pending: palette.primaryText.opacity(0.16)
         }
     }
 }
@@ -387,16 +309,31 @@ struct PresentationComponentView: View {
     let component: LiveActivityPresentation.Component
     let palette: PresentationPalette
     let accountID: String?
-    let compact: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var componentColor: Color {
-        Color.presentationHex(presentation.color(for: component.colorRole)) ?? palette.accent
+        palette.cyan
     }
 
     var body: some View {
         switch component {
-        case let .progressBar(_, _, value, label):
+        case .progressBar(_, _, let value, let label) where presentation.appearance.drawsProgressAsRing:
+            HStack(spacing: 10) {
+                PresentationProgressRing(value: value, color: componentColor, track: palette.primaryText)
+                    .frame(width: 40, height: 40)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: value)
+                if let label {
+                    Text(label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(palette.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label ?? "Progress")
+            .accessibilityValue("\(Int((value * 100).rounded())) percent")
+        case .progressBar(_, _, let value, let label):
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     if let label {
@@ -404,7 +341,6 @@ struct PresentationComponentView: View {
                             .font(.caption2)
                             .foregroundStyle(palette.secondaryText)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.68)
                             .allowsTightening(true)
                     }
                     Spacer(minLength: 0)
@@ -412,53 +348,86 @@ struct PresentationComponentView: View {
                         .font(.caption2.weight(.semibold).monospacedDigit())
                         .foregroundStyle(componentColor)
                 }
-                ProgressView(value: value).tint(componentColor)
+                PresentationNeonBar(value: value, palette: palette)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: value)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label ?? "Progress")
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
-        case let .steps(_, _, items):
+        case .steps(_, _, let items):
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
                     ForEach(items) { item in
-                        Capsule().fill(stepColor(item.state, color: componentColor))
-                            .frame(height: 5)
+                        stepSegment(item.state)
                     }
                 }
-                if let current = items.first(where: { $0.state == .current }) {
-                    Label(current.label, systemImage: "circle.inset.filled")
-                        .font((compact ? Font.caption2 : .caption).weight(.semibold))
+                let phase = LiveActivitySurfaceProjection.Phase(items: items)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(phase.label)
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(palette.primaryText)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.68)
                         .allowsTightening(true)
+                    Spacer(minLength: 0)
+                    if let current = phase.current {
+                        Text("\(current) of \(phase.total)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(palette.secondaryText)
+                    }
                 }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Steps")
             .accessibilityValue(items.map { "\($0.label), \($0.state.rawValue)" }.joined(separator: "; "))
-        case let .image(_, _, asset):
-            if let image = ImmutablePresentationAssetCache.image(for: asset, accountID: accountID) {
-                Image(uiImage: image).resizable()
-                    .aspectRatio(contentMode: asset.contentMode == .fill ? .fill : .fit)
-                    .frame(maxWidth: .infinity, maxHeight: compact ? 36 : 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityLabel(asset.altText)
-            } else {
-                Label("Image available in Relo", systemImage: "photo.badge.exclamationmark")
-                    .font(.caption).foregroundStyle(palette.secondaryText)
-                    .accessibilityLabel(asset.altText)
+        case .image(_, _, let asset):
+            ZStack {
+                palette.primaryText.opacity(0.08)
+                if let image = ImmutablePresentationAssetCache.image(for: asset, accountID: accountID) {
+                    Image(uiImage: image).resizable()
+                        .aspectRatio(contentMode: asset.contentMode == .fill ? .fill : .fit)
+                } else {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .foregroundStyle(palette.secondaryText)
+                }
             }
+            .frame(height: 36)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityLabel(asset.altText)
         }
     }
 
-    private func stepColor(_ state: LiveActivityDisplayPresentation.Step.State, color: Color) -> Color {
+    /// Completed work is the cyan to violet ramp, the step in progress is the brightest
+    /// segment (static: Live Activities cannot loop animation), pending steps are faint glass.
+    @ViewBuilder
+    private func stepSegment(_ state: LiveActivityDisplayPresentation.Step.State) -> some View {
         switch state {
-        case .complete: color
-        case .current: palette.secondary
-        case .pending: palette.primaryText.opacity(0.16)
+        case .complete:
+            Capsule().fill(palette.rampGradient).frame(height: 5)
+        case .current:
+            Capsule()
+                .fill(LinearGradient(colors: [palette.violet, palette.magenta], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 5)
+                .shadow(color: palette.magenta.opacity(0.75), radius: 4)
+        case .pending:
+            Capsule().fill(Color.white.opacity(0.15)).frame(height: 5)
         }
+    }
+}
+
+/// A thin determinate bar filled with the neon ramp over faint glass.
+struct PresentationNeonBar: View {
+    let value: Double
+    let palette: PresentationPalette
+
+    var body: some View {
+        Capsule().fill(Color.white.opacity(0.15)).frame(height: 5)
+            .overlay(alignment: .leading) {
+                GeometryReader { proxy in
+                    Capsule().fill(palette.rampGradient)
+                        .frame(width: max(5, proxy.size.width * min(max(value, 0), 1)))
+                }
+            }
     }
 }
 
@@ -468,15 +437,16 @@ struct PresentationSourceMark: View {
     var lineLimit: Int? = 1
 
     private var identityText: String {
-        let labels = [presentation.identity.project?.label, presentation.identity.thread?.label]
-            .compactMap { $0 }
-        return labels.isEmpty ? (presentation.header ?? "Relo") : labels.joined(separator: " · ")
+        presentation.privacy == .private
+            ? "Relo" : presentation.identity.project?.label ?? presentation.header ?? "Relo"
     }
 
     private var identityIcon: String {
-        presentation.identity.project?.icon.systemImageName
-            ?? presentation.identity.thread?.icon.systemImageName
-            ?? presentation.state.icon.systemImageName
+        presentation.privacy == .private
+            ? "lock.fill"
+            : presentation.identity.project?.icon.systemImageName
+                ?? presentation.identity.thread?.icon.systemImageName
+                ?? presentation.state.icon.systemImageName
     }
 
     var body: some View {
@@ -484,67 +454,91 @@ struct PresentationSourceMark: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(palette.primaryText)
             .lineLimit(lineLimit)
-            .minimumScaleFactor(0.68)
             .allowsTightening(true)
-            .labelStyle(PresentationSourceLabelStyle(accent: palette.accent))
-    }
-}
-
-struct PresentationStatusMark: View {
-    let presentation: LiveActivityPresentation
-    let palette: PresentationPalette
-    var lineLimit: Int? = 1
-    var body: some View {
-        Text(presentation.status)
-            .font(.caption.weight(.semibold))
-            .lineLimit(lineLimit)
-            .minimumScaleFactor(0.68)
-            .allowsTightening(true)
-            .foregroundStyle(palette.state)
-    }
-}
-
-private struct PresentationPhaseMark: View {
-    let items: [LiveActivityDisplayPresentation.Step]
-    let palette: PresentationPalette
-
-    private var currentPhase: Int {
-        if let index = items.firstIndex(where: { $0.state == .current }) { return index + 1 }
-        return items.filter { $0.state == .complete }.count
+            .labelStyle(
+                PresentationSourceLabelStyle(
+                    accent: presentation.privacy == .private ? palette.primaryText : palette.accent)
+            )
+            .accessibilityLabel(accessibleIdentity)
     }
 
-    var body: some View {
-        Text("Phase \(currentPhase)/\(items.count)")
-            .font(.caption2.weight(.semibold).monospacedDigit())
-            .foregroundStyle(palette.secondaryText)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("Phase \(currentPhase) of \(items.count)")
+    private var accessibleIdentity: String {
+        guard presentation.privacy != .private else { return "Relo private activity" }
+        let labels = [presentation.identity.project?.label, presentation.identity.thread?.label]
+            .compactMap { $0 }
+        return labels.isEmpty ? identityText : labels.joined(separator: ", ")
     }
 }
 
 struct PresentationIslandStatusMark: View {
     let presentation: LiveActivityPresentation
     let palette: PresentationPalette
-    private var compactText: String {
-        for component in presentation.components(for: .expandedBottom) {
-            if case let .steps(_, _, items) = component {
-                let completed = items.filter { $0.state == .complete }.count
-                let current = min(items.count, completed + (completed < items.count ? 1 : 0))
-                return "Phase \(current)/\(items.count)"
-            }
-            if case let .progressBar(_, _, value, _) = component {
-                return "\(Int((value * 100).rounded()))%"
-            }
+    let interaction: ReloActivityAttributes.Interaction?
+    let isStale: Bool
+    /// The bottom card already states measured progress beside its bar or step track.
+    private var bottomCarriesProgress: Bool {
+        let bottom = LiveActivitySurfaceProjection.make(
+            presentation: presentation, surface: .expandedBottom,
+            interaction: interaction, isStale: isStale, now: .now)
+        switch bottom.fact {
+        case .percentage, .stages: return !bottom.components.isEmpty
+        case .symbol: return false
         }
-        return String(presentation.status.prefix(12))
     }
+
     var body: some View {
-        Text(compactText)
-            .font(.caption.weight(.semibold)).monospacedDigit()
-            .lineLimit(1).minimumScaleFactor(0.8).truncationMode(.tail)
-            .foregroundStyle(palette.state)
-            .accessibilityLabel(presentation.status)
+        if bottomCarriesProgress && presentation.privacy != .private {
+            // Never repeat the bottom card's number; show the state glyph instead.
+            Image(systemName: presentation.state.icon.systemImageName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.state)
+                .accessibilityLabel(presentation.status)
+        } else {
+            PresentationCompactSurface(
+                presentation: presentation, surface: .expandedTrailing,
+                palette: palette, interaction: interaction, isStale: isStale)
+        }
+    }
+}
+
+/// Time left to answer, counted down by the system without further pushes.
+struct PresentationCountdown: View {
+    let deadline: Date
+    let palette: PresentationPalette
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "timer")
+            Text(timerInterval: Date.now...max(deadline, Date.now), countsDown: true)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 44, alignment: .trailing)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(palette.state)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Time left to answer")
+    }
+}
+
+/// A determinate gauge with the percent centered: the `ring` activity style.
+struct PresentationProgressRing: View {
+    let value: Double
+    let color: Color
+    let track: Color
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(track.opacity(0.15), lineWidth: 4)
+            Circle().trim(from: 0, to: min(max(value, 0), 1))
+                .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Text(value, format: .percent.precision(.fractionLength(0)))
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundStyle(track)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(2)
     }
 }
 
@@ -552,34 +546,87 @@ struct PresentationCompactSurface: View {
     let presentation: LiveActivityPresentation
     let surface: LiveActivityPresentation.Surface
     let palette: PresentationPalette
+    var interaction: ReloActivityAttributes.Interaction? = nil
+    var isStale = false
+
+    private var projection: LiveActivitySurfaceProjection {
+        .make(
+            presentation: presentation, surface: surface,
+            interaction: interaction, isStale: isStale, now: .now)
+    }
+    private var factColor: Color {
+        if presentation.privacy == .private { return palette.primaryText }
+        if case .percentage(_, let role) = projection.fact {
+            return palette.cyan
+        }
+        return palette.state
+    }
+
     var body: some View {
-        if let component = presentation.components(for: surface).first {
-            switch component {
-            case let .progressBar(_, role, value, _):
-                Text(value, format: .percent.precision(.fractionLength(0)))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(Color.presentationHex(presentation.color(for: role)) ?? palette.accent)
-            case let .steps(_, role, items):
-                Text("\(items.filter { $0.state == .complete }.count)/\(items.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(Color.presentationHex(presentation.color(for: role)) ?? palette.accent)
-            case .image:
-                Image(systemName: "photo.fill").foregroundStyle(palette.accent)
+        Group {
+            if surface == .minimal {
+                minimalFact
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    fullFact.fixedSize(horizontal: true, vertical: false)
+                    Image(systemName: fallbackSymbol).foregroundStyle(factColor)
+                }
             }
-        } else {
-            Image(systemName: presentation.state.icon.systemImageName).foregroundStyle(palette.state)
+        }
+        .font(.caption2.weight(.semibold).monospacedDigit())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder private var fullFact: some View {
+        switch projection.fact {
+        case .symbol(let symbol, _):
+            Image(systemName: symbol).foregroundStyle(factColor)
+        case .percentage(let value, _):
+            Text(value, format: .percent.precision(.fractionLength(0)))
+                .foregroundStyle(factColor).frame(width: 36)
+        case .stages(let completed, let total):
+            Text("\(completed)/\(total)").foregroundStyle(factColor).frame(width: 30)
         }
     }
-}
 
-struct PresentationThemeModifier: ViewModifier {
-    let theme: LiveActivityDisplayPresentation.Theme
-    @ViewBuilder func body(content: Content) -> some View {
-        switch theme {
-        case .system: content
-        case .light: content.environment(\.colorScheme, .light)
-        case .dark: content.environment(\.colorScheme, .dark)
+    @ViewBuilder private var minimalFact: some View {
+        switch projection.fact {
+        case .symbol(let symbol, _):
+            Image(systemName: symbol).foregroundStyle(factColor)
+        case .percentage(let value, _):
+            ring(value)
+        case .stages(let completed, let total):
+            ring(Double(completed) / Double(max(total, 1)))
         }
+    }
+
+    private func ring(_ value: Double) -> some View {
+        ZStack {
+            Circle().stroke(palette.primaryText.opacity(0.22), lineWidth: 2)
+            Circle().trim(from: 0, to: value).stroke(
+                factColor, style: StrokeStyle(lineWidth: 2, lineCap: .round)
+            )
+            .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 20, height: 20)
+    }
+
+    private var fallbackSymbol: String {
+        if case .symbol(let symbol, _) = projection.fact { return symbol }
+        return presentation.state.icon.systemImageName
+    }
+    private var accessibilityText: String {
+        if presentation.privacy == .private { return "Relo private activity. Open Relo to view" }
+        let fact: String
+        switch projection.fact {
+        case .symbol(_, let label): fact = label
+        case .percentage(let value, _): fact = "\(Int((value * 100).rounded())) percent"
+        case .stages(let completed, let total): fact = "\(completed) of \(total) stages complete"
+        }
+        return surface == .minimal
+            ? "\(presentation.identity.project?.label ?? presentation.header ?? "Relo"), \(presentation.title), \(fact)"
+            : fact
     }
 }
 
@@ -590,23 +637,27 @@ struct PresentationBehaviorModule: View {
     let interaction: ReloActivityAttributes.Interaction?
     let fallbackStatus: String
     let palette: PresentationPalette
+    let permitsSubmission: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         switch behavior {
         case .informational, .progress:
             EmptyView()
-        case let .approval(primary, secondary):
+        case .approval(let primary, let secondary):
             decisionOptions(primary: primary, secondary: secondary, expectedKind: "approval")
-        case let .yesNo(primary, secondary):
+        case .yesNo(let primary, let secondary):
             decisionOptions(primary: primary, secondary: secondary, expectedKind: "yes_no")
         case .unsupportedTextReply:
-            feedback(label: "Reply in the Relo app", symbol: "arrow.up.forward.app.fill")
+            decisionOptions(primary: "Reply", secondary: "Reply", expectedKind: "text")
                 .accessibilityHint("Inline text entry is not supported in Live Activities")
         }
     }
 
     @ViewBuilder
-    private func decisionOptions(primary: String, secondary: String, expectedKind: String) -> some View {
+    private func decisionOptions(primary: String, secondary: String, expectedKind: String)
+        -> some View
+    {
         if let interaction, interaction.kind == expectedKind {
             let response = LiveActivityResponseWidgetPresentation.make(
                 interaction: interaction, primary: primary, secondary: secondary,
@@ -614,13 +665,27 @@ struct PresentationBehaviorModule: View {
             )
             switch response.mode {
             case .actions:
-                HStack(spacing: 8) {
-                    decisionButton(label: primary, action: expectedKind == "yes_no" ? "yes" : "approve", interaction: interaction, emphasized: true)
-                    decisionButton(label: secondary, action: expectedKind == "yes_no" ? "no" : "deny", interaction: interaction, emphasized: false)
+                if permitsSubmission {
+                    HStack(spacing: 8) {
+                        decisionButton(
+                            label: secondary, action: expectedKind == "yes_no" ? "no" : "deny",
+                            interaction: interaction, emphasized: false)
+                        decisionButton(
+                            label: primary, action: expectedKind == "yes_no" ? "yes" : "approve",
+                            interaction: interaction, emphasized: true)
+                    }
+                    .invalidatableContent()
+                } else {
+                    feedback(label: fallbackStatus, symbol: "info.circle.fill")
                 }
-                .invalidatableContent()
-            case .openTextReply, .sending, .queued, .rejected, .accepted, .terminal:
-                feedback(label: response.label ?? "Response unavailable", symbol: response.symbol, showsProgress: response.showsProgress)
+            case .openTextReply:
+                feedback(label: "Reply needed", symbol: "text.bubble")
+            case .rejected:
+                feedback(label: "Response not recorded", symbol: "exclamationmark.triangle.fill")
+            case .sending, .queued, .accepted, .terminal:
+                feedback(
+                    label: response.label ?? "Response unavailable", symbol: response.symbol,
+                    showsProgress: response.showsProgress)
             case .placeholder:
                 feedback(label: fallbackStatus, symbol: "info.circle.fill")
             }
@@ -632,19 +697,27 @@ struct PresentationBehaviorModule: View {
     private func decisionButton(
         label: String, action: String, interaction: ReloActivityAttributes.Interaction, emphasized: Bool
     ) -> some View {
-        Button(intent: ReloLiveActivityResponseIntent(
-            activityID: activityID, activityGeneration: activityGeneration,
-            notificationID: interaction.notificationID,
-            interactionID: interaction.id, accountID: interaction.accountID,
-            deviceID: interaction.targetDeviceID, action: action,
-            credential: interaction.credential, expiresAt: interaction.expiresAt
-        )) {
+        Button(
+            intent: ReloLiveActivityResponseIntent(
+                activityID: activityID, activityGeneration: activityGeneration,
+                notificationID: interaction.notificationID,
+                interactionID: interaction.id, accountID: interaction.accountID,
+                deviceID: interaction.targetDeviceID, action: action,
+                credential: interaction.credential, expiresAt: interaction.expiresAt
+            )
+        ) {
             Text(label)
                 .font(.caption.weight(.bold))
-                .foregroundStyle(emphasized ? Color(red: 0.03, green: 0.16, blue: 0.13) : palette.primaryText.opacity(0.78))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(emphasized ? palette.accent : Color.white.opacity(0.11), in: Capsule())
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(emphasized ? Color.white : palette.primaryText)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(
+                    emphasized
+                        ? AnyShapeStyle(LinearGradient(
+                            colors: [Color(neonHex: 0x4F5BEA), Color(neonHex: 0x9A45DD)],
+                            startPoint: .leading, endPoint: .trailing))
+                        : AnyShapeStyle(palette.primaryText.opacity(0.11)),
+                    in: Capsule())
         }
         .buttonStyle(LiveActivityDecisionButtonStyle())
         .accessibilityLabel(label)
@@ -653,82 +726,100 @@ struct PresentationBehaviorModule: View {
 
     private func feedback(label: String, symbol: String?, showsProgress: Bool = false) -> some View {
         HStack(spacing: 7) {
-            if showsProgress { ProgressView().controlSize(.small) }
-            else if let symbol { Image(systemName: symbol).contentTransition(.symbolEffect(.replace)) }
+            if showsProgress {
+                ProgressView().controlSize(.small)
+            } else if let symbol {
+                Image(systemName: symbol).contentTransition(
+                    reduceMotion ? .identity : .symbolEffect(.replace))
+            }
             Text(label)
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
-                .allowsTightening(true)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .font(.caption.weight(.bold))
         .foregroundStyle(palette.primaryText)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.11), in: Capsule())
-        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .transition(.opacity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
     }
 }
 
 struct LiveActivityDecisionButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .opacity(configuration.isPressed ? 0.38 : 1)
-            .overlay {
-                if configuration.isPressed {
-                    ProgressView().controlSize(.mini).tint(.white).transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.8 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 struct PresentationPalette: Sendable {
+    /// The curated neon ramp. Structure (bars, steps, rings, glow) uses only these; the project
+    /// identity colour is a small accent on the source mark and never a fill or wash.
+    let cyan = Color(neonHex: 0x5CE1FF)
+    let violet = Color(neonHex: 0x8B7CFF)
+    let magenta = Color(neonHex: 0xD65CF0)
+    static let mint = Color(neonHex: 0x34D399)
+    static let coral = Color(neonHex: 0xFF6B57)
+    static let amber = Color(neonHex: 0xFBBF24)
+
     let accent: Color
     let secondary: Color
     let state: Color
-    let primaryText: Color
-    let secondaryText: Color
+    let primaryText = Color.white
+    let secondaryText = Color.white.opacity(0.72)
+    let canvas = Color(neonHex: 0x0B0E1A)
+    /// Live Activities are always dark glass so the neon reads, even on a light Lock Screen.
+    let isLight = false
 
-    init(presentation: LiveActivityPresentation) {
-        accent = Color.presentationHex(
-            presentation.color(for: presentation.appearance.roles.cardIdentity)
-        ) ?? .mint
-        secondary = Color.presentationHex(
-            presentation.color(for: presentation.appearance.roles.componentIdentity)
-        ) ?? accent.opacity(0.58)
-        state = Color.presentationHex(
-            presentation.color(for: presentation.appearance.roles.statusEmphasis)
-        ) ?? accent
-        primaryText = presentation.appearance.theme == .light ? .black : .white
-        secondaryText = primaryText.opacity(0.68)
+    var rampGradient: LinearGradient {
+        LinearGradient(colors: [cyan, violet], startPoint: .leading, endPoint: .trailing)
     }
+
+    init(
+        presentation: LiveActivityPresentation, surface: PresentationCardSurface = .expanded,
+        hostColorScheme: ColorScheme = .dark
+    ) {
+        let project = (ReloReadableColor(hex: presentation.color(for: .project))
+            ?? .init(red: 0.37, green: 0.85, blue: 0.72)).readable(onLight: false)
+        accent = Color(red: project.red, green: project.green, blue: project.blue)
+        secondary = Color(neonHex: 0x8B7CFF)
+        state = switch presentation.state.tone {
+        case "success": Self.mint
+        case "failure", "attention": Self.coral
+        case "waiting", "stopped", "warning": Self.amber
+        default: Color(neonHex: 0x5CE1FF)
+        }
+    }
+    func identityColor(_ hex: String) -> Color { cyan }
 }
 
+/// The Lock Screen surface: deep near-black glass with a faint cyan and violet edge glow.
+/// Always On dims to plain black so the glow never burns in.
 struct PresentationBackdrop: View {
+    static let base = Color(neonHex: 0x0B0E1A)
     let palette: PresentationPalette
+    var isLuminanceReduced = false
 
     var body: some View {
-        ZStack {
+        if isLuminanceReduced {
             Color.black
-            LinearGradient(
-                colors: [palette.accent.opacity(0.34), palette.secondary.opacity(0.18), .black.opacity(0.94)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [palette.secondary.opacity(0.28), .clear], center: .bottomTrailing,
-                startRadius: 0, endRadius: 190
-            )
-        }
-        .overlay {
-            ContainerRelativeShape()
-                .stroke(LinearGradient(
-                    colors: [palette.accent.opacity(0.72), palette.secondary.opacity(0.18), .clear],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ), lineWidth: 1)
-                .padding(1)
+        } else {
+            ZStack {
+                Self.base
+                RadialGradient(
+                    colors: [palette.cyan.opacity(0.10), .clear],
+                    center: .topLeading, startRadius: 0, endRadius: 200)
+                RadialGradient(
+                    colors: [palette.violet.opacity(0.12), .clear],
+                    center: .bottomTrailing, startRadius: 0, endRadius: 220)
+                Rectangle().strokeBorder(
+                    LinearGradient(
+                        colors: [palette.cyan.opacity(0.22), palette.violet.opacity(0.10), palette.magenta.opacity(0.18)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1)
+            }
         }
     }
 }
@@ -743,10 +834,16 @@ struct PresentationSourceLabelStyle: LabelStyle {
     }
 }
 
-private extension Color {
-    static func presentationHex(_ value: String) -> Color? {
+extension Color {
+    fileprivate init(neonHex rgb: UInt32) {
+        self.init(
+            red: Double((rgb >> 16) & 0xff) / 255, green: Double((rgb >> 8) & 0xff) / 255,
+            blue: Double(rgb & 0xff) / 255)
+    }
+    fileprivate static func presentationHex(_ value: String) -> Color? {
         guard value.range(of: #"^#[0-9A-F]{6}$"#, options: .regularExpression) != nil,
-              let rgb = UInt64(value.dropFirst(), radix: 16) else { return nil }
+            let rgb = UInt64(value.dropFirst(), radix: 16)
+        else { return nil }
         return Color(
             red: Double((rgb >> 16) & 0xff) / 255,
             green: Double((rgb >> 8) & 0xff) / 255,
@@ -759,12 +856,16 @@ private func accessibilitySummary(
     for context: ActivityViewContext<ReloActivityAttributes>
 ) -> LiveActivityAccessibilitySummary {
     let presentation = context.state.presentation
-    let progress = context.state.progress
+    let projection = LiveActivitySurfaceProjection.make(
+        presentation: presentation, surface: .lockScreen,
+        interaction: context.state.displayInteraction, isStale: context.isStale, now: .now)
+    let source = [presentation.identity.project?.label, presentation.identity.thread?.label]
+        .compactMap { $0 }
     return LiveActivityAccessibilitySummary(
-        source: presentation.identity.project?.label ?? presentation.header ?? "Relo",
+        source: source.isEmpty ? presentation.header ?? "Relo" : source.joined(separator: ", "),
         headline: presentation.title,
-        status: presentation.status, detail: presentation.subtitle, progress: progress,
+        status: projection.status, detail: presentation.subtitle, progress: projection.measuredProgress,
         isPrivate: presentation.privacy == .private,
-        isInteractive: presentation.permitsLiveActivityActions && context.state.displayInteraction != nil
+        isInteractive: projection.permitsInlineResponse
     )
 }

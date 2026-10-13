@@ -47,17 +47,22 @@ describe("Dashboard shell mobile contracts", () => {
     const { container, rerender } = render(<DashboardShell shell={shell}><main id="main-content">Monitor</main></DashboardShell>)
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main-content")
     expect(screen.getByRole("link", { name: "Inbox" })).toHaveAttribute("href", "/dashboard")
-    expect(screen.getByRole("link", { name: "Connections" })).toHaveAttribute("href", "/dashboard/connections/services")
+    expect(screen.getByRole("link", { name: "Connections" })).toHaveAttribute("href", "/dashboard/connections")
     expect(screen.getByRole("link", { name: "Test Lab" })).toHaveAttribute("href", "/dashboard/testing")
-    expect(screen.getByRole("link", { name: "Account" })).toHaveAttribute("href", "/dashboard/account")
-    expect(screen.getByRole("link", { name: "Documentation" })).toHaveAttribute("href", "/dashboard/docs")
     expect(screen.getByRole("link", { name: "Test Lab" })).toHaveAttribute("aria-current", "page")
-    expect(container.querySelector("[data-release-identity='test-release']")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Sign out" })).toHaveAttribute("id", "sign-out")
+    expect(screen.queryByRole("link", { name: "Account" })).toBeNull()
+    const profile = container.querySelector<HTMLElement>("#profile-menu")!
+    profile.focus()
+    fireEvent.keyDown(profile, { key: "Enter" })
+    expect(screen.getByRole("menuitem", { name: "Account" })).toHaveAttribute("href", "/dashboard/account")
+    expect(screen.getByRole("menuitem", { name: "Documentation" })).toHaveAttribute("href", "/dashboard/docs")
+    expect(document.querySelector("[data-release-identity='test-release']")).toBeInTheDocument()
+    expect(screen.getByRole("menuitem", { name: "Sign out" })).toHaveAttribute("id", "sign-out")
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" })
 
     rerender(<DashboardShell shell={{ ...shell, title: "Inbox", active: "inbox", counts: { pending: 0, notifications: 0, deliveries: 0 } }}><main id="main-content">Inbox</main></DashboardShell>)
     expect(screen.getByRole("link", { name: "Inbox" })).toHaveAttribute("aria-current", "page")
-    expect(screen.getByText("Inbox", { selector: "header span" })).toBeInTheDocument()
+    expect(screen.getByText("Relo", { selector: "header span" })).toBeInTheDocument()
   })
 
   it("keeps the 320px content path shrink-safe without viewport-width utility overflow", () => {

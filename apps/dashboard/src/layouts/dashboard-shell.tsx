@@ -2,22 +2,28 @@ import {
   BellRing,
   BookOpen,
   Cable,
+  ChevronsUpDown,
   FlaskConical,
-  Inbox,
   FolderKanban,
+  Inbox,
+  LogOut,
   UserRound,
 } from "lucide-react"
 import * as React from "react"
 
 import type { AuthenticatedDashboardBootstrap } from "@/app/bootstrap"
-import { AccountFooter } from "@/components/molecules/account-footer"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -26,59 +32,39 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
+
 const navigation = [
   {
-    label: "Operate",
-    items: [
-      {
-        label: "Inbox",
-        href: "/dashboard",
-        icon: Inbox,
-        sections: ["inbox", "inbox-notifications", "inbox-delivery"],
-      },
-      {
-        label: "Projects",
-        href: "/dashboard/projects",
-        icon: FolderKanban,
-        sections: ["projects"],
-      },
-      {
-        label: "Connections",
-        href: "/dashboard/connections/services",
-        icon: Cable,
-        sections: [
-          "connections-pairing",
-          "connections-services",
-          "connections-phones",
-          "connections-clients",
-        ],
-      },
-      {
-        label: "Test Lab",
-        href: "/dashboard/testing",
-        icon: FlaskConical,
-        sections: ["testing"],
-      },
+    label: "Inbox",
+    href: "/dashboard",
+    icon: Inbox,
+    sections: ["inbox", "inbox-notifications", "inbox-delivery"],
+  },
+  {
+    label: "Projects",
+    href: "/dashboard/projects",
+    icon: FolderKanban,
+    sections: ["projects"],
+  },
+  {
+    label: "Connections",
+    href: "/dashboard/connections",
+    icon: Cable,
+    sections: [
+      "connections",
+      "connections-phones",
+      "connections-clients",
     ],
   },
   {
-    label: "System",
-    items: [
-      {
-        label: "Account",
-        href: "/dashboard/account",
-        icon: UserRound,
-        sections: ["account"],
-      },
-      {
-        label: "Documentation",
-        href: "/dashboard/docs",
-        icon: BookOpen,
-        sections: ["docs"],
-      },
-    ],
+    label: "Test Lab",
+    href: "/dashboard/testing",
+    icon: FlaskConical,
+    sections: ["testing"],
   },
 ]
+
+type Shell = AuthenticatedDashboardBootstrap["shell"]
 
 function MobileSidebarTrigger() {
   const { openMobile } = useSidebar()
@@ -102,11 +88,83 @@ function MobileSidebarTrigger() {
   )
 }
 
+function ProfileMenu({ shell }: { shell: Shell }) {
+  const [pending, setPending] = React.useState(false)
+  const signOut = async () => {
+    setPending(true)
+    try {
+      const response = await fetch("/api/auth/sign-out", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+      if (!response.ok) throw new Error("Sign out failed")
+      window.location.assign("/")
+    } finally {
+      setPending(false)
+    }
+  }
+  const { account } = shell
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        id="profile-menu"
+        className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-accent data-[state=open]:bg-accent"
+      >
+        <span className="brand-gradient grid size-8 shrink-0 place-items-center rounded-full text-sm font-semibold text-primary-foreground">
+          {account.initial}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-foreground">
+            {account.name}
+          </span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {account.email}
+          </span>
+        </span>
+        <ChevronsUpDown
+          className="size-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" className="w-56">
+        <DropdownMenuItem asChild>
+          <a href="/dashboard/account">
+            <UserRound aria-hidden="true" />
+            Account
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href="/dashboard/docs">
+            <BookOpen aria-hidden="true" />
+            Documentation
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel
+          className="text-xs font-normal text-muted-foreground"
+          data-release-identity={shell.releaseIdentity}
+        >
+          Relo {shell.releaseIdentity}
+        </DropdownMenuLabel>
+        <DropdownMenuItem
+          id="sign-out"
+          disabled={pending}
+          onSelect={() => void signOut()}
+        >
+          <LogOut aria-hidden="true" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function DashboardShell({
   shell,
   children,
 }: {
-  shell: AuthenticatedDashboardBootstrap["shell"]
+  shell: Shell
   children: React.ReactNode
 }) {
   return (
@@ -123,11 +181,11 @@ export function DashboardShell({
           className="flex h-full min-w-0 flex-col"
           aria-label="Dashboard navigation"
         >
-          <SidebarHeader className="h-[72px] flex-row items-center gap-3 px-5 py-0">
-            <span className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[#ff6b5e] text-[#1b0d0d]">
-              <BellRing className="size-5" aria-hidden="true" />
+          <SidebarHeader className="h-16 flex-row items-center gap-2.5 px-5 py-0">
+            <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground">
+              <BellRing className="size-4" aria-hidden="true" />
             </span>
-            <span className="font-semibold tracking-[-0.02em] text-foreground">
+            <span className="font-semibold tracking-tight text-foreground">
               Relo
             </span>
             <SidebarTrigger
@@ -136,54 +194,36 @@ export function DashboardShell({
             />
           </SidebarHeader>
 
-          <SidebarContent>
+          <SidebarContent className="px-3 pt-2">
             <nav aria-label="Primary">
-              {navigation.map((group) => (
-                <SidebarGroup key={group.label} className="px-3 py-2">
-                  <SidebarGroupLabel className="px-3 text-[11px] font-semibold tracking-[0.16em] uppercase">
-                    {group.label}
-                  </SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      {group.items.map((item) => {
-                        const Icon = item.icon
-                        const active = item.sections.includes(shell.active)
-                        return (
-                          <SidebarMenuItem key={item.href}>
-                            <SidebarMenuButton
-                              asChild
-                              isActive={active}
-                              className="min-h-11 gap-3 rounded-[10px] px-3 text-muted-foreground data-active:text-foreground"
-                            >
-                              <a
-                                href={item.href}
-                                aria-current={active ? "page" : undefined}
-                              >
-                                <Icon aria-hidden="true" />
-                                <span>{item.label}</span>
-                              </a>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        )
-                      })}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              ))}
+              <SidebarMenu className="gap-1">
+                {navigation.map((item) => {
+                  const Icon = item.icon
+                  const active = item.sections.includes(shell.active)
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={active}
+                        className="min-h-10 gap-3 rounded-xl px-3 text-muted-foreground hover:text-foreground data-active:bg-accent data-active:text-foreground [&[data-active=true]>svg]:text-primary"
+                      >
+                        <a
+                          href={item.href}
+                          aria-current={active ? "page" : undefined}
+                        >
+                          <Icon aria-hidden="true" />
+                          <span>{item.label}</span>
+                        </a>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
             </nav>
           </SidebarContent>
 
-          <SidebarFooter className="gap-0 p-0">
-            <div
-              className="border-t border-border px-4 py-3 text-xs text-muted-foreground"
-              data-release-identity={shell.releaseIdentity}
-            >
-              <span className="block tracking-[0.12em] uppercase">Release</span>
-              <strong className="mt-1 block truncate font-mono font-normal text-foreground">
-                {shell.releaseIdentity}
-              </strong>
-            </div>
-            <AccountFooter account={shell.account} />
+          <SidebarFooter className="p-3">
+            <ProfileMenu shell={shell} />
           </SidebarFooter>
         </aside>
       </Sidebar>
@@ -191,10 +231,13 @@ export function DashboardShell({
       <div data-dashboard-main className="max-w-full min-w-0 flex-1">
         <header
           data-mobile-shell-header
-          className="flex h-16 items-center gap-3 border-b border-border bg-background/95 px-4 md:hidden"
+          className="glass-strong sticky top-0 z-30 flex h-16 items-center gap-3 border-b px-4 md:hidden"
         >
           <MobileSidebarTrigger />
-          <span className="min-w-0 truncate font-semibold">{shell.title}</span>
+          <span className="grid size-7 place-items-center rounded-lg bg-primary text-primary-foreground">
+            <BellRing className="size-3.5" aria-hidden="true" />
+          </span>
+          <span className="font-semibold tracking-tight">Relo</span>
         </header>
         {children}
       </div>

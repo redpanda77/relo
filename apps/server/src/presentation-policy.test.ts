@@ -48,6 +48,30 @@ describe("Live Activity presentation policy", () => {
       .toEqual({ status: "Working" });
   });
 
+  test("labels Codex topics by name even when the opaque origin thread exceeds the label limit", () => {
+    const codexThread = `codex-task-${"b".repeat(40)}`;
+    const input = {
+      title: "Codex · relo",
+      status: "Planning",
+      lifecycle: { provider: "codex",runId: "codex-run-1" },
+      origin: { sourceInstance: "codex-notify-1",project: "relo",thread: codexThread,channel: "task-progress" },
+      context: { project: "relo",threadName: "Codex task" },
+    };
+    const resolved = resolveActivityPresentation(input,{
+      principalId: "principal-1",
+      effective: { policy: SYSTEM_PRESENTATION_POLICY,source: "system" },
+    });
+    expect(resolved.stored.presentation.identity.thread?.label).toBe("Codex task");
+    const unnamed = resolveActivityPresentation({ ...input,context: { project: "relo" } },{
+      principalId: "principal-1",
+      effective: { policy: SYSTEM_PRESENTATION_POLICY,source: "system" },
+    });
+    expect(unnamed.stored.presentation.identity.thread?.label).toHaveLength(48);
+    expect(unnamed.stored.presentation.identity.thread?.label.endsWith("…")).toBe(true);
+    // Colors still key on the stable origin identity.
+    expect(unnamed.stored.presentation.identity.thread?.color).toBe(resolved.stored.presentation.identity.thread?.color);
+  });
+
   test("applies automatic server defaults without client appearance fields", () => {
     const resolved = resolveActivityPresentation({
       title: "Codex task",

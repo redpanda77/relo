@@ -15,6 +15,8 @@ concurrency:
 jobs:
   source:
     name: Source gates
+    # Contributor CI for the public repository; this private checkout is gated locally.
+    if: github.repository == 'redpanda77/relo'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,11 +34,14 @@ jobs:
             pnpm public:stage -- "$candidate"
           fi
       - run: pnpm typecheck
+      - run: node --test scripts/relo-latency-report.test.mjs
       - run: pnpm test
       - run: pnpm build
 
   postgres:
     name: PostgreSQL integration tests
+    # Contributor CI for the public repository; this private checkout is gated locally.
+    if: github.repository == 'redpanda77/relo'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -65,7 +70,36 @@ jobs:
 
   swift:
     name: Swift package tests
-    runs-on: macos-latest
+    # Contributor CI for the public repository; this private checkout is gated locally.
+    if: github.repository == 'redpanda77/relo'
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
+      - run: xcodebuild -version && swift --version
       - run: swift test --package-path apps/ios
+
+  ios-native:
+    name: iOS application and extension tests
+    # Contributor CI for the public repository; this private checkout is gated locally.
+    if: github.repository == 'redpanda77/relo'
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install project generator
+        run: brew install xcodegen
+      - name: Build shipping targets and run hosted tests unsigned
+        env:
+          RELO_DERIVED_DATA: ${{ runner.temp }}/relo-ios-build
+        run: bash scripts/test-ios.sh
+      - name: Preserve native test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relo-native-test-results
+          path: ${{ runner.temp }}/relo-ios-build/*.xcresult
+          if-no-files-found: warn

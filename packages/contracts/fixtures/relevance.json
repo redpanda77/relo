@@ -1,0 +1,1474 @@
+{
+  "version": 1,
+  "policies": [
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "notice defaults",
+      "policy": {
+        "kind": "notice"
+      },
+      "expected": {
+        "kind": "notice",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": "2026-09-30T12:15:00.000Z",
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:01:00.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "decision alert lasts until action deadline",
+      "policy": {
+        "kind": "decision"
+      },
+      "expected": {
+        "kind": "decision",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+        "deliverUntil": "2026-09-30T12:15:00.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "routine progress without invented heartbeat",
+      "policy": {
+        "kind": "progress"
+      },
+      "expected": {
+        "kind": "progress",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:00:15.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "declared heartbeat interval times three",
+      "policy": {
+        "kind": "progress",
+        "heartbeat": {
+          "intervalSeconds": 10,
+          "lastHeartbeatAt": "2026-09-30T11:59:55.000Z"
+        }
+      },
+      "expected": {
+        "kind": "progress",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": "2026-09-30T12:00:25.000Z",
+        "relevantUntil": null,
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:00:15.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "short notice also clamps default alert",
+      "policy": {
+        "kind": "notice",
+        "relevanceSeconds": 20
+      },
+      "expected": {
+        "kind": "notice",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": "2026-09-30T12:00:20.000Z",
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:00:20.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "decision can explicitly shorten interruption",
+      "policy": {
+        "kind": "decision",
+        "deliverySeconds": 30
+      },
+      "expected": {
+        "kind": "decision",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+        "deliverUntil": "2026-09-30T12:00:30.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:20:00.000Z",
+      "name": "delayed notice never gains a fresh deadline",
+      "policy": {
+        "kind": "notice"
+      },
+      "expected": {
+        "kind": "notice",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:20:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": "2026-09-30T12:15:00.000Z",
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:01:00.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:20:00.000Z",
+      "name": "delayed decision never gains a fresh deadline",
+      "policy": {
+        "kind": "decision"
+      },
+      "expected": {
+        "kind": "decision",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:20:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+        "deliverUntil": "2026-09-30T12:15:00.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "incident until resolved is explicit",
+      "policy": {
+        "kind": "incident",
+        "mode": "until_resolved"
+      },
+      "expected": {
+        "kind": "incident",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:01:00.000Z"
+      }
+    },
+    {
+      "occurredAt": "2026-09-30T12:00:00.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "name": "incident lease also bounds alert",
+      "policy": {
+        "kind": "incident",
+        "mode": "lease",
+        "leaseUntil": "2026-09-30T12:00:30.000Z"
+      },
+      "expected": {
+        "kind": "incident",
+        "occurredAt": "2026-09-30T12:00:00.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": "2026-09-30T12:00:30.000Z",
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:00:30.000Z"
+      }
+    },
+    {
+      "name": "notice tolerates bounded clock lead without extending lifetime",
+      "policy": {
+        "kind": "notice"
+      },
+      "occurredAt": "2026-09-30T12:00:00.040Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "expected": {
+        "kind": "notice",
+        "occurredAt": "2026-09-30T12:00:00.040Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": "2026-09-30T12:15:00.000Z",
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:01:00.000Z"
+      }
+    },
+    {
+      "name": "decision tolerates bounded clock lead without extending lifetime",
+      "policy": {
+        "kind": "decision",
+        "actionSeconds": 30
+      },
+      "occurredAt": "2026-09-30T12:00:01.000Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "expected": {
+        "kind": "decision",
+        "occurredAt": "2026-09-30T12:00:01.000Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": "2026-09-30T12:00:30.000Z",
+        "deliverUntil": "2026-09-30T12:00:30.000Z"
+      }
+    },
+    {
+      "name": "progress tolerates bounded clock lead without extending lifetime",
+      "policy": {
+        "kind": "progress",
+        "heartbeat": {
+          "intervalSeconds": 10,
+          "lastHeartbeatAt": "2026-09-30T12:00:00.040Z"
+        }
+      },
+      "occurredAt": "2026-09-30T12:00:00.040Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "expected": {
+        "kind": "progress",
+        "occurredAt": "2026-09-30T12:00:00.040Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": "2026-09-30T12:00:30.000Z",
+        "relevantUntil": null,
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:00:15.000Z"
+      }
+    },
+    {
+      "name": "incident tolerates bounded clock lead without extending lifetime",
+      "policy": {
+        "kind": "incident",
+        "mode": "until_resolved"
+      },
+      "occurredAt": "2026-09-30T12:00:00.040Z",
+      "acceptedAt": "2026-09-30T12:00:00.000Z",
+      "expected": {
+        "kind": "incident",
+        "occurredAt": "2026-09-30T12:00:00.040Z",
+        "acceptedAt": "2026-09-30T12:00:00.000Z",
+        "freshUntil": null,
+        "relevantUntil": null,
+        "actionExpiresAt": null,
+        "deliverUntil": "2026-09-30T12:01:00.000Z"
+      }
+    }
+  ],
+  "evaluations": [
+    {
+      "name": "notice before alert boundary",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "notice",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": "2026-09-30T12:15:00.000Z",
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:59.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": true,
+        "alertReason": "eligible",
+        "deliveryEligible": true
+      }
+    },
+    {
+      "name": "notice stays current after alert expires",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "notice",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": "2026-09-30T12:15:00.000Z",
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:01:00.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "delivery_expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "offline notice expires at exact boundary",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "notice",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": "2026-09-30T12:15:00.000Z",
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:15:00.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "valid decision remains after 250 unrelated updates",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "approval_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "approval_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:14:59.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "available",
+        "alertEligible": true,
+        "alertReason": "eligible",
+        "deliveryEligible": true
+      }
+    },
+    {
+      "name": "independent decision in same project remains available",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "approval_b",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "approval_b",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:14:59.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "available",
+        "alertEligible": true,
+        "alertReason": "eligible",
+        "deliveryEligible": true
+      }
+    },
+    {
+      "name": "decision expires offline without a sweep",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:15:00.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "expired",
+        "alertEligible": false,
+        "alertReason": "expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "old completion after a new run",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "notice",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": "2026-09-30T12:15:00.000Z",
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 2,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "superseded",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "same run revision two cannot replace three",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 2
+        },
+        "deadlines": {
+          "kind": "progress",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:00:15.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 3
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "superseded",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "replacement retires only exact decision key",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 2
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "superseded",
+        "alertEligible": false,
+        "alertReason": "superseded",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "persisted supersession survives a missing pointer",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": "2026-09-30T12:00:05.000Z",
+        "supersededBy": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 2
+        }
+      },
+      "current": null,
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "superseded",
+        "alertEligible": false,
+        "alertReason": "superseded",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "settled response remains evidence even after replacement",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "settled",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 2,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "settled",
+        "alertEligible": false,
+        "alertReason": "superseded",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "settled response cannot become actionable",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "settled",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "settled",
+        "alertEligible": false,
+        "alertReason": "settled",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "unresolved incident stays current without repeat alert",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "incident",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T13:00:00.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "delivery_expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "incident resolution removes attention",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "incident",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "resolved",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "resolved",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "incident lease expires",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "incident",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": "2026-09-30T12:01:00.000Z",
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:01:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:01:00.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "event driven progress has no idle expiry",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "progress",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:00:15.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T13:00:00.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "delivery_expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "heartbeat stale is not failed or completed",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "progress",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": "2026-09-30T12:00:10.000Z",
+          "relevantUntil": null,
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:00:15.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "stale",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "stale",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "heartbeat is fresh before boundary",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "progress",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": "2026-09-30T12:00:30.000Z",
+          "relevantUntil": null,
+          "actionExpiresAt": null,
+          "deliverUntil": "2026-09-30T12:00:15.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "current",
+        "freshness": "fresh",
+        "action": "none",
+        "alertEligible": false,
+        "alertReason": "silent_progress",
+        "deliveryEligible": true
+      }
+    },
+    {
+      "name": "uncertain clock never authorizes an action",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": false,
+      "expected": {
+        "placement": "current",
+        "freshness": "unknown",
+        "action": "unverified",
+        "alertEligible": false,
+        "alertReason": "unverified",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "known expiry remains expired with uncertain clock",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:15:00.000Z",
+      "clockTrusted": false,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "expired",
+        "alertEligible": false,
+        "alertReason": "expired",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "wrong source pointer cannot grant action authority",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 1
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_b",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "unverified",
+        "alertEligible": false,
+        "alertReason": "unverified",
+        "deliveryEligible": false
+      }
+    },
+    {
+      "name": "older pointer cannot validate a future revision",
+      "item": {
+        "identity": {
+          "accountId": "account_a",
+          "sourceId": "source_a",
+          "subjectKey": "work_a",
+          "generation": 1,
+          "revision": 2
+        },
+        "deadlines": {
+          "kind": "decision",
+          "occurredAt": "2026-09-30T12:00:00.000Z",
+          "acceptedAt": "2026-09-30T12:00:00.000Z",
+          "freshUntil": null,
+          "relevantUntil": null,
+          "actionExpiresAt": "2026-09-30T12:15:00.000Z",
+          "deliverUntil": "2026-09-30T12:15:00.000Z"
+        },
+        "status": "active",
+        "supersededAt": null,
+        "supersededBy": null
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "now": "2026-09-30T12:00:10.000Z",
+      "clockTrusted": true,
+      "expected": {
+        "placement": "history",
+        "freshness": "unknown",
+        "action": "unverified",
+        "alertEligible": false,
+        "alertReason": "unverified",
+        "deliveryEligible": false
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "name": "first start opens generation one",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": null,
+      "operation": "replace",
+      "expected": "advance"
+    },
+    {
+      "name": "late completion cannot start absent work",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": null,
+      "operation": "update",
+      "expected": "requires_replace"
+    },
+    {
+      "name": "revision one to three",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 3
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "update",
+      "expected": "advance"
+    },
+    {
+      "name": "then revision two is stale",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 2
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 3
+      },
+      "operation": "update",
+      "expected": "stale"
+    },
+    {
+      "name": "duplicate identity still requires payload hash equality",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "update",
+      "expected": "duplicate"
+    },
+    {
+      "name": "explicit next generation starts",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 2,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "replace",
+      "expected": "advance"
+    },
+    {
+      "name": "completion cannot promote a new generation",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 2,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "update",
+      "expected": "requires_replace"
+    },
+    {
+      "name": "old completion cannot roll back",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 2,
+        "revision": 1
+      },
+      "operation": "update",
+      "expected": "stale"
+    },
+    {
+      "name": "unrelated decision requires its own pointer",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "approval_b",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "update",
+      "expected": "wrong_subject"
+    },
+    {
+      "name": "account cannot replace another account",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_b",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "replace",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "producer cannot replace another source",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_b",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "replace",
+      "expected": "unauthorized"
+    },
+    {
+      "name": "generation cannot be skipped",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 3,
+        "revision": 1
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "replace",
+      "expected": "invalid_generation"
+    },
+    {
+      "name": "new generation begins at revision one",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 2,
+        "revision": 2
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "replace",
+      "expected": "invalid_generation"
+    },
+    {
+      "name": "replace is not a same-generation update",
+      "actor": {
+        "accountId": "account_a",
+        "sourceId": "source_a"
+      },
+      "candidate": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 2
+      },
+      "current": {
+        "accountId": "account_a",
+        "sourceId": "source_a",
+        "subjectKey": "work_a",
+        "generation": 1,
+        "revision": 1
+      },
+      "operation": "replace",
+      "expected": "invalid_generation"
+    }
+  ]
+}

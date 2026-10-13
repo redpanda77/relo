@@ -10,7 +10,7 @@ function retryAfterSeconds(response) {
 }
 
 export class ReloApiClient {
-  constructor({ apiUrl, token, fetchImpl = globalThis.fetch, version = "0.7.17" }) {
+  constructor({ apiUrl, token, fetchImpl = globalThis.fetch, version = "0.9.0" }) {
     this.apiUrl = String(apiUrl).replace(/\/$/, "");
     this.token = token;
     this.fetchImpl = fetchImpl;

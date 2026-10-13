@@ -1,4 +1,4 @@
-import { BellRing, LockKeyhole } from "lucide-react"
+import { BellRing } from "lucide-react"
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
@@ -7,6 +7,15 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { authenticateOwner } from "@/features/auth/auth-service"
 import type { DashboardAuth } from "@/features/auth/types"
+
+function friendlyAuthError(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message.toLowerCase() : ""
+  if (raw.includes("invalid") && (raw.includes("password") || raw.includes("credential") || raw.includes("email")))
+    return "That email and password don't match."
+  if (raw.includes("owner not bootstrapped")) return "This server isn't ready for its first account yet."
+  if (raw.includes("rate") || raw.includes("too many")) return "Too many attempts. Wait a minute and try again."
+  return "Couldn't sign in. Check your connection and try again."
+}
 
 export function AuthPage({
   bootstrap,
@@ -35,9 +44,7 @@ export function AuthPage({
       })
       onAuthenticated(bootstrap.route.nextPath)
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Authentication failed."
-      )
+      setError(friendlyAuthError(cause))
       setPending(false)
     }
   }
@@ -48,25 +55,19 @@ export function AuthPage({
       id="main-content"
       className="canvas grid min-h-[100dvh] place-items-center px-4 py-10 sm:px-6"
     >
-      <div className="w-full max-w-[460px]">
-        <a
-          href="/"
-          className="mb-6 inline-flex min-h-11 items-center gap-3 rounded-[10px] text-sm font-semibold tracking-[-0.02em] text-foreground no-underline"
-        >
-          <span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground">
-            <BellRing className="size-5" aria-hidden="true" />
+      <div className="w-full max-w-sm">
+        <div className="mb-8 flex items-center gap-2.5">
+          <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
+            <BellRing className="size-4" aria-hidden="true" />
           </span>
-          Relo
-        </a>
-        <Card className="overflow-hidden rounded-[16px] border-border bg-card/95 shadow-[0_24px_80px_rgb(4_2_6_/_0.35)]">
-          <CardHeader className="space-y-3 p-6 sm:p-8">
-            <span className="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
-              <LockKeyhole className="size-5" aria-hidden="true" />
-            </span>
-            <CardTitle className="text-2xl tracking-[-0.035em]">
+          <span className="font-semibold tracking-tight">Relo</span>
+        </div>
+        <Card className="glass-strong">
+          <CardHeader className="space-y-1.5 p-6 sm:p-8">
+            <CardTitle className="text-2xl font-semibold tracking-tight">
               {bootstrap.title}
             </CardTitle>
-            <p className="max-w-[42ch] text-sm leading-6 text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {bootstrap.description}
             </p>
           </CardHeader>
@@ -128,8 +129,8 @@ export function AuthPage({
               <Button type="submit" disabled={pending} className="min-h-11 w-full">
                 {pending
                   ? signingIn
-                    ? "Signing in..."
-                    : "Creating account..."
+                    ? "Signing in…"
+                    : "Creating account…"
                   : signingIn
                     ? "Sign in"
                     : "Create account"}

@@ -41,17 +41,23 @@ export async function lockOriginGenerationSlot<Row = any>(
 ): Promise<OriginGenerationSlot<Row>> {
   await lockOriginSlot(query,principalId,originHash);
   await afterLock?.();
-  const history = await query.query(
+  // The advisory lock serializes allocation. Only current pointers need row
+  // locks; archived generations must not grow this immediate path's lock set.
+  const current = await query.query(
     `SELECT * FROM live_activities
      WHERE principal_id=$1 AND origin_hash=$2
      ORDER BY generation DESC,created_at DESC,id DESC
-     FOR UPDATE`,
+     LIMIT 1 FOR UPDATE`,
     [principalId,originHash],
   );
-  const rows = history.rows as Row[];
-  const latest = rows[0] as (Row & { generation: number | string }) | undefined;
+  const latest = current.rows[0] as (Row & { generation: number | string; state: string }) | undefined;
+  const active = latest?.state === "active" ? latest : (await query.query(
+    `SELECT * FROM live_activities
+     WHERE principal_id=$1 AND origin_hash=$2 AND state='active' LIMIT 1 FOR UPDATE`,
+    [principalId,originHash],
+  )).rows[0] as Row | undefined;
   return {
-    active: rows.find((row) => (row as { state?: string }).state === "active"),
+    active,
     latest,
     nextGeneration: Number(latest?.generation ?? 0)+1,
   };

@@ -1,0 +1,32 @@
+[
+  {
+    "origin": "https://Example.COM:443/",
+    "normalized": "https://example.com",
+    "sha256": "100680ad546ce6a577f42f52df33b4cfdca756859e664b8d7de329b150d09ce9"
+  },
+  {
+    "origin": "https://example.com",
+    "normalized": "https://example.com",
+    "sha256": "100680ad546ce6a577f42f52df33b4cfdca756859e664b8d7de329b150d09ce9"
+  },
+  {
+    "origin": "http://LOCALHOST:80/",
+    "normalized": "http://localhost",
+    "sha256": "8605b8ba08c20d42f9e455151871896d0e0de980596286fb736d11eec013e2a4"
+  },
+  {
+    "origin": "https://relo.tail0000.ts.net:8180/",
+    "normalized": "https://relo.tail0000.ts.net:8180",
+    "sha256": "26e247fda31b032f9023d7a13eea4546a85a968c1daa733d80d6211496af39b1"
+  },
+  {
+    "origin": "http://[::1]:8180/",
+    "normalized": "http://[::1]:8180",
+    "sha256": "e32db9a9fed83657aba9da33edd9bda75de10f96ecd02f66c29e25d4f2195c6f"
+  },
+  {
+    "origin": "https://example.com:8443",
+    "normalized": "https://example.com:8443",
+    "sha256": "20ba33b878e5f5c63bf18aa8a6d5a7a27ad7104710fd0e896ec822bdefb1289d"
+  }
+]

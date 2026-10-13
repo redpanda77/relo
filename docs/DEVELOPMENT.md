@@ -5,7 +5,7 @@
 - Node.js 22 or newer
 - pnpm 11.20.0
 - PostgreSQL 16 for database integration tests
-- Xcode 26 for the full iOS project; Swift Package Manager is enough for shared Swift tests
+- Xcode 27 for the full iOS project; Swift Package Manager is enough for shared Swift tests
 
 Install the repository's pinned pnpm directly. Do not rely on the Corepack version bundled with an
 older Node 22 release; older Corepack signing keys can reject current pnpm packages.
@@ -29,7 +29,6 @@ Useful focused commands:
 pnpm --filter @relo/server test
 pnpm --filter @relo/dashboard test
 pnpm --filter @relo/cli test
-pnpm --filter @relo/codex-notify test
 npm --prefix skills/relo-notifications test
 ```
 

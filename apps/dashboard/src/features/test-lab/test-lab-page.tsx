@@ -1,17 +1,24 @@
-import { AlertCircle, RefreshCw } from "lucide-react"
+import { AlertCircle, ArrowRight, FlaskConical, Smartphone } from "lucide-react"
 import * as React from "react"
 
+import { Page, Section } from "@/components/page"
 import { RunMonitor } from "@/components/organisms/run-monitor"
 import { Button } from "@/components/ui/button"
 import { Sheet } from "@/components/ui/sheet"
+import { ConfirmationAction } from "@/features/connections/components"
 import { NewRunSheet } from "@/features/test-lab/new-run-sheet"
 import { RunDetailsSheet } from "@/features/test-lab/run-details-sheet"
+import { CONNECTIONS_HREF, deviceBlocker } from "@/features/test-lab/devices"
 import {
   rememberLaunchReceipt,
   takeLaunchReceipt,
   type LaunchRunReceipt,
 } from "@/features/test-lab/launch-receipt"
-import type { BuilderDraft, TestLabBootstrap } from "@/features/test-lab/types"
+import type {
+  BuilderDraft,
+  TestDevice,
+  TestLabBootstrap,
+} from "@/features/test-lab/types"
 import type { TestLabService } from "@/services/test-lab-service"
 import { useBuilderDraft } from "@/state/use-builder-draft"
 import {
@@ -20,6 +27,76 @@ import {
 } from "@/state/use-dashboard-route"
 import { useTestLabData } from "@/state/use-test-lab-data"
 import { useSelectedRunPolling } from "@/state/use-selected-run-polling"
+
+const LIST_REFRESH_MS = 5_000
+
+function DeviceSetup({ devices }: { devices: TestDevice[] }) {
+  return (
+    <section
+      aria-labelledby="device-setup-heading"
+      className="glass flex flex-col gap-5 rounded-2xl p-5 sm:flex-row sm:items-center sm:p-6"
+      data-device-setup
+    >
+      <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-accent text-primary">
+        <Smartphone className="size-5" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 id="device-setup-heading" className="font-medium">
+          {devices.length
+            ? "No iPhone is ready for tests"
+            : "Connect an iPhone to start testing"}
+        </h2>
+        {devices.length ? (
+          <ul className="mt-1.5 space-y-1 text-sm text-muted-foreground">
+            {devices.map((device) => (
+              <li key={device.id}>
+                <span className="text-foreground">{device.name}</span>
+                {" · "}
+                {deviceBlocker(device)}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 max-w-[60ch] text-sm text-muted-foreground">
+            Sign in to the Relo app on your iPhone and allow notifications and
+            Live Activities. It appears here as soon as it can receive tests.
+          </p>
+        )}
+      </div>
+      <Button variant="outline" className="min-h-11 self-start sm:self-auto" asChild>
+        <a href={CONNECTIONS_HREF}>
+          Open Connections
+          <ArrowRight aria-hidden="true" />
+        </a>
+      </Button>
+    </section>
+  )
+}
+
+/** Server errors arrive as codes; say what happened in words. */
+function friendlyError(message: string | null): string | null {
+  if (!message) return null
+  if (/not[_ ]?found|\b404\b/i.test(message))
+    return "This test no longer exists. It may have ended on another device."
+  if (/unauthori[sz]ed|forbidden|\b40[13]\b/i.test(message))
+    return "Your session expired. Reload the page and sign in again."
+  if (/failed to fetch|network/i.test(message))
+    return "Relo couldn’t be reached. Check your connection."
+  if (/^[a-z_]+$/.test(message)) return "Something went wrong on the server."
+  return message
+}
+
+function summaryLine(summary: TestLabBootstrap["summary"]) {
+  const parts = [
+    summary.active ? `${summary.active} live` : null,
+    summary.awaitingProvider ? `${summary.awaitingProvider} waiting on Apple` : null,
+    summary.awaitingPhone ? `${summary.awaitingPhone} waiting on iPhone` : null,
+    summary.awaitingResponse
+      ? `${summary.awaitingResponse} waiting for an answer`
+      : null,
+  ].filter(Boolean)
+  return parts.join(" · ")
+}
 
 export function TestLabPage({
   initial,
@@ -34,7 +111,7 @@ export function TestLabPage({
   openRun?: (runId: string) => void
 }) {
   const route = useDashboardRoute()
-  const { snapshot, setSnapshot, pending, error, mutate } =
+  const { snapshot, setSnapshot, pending, error, setError, mutate } =
     useTestLabData(initial)
   const builder = useBuilderDraft(snapshot.composer.defaultPreset)
   const selectedRun =
@@ -51,10 +128,14 @@ export function TestLabPage({
           )
         : null
     )
+  const refresh = React.useCallback(async () => {
+    setSnapshot(await service.getSnapshot())
+  }, [service, setSnapshot])
+
   const launch = async (draft: BuilderDraft) => {
     const receipt = await mutate(async () => {
       const launched = await service.launchRun(draft)
-      setSnapshot(await service.getSnapshot())
+      await refresh()
       return launched
     })
     rememberLaunchReceipt(receipt)
@@ -62,7 +143,10 @@ export function TestLabPage({
     return receipt
   }
   const finish = async (runId: string) => {
-    await mutate(() => service.finishRun(runId))
+    await mutate(async () => {
+      await service.finishRun(runId)
+      await refresh()
+    })
   }
   const update = async (
     run: NonNullable<typeof selectedRun>,
@@ -94,15 +178,34 @@ export function TestLabPage({
     await mutate(() => service.waitRun(runId, kind, prompt))
   }
   const finishAll = async () => {
-    if (
-      !window.confirm(
-        `Finish all ${snapshot.summary.active} active Test Lab runs?`
-      )
-    )
-      return
-    await mutate(() => service.finishAll())
-    window.location.reload()
+    await mutate(async () => {
+      await service.finishAll()
+      await refresh()
+    })
   }
+
+  // Keep the list honest while anything is live; pause when the tab is hidden and while a
+  // run sheet is open, where the lightweight run-status poll already keeps it current.
+  const hasLive = snapshot.summary.active > 0
+  const runOpen = route.kind === "run"
+  React.useEffect(() => {
+    if (!hasLive || runOpen) return
+    let stopped = false
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden" || stopped) return
+      service
+        .getSnapshot()
+        .then((next) => {
+          if (!stopped) setSnapshot(next)
+        })
+        .catch(() => undefined)
+    }, LIST_REFRESH_MS)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [hasLive, runOpen, service, setSnapshot])
+
   const polled = useSelectedRunPolling({
     runId: selectedRun?.id,
     active: selectedRun?.state === "active",
@@ -152,108 +255,100 @@ export function TestLabPage({
       })),
   })
 
-  const summary = [
-    ["Active", snapshot.summary.active, "active"],
-    ["Provider waiting", snapshot.summary.awaitingProvider, "warning"],
-    ["Phone waiting", snapshot.summary.awaitingPhone, "info"],
-    ["Response waiting", snapshot.summary.awaitingResponse, "neutral"],
-    ["Total", snapshot.summary.total, "neutral"],
-  ] as const
+  const readyDevices = snapshot.devices.filter((device) => device.ready)
+  const shownError = friendlyError(
+    error ?? (selectedRun ? polled.error : null)
+  )
+  const summary = summaryLine(snapshot.summary)
 
   return (
-    <main
-      id="main-content"
-      tabIndex={-1}
-      className="canvas min-h-[100dvh] px-4 py-7 sm:px-6 lg:px-10 lg:py-10"
+    <Page
+      title="Test Lab"
+      actions={
+        <NewRunSheet
+          open={route.kind === "new"}
+          devices={snapshot.devices}
+          draft={builder.draft}
+          pending={pending}
+          update={builder.update}
+          reset={builder.reset}
+          launch={launch}
+          openRun={openRun}
+        />
+      }
     >
-      <div className="mx-auto max-w-[1500px]">
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-              {snapshot.shell.title}
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
-              {snapshot.shell.description}
-            </p>
-          </div>
-          <NewRunSheet
-            open={route.kind === "new"}
-            devices={snapshot.devices}
-            presets={snapshot.composer.presets}
-            draft={builder.draft}
-            pending={pending}
-            update={builder.update}
-            reset={builder.reset}
-            launch={launch}
-            openRun={openRun}
-          />
-        </header>
-        <section
-          className="mt-6 grid grid-cols-2 gap-2 sm:flex sm:max-w-full"
-          aria-label="Run summary"
+      {shownError ? (
+        <div
+          role="alert"
+          className="glass flex items-start gap-3 rounded-2xl border-[color-mix(in_srgb,var(--status-danger)_40%,var(--border))] p-4 text-sm"
         >
-          {summary.map(([label, value, tone]) => (
-            <div
-              key={label}
-              className="status-card flex min-h-11 min-w-0 items-center gap-2 rounded-xl border px-3 py-2 last:col-span-2 sm:shrink-0 sm:rounded-full sm:px-3.5 sm:last:col-span-1"
-              data-tone={tone}
-              data-live={label === "Active" && value > 0 ? "true" : "false"}
-            >
-              <span className="text-lg font-semibold text-foreground tabular-nums">
-                {value}
-              </span>
-              <span className="text-xs text-muted-foreground">{label}</span>
-            </div>
-          ))}
-        </section>
-        <div className="mt-7 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="text-lg font-medium">Run monitor</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Each row keeps Server, Provider, Phone, ActivityKit, and Response
-              evidence separate.
-            </p>
+          <AlertCircle
+            className="mt-0.5 size-4 shrink-0 text-[var(--status-danger)]"
+            aria-hidden="true"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">That didn’t go through</p>
+            <p className="mt-0.5 text-muted-foreground">{shownError}</p>
           </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            {snapshot.summary.active > 0 ? (
-              <Button
-                variant="destructive"
-                className="min-h-11"
-                data-workbench-action
-                data-action="end-all-live-activities"
-                disabled={pending}
-                onClick={() => void finishAll()}
-              >
-                Finish {snapshot.summary.active} active
-              </Button>
-            ) : null}
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-11"
-              onClick={() => window.location.reload()}
-              aria-label="Refresh runs"
-            >
-              <RefreshCw />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            className="min-h-11 shrink-0"
+            onClick={() => {
+              setError(null)
+              void refresh().catch((cause: unknown) =>
+                setError(
+                  cause instanceof Error ? cause.message : "Refresh failed."
+                )
+              )
+            }}
+          >
+            Try again
+          </Button>
         </div>
-        {error || polled.error ? (
-          <div
-            role="alert"
-            className="my-4 flex items-start gap-3 rounded-[10px] border border-[#6a343d] bg-[#2b171d] p-4 text-sm text-[#ffb1ba]"
-          >
-            <AlertCircle className="mt-0.5 size-4 shrink-0" />
-            <span>{error ?? polled.error}</span>
+      ) : null}
+
+      {readyDevices.length === 0 ? (
+        <DeviceSetup devices={snapshot.devices} />
+      ) : null}
+
+      <Section
+        title="Tests"
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            {summary ? (
+              <span
+                className="flex items-center gap-2 text-xs text-muted-foreground"
+                role="status"
+              >
+                {hasLive ? (
+                  <span
+                    className="size-1.5 rounded-full bg-[var(--status-active)] shadow-[0_0_8px_var(--status-active)]"
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {summary}
+              </span>
+            ) : null}
+            {snapshot.summary.active > 1 ? (
+              <ConfirmationAction
+                label={`End all ${snapshot.summary.active}`}
+                title={`End ${snapshot.summary.active} live tests?`}
+                description="Every live test is removed from its iPhone’s Lock Screen. You can’t undo this."
+                pending={pending}
+                variant="outline"
+                onConfirm={() => void finishAll()}
+              />
+            ) : null}
           </div>
-        ) : null}
-        <div className="mt-4">
-          <Sheet
-            open={route.kind === "run"}
-            onOpenChange={(next) =>
-              !next && navigateDashboard("/dashboard/testing")
-            }
-          >
+        }
+      >
+        <Sheet
+          open={route.kind === "run"}
+          onOpenChange={(next) =>
+            !next && navigateDashboard("/dashboard/testing")
+          }
+        >
+          {snapshot.runs.length ? (
             <RunMonitor
               runs={snapshot.runs}
               onSelect={(run) =>
@@ -262,36 +357,52 @@ export function TestLabPage({
                 )
               }
             />
-            <RunDetailsSheet
-              key={selectedRun?.id ?? "missing"}
-              run={selectedRun}
-              launchReceipt={
-                launchReceipt &&
-                selectedRun &&
-                launchReceipt.activityId === selectedRun.id &&
-                launchReceipt.generation === selectedRun?.generation &&
-                launchReceipt.sequence === selectedRun?.sequence
-                  ? launchReceipt
-                  : null
-              }
-              pending={pending}
-              finish={finish}
-              update={update}
-              wait={wait}
-            />
-          </Sheet>
-        </div>
-        <footer className="mt-6 flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:justify-between">
-          <span>{snapshot.shell.releaseIdentity}</span>
-          <span>
-            {polled.pending
-              ? "Refreshing selected run"
-              : selectedRun?.state === "active"
-                ? "Selected run refreshes every 3 seconds"
-                : "Select an active run for live evidence"}
-          </span>
-        </footer>
-      </div>
-    </main>
+          ) : (
+            <div className="glass rounded-2xl px-6 py-12 text-center">
+              <FlaskConical
+                className="mx-auto size-5 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <p className="mt-3 text-sm font-medium">No tests yet</p>
+              <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
+                {readyDevices.length
+                  ? "Send one to see exactly how a notification looks and travels."
+                  : "Once an iPhone is connected, your tests show up here."}
+              </p>
+              {readyDevices.length ? (
+                <Button
+                  variant="outline"
+                  className="mt-5 min-h-11"
+                  onClick={() =>
+                    navigateDashboard(
+                      "/dashboard/testing?compose=1#activity-builder-panel"
+                    )
+                  }
+                >
+                  Send your first test
+                </Button>
+              ) : null}
+            </div>
+          )}
+          <RunDetailsSheet
+            key={selectedRun?.id ?? "missing"}
+            run={selectedRun}
+            launchReceipt={
+              launchReceipt &&
+              selectedRun &&
+              launchReceipt.activityId === selectedRun.id &&
+              launchReceipt.generation === selectedRun?.generation &&
+              launchReceipt.sequence === selectedRun?.sequence
+                ? launchReceipt
+                : null
+            }
+            pending={pending}
+            finish={finish}
+            update={update}
+            wait={wait}
+          />
+        </Sheet>
+      </Section>
+    </Page>
   )
 }

@@ -41,6 +41,7 @@ const schema = z.object({
   ),
   WORKER_POLL_MS: z.coerce.number().int().min(250).default(2000),
   WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(20),
+  WORKER_URGENT_RESERVED_SLOTS: z.coerce.number().int().min(0).max(99).optional(),
 });
 
 export type Config = z.infer<typeof schema>;

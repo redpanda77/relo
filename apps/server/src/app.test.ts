@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, test,vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createApp } from "./app.js";
@@ -10,6 +10,7 @@ import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle
 import { cancelUndeliverableDeliveryJobs } from "./delivery-lifecycle.js";
 import { currentTestPresentationRecord } from "./test-current-presentation.js";
 import { createTransportTokenEncryption } from "./token-encryption.js";
+import { ChangeSubscription,InteractionChangeHub } from "./interaction-change-hub.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -74,6 +75,164 @@ suite("Relo API persistence boundaries", () => {
     return { credential, deviceId: `dev_${deviceId}` };
   }
 
+  test("late exact-generation tokens wake only matching cleanup jobs and preserve provider backoff", async () => {
+    const first = await pair(ownerOneToken,randomUUID());
+    const second = await pair(ownerOneToken,randomUUID());
+    const started = await request("/api/live-activities",ownerOneToken,{
+      method: "POST",headers: { "idempotency-key": "late-token-start-12345678" },
+      body: JSON.stringify({ key: "late-token",title: "Late token",status: "Starting",
+        deviceIds: [first.deviceId,second.deviceId] }),
+    });
+    const { activity } = await started.json() as any;
+    expect(started.status).toBe(201);
+    const ended = await request(`/api/live-activities/${activity.id}/end`,ownerOneToken,{
+      method: "POST",headers: { "idempotency-key": "late-token-end-12345678" },
+      body: JSON.stringify({ status: "Done",dismissAfterSeconds: 5 }),
+    });
+    expect(ended.status).toBe(200);
+    const activityId = activity.id.slice(4);
+    await db.query(`UPDATE delivery_jobs SET state='retry',available_at=now()+interval '60 seconds',
+      last_error_code='activity_token_pending' WHERE live_activity_id=$1 AND state='pending'`,[activityId]);
+    const register = (phone: typeof first,generation = activity.generation) => request(
+      `/api/devices/self/live-activities/${activity.id}/token`,phone.credential,{
+        method: "PUT",body: JSON.stringify({ generation,nativeActivityId: "native-late",
+          environment: "sandbox",token: "c".repeat(64) }),
+      });
+    expect((await register(first,activity.generation+1)).status).toBe(409);
+    expect((await register(first)).status).toBe(200);
+    let jobs = (await db.query(`SELECT device_id,available_at<=clock_timestamp() AS ready,last_error_code
+      FROM delivery_jobs WHERE live_activity_id=$1 AND state='retry' ORDER BY device_id`,[activityId])).rows;
+    expect(jobs.find(j => j.device_id === first.deviceId.slice(4)).ready).toBe(true);
+    expect(jobs.find(j => j.device_id === second.deviceId.slice(4)).ready).toBe(false);
+    await db.query("UPDATE delivery_jobs SET last_error_code='provider_retry_scheduled' WHERE live_activity_id=$1 AND device_id=$2 AND state='retry'",[activityId,second.deviceId.slice(4)]);
+    expect((await register(second)).status).toBe(200);
+    jobs = (await db.query("SELECT available_at>clock_timestamp() AS waiting FROM delivery_jobs WHERE live_activity_id=$1 AND device_id=$2 AND state='retry'",[activityId,second.deviceId.slice(4)])).rows;
+    expect(jobs[0].waiting).toBe(true);
+    await db.query("UPDATE notification_events SET expires_at=now()-interval '1 second' WHERE payload#>>'{liveActivity,activityId}'=$1",[activity.id]);
+    expect((await register(first)).status).toBe(404);
+    expect((await db.query("SELECT generation FROM live_activity_update_tokens WHERE live_activity_id=$1 AND device_id=$2",[activityId,first.deviceId.slice(4)])).rows[0].generation).toBe(activity.generation);
+  });
+
+  test("committed decisions bypass the wait fallback and saturated producer rate buckets",async () => {
+    const phone = await pair(ownerOneToken,randomUUID());
+    const created = await request("/api/interactions",ownerOneToken,{ method: "POST",
+      body: JSON.stringify({ title: "Wake",prompt: "Continue?",type: "approval" }) });
+    const body = await created.json() as any;
+    const hub = await InteractionChangeHub.listen(db);
+    const app = createApp(db,{ apnsMode: "sandbox",credentialDerivationSecret: transportSecret,interactionChanges: hub });
+    let entered!: () => void;
+    const waitingForChange = new Promise<void>(resolve => { entered = resolve; });
+    const original = ChangeSubscription.prototype.wait;
+    const spy = vi.spyOn(ChangeSubscription.prototype,"wait").mockImplementation(function(this: ChangeSubscription,...args) {
+      const result = original.apply(this,args);entered();return result;
+    });
+    try {
+      const waiting = app.request(`/api/interactions/${body.interaction.id}/wait?timeoutSeconds=60`,{
+        headers: { authorization: `Bearer ${ownerOneToken}` },signal: AbortSignal.timeout(1_500),
+      });
+      await waitingForChange;
+      await db.query("UPDATE request_rate_limits SET request_count=1000 WHERE family='authenticated-mutations'");
+      const replied = await request(`/api/notifications/${body.eventId}/interactions`,phone.credential,{
+        method: "POST",body: JSON.stringify({ kind: "approve",value: {},idempotencyKey: "immediate-wake-response" }),
+      });
+      expect(replied.status).toBe(201);
+      const result = await waiting;
+      expect(result.status).toBe(200);
+      expect(await result.json()).toMatchObject({ interaction: { state: "approved" } });
+      expect((await db.query(`SELECT count(*)::int AS n FROM request_rate_limits WHERE family='decision-responses'
+        AND scope_id IN (SELECT id FROM devices WHERE id=$1 UNION SELECT principal_id FROM devices WHERE id=$1)`,
+      [phone.deviceId.slice(4)])).rows[0].n).toBe(2);
+    } finally { spy.mockRestore();await hub.close(); }
+  });
+
+  test("current generation can replace an older token without granting stale registrations authority",async () => {
+    const phone = await pair(ownerOneToken,randomUUID());
+    const started = await request("/api/live-activities",ownerOneToken,{ method: "POST",
+      headers: { "idempotency-key": "token-generation-start-12345678" },
+      body: JSON.stringify({ key: "token-generation",title: "Generation",status: "Starting",deviceIds: [phone.deviceId] }) });
+    const { activity } = await started.json() as any;
+    const register = (generation: number) => request(`/api/devices/self/live-activities/${activity.id}/token`,phone.credential,{
+      method: "PUT",body: JSON.stringify({ generation,nativeActivityId: `native-${generation}`,environment: "sandbox",token: String(generation).repeat(64) }),
+    });
+    expect((await register(activity.generation)).status).toBe(200);
+    await db.query("UPDATE live_activities SET generation=generation+1 WHERE id=$1",[activity.id.slice(4)]);
+    expect((await register(activity.generation+1)).status).toBe(200);
+    expect((await register(activity.generation)).status).toBe(409);
+    expect((await db.query("SELECT generation,native_activity_id FROM live_activity_update_tokens WHERE live_activity_id=$1",[activity.id.slice(4)])).rows[0])
+      .toEqual({ generation: activity.generation+1,native_activity_id: `native-${activity.generation+1}` });
+  });
+
+  test("the ring style draws progress as a gauge until a later update changes layout",async () => {
+    const phone = await pair(ownerOneToken,randomUUID());
+    const started = await request("/api/live-activities",ownerOneToken,{ method: "POST",
+      body: JSON.stringify({ key: "ring",title: "Deploy #184",status: "Building",progress: 0.1,style: "ring",
+        deviceIds: [phone.deviceId] }) });
+    expect(started.status).toBe(201);
+    const { activity } = await started.json() as any;
+    const stored = async () => (await db.query(
+      "SELECT style,privacy,presentation FROM live_activities WHERE id=$1",[activity.id.slice(4)])).rows[0];
+    expect(await stored()).toMatchObject({ style: "ring",privacy: "standard",
+      presentation: { appearance: { progressDisplay: "ring" } } });
+    const patch = (body: object) => request(`/api/live-activities/${activity.id}`,ownerOneToken,{
+      method: "PATCH",body: JSON.stringify(body) });
+    expect((await patch({ status: "Testing",progress: 0.6 })).status).toBe(200);
+    expect((await stored()).style).toBe("ring");
+    expect((await patch({ style: "standard",status: "Packaging" })).status).toBe(200);
+    expect((await stored()).style).toBe("standard");
+    expect((await stored()).presentation.appearance.progressDisplay).toBeUndefined();
+  });
+
+  test("private activities never store or send their content, even across updates",async () => {
+    const phone = await pair(ownerOneToken,randomUUID());
+    const started = await request("/api/live-activities",ownerOneToken,{ method: "POST",
+      body: JSON.stringify({ key: "private",title: "Rotate prod keys",status: "Running",progress: 0.2,
+        privacy: "private",deviceIds: [phone.deviceId] }) });
+    expect(started.status).toBe(201);
+    const { activity } = await started.json() as any;
+    const stored = async () => (await db.query(
+      "SELECT title,status,privacy FROM live_activities WHERE id=$1",[activity.id.slice(4)])).rows[0];
+    expect(await stored()).toEqual({ title: "Private activity",status: "Open Relo to view",privacy: "private" });
+    for (const body of [{ status: "Rotating",progress: 0.6 },{ style: "hero",status: "Rotated" }]) {
+      expect((await request(`/api/live-activities/${activity.id}`,ownerOneToken,{
+        method: "PATCH",body: JSON.stringify(body) })).status).toBe(200);
+      expect(await stored()).toEqual({ title: "Private activity",status: "Open Relo to view",privacy: "private" });
+    }
+    const payloads = (await db.query(`SELECT e.payload FROM delivery_jobs j JOIN notification_events e ON e.id=j.notification_event_id
+      WHERE j.live_activity_id=$1`,[activity.id.slice(4)])).rows.map(row => JSON.stringify(row.payload));
+    expect(payloads.length).toBeGreaterThan(0);
+    for (const payload of payloads) expect(payload).not.toMatch(/Rotate prod keys|Rotating|Rotated/);
+  });
+
+  test("aborted waits release their subscription and malformed query bounds fail immediately",async () => {
+    const phone = await pair(ownerOneToken,randomUUID());
+    const created = await request("/api/interactions",ownerOneToken,{ method: "POST",
+      body: JSON.stringify({ title: "Abort",prompt: "Continue?",type: "approval" }) });
+    const body = await created.json() as any;
+    for (const value of ["NaN","Infinity","-1","1.5","301",""]) {
+      expect((await request(`/api/interactions/${body.interaction.id}/wait?timeoutSeconds=${value}`,ownerOneToken)).status).toBe(400);
+    }
+    for (const value of ["NaN","Infinity","0","1.5","101",""]) {
+      expect((await request(`/api/inbox/history?limit=${value}`,phone.credential)).status).toBe(400);
+    }
+    const hub = await InteractionChangeHub.listen(db);
+    const app = createApp(db,{ interactionChanges: hub });
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    const original = ChangeSubscription.prototype.wait;
+    const spy = vi.spyOn(ChangeSubscription.prototype,"wait").mockImplementation(function(this: ChangeSubscription,...args) {
+      const result = original.apply(this,args);entered();return result;
+    });
+    try {
+      const cancel = new AbortController();
+      const waiting = app.request(`/api/interactions/${body.interaction.id}/wait?timeoutSeconds=300`,{
+        headers: { authorization: `Bearer ${ownerOneToken}` },signal: cancel.signal,
+      });
+      await ready;cancel.abort();
+      expect((await waiting).status).toBe(499);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally { spy.mockRestore();await hub.close(); }
+  });
+
   test("rejects malformed public interaction identifiers before PostgreSQL casts", async () => {
     for (const [method, suffix] of [
       ["GET", ""],
@@ -88,11 +247,24 @@ suite("Relo API persistence boundaries", () => {
     }
   });
 
+  test("API notifications, decisions, and activity starts require a project and topic", async () => {
+    const headers = { "x-relo-test-raw-identity": "1" };
+    for (const [path,body] of [
+      ["/api/notifications",{ sourceName: "Codex",title: "Done",body: "Task complete",context: { project: "Relo" } }],
+      ["/api/interactions",{ type: "approval",title: "Ship?",prompt: "Ship the release?" }],
+      ["/api/live-activities",{ key: "identity-missing",title: "Build",status: "Running" }],
+    ] as const) {
+      const response = await request(path,ownerOneToken,{ method: "POST",headers,body: JSON.stringify(body) });
+      expect(response.status,path).toBe(422);
+      expect(await response.json()).toMatchObject({ error: "work_identity_required" });
+    }
+  });
+
   test("notification creation is idempotent and creates one durable outbox job per device", async () => {
     const phone = await pair(ownerOneToken, "11111111-1111-4111-8111-111111111111");
     const body = JSON.stringify({
       sourceName: "Codex", title: "Done", body: "Task complete",
-      context: { computer: "MacBook", project: "Relo", taskTitle: "Lifecycle verification" },
+      context: { computer: "MacBook", project: "Relo", threadName: "Lifecycle", taskTitle: "Lifecycle verification" },
     });
     const headers = { "idempotency-key": "x" };
     const first = await request("/api/notifications", ownerOneToken, { method: "POST", headers, body });
@@ -116,12 +288,13 @@ suite("Relo API persistence boundaries", () => {
       "SELECT source,title,body FROM notification_events WHERE idempotency_key=$1",
       ["x"],
     )).rows[0]).toEqual({ source: "Codex", title: "Done", body: "Task complete" });
-    const inbox = await (await request("/api/inbox", phone.credential)).json() as any;
+    const inbox = await (await request("/api/inbox/history?limit=100", phone.credential)).json() as any;
     expect(inbox.items[0].sourceName).toBe("Codex");
     expect(inbox.items[0].title).toBe("Done");
     expect(inbox.items[0].detail).toBe("Task complete");
     expect(inbox.items[0].context).toEqual({
-      computer: "MacBook", project: "Relo", taskTitle: "Lifecycle verification",
+      computer: "MacBook", project: "Relo", threadName: "Lifecycle", taskTitle: "Lifecycle verification",
+      providerThreadId: expect.stringMatching(/^topic:[0-9a-f]{64}$/),
     });
   });
 
@@ -494,7 +667,9 @@ suite("Relo API persistence boundaries", () => {
       "SELECT payload FROM notification_events WHERE idempotency_key=$1",
       ["golden-notification-route-12345678"],
     )).rows[0]!.payload;
-    expect(stored).toEqual({ privacy: canonical.privacy, context: canonical.context });
+    expect(stored).toEqual({ privacy: canonical.privacy, context: {
+      ...canonical.context, providerThreadId: expect.stringMatching(/^topic:[0-9a-f]{64}$/),
+    } });
 
     const rejected = await request("/api/notifications",ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "golden-notification-injection-12345678" },
@@ -529,12 +704,47 @@ suite("Relo API persistence boundaries", () => {
     expect(new Set(keys).size).toBe(2);
   });
 
+  test("ordinary and Live Activity asks persist source, project, and topic resources", async () => {
+    const phone = await pair(ownerOneToken,"91919191-9191-4191-8191-919191919191");
+    const identity = { providerName: "Codex",project: "Relo",threadName: "Release verification",
+      providerThreadId: "cli-topic:release-verification" };
+    for (const presentation of ["notification","live_activity"] as const) {
+      const input = { title: "Review",prompt: "Continue?",type: "approval",presentation,
+        deviceIds: [phone.deviceId],context: identity };
+      const headers = { "idempotency-key": `grouped-ask-${presentation}` };
+      const created = await request("/api/interactions",ownerOneToken,{
+        method: "POST",headers,body: JSON.stringify(input),
+      });
+      expect(created.status).toBe(201);
+      const body = await created.json() as any;
+      const stored = await db.query<any>(
+        `SELECT e.source,e.payload,e.conversation_id,p.display_name AS project,c.display_name AS topic
+         FROM notification_events e JOIN resource_projects p ON p.id=e.project_resource_id
+         JOIN activity_conversations c ON c.id=e.conversation_id WHERE e.id=$1`,
+        [body.eventId.slice(4)],
+      );
+      expect(stored.rows[0]).toMatchObject({ source: "Codex",project: "Relo",
+        topic: "Release verification",payload: { context: identity } });
+      if (presentation === "live_activity") {
+        const activity = await db.query<any>("SELECT context,conversation_id,presentation FROM live_activities WHERE id=$1",[body.liveActivityId.slice(4)]);
+        expect(activity.rows[0].context).toEqual(identity);
+        expect(activity.rows[0].conversation_id).toBe(stored.rows[0].conversation_id);
+        expect(activity.rows[0].presentation.identity).toMatchObject({ project: { label: "Relo" },thread: { label: "Release verification" },direct: false });
+      }
+      const replay = await request("/api/interactions",ownerOneToken,{ method: "POST",headers,body: JSON.stringify(input) });
+      expect(replay.status).toBe(200);
+      const conflict = await request("/api/interactions",ownerOneToken,{ method: "POST",headers,
+        body: JSON.stringify({ ...input,context: { ...identity,project: "Other" } }) });
+      expect(conflict.status).toBe(409);
+    }
+  });
+
   test("interactive Live Activity asks are device-bound, waitable, and preserve presentation fields", async () => {
     const phone = await pair(ownerOneToken,"13131313-1313-4313-8313-131313131313");
     const input = {
       title: "Release decision", prompt: "Deploy the verified candidate?", type: "approval",
       presentation: "live_activity", style: "shell", primaryLabel: "Allow",
-      secondaryLabel: "Reject", expiresInSeconds: 600, deviceIds: [phone.deviceId],
+      secondaryLabel: "Reject", expiresInSeconds: 300, deviceIds: [phone.deviceId],
     };
     const created = await request("/api/interactions",ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "interactive-live-ask-12345678" },
@@ -555,7 +765,7 @@ suite("Relo API persistence boundaries", () => {
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ replayed: true, liveActivityId: body.liveActivityId });
 
-    const inbox = await (await request("/api/inbox",phone.credential)).json() as any;
+    const inbox = await (await request("/api/inbox/history?limit=100",phone.credential)).json() as any;
     expect(inbox.items).toHaveLength(1);
     expect(inbox.items[0].liveActivity).toMatchObject({
       activityId: body.liveActivityId, generation: 1, targetDeviceId: phone.deviceId, style: "shell",
@@ -584,7 +794,7 @@ suite("Relo API persistence boundaries", () => {
     ]);
     expect(stored.rows[0]).toMatchObject({ style: "standard", state: "ended", status: "Approved", sequence: "1" });
     expect(stored.rows[0].requester_credential_id).not.toBeNull();
-    const terminalInbox = await (await request("/api/inbox",phone.credential)).json() as any;
+    const terminalInbox = await (await request("/api/inbox/history?limit=100",phone.credential)).json() as any;
     expect(terminalInbox.items
       .map((item: any) => item.liveActivity)
       .sort((left: any,right: any) => left.sequence-right.sequence)
@@ -618,7 +828,7 @@ suite("Relo API persistence boundaries", () => {
       method: "POST", headers: { "idempotency-key": "multi-device-live-ask-12345678" },
       body: JSON.stringify({
         title: "Release decision", prompt: "Ship the candidate?", type: "yes_no",
-        presentation: "live_activity", style: "verdict", expiresInSeconds: 600,
+        presentation: "live_activity", style: "verdict", expiresInSeconds: 300,
         deviceIds: [first.deviceId,second.deviceId],
       }),
     });
@@ -626,8 +836,8 @@ suite("Relo API persistence boundaries", () => {
     const body = await created.json() as any;
     expect(body.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 2 });
     const [firstInbox,secondInbox] = await Promise.all([
-      request("/api/inbox",first.credential).then((response) => response.json() as Promise<any>),
-      request("/api/inbox",second.credential).then((response) => response.json() as Promise<any>),
+      request("/api/inbox/history?limit=100",first.credential).then((response) => response.json() as Promise<any>),
+      request("/api/inbox/history?limit=100",second.credential).then((response) => response.json() as Promise<any>),
     ]);
     expect(firstInbox.items[0].liveActivity.targetDeviceId).toBe(first.deviceId);
     expect(secondInbox.items[0].liveActivity.targetDeviceId).toBe(second.deviceId);
@@ -685,7 +895,7 @@ suite("Relo API persistence boundaries", () => {
       image_url: "https://images.example.test/review.png",
       deep_link: "https://example.test/reviews/42",
     });
-    const inbox = await (await request("/api/inbox",phone.credential)).json() as any;
+    const inbox = await (await request("/api/inbox/history?limit=100",phone.credential)).json() as any;
     expect(inbox.items[0]).toMatchObject({
       sourceImageUrl: "https://images.example.test/review.png",
       destinationUrl: "https://example.test/reviews/42",
@@ -729,8 +939,8 @@ suite("Relo API persistence boundaries", () => {
       "SELECT state,status FROM live_activities WHERE id=$1",
       [body.liveActivityId.slice("act_".length)],
     );
-    expect(activity.rows[0]).toEqual({ state: "expired", status: "Expired" });
-    const terminalInbox = await (await request("/api/inbox",phone.credential)).json() as any;
+    expect(activity.rows[0]).toEqual({ state: "expired", status: "No answer" });
+    const terminalInbox = await (await request("/api/inbox/history?limit=100",phone.credential)).json() as any;
     expect(terminalInbox.items
       .map((item: any) => item.liveActivity)
       .sort((left: any,right: any) => left.sequence-right.sequence)
@@ -798,7 +1008,7 @@ suite("Relo API persistence boundaries", () => {
       body: "Continue deployment?",
       url: "https://example.test/deployments/42",
       deviceIds: [phone.deviceId],
-      response: { type: "approval", expiresInSeconds: 600, correlationId: "deploy-42" },
+      response: { type: "approval", expiresInSeconds: 300, correlationId: "deploy-42" },
     });
     const headers = { "content-type": "application/json", "idempotency-key": "w" };
     const sent = await createApp(db).request(hookPath,{ method: "POST", headers, body: requestBody });
@@ -885,37 +1095,33 @@ suite("Relo API persistence boundaries", () => {
     expect(await (await request(`${path}/wait?timeoutSeconds=0`,ownerOneToken)).json()).toEqual(canceledBody);
   });
 
-  test("interaction get and wait return the same canonical winning text result and device", async () => {
+  test("interaction get and wait return the same canonical winning answer and device; typed replies are refused", async () => {
     const first = await pair(ownerOneToken,"abababab-abab-4bab-8bab-abababababab");
     const second = await pair(ownerOneToken,"cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd");
     await db.query("UPDATE devices SET name='Developer’s iPhone' WHERE id=$1",[
       second.deviceId.slice("dev_".length),
     ]);
+    const typed = await request("/api/interactions",ownerOneToken,{
+      method: "POST", body: JSON.stringify({ title: "Release notes", prompt: "What changed?", type: "text" }),
+    });
+    expect(typed.status).toBe(400);
     const created = await request("/api/interactions",ownerOneToken,{
-      method: "POST", headers: { "idempotency-key": "canonical-text-create-12345678" },
+      method: "POST", headers: { "idempotency-key": "canonical-yes-no-create-12345678" },
       body: JSON.stringify({
-        title: "Release notes", prompt: "What changed?", type: "text",
+        title: "Release", prompt: "Ship it?", type: "yes_no",
         deviceIds: [first.deviceId,second.deviceId],
       }),
     });
     expect(created.status).toBe(201);
     const body = await created.json() as any;
-    const responseText = "x".repeat(4_000);
     const answered = await request(`/api/notifications/${body.eventId}/interactions`,second.credential,{
-      method: "POST", body: JSON.stringify({
-        kind: "answer", value: { response: responseText },
-        idempotencyKey: "canonical-text-answer-12345678",
-      }),
+      method: "POST", body: JSON.stringify({ kind: "yes", idempotencyKey: "canonical-yes-answer-12345678" }),
     });
     expect(answered.status).toBe(201);
     const opposite = await request(`/api/notifications/${body.eventId}/interactions`,first.credential,{
-      method: "POST", body: JSON.stringify({
-        kind: "answer", value: { response: "late" },
-        idempotencyKey: "canonical-text-opposite-12345678",
-      }),
+      method: "POST", body: JSON.stringify({ kind: "no", idempotencyKey: "canonical-no-opposite-12345678" }),
     });
     expect(opposite.status).toBe(409);
-
     const fetched = await request(`/api/interactions/${body.interaction.id}`,ownerOneToken);
     const waited = await request(`/api/interactions/${body.interaction.id}/wait?timeoutSeconds=0`,ownerOneToken);
     expect(fetched.status).toBe(200);
@@ -923,25 +1129,12 @@ suite("Relo API persistence boundaries", () => {
     const fetchedBody = await fetched.json() as any;
     expect(await waited.json()).toEqual(fetchedBody);
     expect(fetchedBody.interaction).toMatchObject({
-      id: body.interaction.id,
-      eventId: body.eventId,
-      type: "text",
-      prompt: "What changed?",
-      state: "replied",
-      action: "reply",
-      response: { response: responseText },
-      respondingDevice: { id: second.deviceId, name: "Developer’s iPhone" },
+      id: body.interaction.id, eventId: body.eventId, type: "yes_no", prompt: "Ship it?",
+      state: "yes", action: "yes", respondingDevice: { id: second.deviceId, name: "Developer’s iPhone" },
     });
     expect((await request(`/api/interactions/${body.interaction.id}`,ownerTwoToken)).status).toBe(404);
-
-    const oversized = await request(`/api/notifications/${body.eventId}/interactions`,second.credential,{
-      method: "POST", body: JSON.stringify({
-        kind: "answer", value: { response: "x".repeat(4_001) },
-        idempotencyKey: "canonical-text-oversized-12345678",
-      }),
-    });
-    expect(oversized.status).toBe(400);
   });
+
 
   test("notifications, interaction reads, cancellation, and idempotency are credential-scoped", async () => {
     await pair(ownerOneToken,"23232323-2323-4323-8323-232323232323");
@@ -1001,12 +1194,12 @@ suite("Relo API persistence boundaries", () => {
     const sentBody = await sent.json() as any;
     expect(sentBody.queued).toBe(0);
     expect(sentBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
-    const inbox = await request("/api/inbox", phone.credential);
+    const inbox = await request("/api/inbox/history?limit=100", phone.credential);
     expect(inbox.status).toBe(200);
     const page = await inbox.json() as any;
     expect(page.items).toHaveLength(1);
     expect(page.items[0].title).toBe("While offline");
-    expect(page.cursor).toBeTypeOf("string");
+    expect(page.cursor).toBeNull();
     expect(page.hasMore).toBe(false);
   });
 
@@ -1137,35 +1330,23 @@ suite("Relo API persistence boundaries", () => {
     expect(crossAccountCursor.status).toBe(410);
   });
 
-  test("Inbox history rejects invalid cursors and limits while forward updated-at sync remains unchanged", async () => {
+  test("Inbox history rejects invalid cursors and limits", async () => {
     const phone = await pair(ownerOneToken,"22222222-2020-4222-8020-222222222222",false);
-    const firstCreated = await request("/api/notifications",ownerOneToken,{
-      method: "POST", headers: { "idempotency-key": "history-forward-first" },
+    const created = await request("/api/notifications",ownerOneToken,{
+      method: "POST", headers: { "idempotency-key": "history-validation-first" },
       body: JSON.stringify({ sourceName: "History", title: "First", body: "First" }),
     });
-    const firstCreatedBody = await firstCreated.json() as any;
-    await db.query(
-      "UPDATE notification_events SET updated_at='2026-08-07T00:00:00.123456Z' WHERE id=$1",
-      [firstCreatedBody.eventId.slice("ntf_".length)],
-    );
-    const forward = await (await request("/api/inbox",phone.credential)).json() as any;
-    expect(forward.items.map((item: any) => item.title)).toEqual(["First"]);
-    expect(JSON.parse(Buffer.from(forward.cursor,"base64url").toString("utf8"))[0])
-      .toBe("2026-08-07T00:00:00.123456Z");
+    expect(created.status).toBe(201);
     const history = await (await request("/api/inbox/history",phone.credential)).json() as any;
-    expect(history.items).toHaveLength(1);
-    expect(history.items[0]).toEqual(forward.items[0]);
-    const forwardAsHistory = await request(
-      `/api/inbox/history?before=${encodeURIComponent(forward.cursor)}`,
-      phone.credential,
-    );
-    expect(forwardAsHistory.status).toBe(410);
-    expect(await forwardAsHistory.json()).toEqual({ error: "cursor_expired" });
+    expect(history.items.map((item: any) => item.title)).toEqual(["First"]);
+    const foreignCursor = Buffer.from(JSON.stringify(["2026-08-07T00:00:00.123456Z","bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"]))
+      .toString("base64url");
     const fabricated = Buffer.from(JSON.stringify([
       "inbox-history-v1","2026-08-07T00:00:00.000Z","aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     ])).toString("base64url");
     for (const path of [
       "/api/inbox/history?before=not-a-cursor",
+      `/api/inbox/history?before=${encodeURIComponent(foreignCursor)}`,
       `/api/inbox/history?before=${encodeURIComponent(fabricated)}`,
     ]) {
       const response = await request(path,phone.credential);
@@ -1177,58 +1358,6 @@ suite("Relo API persistence boundaries", () => {
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: "invalid_limit" });
     }
-
-    const secondCreated = await request("/api/notifications",ownerOneToken,{
-      method: "POST", headers: { "idempotency-key": "history-forward-second" },
-      body: JSON.stringify({ sourceName: "History", title: "Second", body: "Second" }),
-    });
-    const secondCreatedBody = await secondCreated.json() as any;
-    await db.query(
-      "UPDATE notification_events SET updated_at='2026-08-07T00:00:00.123457Z' WHERE id=$1",
-      [secondCreatedBody.eventId.slice("ntf_".length)],
-    );
-    const delta = await (await request(
-      `/api/inbox?after=${encodeURIComponent(forward.cursor)}`,
-      phone.credential,
-    )).json() as any;
-    expect(delta.items.map((item: any) => item.title)).toEqual(["Second"]);
-  });
-
-  test("forward Inbox sync expires a cursor that falls outside the bounded device window", async () => {
-    const phone = await pair(ownerOneToken,"25252525-2525-4525-8525-252525252525",false);
-    const initial = await request("/api/notifications",ownerOneToken,{
-      method: "POST",
-      headers: { "idempotency-key": "forward-window-anchor" },
-      body: JSON.stringify({ sourceName: "History", title: "Anchor", body: "Anchor" }),
-    });
-    expect(initial.status).toBe(201);
-    const firstPage = await (await request("/api/inbox",phone.credential)).json() as any;
-    expect(firstPage.items.map((item: any) => item.title)).toEqual(["Anchor"]);
-
-    const owner = await db.query<{ principal_id: string }>(
-      "SELECT principal_id FROM principal_api_keys WHERE token_hash=$1",
-      [hashToken(ownerOneToken)],
-    );
-    await db.query(
-      `INSERT INTO notification_events(
-         principal_id,source,title,body,idempotency_key,created_at,updated_at,target_mode
-       )
-       SELECT $1,'History',concat('New ',series),'Body',concat('forward-window-',series),
-         anchor.updated_at + series * interval '1 second',
-         anchor.updated_at + series * interval '1 second','broadcast'
-       FROM generate_series(1,250) AS series
-       CROSS JOIN (
-         SELECT updated_at FROM notification_events WHERE id=$2
-       ) anchor`,
-      [owner.rows[0]!.principal_id,(await initial.json() as any).eventId.slice("ntf_".length)],
-    );
-
-    const expired = await request(
-      `/api/inbox?after=${encodeURIComponent(firstPage.cursor)}`,
-      phone.credential,
-    );
-    expect(expired.status).toBe(410);
-    expect(await expired.json()).toEqual({ error: "cursor_expired" });
   });
 
   test("durable targets isolate two device inboxes and let an offline target answer without an APNs job", async () => {
@@ -1243,8 +1372,8 @@ suite("Relo API persistence boundaries", () => {
       }),
     });
     expect((await targeted.json() as any).delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
-    expect((await (await request("/api/inbox",offline.credential)).json() as any).items).toHaveLength(1);
-    expect((await (await request("/api/inbox",other.credential)).json() as any).items).toHaveLength(0);
+    expect((await (await request("/api/inbox/history?limit=100",offline.credential)).json() as any).items).toHaveLength(1);
+    expect((await (await request("/api/inbox/history?limit=100",other.credential)).json() as any).items).toHaveLength(0);
 
     const broadcast = await request("/api/notifications",ownerOneToken,{
       method: "POST",
@@ -1254,8 +1383,8 @@ suite("Relo API persistence boundaries", () => {
       }),
     });
     expect((await broadcast.json() as any).delivery).toEqual({ eligibleDevices: 2, durableCommands: 1, apnsJobs: 1 });
-    expect((await (await request("/api/inbox",offline.credential)).json() as any).items).toHaveLength(2);
-    expect((await (await request("/api/inbox",other.credential)).json() as any).items).toHaveLength(1);
+    expect((await (await request("/api/inbox/history?limit=100",offline.credential)).json() as any).items).toHaveLength(2);
+    expect((await (await request("/api/inbox/history?limit=100",other.credential)).json() as any).items).toHaveLength(1);
 
     const interaction = await request("/api/interactions",ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "offline-target-interaction-12345678" },
@@ -1265,7 +1394,7 @@ suite("Relo API persistence boundaries", () => {
     });
     const interactionBody = await interaction.json() as any;
     expect(interactionBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
-    const otherInbox = await (await request("/api/inbox",other.credential)).json() as any;
+    const otherInbox = await (await request("/api/inbox/history?limit=100",other.credential)).json() as any;
     expect(otherInbox.items.some((item: any) => item.id === interactionBody.eventId)).toBe(false);
     const answered = await request(`/api/notifications/${interactionBody.eventId}/interactions`,offline.credential,{
       method: "POST",
@@ -1284,7 +1413,7 @@ suite("Relo API persistence boundaries", () => {
     expect(created.status).toBe(201);
     const eventId = (await created.json() as any).eventId;
 
-    const pending = await (await request("/api/inbox", phone.credential)).json() as any;
+    const pending = await (await request("/api/inbox/history?limit=100", phone.credential)).json() as any;
     expect(pending.items[0].interaction).toMatchObject({
       kind: "approval", prompt: "Deploy to Relo server?", state: "pending",
     });
@@ -1294,7 +1423,7 @@ suite("Relo API persistence boundaries", () => {
       body: JSON.stringify({ kind: "approve", value: {}, idempotencyKey: "ios-approval-detail-12345678" }),
     });
     expect(response.status).toBe(201);
-    const answered = await (await request("/api/inbox", phone.credential)).json() as any;
+    const answered = await (await request("/api/inbox/history?limit=100", phone.credential)).json() as any;
     expect(answered.items[0].interaction.state).toBe("approved");
     expect(answered.items[0].result).toBe("responded");
   });
@@ -1342,11 +1471,11 @@ suite("Relo API persistence boundaries", () => {
       headers: { "idempotency-key": "private-12345678" },
       body: JSON.stringify({ sourceName: "Private", title: "Owner one", body: "Secret" }),
     });
-    expect((await (await request("/api/inbox", phoneOne.credential)).json() as any).items).toHaveLength(1);
-    expect((await (await request("/api/inbox", phoneTwo.credential)).json() as any).items).toHaveLength(0);
+    expect((await (await request("/api/inbox/history?limit=100", phoneOne.credential)).json() as any).items).toHaveLength(1);
+    expect((await (await request("/api/inbox/history?limit=100", phoneTwo.credential)).json() as any).items).toHaveLength(0);
   });
 
-  test("a pairing code is one-time and device credentials cannot send notifications", async () => {
+  test("device credentials cannot send notifications", async () => {
     const phone = await pair(ownerOneToken, "55555555-5555-4555-8555-555555555555");
     const forbidden = await request("/api/notifications", phone.credential, {
       method: "POST",
@@ -1441,9 +1570,10 @@ suite("Relo API persistence boundaries", () => {
       body: JSON.stringify({ symbol: "success", ifSequence: 1 }),
     });
     expect(appearanceUpdate.status).toBe(200);
+    // A topic owns the activity identity, so a later appearance update keeps the started symbol.
     expect(await appearanceUpdate.json()).toMatchObject({
       activity: {
-        sequence: 2,title: "Building",status: "Running",progress: 0.5,symbol: "success",
+        sequence: 2,title: "Building",status: "Running",progress: 0.5,symbol: "build",
       },
     });
     const fetched = await request(`/api/live-activities/${activityId}`, ownerOneToken);
@@ -1562,18 +1692,22 @@ suite("Relo API persistence boundaries", () => {
     };
     const started = await request("/api/live-activities",ownerOneToken,{
       method: "POST",headers: { "idempotency-key": "presentation-current-start-12345678" },
-      body: JSON.stringify({ key: "presentation-current",deviceIds: [phone.deviceId],presentation }),
+      body: JSON.stringify({ key: "presentation-current",deviceIds: [phone.deviceId],presentation,
+        context: { project: "Release",threadName: "Deploys" } }),
     });
     expect(started.status).toBe(201);
     const startBody = await started.json() as any;
     expect(startBody.delivery).toEqual({ eligibleDevices: 1,durableCommands: 1,apnsJobs: 1 });
-    expect(startBody.activity).toMatchObject({ presentation,
+    // Required project/topic context owns the identity; every other supplied field persists as sent.
+    const persisted = { ...presentation,identity: expect.objectContaining({ direct: false,
+      project: expect.objectContaining({ label: "Release" }),thread: expect.objectContaining({ label: "Deploys" }) }) };
+    expect(startBody.activity).toMatchObject({ presentation: persisted,
       presentationHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
     const stored = (await db.query<any>(
       "SELECT presentation,presentation_sha256 FROM live_activities WHERE id=$1",
       [startBody.activity.id.slice(4)],
     )).rows[0];
-    expect(stored.presentation).toEqual(presentation);
+    expect(stored.presentation).toEqual(persisted);
     expect(stored.presentation_sha256).toBe(startBody.activity.presentationHash);
     const firstPayload = (await db.query<any>(
       `SELECT payload FROM notification_events
@@ -1639,7 +1773,7 @@ suite("Relo API persistence boundaries", () => {
     expect(attached.status).toBe(201);
     const attachedBody = await attached.json() as any;
     expect(attachedBody).toMatchObject({
-      parentActivityId,companionActivityId: expect.stringMatching(/^act_/),
+      parentActivityId,companionActivityId: null,
       interaction: { id: expect.stringMatching(/^int_/),eventId: expect.stringMatching(/^ntf_/),
         type: "approval",state: "pending",prompt: "Approve production?" },
       eventId: expect.stringMatching(/^ntf_/),delivery: { eligibleDevices: 1,durableCommands: 1,apnsJobs: 1 },
@@ -1668,36 +1802,20 @@ suite("Relo API persistence boundaries", () => {
       method: "POST",headers: { "idempotency-key": "invalid-wait-12345678" },body: waitBody,
     })).status).toBe(404);
 
-    const text = await request(`/api/live-activities/${parentActivityId}/wait`,ownerOneToken,{
+    const typed = await request(`/api/live-activities/${parentActivityId}/wait`,ownerOneToken,{
       method: "POST",headers: { "idempotency-key": "attached-text-wait-12345678" },
       body: JSON.stringify({ type: "text",prompt: "Deployment note?" }),
     });
-    expect(text.status).toBe(201);
-    const textBody = await text.json() as any;
-    expect(textBody).toMatchObject({
-      parentActivityId,companionActivityId: null,
-      interaction: { type: "text",state: "pending" },
-      delivery: { eligibleDevices: 1,durableCommands: 1,apnsJobs: 1 },
-    });
-    const audit = await db.query<{ count: number }>(
-      `SELECT count(*)::int AS count FROM live_activity_operations o
-       JOIN live_activities a ON a.id=o.live_activity_id
-       WHERE o.operation='wait' AND a.id=$1 AND o.requester_credential_id=a.requester_credential_id`,
-      [parentActivityId.slice("act_".length)],
-    );
-    expect(audit.rows[0]!.count).toBe(2);
+    expect(typed.status).toBe(400);
     const linkedEvents = await db.query<{ origin_hash: string | null }>(
-      `SELECT e.origin_hash FROM notification_events e
-       WHERE e.id=ANY($1::uuid[]) ORDER BY e.id`,
-      [[attachedBody.eventId,textBody.eventId].map((id: string) => id.slice("ntf_".length))],
+      "SELECT e.origin_hash FROM notification_events e WHERE e.id=$1",
+      [attachedBody.eventId.slice("ntf_".length)],
     );
     const parentOrigin = (await db.query<{ origin_hash: string }>(
       "SELECT origin_hash FROM live_activities WHERE id=$1",
       [parentActivityId.slice("act_".length)],
     )).rows[0]!.origin_hash;
-    expect(linkedEvents.rows).toEqual([
-      { origin_hash: parentOrigin },{ origin_hash: parentOrigin },
-    ]);
+    expect(linkedEvents.rows).toEqual([{ origin_hash: parentOrigin }]);
   });
 
   test("task activities and idempotency are isolated between credentials for one owner", async () => {
@@ -1837,8 +1955,9 @@ suite("Relo API persistence boundaries", () => {
     expect(await replayedEnd.json()).toMatchObject({ replayed: true, activity: { sequence: 2, state: "ended", status: "Done" } });
 
     for (const phone of [online,offline]) {
-      const inbox = await (await request("/api/inbox?limit=20",phone.credential,undefined,apnsMode)).json() as any;
-      const commands = inbox.items.filter((item: any) => item.liveActivity?.activityId === activityId);
+      const inbox = await (await request("/api/inbox/history?limit=20",phone.credential,undefined,apnsMode)).json() as any;
+      // History is newest first; the lifecycle reads oldest first.
+      const commands = inbox.items.filter((item: any) => item.liveActivity?.activityId === activityId).reverse();
       expect(commands.map((item: any) => item.liveActivity.operation)).toEqual(["start","update","end"]);
       expect(commands.map((item: any) => item.liveActivity.generation)).toEqual([
         startedBody.activity.generation,startedBody.activity.generation,startedBody.activity.generation,
@@ -1885,9 +2004,9 @@ suite("Relo API persistence boundaries", () => {
     });
     expect(replaced.status).toBe(201);
     const replacedBody = await replaced.json() as any;
+    // The project/topic identity supplies the accent; the requested accent does not override it.
     expect(replacedBody).toMatchObject({ replaced: 1, activity: {
-      key: "deploy", symbol: "build", style: "standard", privacyMode: "standard",
-      accentColor: "#64D2FF", state: "active",
+      key: "deploy", symbol: "build", style: "standard", privacyMode: "standard", state: "active",
     } });
     expect(new Date(replacedBody.activity.staleAt).getTime()).toBeLessThanOrEqual(
       new Date(replacedBody.activity.expiresAt).getTime(),
@@ -1989,14 +2108,13 @@ suite("Relo API persistence boundaries", () => {
     expect(terminal.rows.filter((row) => row.state === "pending")).toHaveLength(1);
   });
 
-  test("expiring a request advances the parent event Inbox cursor", async () => {
+  test("expiring a request shows its parent event as expired in the phone inbox", async () => {
     const phone = await pair(ownerOneToken,"45454545-4545-4545-8545-454545454545",true);
     const created = await request("/api/interactions",ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "expiry-cursor-create-12345678" },
       body: JSON.stringify({ title: "Expires", prompt: "Wait", type: "approval", deviceIds: [phone.deviceId] }),
     });
     const createdBody = await created.json() as any;
-    const firstInbox = await (await request("/api/inbox",phone.credential)).json() as any;
     await db.query("UPDATE interaction_requests SET expires_at=now()-interval '1 second' WHERE id=$1",[
       createdBody.interaction.id.slice("int_".length),
     ]);
@@ -2007,8 +2125,8 @@ suite("Relo API persistence boundaries", () => {
     } });
     expect(await (await request(`/api/interactions/${createdBody.interaction.id}`,ownerOneToken)).json())
       .toEqual(expiredBody);
-    const delta = await (await request(`/api/inbox?after=${encodeURIComponent(firstInbox.cursor)}`,phone.credential)).json() as any;
-    expect(delta.items).toHaveLength(1);
-    expect(delta.items[0]).toMatchObject({ id: createdBody.eventId, interaction: { state: "expired" } });
+    const inbox = await (await request("/api/inbox/history?limit=100",phone.credential)).json() as any;
+    expect(inbox.items).toHaveLength(1);
+    expect(inbox.items[0]).toMatchObject({ id: createdBody.eventId, interaction: { state: "expired" } });
   });
 });

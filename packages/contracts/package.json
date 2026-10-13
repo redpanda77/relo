@@ -1,6 +1,6 @@
 {
   "name": "@relo/notification-contracts",
-  "version": "0.7.30",
+  "version": "0.9.11",
   "private": true,
   "type": "module",
   "main": "./dist/src/index.js",
@@ -10,6 +10,11 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js",
       "default": "./dist/src/index.js"
+    },
+    "./dashboard/*": {
+      "types": "./dist/src/dashboard/*.d.ts",
+      "import": "./dist/src/dashboard/*.js",
+      "default": "./dist/src/dashboard/*.js"
     }
   },
   "files": [

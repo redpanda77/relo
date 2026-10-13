@@ -12,14 +12,41 @@ import { persistedPresentationColumns } from "./presentation-runtime.js";
 import { systemPresentationPolicySnapshot } from "./presentation-policy.js";
 import { currentTestPresentationRecord } from "./test-current-presentation.js";
 
+import { dashboardAuthSchema } from "@relo/notification-contracts/dashboard/auth";
+import { accountDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/account";
+import { documentationDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/docs";
+import { connectionsDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/connections";
+import { projectsDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/projects";
+import { testLabBootstrapSchema } from "@relo/notification-contracts/dashboard/test-lab";
+import { inboxDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/inbox";
+
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 
+const dashboardContracts: Record<string,{ parse(value: unknown): unknown }> = {
+  auth: dashboardAuthSchema,
+  account: accountDashboardBootstrapSchema,
+  docs: documentationDashboardBootstrapSchema,
+  connections: connectionsDashboardBootstrapSchema,
+  projects: projectsDashboardBootstrapSchema,
+  "test-lab": testLabBootstrapSchema,
+  "inbox-overview": inboxDashboardBootstrapSchema,
+  "notification-history": inboxDashboardBootstrapSchema,
+  "delivery-history": inboxDashboardBootstrapSchema,
+  "notification-detail": inboxDashboardBootstrapSchema,
+};
+
+/** Extracts a page's bootstrap and checks it against the schema the React app parses it with. */
 function optionalDashboardBootstrap(document: string): any | null {
   const match = document.match(
     /<script id="relo-dashboard-bootstrap" type="application\/json">([^<]*)<\/script>/,
   );
-  return match ? JSON.parse(match[1]!) : null;
+  if (!match) return null;
+  const bootstrap = JSON.parse(match[1]!);
+  const contract = dashboardContracts[bootstrap.kind];
+  expect(contract,`a shared contract for bootstrap kind ${bootstrap.kind}`).toBeDefined();
+  contract!.parse(bootstrap);
+  return bootstrap;
 }
 
 function dashboardBootstrap(document: string): any {
@@ -143,9 +170,13 @@ suite("account web authentication", () => {
     const authorizeRedirect = await app().request("/cli/authorize?code=ABCD-EFGH");
     expect(authorizeRedirect.status).toBe(302);
     const login = await app().request(authorizeRedirect.headers.get("location")!);
-    expect(await login.text()).toContain(`data-next="/cli/authorize?code=ABCD-EFGH"`);
+    expect(optionalDashboardBootstrap(await login.text())).toMatchObject({
+      kind: "auth",route: { nextPath: "/cli/authorize?code=ABCD-EFGH" },
+    });
     const externalNext = await app().request("/?next=https%3A%2F%2Fevil.example%2F");
-    expect(await externalNext.text()).toContain(`data-next="/dashboard"`);
+    expect(optionalDashboardBootstrap(await externalNext.text())).toMatchObject({
+      kind: "auth",route: { nextPath: "/dashboard" },
+    });
 
     const signup = await app().request("/api/auth/sign-up/email", {
       method: "POST",
@@ -735,8 +766,7 @@ suite("account web authentication", () => {
       return JSON.parse(payload);
     };
     const sectionPaths = [
-      "", "/inbox/notifications", "/inbox/delivery", "/connections/services",
-      "/connections/phones", "/connections/clients", "/account", "/docs",
+      "", "/inbox/notifications", "/inbox/delivery", "/connections", "/account", "/docs",
     ];
     const pages = new Map<string,string>();
     for (const suffix of sectionPaths) {
@@ -745,16 +775,10 @@ suite("account web authentication", () => {
       expect(response.headers.get("cache-control")).toBe("private, no-store");
       const text = await response.text();
       const bootstrap = optionalDashboardBootstrap(text);
-      if (bootstrap) {
-        expect(text).toContain('<div id="root" data-dashboard-entry=');
-        expect(text).toMatch(/<script type="module"[^>]+src="\/assets\/[A-Za-z0-9._-]+\.js"/);
-        expect(bootstrap).toMatchObject({ version: 1 });
-      } else {
-        expect(text).toContain('aria-label="Dashboard navigation"');
-        expect(text).toContain('class="skip-link"');
-        expect(text).toContain('/assets/relo-dashboard.css');
-        expect(text).toContain('/assets/relo-dashboard.js');
-      }
+      expect(bootstrap,`dashboard route ${suffix || "/"} renders the React app`).not.toBeNull();
+      expect(text).toContain('<div id="root" data-dashboard-entry=');
+      expect(text).toMatch(/<script type="module"[^>]+src="\/assets\/[A-Za-z0-9._-]+\.js"/);
+      expect(bootstrap).toMatchObject({ version: 1 });
       pages.set(suffix || "/", text);
     }
     const testLabResponse = await application.request("/dashboard/testing", { headers });
@@ -772,26 +796,18 @@ suite("account web authentication", () => {
       shell: { title: "Inbox",active: "inbox" },
       summary: { pendingResponses: 0,pendingApprovals: 0,notifications: 2,deliveries: 1 },
     });
-    expect(dashboardBootstrap(pages.get("/connections/services")!)).toMatchObject({
-      kind: "connections-services",
-      shell: { title: "Connections",active: "connections-services" },
+    expect(dashboardBootstrap(pages.get("/connections")!)).toMatchObject({
+      kind: "connections",
+      shell: { title: "Connections",active: "connections" },
       services: expect.arrayContaining([expect.objectContaining({
         title: "<iframe srcdoc=\"updated-service()\">",
         destinationUrl: "https://example.test/updated?from=dashboard&mode=default",
       })]),
-    });
-    expect(dashboardBootstrap(pages.get("/connections/phones")!)).toMatchObject({
-      kind: "connections-phones",
-      shell: { title: "Connections",active: "connections-phones" },
       phones: expect.arrayContaining([expect.objectContaining({
         name: `<img src=x onerror="device()">`,
         model: `<svg/onload='model()'>`,
         lastSeenAt: expect.any(String),
       })]),
-    });
-    expect(dashboardBootstrap(pages.get("/connections/clients")!)).toMatchObject({
-      kind: "connections-clients",
-      shell: { title: "Connections",active: "connections-clients" },
       clients: expect.arrayContaining([
         expect.objectContaining({ label: '<b onclick="client()">Client</b>' }),
       ]),
@@ -802,26 +818,20 @@ suite("account web authentication", () => {
       deliveries: [expect.objectContaining({ title: "Webhook title",state: "pending" })],
     });
     const accountBootstrap = optionalDashboardBootstrap(pages.get("/account")!);
-    if (accountBootstrap) {
-      expect(accountBootstrap).toMatchObject({
-        kind: "account",
-        route: { path: "/dashboard/account" },
-        shell: {
-          title: "Account",
-          active: "account",
-          account: { name: "Relo Owner",email: "owner@example.com" },
-        },
-        account: {
-          name: "Relo Owner",
-          email: "owner@example.com",
-          authentication: "Better Auth email/password session",
-        },
-      });
-    } else {
-      expect(pages.get("/account")).toContain('id="password-form"');
-      expect(pages.get("/account")).toContain('id="delete-account-form"');
-      expect(pages.get("/account")).toContain('class="destructive"');
-    }
+    expect(accountBootstrap).toMatchObject({
+      kind: "account",
+      route: { path: "/dashboard/account" },
+      shell: {
+        title: "Account",
+        active: "account",
+        account: { name: "Relo Owner",email: "owner@example.com" },
+      },
+      account: {
+        name: "Relo Owner",
+        email: "owner@example.com",
+        authentication: "Better Auth email/password session",
+      },
+    });
     expect(workbenchHtml).toContain('<div id="root" data-dashboard-entry="test-lab">');
     expect(workbenchHtml).not.toContain("/assets/relo-dashboard.js");
     const moduleAsset = workbenchHtml.match(
@@ -862,7 +872,7 @@ suite("account web authentication", () => {
     })]);
     expect(initialTestLab.runs).toEqual([]);
     expect(initialTestLab.composer.presets.map((preset: any) => preset.id)).toEqual([
-      "standard","hero","terminal","steps","approval","shell","verdict","signal",
+      "standard","ring","hero","terminal","steps","approval","shell","verdict","signal",
     ]);
     expect(initialTestLab.composer.presets.every((preset: any) => !("version" in preset.presentation))).toBe(true);
     const snapshot = await application.request(
@@ -1048,7 +1058,7 @@ suite("account web authentication", () => {
     expect(activityDetailHtml).toContain('"relationships":[]');
     expect(activityDetailHtml).toContain('"correlationDecisions":[');
     expect((await db.query("SELECT count(*)::int AS count FROM interaction_requests WHERE state='pending'")).rows[0].count).toBe(1);
-    const inbox = await application.request("/api/inbox?limit=100", {
+    const inbox = await application.request("/api/inbox/history?limit=100", {
       headers: { authorization: `Bearer ${registeredBody.credential.accessToken}` },
     });
     expect(inbox.status).toBe(200);
@@ -1152,7 +1162,7 @@ suite("account web authentication", () => {
     )).status).toBe(409);
     const updateInboxByDevice = [registeredBody,secondRegisteredBody];
     for (const device of updateInboxByDevice) {
-      const deviceInbox = await application.request("/api/inbox?limit=100", {
+      const deviceInbox = await application.request("/api/inbox/history?limit=100", {
         headers: { authorization: `Bearer ${device.credential.accessToken}` },
       });
       const deviceInboxBody = await deviceInbox.json() as any;
@@ -1197,42 +1207,44 @@ suite("account web authentication", () => {
       })),
     ));
 
+    const cardsBeforeQuestion = (await db.query("SELECT count(*)::int AS n FROM live_activities")).rows[0].n;
     const waiting = await application.request(`/api/dashboard/live-activities/${activityId}/wait`, {
       method: "POST", headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({ kind: "approval", prompt: "Continue the integration test?" }),
     });
     expect(waiting.status).toBe(200);
     const waitingBody = await waiting.json() as any;
-    expect(waitingBody.activity).toMatchObject({
-      parentActivityId: activityId, status: "Waiting for input", style: "approval", sequence: 0,
-    });
-    expect(waitingBody.activity.id).not.toBe(activityId);
+    // The question folds into the running card: same card, now asking.
+    expect(waitingBody.activity).toMatchObject({ id: activityId, status: "Needs you" });
     expect(waitingBody.interaction).toMatchObject({ kind: "approval", state: "pending" });
     expect(waitingBody.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
-    expect(waitingBody.eventIds).toEqual([waitingBody.eventId]);
-    expect(waitingBody.interactions).toEqual([waitingBody.interaction]);
+    expect(waitingBody.eventIds).toHaveLength(2);
+    expect(waitingBody.eventIds[0]).toBe(waitingBody.eventId);
+    expect(waitingBody.interactions[0]).toEqual(waitingBody.interaction);
     for (const interaction of waitingBody.interactions) expect(interaction).not.toHaveProperty("credential");
     const storedWait = await db.query<any>(
       "SELECT id,payload FROM notification_events WHERE id=ANY($1::uuid[]) ORDER BY id",
       [waitingBody.eventIds.map((id: string) => id.slice("ntf_".length))],
     );
     for (const row of storedWait.rows) expect(JSON.stringify(row.payload)).not.toContain("credential");
-    const waitingInbox = await application.request("/api/inbox?limit=100", {
+    const waitingInbox = await application.request("/api/inbox/history?limit=100", {
       headers: { authorization: `Bearer ${registeredBody.credential.accessToken}` },
     });
-    const waitingItem = (await waitingInbox.json() as any).items.find((item: any) => item.id === waitingBody.eventId);
+    // Each phone gets its own copy of the question on the card; answer this phone's copy.
+    const waitingItem = (await waitingInbox.json() as any).items.find((item: any) => waitingBody.eventIds.includes(item.id));
+    const ownQuestion = waitingBody.interactions.find((interaction: any) => interaction.notificationId === waitingItem.id);
     expect(waitingItem.liveActivity.interaction).toMatchObject({
-      id: waitingBody.interaction.id, notificationId: waitingBody.interaction.notificationId,
+      id: ownQuestion.id, notificationId: ownQuestion.notificationId,
       kind: "approval", state: "pending",
     });
     expect(waitingItem.liveActivity.interaction.credential).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const invalidResponse = await application.request(
-      `/api/live-activity-responses/${waitingBody.interaction.id}`,
+      `/api/live-activity-responses/${ownQuestion.id}`,
       {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          notificationId: waitingBody.interaction.notificationId,
+          notificationId: ownQuestion.notificationId,
           deviceId: registeredBody.device.deviceId,
           action: "approve",
           credential: "x".repeat(43),
@@ -1246,11 +1258,11 @@ suite("account web authentication", () => {
       registeredBody.device.deviceId.slice("dev_".length),
     ]);
     const revokedResponse = await application.request(
-      `/api/live-activity-responses/${waitingBody.interaction.id}`,
+      `/api/live-activity-responses/${ownQuestion.id}`,
       {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          notificationId: waitingBody.interaction.notificationId,
+          notificationId: ownQuestion.notificationId,
           deviceId: registeredBody.device.deviceId,
           action: "approve",
           credential: waitingItem.liveActivity.interaction.credential,
@@ -1264,11 +1276,11 @@ suite("account web authentication", () => {
     ]);
 
     const phoneResponse = await application.request(
-      `/api/live-activity-responses/${waitingBody.interaction.id}`,
+      `/api/live-activity-responses/${ownQuestion.id}`,
       {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          notificationId: waitingBody.interaction.notificationId,
+          notificationId: ownQuestion.notificationId,
           deviceId: registeredBody.device.deviceId,
           action: "approve",
           credential: waitingItem.liveActivity.interaction.credential,
@@ -1279,11 +1291,11 @@ suite("account web authentication", () => {
     expect(phoneResponse.status).toBe(200);
     expect(await phoneResponse.json()).toMatchObject({ state: "approved", replayed: false });
     const replayedPhoneResponse = await application.request(
-      `/api/live-activity-responses/${waitingBody.interaction.id}`,
+      `/api/live-activity-responses/${ownQuestion.id}`,
       {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          notificationId: waitingBody.interaction.notificationId,
+          notificationId: ownQuestion.notificationId,
           deviceId: registeredBody.device.deviceId,
           action: "approve",
           credential: waitingItem.liveActivity.interaction.credential,
@@ -1293,11 +1305,11 @@ suite("account web authentication", () => {
     );
     expect(await replayedPhoneResponse.json()).toMatchObject({ state: "approved", replayed: true });
     const collision = await application.request(
-      `/api/live-activity-responses/${waitingBody.interaction.id}`,
+      `/api/live-activity-responses/${ownQuestion.id}`,
       {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          notificationId: waitingBody.interaction.notificationId,
+          notificationId: ownQuestion.notificationId,
           deviceId: registeredBody.device.deviceId,
           action: "deny",
           credential: waitingItem.liveActivity.interaction.credential,
@@ -1308,19 +1320,20 @@ suite("account web authentication", () => {
     expect(collision.status).toBe(409);
     expect(await collision.json()).toEqual({ error: "idempotency_conflict" });
 
-    const secondWaitingInbox = await application.request("/api/inbox?limit=100", {
+    const secondWaitingInbox = await application.request("/api/inbox/history?limit=100", {
       headers: { authorization: `Bearer ${secondRegisteredBody.credential.accessToken}` },
     });
     const secondWaitingItem = (await secondWaitingInbox.json() as any).items.find(
-      (item: any) => item.id === waitingBody.interaction.notificationId,
+      (item: any) => waitingBody.eventIds.includes(item.id) && item.id !== ownQuestion.notificationId,
     );
+    const secondQuestion = waitingBody.interactions.find((interaction: any) => interaction.notificationId === secondWaitingItem.id);
     expect(secondWaitingItem.liveActivity.targetDeviceId).toBe(secondRegisteredBody.device.deviceId);
     const secondPhoneResponse = await application.request(
-      `/api/live-activity-responses/${waitingBody.interaction.id}`,
+      `/api/live-activity-responses/${secondQuestion.id}`,
       {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          notificationId: waitingBody.interaction.notificationId,
+          notificationId: secondQuestion.notificationId,
           deviceId: secondRegisteredBody.device.deviceId,
           action: "approve",
           credential: secondWaitingItem.liveActivity.interaction.credential,
@@ -1331,26 +1344,10 @@ suite("account web authentication", () => {
     expect(secondPhoneResponse.status).toBe(409);
     expect(await secondPhoneResponse.json()).toMatchObject({ error: "interaction_terminal", state: "approved" });
 
-    const status = await application.request(`/api/dashboard/live-activities/${waitingBody.activity.id}/status`, { headers });
-    expect(status.status).toBe(200);
-    expect((await status.json() as any).activity).toMatchObject({
-      id: waitingBody.activity.id, state: "ended", progress: null,
-      interaction: { kind: "approval", state: "approved", action: "approve",
-        device: { id: registeredBody.device.deviceId } },
-    });
-    const parentOrigin = (await db.query<{ origin_hash: string }>(
-      "SELECT origin_hash FROM live_activities WHERE id=$1",
-      [activityId.slice("act_".length)],
-    )).rows[0]!.origin_hash;
-    expect((await db.query<{ origin_hash: string | null }>(
-      `SELECT origin_hash FROM notification_events
-       WHERE payload#>>'{liveActivity,activityId}'=$1 ORDER BY created_at,id`,
-      [waitingBody.activity.id],
-    )).rows).toEqual([
-      { origin_hash: parentOrigin },{ origin_hash: parentOrigin },
-    ]);
+    // Answered: the same card returns to its work, showing the answer.
     const parentStatus = await application.request(`/api/dashboard/live-activities/${activityId}/status`, { headers });
-    expect((await parentStatus.json() as any).activity).toMatchObject({
+    const parentStatusBody = (await parentStatus.json() as any).activity;
+    expect(parentStatusBody).toMatchObject({
       id: activityId, state: "active", progress: 0.73,
       interaction: { kind: "approval", state: "approved", action: "approve",
         device: { id: registeredBody.device.deviceId } },
@@ -1358,37 +1355,23 @@ suite("account web authentication", () => {
         expect.objectContaining({ id: registeredBody.device.deviceId, name: expect.any(String) }),
         expect.objectContaining({ id: secondRegisteredBody.device.deviceId, name: "Second iPhone" }),
       ]),
-      delivery: expect.objectContaining({ eventId: waitingBody.eventId }),
     });
+    expect(parentStatusBody.status).toMatch(/^Approved · /);
+    expect((await db.query("SELECT count(*)::int AS n FROM live_activities")).rows[0].n).toBe(cardsBeforeQuestion);
+    const parentOrigin = (await db.query<{ origin_hash: string }>(
+      "SELECT origin_hash FROM live_activities WHERE id=$1",
+      [activityId.slice("act_".length)],
+    )).rows[0]!.origin_hash;
+    expect((await db.query<{ origin_hash: string | null }>(
+      "SELECT DISTINCT origin_hash FROM notification_events WHERE id=ANY($1::uuid[])",
+      [waitingBody.eventIds.map((id: string) => id.slice("ntf_".length))],
+    )).rows).toEqual([{ origin_hash: parentOrigin }]);
 
-    const textWaiting = await application.request(`/api/dashboard/live-activities/${activityId}/wait`, {
+    const typedReply = await application.request(`/api/dashboard/live-activities/${activityId}/wait`, {
       method: "POST", headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({ kind: "text", prompt: "What should happen next?" }),
     });
-    expect(textWaiting.status).toBe(200);
-    const textWaitingBody = await textWaiting.json() as any;
-    expect(textWaitingBody.activity.id).toBe(activityId);
-    expect(textWaitingBody.interaction).toMatchObject({ kind: "text", state: "pending" });
-    expect(textWaitingBody.delivery).toEqual({ eligibleDevices: 2, durableCommands: 1, apnsJobs: 0 });
-    expect((await db.query<{ origin_hash: string | null }>(
-      "SELECT origin_hash FROM notification_events WHERE id=$1",
-      [textWaitingBody.eventId.slice("ntf_".length)],
-    )).rows[0]!.origin_hash).toBe(parentOrigin);
-    const textResponse = await application.request(
-      `/api/notifications/${textWaitingBody.eventId}/interactions`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${registeredBody.credential.accessToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ kind: "answer", value: { response: "Ship after the checks pass." },
-          idempotencyKey: "dashboard-text-response-12345678" }),
-      },
-    );
-    expect(textResponse.status).toBe(201);
-    const textStatus = await application.request(`/api/dashboard/live-activities/${activityId}/status`, { headers });
-    expect((await textStatus.json() as any).activity).toMatchObject({
-      interaction: { kind: "text", state: "replied", action: "answer",
-        response: { response: "Ship after the checks pass." },
-        device: { id: registeredBody.device.deviceId } },
-    });
+    expect(typedReply.status).toBe(400);
 
     const ended = await application.request(`/api/dashboard/live-activities/${activityId}/end`, {
       method: "POST", headers: { ...headers, "content-type": "application/json" },
@@ -1396,14 +1379,18 @@ suite("account web authentication", () => {
     });
     expect(ended.status).toBe(200);
     const endedBody = await ended.json() as any;
-    const terminalSequence = updateSequence+1;
+    // The question (+1) and its answer (+1) moved the card on before the end.
+    const terminalSequence = updateSequence+3;
+    // Finishing is finished work: the measured bar fills, never "Finished" at 73%.
     const terminalPresentation = {
       ...updatedPresentation,
       content: { ...updatedPresentation.content,status: "Finished" },
       state: { kind: "completed",tone: "success",icon: "completed" },
+      components: updatedPresentation.components.map((component: any) =>
+        component.type === "progress_bar" ? { ...component,value: 1 } : component),
     };
     expect(endedBody.activity).toMatchObject({
-      id: activityId, state: "ended", status: "Finished", progress: 0.73, sequence: terminalSequence,
+      id: activityId, state: "ended", status: "Finished", progress: 1, sequence: terminalSequence,
       presentation: terminalPresentation,      presentationHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
     const endedRunPage = await application.request(`/dashboard/testing/runs/${activityId}`,{ headers });
@@ -1419,7 +1406,7 @@ suite("account web authentication", () => {
       id: activityId,
       state: "ended",
       status: "Finished",
-      progress: 0.73,
+      progress: 1,
       sequence: terminalSequence,
       presentation: terminalPresentation,
       ownerControlled: true,
@@ -1441,9 +1428,9 @@ suite("account web authentication", () => {
     expect(parentOperations.rows[0]?.operation).toBe("start");
     expect(parentOperations.rows.filter((row) => row.operation === "update"))
       .toHaveLength(launchedIds.length+1);
-    expect(parentOperations.rows.slice(-3).map((row) => row.operation)).toEqual(["wait","wait","end"]);
-    expect(parentOperations.rows.find((row) => row.operation === "wait")?.companion_activity_id)
-      .toBe(waitingBody.activity.id.slice("act_".length));
+    expect(parentOperations.rows.filter((row) => row.operation === "wait")).toHaveLength(1);
+    expect(parentOperations.rows.at(-1)?.operation).toBe("end");
+    expect(parentOperations.rows.every((row) => row.companion_activity_id === null)).toBe(true);
     expect(parentOperations.rows.every((row) => row.delivery_summary && row.activity_snapshot)).toBe(true);
     expect(parentOperations.rows.every((row) => row.presentation_snapshot
       && /^[a-f0-9]{64}$/.test(row.presentation_snapshot_sha256))).toBe(true);
@@ -1451,11 +1438,6 @@ suite("account web authentication", () => {
       operation: "end",presentation_snapshot: terminalPresentation,
       presentation_snapshot_sha256: endedBody.activity.presentationHash,
     });
-    const companionOperations = await db.query<any>(
-      "SELECT operation,delivery_summary,activity_snapshot FROM live_activity_operations WHERE live_activity_id=$1",
-      [waitingBody.activity.id.slice("act_".length)],
-    );
-    expect(companionOperations.rows).toMatchObject([{ operation: "respond" }]);
     const lifecycleEventRows = (await db.query<any>(
       `SELECT payload#>'{liveActivity}' AS command,expires_at FROM notification_events
        WHERE kind='live_activity' AND payload#>>'{liveActivity,activityId}'=$1 ORDER BY created_at`,
@@ -1476,7 +1458,8 @@ suite("account web authentication", () => {
     ]));
     for (const command of primaryCommands.filter((candidate) =>
       candidate.sequence === updateSequence || candidate.sequence === terminalSequence)) {
-      expect(JSON.parse(command.componentsJson)).toEqual(updatedPresentation.components);
+      expect(JSON.parse(command.componentsJson)).toEqual(command.sequence === terminalSequence
+        ? terminalPresentation.components : updatedPresentation.components);
     }
     const finishAll = await application.request("/api/dashboard/live-activities/end-all", {
       method: "POST", headers: { ...headers, "content-type": "application/json" },
@@ -1645,28 +1628,24 @@ suite("account web authentication", () => {
            now()+(n*interval '1 second') FROM generate_series(1,26) n`,
       ),
     ]);
+    const connections = dashboardBootstrap(await (await application.request("/dashboard/connections",{ headers })).text());
+    expect(connections.phones).toHaveLength(26);
+    expect(connections.clients.length).toBeGreaterThanOrEqual(27);
+    expect(connections.services).toHaveLength(26);
+    expect(connections.summary).toMatchObject({ phones: 26,services: 26 });
     for (const [path,item,total] of [
-      ["/dashboard/connections/phones","Inventory Device 1",26],
-      ["/dashboard/connections/clients","Inventory Client 1",27],
-      ["/dashboard/connections/services","Inventory Service 1",26],
       ["/dashboard","Inventory Approval 1",26],
     ] as const) {
       const response = await application.request(`${path}?page=2`,{ headers });
       expect(response.status,`dashboard pagination route ${path}`).toBe(200);
       const html = await response.text();
       const bootstrap = optionalDashboardBootstrap(html);
-      if (bootstrap) {
-        expect(JSON.stringify(bootstrap)).toContain(item);
-        const pagination = bootstrap.pagination ?? bootstrap.approvalPagination;
-        expect(pagination).toMatchObject({
-          page: 2,pageCount: 2,total,previousHref: `${path}?page=1`,nextHref: null,
-        });
-      } else {
-        expect(html).toContain(item);
-        expect(html).toContain(`Page 2 of 2 · ${total} total`);
-        expect(html).toContain(`rel="prev" href="${path}?page=1"`);
-        expect(html).not.toContain(`href="${path}?page=3"`);
-      }
+      expect(bootstrap,`dashboard pagination route ${path} renders the React app`).not.toBeNull();
+      expect(JSON.stringify(bootstrap)).toContain(item);
+      const pagination = bootstrap.pagination ?? bootstrap.approvalPagination;
+      expect(pagination).toMatchObject({
+        page: 2,pageCount: 2,total,previousHref: `${path}?page=1`,nextHref: null,
+      });
     }
     const excessiveSelection = new URL("http://127.0.0.1:8180/api/dashboard/snapshot");
     for (let index = 0; index < 51; index += 1) excessiveSelection.searchParams.append(

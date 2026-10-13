@@ -1,4 +1,6 @@
 import type { Database } from "./db.js";
+import { relevanceDeliveryDeadline,relevanceDeliveryGuard } from "./relevance/delivery.js";
+import type { DeliveryLane } from "./delivery-dispatcher.js";
 import type { ApnsRuntimeResult } from "./apns-runtime.js";
 import type {
   DeliverySerializationEvidence,
@@ -9,6 +11,7 @@ export type ClaimedDeliveryJob = {
   claim_token: string;
   canonical_intent_sha256: string | null;
   device_projection_sha256: string | null;
+  ordinary_delivery_inputs: unknown;
   principal_id: string;
   device_id: string;
   transport: "notification" | "live_activity_start" | "live_activity_update";
@@ -62,18 +65,29 @@ export async function claimDeliveryJobs(
   db: Database,
   limit: number,
   cutoverAt: Date,
+  lane?: DeliveryLane,
 ): Promise<ClaimedDeliveryJob[]> {
-  const result = await db.query<ClaimedDeliveryJob>(
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("claim limit must be between 1 and 100");
+  const result = await db.query<ClaimedDeliveryJob & { available_at: Date }>(
     `WITH candidates AS (
        SELECT j.id FROM delivery_jobs j JOIN notification_events candidate_event
          ON candidate_event.id=j.notification_event_id
        JOIN devices candidate_device ON candidate_device.id=j.device_id
          AND candidate_device.principal_id=candidate_event.principal_id
+       CROSS JOIN LATERAL (SELECT (
+         candidate_event.payload#>>'{liveActivity,operation}'='end'
+         OR EXISTS (SELECT 1 FROM interaction_requests request
+           WHERE request.notification_event_id=candidate_event.id
+             AND request.state='pending' AND request.expires_at>now())
+       ) IS TRUE AS urgent) priority
        WHERE j.state IN ('pending','retry') AND j.available_at<=now()
          AND candidate_event.created_at >= $2
          AND candidate_event.state='active'
          AND (candidate_event.expires_at IS NULL OR candidate_event.expires_at>now())
-       ORDER BY j.available_at,j.created_at FOR UPDATE OF j SKIP LOCKED LIMIT $1
+         AND ${relevanceDeliveryGuard("candidate_event")}
+         AND ($3::text IS NULL OR priority.urgent=($3='urgent'))
+         AND (j.provider_next_attempt_not_before IS NULL OR j.provider_next_attempt_not_before<=now())
+       ORDER BY j.available_at,j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT $1
      )
      UPDATE delivery_jobs j SET state='processing',attempt_count=j.attempt_count+1,
        claim_token=gen_random_uuid(),claim_started_at=now(),claim_phase='preparing',
@@ -82,11 +96,12 @@ export async function claimDeliveryJobs(
      FROM candidates c,notification_events e,devices d
      WHERE j.id=c.id AND e.id=j.notification_event_id AND d.id=j.device_id
        AND d.principal_id=e.principal_id
-     RETURNING j.id,j.claim_token,j.canonical_intent_sha256,
-       j.device_projection_sha256,e.principal_id,j.device_id,j.transport,j.live_activity_id,
+     RETURNING j.id,j.claim_token,j.available_at,j.canonical_intent_sha256,
+       j.device_projection_sha256,j.ordinary_delivery_inputs,e.principal_id,j.device_id,j.transport,j.live_activity_id,
        e.id AS event_id,e.title,e.body,e.source,e.service_id,e.requester_credential_id,e.origin_hash,
        (SELECT s.image_url FROM webhook_services s WHERE s.id=e.service_id) AS service_image_url,
-       e.image_url,e.deep_link,e.expires_at,e.payload,j.attempt_count,
+       e.image_url,e.deep_link,
+       ${relevanceDeliveryDeadline("e")} AS expires_at,e.payload,j.attempt_count,
        j.provider_attempts_used,j.provider_retry_started_at,j.provider_retry_attempt_cap,
        j.provider_retry_horizon_at,j.provider_next_attempt_not_before,j.provider_status,j.created_at,
        j.apns_priority,j.first_claimed_at,j.last_claimed_at,j.last_dispatch_started_at,
@@ -95,9 +110,10 @@ export async function claimDeliveryJobs(
        (SELECT r.kind FROM interaction_requests r WHERE r.notification_event_id=e.id) AS interaction_kind,
        (SELECT r.state FROM interaction_requests r WHERE r.notification_event_id=e.id) AS interaction_state,
        (SELECT r.expires_at FROM interaction_requests r WHERE r.notification_event_id=e.id) AS interaction_expires_at`,
-    [limit,cutoverAt],
+    [limit,cutoverAt,lane ?? null],
   );
-  return result.rows;
+  return result.rows.sort((a,b) => a.available_at.getTime()-b.available_at.getTime()
+    || a.created_at.getTime()-b.created_at.getTime() || a.id.localeCompare(b.id));
 }
 
 export async function pinDeliverySerializationEvidence(
@@ -302,6 +318,19 @@ export async function finalizeDeliveryClaim(
         [job.id,job.claim_token,result.providerMessageId ?? null],
       );
       requireOwned(updated.rowCount);
+    } else if (result.kind === "retry_scheduled") {
+      const updated = await client.query(
+        `UPDATE delivery_jobs SET state='retry',available_at=GREATEST(clock_timestamp(),provider_next_attempt_not_before),
+           last_error_code=$4,last_error_message=$5,
+           claim_token=NULL,claim_started_at=NULL,claim_phase=NULL,lease_expires_at=NULL,updated_at=now()
+         WHERE id=$1 AND state='processing' AND claim_token=$2 AND claim_phase='dispatch_started'
+           AND provider_next_attempt_not_before=$3
+           AND provider_next_attempt_not_before<provider_retry_horizon_at
+           AND provider_attempts_used<provider_retry_attempt_cap`,
+        [job.id,job.claim_token,result.notBefore,result.code,result.message],
+      );
+      requireOwned(updated.rowCount);
+      rescheduled = true;
     } else if (result.kind === "invalid_token") {
       const updated = await client.query(
         `UPDATE delivery_jobs SET state='token_invalid',last_error_code=$3,last_error_message=$4,
@@ -324,10 +353,12 @@ export async function finalizeDeliveryClaim(
       );
       requireOwned(updated.rowCount);
     }
-    if (terminalActivityJob && !rescheduled && job.live_activity_id) {
+    if (terminalActivityJob && result.kind === "accepted" && !rescheduled && job.live_activity_id) {
       await client.query(
-        "DELETE FROM live_activity_update_tokens WHERE live_activity_id=$1 AND device_id=$2",
-        [job.live_activity_id,job.device_id],
+        `DELETE FROM live_activity_update_tokens token USING delivery_jobs job
+         WHERE token.live_activity_id=$1 AND token.device_id=$2 AND job.id=$3
+           AND encode(sha256(convert_to(token.token,'UTF8')),'hex')=job.recipient_generation`,
+        [job.live_activity_id,job.device_id,job.id],
       );
     }
     await client.query("UPDATE notification_events SET updated_at=now() WHERE id=$1",[job.event_id]);

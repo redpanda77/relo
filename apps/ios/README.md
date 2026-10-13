@@ -4,12 +4,14 @@ This is the native SwiftUI client for Relo. The committed `Relo.xcodeproj` opens
 
 ## What is implemented
 
-- Dashboard QR connection with camera scanning, visible origin confirmation, persisted runtime
-  origin, and Better Auth email/password as the manual fallback.
+- Browser sign-in: **Sign in** opens the server's `/mobile/sign-in` page in
+  `ASWebAuthenticationSession`; the owner approves there and the app exchanges a one-time code
+  (authorization code + PKCE) for its account session. The server origin is persisted and can be
+  changed under **Use another server**.
 - A clear **Open Relo Dashboard** action at the configured origin plus `/dashboard`.
 - Keychain-only account sessions, device credentials, stable device/installation IDs, APNs token, and registration retry state using `AfterFirstUnlockThisDeviceOnly`.
 - Automatic, idempotent device creation and refresh through `POST /api/devices/register` against
-  the QR-selected or manually configured server origin.
+  the configured server origin.
 - Two-credential sign-out: device revocation and Better Auth session revocation must both succeed before local protected data is erased.
 - Notification authorization and APNs registration handoff.
 - Server-authoritative Recent Activity with an account-scoped protected JSON projection for instant offline display.
@@ -29,7 +31,7 @@ This is the native SwiftUI client for Relo. The committed `Relo.xcodeproj` opens
 
 The website and iPhone use the same Relo account. iOS sends the Better Auth mobile session only to account-session and device-registration routes. Inbox, heartbeat, and interaction traffic continues using the separately revocable device credential.
 
-A push is only a wake-up hint. The Relo server owns the canonical Inbox. If the phone is offline, cached activity remains visible. On return, the app calls `GET /api/inbox?after=<cursor>&limit=50`, saves each page atomically, and resumes from the last committed cursor after any interruption.
+A push is only a wake-up hint. The Relo server owns the canonical Inbox. If the phone is offline, cached activity remains visible. On return, the app reads authoritative current state (`GET /api/inbox/current`, with `GET /api/inbox/events` change hints while connected) and repairs its protected history from `GET /api/inbox/snapshot`; a missed hint is recovered by the next read.
 
 The protected offline projection keeps the newest 250 items per account. While connected, Recent Activity uses `GET /api/inbox/history?before=<cursor>&limit=100` as a separate in-memory browsing window so **Load older** can traverse arbitrary-age history without growing the offline cache. Search and filter copy states exactly how many items are loaded and the current server-reported total. Account-session, device, or credential-version changes replace that browsing window rather than merging it across scopes.
 
@@ -60,8 +62,7 @@ Apple's [Communication Notifications guidance](https://developer.apple.com/docum
 2. Select the **Relo** scheme and connected iPhone.
 3. Leave automatic signing enabled for the app, Notification Service Extension, and Live Activity extension.
 4. Press **Run**.
-5. In Dashboard → Connections → Connect iPhone, generate a QR and scan it from the Relo sign-in
-   screen. Confirm the displayed origin. Email/password remains available.
+5. On the iPhone, open Relo and tap **Sign in**. Approve in the browser, and you're back in the app.
 6. Allow notifications when prompted. The app registers immediately and refreshes the same device automatically when Apple supplies or rotates the APNs token.
 7. Confirm the dashboard lists this iPhone, then send a test notification.
 8. In **Live Activity Gallery**, choose the iPhone and press any style. Open the app and tap **Refresh** to start that preview.
@@ -101,8 +102,10 @@ Device bearer credential:
 - `PUT /api/devices/:deviceId`
 - `PUT /api/devices/self/live-activities/:activityId/token`
 - `DELETE /api/devices/:deviceId`
-- `GET /api/inbox?after=<cursor>&limit=50`
-- `GET /api/inbox/history?before=<cursor>&limit=100`
+- `GET /api/inbox/current`, `GET /api/inbox/events`, `GET /api/inbox/pending`
+- `GET /api/inbox/snapshot`, `GET /api/inbox/history?before=<cursor>&limit=100`, `GET /api/inbox/:notificationId`
+- `POST /api/inbox/read-items`
+- `GET /api/inbox/live-activities/active`
 - `POST /api/notifications/:notificationId/interactions`
 
 Device-bound Live Activity response capability:
@@ -140,3 +143,16 @@ xcodebuild -project Relo.xcodeproj \
 ```
 
 `project.yml` is the maintainers' source of truth. Run `xcodegen generate` after changing the project specification or adding source/test files, and include the regenerated `.xcodeproj` in the same change.
+
+Home loading geometry has a native macOS SwiftUI regression harness. It compiles the actual
+media viewport and toolbar status views, reproduces the previous 120-to-240-point image
+height jump, and checks unchanged bounds across loading, failure, loaded media, connection
+status, widths, and text sizes. It does not install or run the iOS app:
+
+```sh
+cd apps/ios
+swiftc -parse-as-library Scripts/verify-home-loading-layout.swift \
+  Sources/ReloApp/ReloMediaViewport.swift Sources/ReloApp/ReloNowStatusLabel.swift \
+  -o /tmp/relo-verify-home-loading-layout
+/tmp/relo-verify-home-loading-layout
+```

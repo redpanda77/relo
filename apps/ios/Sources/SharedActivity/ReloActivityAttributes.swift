@@ -5,6 +5,7 @@ import ReloCore
 struct ReloActivityAttributes: Codable {
     enum Style: String, Codable, CaseIterable, Hashable {
         case standard
+        case ring
         case hero
         case terminal
         case steps

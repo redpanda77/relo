@@ -1,16 +1,41 @@
+import ReloCore
 import Intents
+import OSLog
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
-    private struct DownloadedMedia {
+    private struct DownloadedMedia: Sendable {
         let data: Data
         let response: URLResponse
     }
 
+    /// Shared only by this request's sequential enrichment and donation callbacks.
+    private actor RequestMedia {
+        private var image: DownloadedMedia?
+        func store(_ image: DownloadedMedia?) { self.image = image }
+        func load() -> DownloadedMedia? { image }
+    }
+
+    /// Immutable donation inputs captured before enrichment starts.
+    private struct DonationInput: Sendable {
+        let sourceName: String
+        let conversationIdentifier: String
+        let avatarURL: URL?
+        let imageURL: URL?
+
+        init?(_ envelope: ReloNotificationEnvelope) {
+            guard let sourceName = envelope.sourceName,
+                  let conversationIdentifier = envelope.conversationIdentifier
+            else { return nil }
+            self.sourceName = sourceName
+            self.conversationIdentifier = conversationIdentifier
+            avatarURL = envelope.avatarURL
+            imageURL = envelope.imageURL
+        }
+    }
+
     private var orchestrator: ReloNotificationServiceOrchestrator<UNMutableNotificationContent>?
     private var enrichmentTask: Task<Void, Never>?
-
-    private static let selfImposedTimeout: TimeInterval = 24
 
     override func didReceive(
         _ request: UNNotificationRequest,
@@ -36,45 +61,33 @@ final class NotificationService: UNNotificationServiceExtension {
             userInfo: request.content.userInfo,
             requestIdentifier: request.identifier
         )
-        recordBestEffortReceipt(notificationID: envelope?.notificationID ?? request.identifier)
-
-        DispatchQueue.global().asyncAfter(deadline: .now() + Self.selfImposedTimeout) {
-            orchestrator.timeout()
-        }
-
-        enrichmentTask = Task { [weak self] in
-            guard let self else { return }
-            var imageMedia: DownloadedMedia?
-            let context = ReloNotificationOrchestrationContext(
-                hasEnvelope: envelope != nil,
-                isPrivate: envelope?.privacy == .private,
-                supportsCommunicationStyle: envelope.map(
-                    ReloNotificationServicePolicy.shouldAttemptDonation
-                ) ?? false,
-                conversationIdentifier: envelope?.conversationIdentifier
-            )
-            await orchestrator.run(
-                context: context,
-                enrichMedia: { ownedContent in
-                    guard let envelope else { return ownedContent }
-                    imageMedia = await self.enrichMedia(content: ownedContent, envelope: envelope)
-                    return ownedContent
-                },
-                donateAndUpdate: { enriched in
-                    guard
-                        let envelope,
-                        let sourceName = envelope.sourceName,
-                        let conversationIdentifier = envelope.conversationIdentifier
-                    else { return .donationFailed }
-                    return await self.donateAndUpdate(
-                        content: enriched,
-                        envelope: envelope,
-                        sourceName: sourceName,
-                        conversationIdentifier: conversationIdentifier,
-                        imageMedia: imageMedia
-                    )
-                }
-            )
+        let context = ReloNotificationOrchestrationContext(
+            hasEnvelope: envelope != nil,
+            isPrivate: envelope?.privacy == .private,
+            supportsCommunicationStyle: envelope.map(ReloNotificationServicePolicy.shouldAttemptDonation) ?? false,
+            conversationIdentifier: envelope?.conversationIdentifier
+        )
+        // Closures capture only immutable Sendable values so every supported compiler can
+        // check the sending regions.
+        let hasEnvelope = envelope != nil
+        let imageURL = envelope?.imageURL
+        let donation = envelope.flatMap(DonationInput.init)
+        let imageMedia = RequestMedia()
+        enrichmentTask = orchestrator.start(
+            context: context,
+            enrichMedia: { ownedContent in
+                await Self.enrich(
+                    content: ownedContent, hasEnvelope: hasEnvelope, imageURL: imageURL, imageMedia: imageMedia
+                )
+            },
+            donateAndUpdate: { enriched in
+                await Self.donate(content: enriched, donation: donation, imageMedia: imageMedia)
+            }
+        )
+        // File access is best effort and must never hold the presentation deadline.
+        let notificationID = envelope?.notificationID ?? request.identifier
+        DispatchQueue.global(qos: .utility).async {
+            Self.recordBestEffortReceipt(notificationID: notificationID, scope: envelope?.receiptScope)
         }
     }
 
@@ -83,34 +96,46 @@ final class NotificationService: UNNotificationServiceExtension {
         orchestrator?.timeout()
     }
 
-    private func enrichMedia(
+    private static func enrich(
         content: UNMutableNotificationContent,
-        envelope: ReloNotificationEnvelope
-    ) async -> DownloadedMedia? {
-        var imageMedia: DownloadedMedia?
-        if let imageURL = envelope.imageURL {
-            imageMedia = await download(imageURL, maximumBytes: ReloNotificationEnvelope.maximumAttachmentBytes)
-            if let imageMedia {
-                addAttachment(from: imageMedia, sourceURL: imageURL, to: content)
+        hasEnvelope: Bool,
+        imageURL: URL?,
+        imageMedia: RequestMedia
+    ) async -> UNMutableNotificationContent {
+        guard hasEnvelope else { return content }
+        var media: DownloadedMedia?
+        if let imageURL {
+            media = cachedMedia(imageURL, maximumBytes: ReloNotificationEnvelope.maximumAttachmentBytes)
+            if let media {
+                addAttachment(from: media, sourceURL: imageURL, to: content)
             }
         }
-        return imageMedia
+        await imageMedia.store(media)
+        return content
     }
 
-    private func donateAndUpdate(
+    private static func donate(
         content: UNMutableNotificationContent,
-        envelope: ReloNotificationEnvelope,
-        sourceName: String,
-        conversationIdentifier: String,
+        donation: DonationInput?,
+        imageMedia: RequestMedia
+    ) async -> ReloNotificationDonationResult<UNMutableNotificationContent> {
+        guard let donation else { return .donationFailed }
+        let storedImage = await imageMedia.load()
+        return await donateAndUpdate(content: content, donation: donation, imageMedia: storedImage)
+    }
+
+    private static func donateAndUpdate(
+        content: UNMutableNotificationContent,
+        donation: DonationInput,
         imageMedia: DownloadedMedia?
     ) async -> ReloNotificationDonationResult<UNMutableNotificationContent> {
         let avatar: INImage?
-        if let avatarURL = envelope.avatarURL {
-            if avatarURL == envelope.imageURL,
+        if let avatarURL = donation.avatarURL {
+            if avatarURL == donation.imageURL,
                let imageMedia,
                imageMedia.data.count <= ReloNotificationEnvelope.maximumAvatarBytes {
                 avatar = INImage(imageData: imageMedia.data)
-            } else if let avatarMedia = await download(
+            } else if let avatarMedia = cachedMedia(
                 avatarURL,
                 maximumBytes: ReloNotificationEnvelope.maximumAvatarBytes
             ) {
@@ -124,46 +149,26 @@ final class NotificationService: UNNotificationServiceExtension {
 
         return await donateCommunicationIntent(
             content: content,
-            sourceName: sourceName,
-            conversationIdentifier: conversationIdentifier,
+            sourceName: donation.sourceName,
+            conversationIdentifier: donation.conversationIdentifier,
             avatar: avatar
         )
     }
 
-    private func download(_ url: URL, maximumBytes: Int64) async -> DownloadedMedia? {
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 8
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpShouldSetCookies = false
-        configuration.urlCache = nil
-        let session = URLSession(
-            configuration: configuration,
-            delegate: ReloPublicImageRedirectDelegate(),
-            delegateQueue: nil
-        )
-        defer { session.invalidateAndCancel() }
-        do {
-            let (temporaryURL, response) = try await session.download(for: request)
-            guard !Task.isCancelled else { return nil }
-            guard
-                let finalURL = response.url,
-                ReloPublicImageURLPolicy.validatedURL(finalURL.absoluteString) != nil
-            else { return nil }
-            let values = try temporaryURL.resourceValues(forKeys: [.fileSizeKey])
-            let fileSize = Int64(values.fileSize ?? 0)
-            guard ReloNotificationMediaPolicy.accepts(
-                response: response,
-                fileSize: fileSize,
-                maximumBytes: maximumBytes
-            ) else { return nil }
-            return DownloadedMedia(data: try Data(contentsOf: temporaryURL), response: response)
-        } catch {
-            return nil
-        }
+    /// This lookup never starts a URLSession request. A cache miss leaves text intact.
+    private static func cachedMedia(_ url: URL, maximumBytes: Int64) -> DownloadedMedia? {
+        guard !Task.isCancelled,
+              let cached = URLCache.shared.cachedResponse(for: URLRequest(url: url)),
+              let finalURL = cached.response.url,
+              ReloPublicImageURLPolicy.validatedURL(finalURL.absoluteString) != nil,
+              ReloNotificationMediaPolicy.accepts(
+                response: cached.response, fileSize: Int64(cached.data.count), maximumBytes: maximumBytes
+              )
+        else { return nil }
+        return DownloadedMedia(data: cached.data, response: cached.response)
     }
 
-    private func addAttachment(
+    private static func addAttachment(
         from media: DownloadedMedia,
         sourceURL: URL,
         to content: UNMutableNotificationContent
@@ -184,7 +189,7 @@ final class NotificationService: UNNotificationServiceExtension {
         }
     }
 
-    private func donateCommunicationIntent(
+    private static func donateCommunicationIntent(
         content: UNMutableNotificationContent,
         sourceName: String,
         conversationIdentifier: String,
@@ -226,7 +231,7 @@ final class NotificationService: UNNotificationServiceExtension {
         }
     }
 
-    private func recordBestEffortReceipt(notificationID: String) {
+    private static func recordBestEffortReceipt(notificationID: String, scope: ReceiptScope?) {
         guard
             let appGroup = Bundle.main.object(forInfoDictionaryKey: "RELOAppGroup") as? String,
             !appGroup.isEmpty,
@@ -234,6 +239,23 @@ final class NotificationService: UNNotificationServiceExtension {
                 forSecurityApplicationGroupIdentifier: appGroup
             )
         else { return }
-        ReloNotificationReceiptStore(baseDirectory: container).add(notificationID: notificationID)
+        let logger = Logger(subsystem: "relo.notification-service", category: "receipts")
+        guard let scope else {
+            logger.notice("Notification has no valid receipt scope; evidence cannot be reassigned")
+            return
+        }
+        do {
+            let result = try ReloNotificationReceiptStore(baseDirectory: container).add(
+                record: NotificationReceiptRecord(scope: scope, notificationID: notificationID),
+                lockWait: ReloNotificationPresentationBudget.receiptLockSeconds
+            )
+            switch result {
+            case .inserted, .duplicate: break
+            case .insertedWithEviction(let count): logger.notice("Receipt capacity retired \(count) oldest records")
+            case .notRecordedWithinBudget: logger.notice("Receipt lock budget elapsed; presentation continues")
+            }
+        } catch {
+            logger.error("Receipt persistence failed; presentation continues")
+        }
     }
 }

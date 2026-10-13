@@ -64,6 +64,7 @@ function databaseStyle(presentation: LiveActivityPresentation): string {
   if (presentation.behavior.type === "approval") return "approval";
   if (presentation.behavior.type === "yes_no") return "verdict";
   if (presentation.components.some((component) => component.type === "steps")) return "steps";
+  if (presentation.appearance.progressDisplay === "ring") return "ring";
   return presentation.appearance.theme === "dark" ? "terminal" : "standard";
 }
 
@@ -148,6 +149,8 @@ export function terminalPresentationFromRow(
     detail?: string | null | undefined;
     progress?: number | null | undefined;
     accentColor?: string | undefined;
+    /** The work itself finished: on success, steps complete and a measured bar fills. */
+    workFinished?: boolean | undefined;
   } = {},
 ): LiveActivityPresentation {
   const current = presentationFromRow(row);
@@ -160,7 +163,8 @@ export function terminalPresentationFromRow(
   for (let suffix = 2; existingComponentIds.has(addedProgressId); suffix += 1) {
     addedProgressId = `terminal_progress_${suffix}`;
   }
-  const components = patch.progress === null
+  const finished = patch.workFinished === true && symbol === "success";
+  const rawComponents = patch.progress === null
     ? current.components.filter((component) => component.type !== "progress_bar")
     : [
         ...current.components.map((component) => component.type === "progress_bar"
@@ -174,6 +178,14 @@ export function terminalPresentationFromRow(
             }]
           : []),
       ];
+  // A finished card shows finished progress; a stopped one keeps exactly where the work stopped.
+  const components = finished
+    ? rawComponents.map((component) => component.type === "steps"
+      ? { ...component,items: component.items.map((item) => ({ ...item,state: "complete" as const })) }
+      : component.type === "progress_bar" && typeof patch.progress !== "number"
+        ? { ...component,value: 1 }
+        : component)
+    : rawComponents;
   const surfaces = patch.progress === null
     ? Object.fromEntries(Object.entries(current.surfaces).map(([surface,componentIds]) => [
         surface,componentIds.filter((componentId) => !progressComponentIds.has(componentId)),
@@ -225,6 +237,7 @@ export function terminalPresentationColumnsFromRow(
     detail?: string | null | undefined;
     progress?: number | null | undefined;
     accentColor?: string | undefined;
+    workFinished?: boolean | undefined;
   } = {},
 ): PersistedPresentationColumns {
   return persistedPresentationColumns(terminalPresentationFromRow(row,status,symbol,patch));

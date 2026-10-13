@@ -8,7 +8,7 @@ describe("pending interaction badge count", () => {
     const count = await pendingInteractionBadgeCount({ query } as unknown as Database,"device-uuid");
 
     expect(count).toBe(4);
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("r.state='pending' AND r.expires_at>now()"),["device-uuid"]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("r.state='pending' AND r.expires_at>clock_timestamp()"),["device-uuid"]);
     expect(query.mock.calls[0]![0]).toContain("t.device_id=d.id");
     expect(query.mock.calls[0]![0]).toContain("d.principal_id=e.principal_id");
   });

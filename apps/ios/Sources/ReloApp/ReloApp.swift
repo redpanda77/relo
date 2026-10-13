@@ -1,66 +1,46 @@
+import ReloPersistence
 import ReloCore
 import Combine
 import SwiftUI
 import UserNotifications
 
+#if !RELO_FLOW_CAPTURE
 @main
+#endif
 struct ReloApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var model: AppModel
+    @State private var model: AppModel
     @StateObject private var notificationNavigation = NotificationNavigationCoordinator.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        let model = AppModel.live()
-        _model = StateObject(wrappedValue: model)
+        let dependencies = AppDependencies.live()
+        let model = AppModel(dependencies: dependencies)
+        _model = State(initialValue: model)
+        appDelegate.tokenRegistrar = dependencies.tokenRegistrar
         BackgroundRefreshCoordinator.shared.install(model: model)
+        BackgroundNotificationActionCoordinator.shared.install(model: model)
     }
 
     var body: some Scene {
         WindowGroup {
             HomeView(model: model)
+                .preferredColorScheme(.dark)
                 .task {
+                    guard !AppLaunchEnvironment.isHostedTest else { return }
                     await model.start()
                 }
                 .task(id: scenePhase) {
-                    guard scenePhase == .active else { return }
+                    guard !AppLaunchEnvironment.isHostedTest else { return }
+                    guard scenePhase == .active else { model.backgrounded(); return }
                     await model.foregrounded()
-                    var attempt = 0
-                    while !Task.isCancelled {
-                        do {
-                            try await Task.sleep(
-                                for: .seconds(
-                                    model.foregroundRefreshDelaySeconds(afterAttempt: attempt)
-                                )
-                            )
-                        } catch {
-                            return
-                        }
-                        await model.refresh()
-                        attempt = min(attempt + 1, 5)
-                    }
                 }
                 .onReceive(notificationNavigation.$notificationID.compactMap { $0 }) { notificationID in
                     notificationNavigation.consume(notificationID)
                     Task { await model.openNotification(notificationID: notificationID) }
                 }
-                .onReceive(notificationNavigation.$actionRequest.compactMap { $0 }) { request in
-                    notificationNavigation.consume(request)
-                    Task {
-                        await model.notificationResponseQueued(notificationID: request.notificationID)
-                    }
-                }
-                .onReceive(notificationNavigation.$actionFailure.compactMap { $0 }) { failure in
-                    notificationNavigation.consume(failure)
-                    Task {
-                        await model.notificationResponseFailed(
-                            notificationID: failure.request.notificationID,
-                            action: failure.request.action
-                        )
-                    }
-                }
                 .onReceive(NotificationCenter.default.publisher(for: .reloPushReceived)) { _ in
-                    Task { await model.refresh() }
+                    model.currentChangeReceived()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .reloDeviceTokenChanged)) { _ in
                     Task { await model.pushRegistrationChanged() }
@@ -75,16 +55,18 @@ struct ReloApp: App {
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    var tokenRegistrar: BackgroundLiveActivityTokenRegistrar?
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !AppLaunchEnvironment.isHostedTest else { return true }
         UNUserNotificationCenter.current().delegate = self
         Self.registerNotificationCategories()
         // APNs may rotate its ordinary token between launches, and ActivityKit may
         // wake this process in the background before SwiftUI scene tasks run.
         application.registerForRemoteNotifications()
-        BackgroundLiveActivityTokenRegistrar.start()
+        tokenRegistrar?.start()
         return true
     }
 
@@ -96,7 +78,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         } catch {
             UserDefaults.standard.set("The protected APNs token could not be saved.", forKey: "relo.apnsRegistrationError")
         }
-        BackgroundLiveActivityTokenRegistrar.reconnect()
+        tokenRegistrar?.reconnect()
         NotificationCenter.default.post(name: .reloDeviceTokenChanged, object: nil)
     }
 
@@ -121,37 +103,29 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        willPresent notification: UNNotification,
-        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
-    ) {
-        NotificationCenter.default.post(name: .reloPushReceived, object: nil)
-        completionHandler([.banner, .list, .sound, .badge])
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        await MainActor.run {
+            NotificationCenter.default.post(name: .reloPushReceived, object: nil)
+        }
+        return [.banner, .list, .sound, .badge]
     }
 
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse,
-        withCompletionHandler completionHandler: @escaping () -> Void
-    ) {
-        defer { completionHandler() }
-        NotificationCenter.default.post(name: .reloPushReceived, object: nil)
-        if let notificationID = Self.reloNotificationID(
-            from: response.notification.request.content.userInfo
-        ) {
+        didReceive response: UNNotificationResponse
+    ) async {
+        // Copy native callback input before crossing to the UI-owned coordinators.
+        // The async delegate bridge completes exactly when handling finishes.
+        if let notificationID = Self.reloNotificationID(from: response.notification.request.content.userInfo) {
             let request = Self.actionRequest(from: response, notificationID: notificationID)
-            let wasPersisted = request.map(Self.persistActionRequest) ?? false
-            Task { @MainActor in
-                if let request {
-                    if wasPersisted {
-                        NotificationNavigationCoordinator.shared.respond(request)
-                    } else {
-                        NotificationNavigationCoordinator.shared.fail(request)
-                    }
-                } else {
-                    NotificationNavigationCoordinator.shared.open(notificationID)
-                }
+            let shouldNavigate = response.actionIdentifier != UNNotificationDismissActionIdentifier
+            if let request {
+                await BackgroundNotificationActionCoordinator.shared.handle(request)
+            } else if shouldNavigate {
+                await NotificationNavigationCoordinator.shared.open(notificationID)
             }
             return
         }
@@ -160,10 +134,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             let value = relo["deepLink"] as? String,
             let url = NotificationDestinationPolicy.validatedURL(value)
         else { return }
-        UIApplication.shared.open(url)
+        await MainActor.run { UIApplication.shared.open(url) }
     }
 
-    private static func reloNotificationID(from userInfo: [AnyHashable: Any]) -> String? {
+    nonisolated private static func reloNotificationID(from userInfo: [AnyHashable: Any]) -> String? {
         guard let relo = userInfo["relo"] as? [String: Any] else { return nil }
         guard let notificationID = relo["notificationId"] as? String,
               ReloIdentifier.isValid(notificationID)
@@ -171,7 +145,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return notificationID
     }
 
-    private static func actionRequest(
+    nonisolated private static func actionRequest(
         from response: UNNotificationResponse,
         notificationID: String
     ) -> NotificationActionRequest? {
@@ -181,61 +155,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         case "RELO_DENY": action = .deny
         case "RELO_YES": action = .yes
         case "RELO_NO": action = .no
-        case "RELO_REPLY": action = .answer
         default: return nil
         }
         let text = (response as? UNTextInputNotificationResponse)?.userText
-        return NotificationActionRequest(notificationID: notificationID, action: action, text: text)
+        let relo = response.notification.request.content.userInfo["relo"] as? [String: Any] ?? [:]
+        return NotificationActionRequest(notificationID: notificationID, action: action, text: text,
+            metadata: NotificationDecisionMetadata(relo: relo))
     }
 
     private static func registerNotificationCategories() {
-        let approve = UNNotificationAction(identifier: "RELO_APPROVE", title: "Approve", options: [.authenticationRequired, .foreground])
-        let deny = UNNotificationAction(identifier: "RELO_DENY", title: "Deny", options: [.authenticationRequired, .foreground, .destructive])
-        let yes = UNNotificationAction(identifier: "RELO_YES", title: "Yes", options: [.authenticationRequired, .foreground])
-        let no = UNNotificationAction(identifier: "RELO_NO", title: "No", options: [.authenticationRequired, .foreground, .destructive])
-        let reply = UNTextInputNotificationAction(
-            identifier: "RELO_REPLY",
-            title: "Reply",
-            options: [.authenticationRequired, .foreground],
-            textInputButtonTitle: "Send",
-            textInputPlaceholder: "Short response"
-        )
+        let approve = UNNotificationAction(identifier: "RELO_APPROVE", title: "Approve", options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: "RELO_DENY", title: "Deny", options: [.authenticationRequired, .destructive])
+        let yes = UNNotificationAction(identifier: "RELO_YES", title: "Yes", options: [.authenticationRequired])
+        let no = UNNotificationAction(identifier: "RELO_NO", title: "No", options: [.authenticationRequired, .destructive])
         UNUserNotificationCenter.current().setNotificationCategories([
             UNNotificationCategory(identifier: "RELO_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
             UNNotificationCategory(identifier: "RELO_YES_NO", actions: [yes, no], intentIdentifiers: []),
-            UNNotificationCategory(identifier: "RELO_TEXT", actions: [reply], intentIdentifiers: []),
         ])
     }
 
-    private static func persistActionRequest(_ request: NotificationActionRequest) -> Bool {
-        guard
-            let credential = try? KeychainDeviceCredentialStore().load(),
-            let queue = try? responseFile()
-        else { return false }
-        let accountID = credential.accountId
-        let trimmedText = NotificationReplyPolicy.normalized(request.text)
-        if request.action == .answer, !NotificationReplyPolicy.isValid(trimmedText) { return false }
-        let response = PendingNotificationResponse(
-            accountID: accountID,
-            deviceID: credential.deviceId,
-            notificationID: request.notificationID,
-            action: request.action,
-            value: trimmedText.map { ["response": $0] } ?? [:],
-            idempotencyKey: "ios:\(credential.installationId):\(request.notificationID):\(request.action.rawValue)",
-            expiresAt: .now.addingTimeInterval(86_400)
-        )
-        return (try? queue.enqueue(response)) != nil
-    }
 
-    private static func responseFile() throws -> CrossProcessResponseFile {
-        guard
-            let group = Bundle.main.object(forInfoDictionaryKey: "RELOAppGroup") as? String,
-            let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
-        else { throw CrossProcessResponseFileError.lockUnavailable }
-        return CrossProcessResponseFile(
-            baseDirectory: root.appendingPathComponent("protected-actions", isDirectory: true)
-        )
-    }
 }
 
 @MainActor
@@ -249,7 +188,7 @@ final class BackgroundRefreshCoordinator {
     func install(model: AppModel) {
         handler = { [weak model] in
             guard let model else { return false }
-            return await model.refresh()
+            return await model.backgroundCurrentRefresh()
         }
     }
 
@@ -259,14 +198,11 @@ final class BackgroundRefreshCoordinator {
     }
 }
 
-struct NotificationActionRequest: Equatable {
+struct NotificationActionRequest: Equatable, Sendable {
     let notificationID: String
     let action: NotificationInteractionAction
     let text: String?
-}
-
-struct NotificationActionFailure: Equatable {
-    let request: NotificationActionRequest
+    var metadata: NotificationDecisionMetadata? = nil
 }
 
 @MainActor
@@ -274,8 +210,6 @@ final class NotificationNavigationCoordinator: ObservableObject {
     static let shared = NotificationNavigationCoordinator()
 
     @Published private(set) var notificationID: String?
-    @Published private(set) var actionRequest: NotificationActionRequest?
-    @Published private(set) var actionFailure: NotificationActionFailure?
 
     private init() {}
 
@@ -289,23 +223,7 @@ final class NotificationNavigationCoordinator: ObservableObject {
     }
 
 
-    func respond(_ request: NotificationActionRequest) {
-        actionRequest = request
-    }
 
-    func consume(_ request: NotificationActionRequest) {
-        guard actionRequest == request else { return }
-        actionRequest = nil
-    }
-
-    func fail(_ request: NotificationActionRequest) {
-        actionFailure = NotificationActionFailure(request: request)
-    }
-
-    func consume(_ failure: NotificationActionFailure) {
-        guard actionFailure == failure else { return }
-        actionFailure = nil
-    }
 }
 
 extension Notification.Name {

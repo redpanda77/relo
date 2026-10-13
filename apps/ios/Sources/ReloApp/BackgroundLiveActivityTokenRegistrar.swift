@@ -1,263 +1,198 @@
+import ReloTransport
+import ReloRuntime
+import ReloPersistence
 import ActivityKit
 import ReloCore
 import UIKit
 import UserNotifications
 
+/// Native event adapter. Foreground and background callbacks share one registration owner.
 @MainActor
-enum BackgroundLiveActivityTokenRegistrar {
-    private static let runtime = Runtime()
+final class BackgroundLiveActivityTokenRegistrar {
+    private let runtime = Runtime()
+    private var appOwnsContext = false
+    private var bootstrapRevision: UInt64 = 0
+    private var bootstrapTask: Task<Void, Never>?
 
-    static func start() {
+    func start() {
+        runtime.start()
+        reconnect()
+    }
+
+    func configure(_ context: LiveActivityTokenContext?) {
+        appOwnsContext = true
+        bootstrapRevision &+= 1
+        bootstrapTask?.cancel(); bootstrapTask = nil
+        runtime.configure(context)
         runtime.start()
     }
 
-    static func reconnect() {
-        runtime.reconnect()
+    func reconnect() {
+        guard !appOwnsContext else { runtime.reconnect(); return }
+        bootstrapRevision &+= 1
+        bootstrapTask?.cancel(); bootstrapTask = nil
+        let revision = bootstrapRevision
+        do {
+            // A background launch can precede AppModel.start. Capture protected authority once.
+            guard try KeychainSignOutProgressStore().load() == nil,
+                  let credential = try KeychainDeviceCredentialStore().load(),
+                  let origin = RuntimeServerOrigin.current() else { runtime.configure(nil); return }
+            let session = try KeychainAccountSessionStore().load()
+            guard session?.account?.accountId == nil || session?.account?.accountId == credential.accountId else {
+                runtime.configure(nil); return
+            }
+            let client = HTTPMobileAPIClient(baseURL: origin)
+            runtime.configure(.init(origin: origin, credential: credential, client: client, environment: Self.environment, heartbeat: nil))
+            // Activity tokens are already eligible; only push-to-start waits for heartbeat metadata.
+            let apnsToken = try KeychainPushTokenStore().load()
+            let installation = try KeychainInstallationIDStore().loadOrCreate()
+            bootstrapTask = Task { @MainActor [weak self] in
+                let settings = await UNUserNotificationCenter.current().notificationSettings()
+                guard !Task.isCancelled, let self, !self.appOwnsContext,
+                      self.bootstrapRevision == revision, let apnsToken else { return }
+                let authorization: AuthorizationState = switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral: .authorized
+                case .denied: .denied
+                default: .pending
+                }
+                let heartbeat = DeviceHeartbeat(deviceId: credential.deviceId, installationId: installation,
+                    deviceName: UIDevice.current.name, bundleId: Bundle.main.bundleIdentifier ?? "com.example.relo.notifications",
+                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
+                    appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
+                    iosVersion: UIDevice.current.systemVersion, deviceModel: Self.modelIdentifier,
+                    apnsToken: apnsToken, apnsEnvironment: Self.environment, notificationAuthorization: authorization,
+                    liveActivityAuthorization: ActivityAuthorizationInfo().areActivitiesEnabled ? .authorized : .denied)
+                self.runtime.configure(.init(origin: origin, credential: credential, client: client, environment: Self.environment, heartbeat: heartbeat))
+                self.bootstrapTask = nil
+            }
+        } catch {
+            // Inaccessible protected state cannot authorize a new background registration.
+            runtime.configure(nil)
+        }
     }
 
+    @MainActor
     private final class Runtime {
+        private let owner = LiveActivityTokenRuntime()
+        private var scope: SessionScope?
+        private var credential: DeviceCredential?
+        private var configuration: Task<Void, Never>?
+        private var revision: UInt64 = 0
         private var activityUpdatesTask: Task<Void, Never>?
         private var pushToStartTask: Task<Void, Never>?
         private var activityTokenTasks: [String: Task<Void, Never>] = [:]
-        private var registrationTasks: [String: Task<Void, Never>] = [:]
-        private var desiredCandidates: [String: LiveActivityTokenRegistrationCandidate] = [:]
-        private var registeredTokens: [String: String] = [:]
-        private var desiredPushToStartToken: String?
-        private var registeredPushToStartToken: String?
-        private var pushToStartRegistrationTask: Task<Void, Never>?
+        private var activityStateTasks: [String: Task<Void, Never>] = [:]
+        private var persistedPushToken: String?
+
+        func configure(_ context: LiveActivityTokenContext?) {
+            let storage = context.flatMap { try? StorageScope(serverOrigin: $0.origin, accountID: $0.credential.accountId, deviceID: $0.credential.deviceId) }
+            if storage != scope?.storage || context?.credential != credential {
+                if let storage, let context { scope = SessionScope(storage: storage, credentialVersion: context.credential.credentialVersion) }
+                else { scope = nil }
+                credential = context?.credential
+            }
+            revision &+= 1
+            let previous = configuration, binding = scope.flatMap { context?.binding(scope: $0) }
+            configuration = Task { [owner] in
+                await previous?.value
+                await owner.configure(binding)
+            }
+            reconnect()
+        }
 
         func start() {
-            guard activityUpdatesTask == nil else {
-                reconnect()
-                return
-            }
-            for activity in Activity<ReloActivityAttributes>.activities {
-                observe(activity)
-            }
+            guard activityUpdatesTask == nil else { return }
             activityUpdatesTask = Task { @MainActor [weak self] in
                 for await activity in Activity<ReloActivityAttributes>.activityUpdates {
                     guard !Task.isCancelled, let self else { return }
                     self.observe(activity)
                 }
             }
-
-            if #available(iOS 17.2, *) {
-                if let current = Activity<ReloActivityAttributes>.pushToStartToken {
-                    receivedPushToStartToken(current)
-                }
-                pushToStartTask = Task { @MainActor [weak self] in
-                    for await token in Activity<ReloActivityAttributes>.pushToStartTokenUpdates {
-                        guard !Task.isCancelled, let self else { return }
-                        self.receivedPushToStartToken(token)
-                    }
+            pushToStartTask = Task { @MainActor [weak self] in
+                for await token in Activity<ReloActivityAttributes>.pushToStartTokenUpdates {
+                    guard !Task.isCancelled, let self else { return }
+                    self.receivedPushToStartToken(token)
                 }
             }
+            reconnect()
         }
 
         func reconnect() {
-            if #available(iOS 17.2, *),
-               let current = Activity<ReloActivityAttributes>.pushToStartToken {
-                receivedPushToStartToken(current)
-            }
+            if let token = Activity<ReloActivityAttributes>.pushToStartToken { receivedPushToStartToken(token) }
             for activity in Activity<ReloActivityAttributes>.activities {
                 observe(activity)
-                if let token = activity.pushToken {
+                if activity.activityState != .ended, activity.activityState != .dismissed, let token = activity.pushToken {
                     queue(token, for: activity)
                 }
             }
         }
 
         private func observe(_ activity: Activity<ReloActivityAttributes>) {
-            guard activityTokenTasks[activity.id] == nil else { return }
-            if let token = activity.pushToken {
-                queue(token, for: activity)
-            }
+            guard activity.activityState != .ended, activity.activityState != .dismissed,
+                  activityTokenTasks[activity.id] == nil else { return }
+            if let token = activity.pushToken { queue(token, for: activity) }
             activityTokenTasks[activity.id] = Task { @MainActor [weak self] in
                 for await token in activity.pushTokenUpdates {
                     guard !Task.isCancelled, let self else { return }
                     self.queue(token, for: activity)
                 }
             }
-        }
-
-        private func queue(
-            _ tokenData: Data,
-            for activity: Activity<ReloActivityAttributes>
-        ) {
-            let token = ActivityKitTokenCodec.hex(tokenData)
-            let candidate = LiveActivityTokenRegistrationCandidate(
-                activityID: activity.attributes.eventID,
-                generation: activity.attributes.generation,
-                nativeActivityID: activity.id,
-                token: token,
-                accountID: activity.attributes.accountID
-            )
-            guard candidate.isValid else { return }
-            desiredCandidates[activity.id] = candidate
-            guard registrationTasks[activity.id] == nil else { return }
-            registrationTasks[activity.id] = Task { @MainActor [weak self] in
-                await self?.drainActivityRegistration(nativeActivityID: activity.id)
+            activityStateTasks[activity.id] = Task { @MainActor [weak self] in
+                for await state in activity.activityStateUpdates {
+                    guard !Task.isCancelled, let self else { return }
+                    if state == .ended || state == .dismissed {
+                        self.activityTokenTasks.removeValue(forKey: activity.id)?.cancel()
+                        self.activityStateTasks.removeValue(forKey: activity.id)?.cancel()
+                        await self.owner.forget(nativeActivityID: activity.id)
+                        return
+                    }
+                }
             }
         }
 
-        private func drainActivityRegistration(nativeActivityID: String) async {
-            defer { registrationTasks[nativeActivityID] = nil }
-            while let candidate = desiredCandidates[nativeActivityID] {
-                if registeredTokens[nativeActivityID] == candidate.token {
-                    desiredCandidates[nativeActivityID] = nil
-                    return
-                }
-                let outcome = await LiveActivityTokenRegistrationRetrier.run(candidate) {
-                    await Self.registerActivityToken($0)
-                }
-                guard desiredCandidates[nativeActivityID] == candidate else { continue }
-                if outcome == .registered {
-                    registeredTokens[nativeActivityID] = candidate.token
-                }
-                desiredCandidates[nativeActivityID] = nil
+        private func queue(_ token: Data, for activity: Activity<ReloActivityAttributes>) {
+            let candidate = LiveActivityTokenRegistrationCandidate(activityID: activity.attributes.eventID,
+                generation: activity.attributes.generation, nativeActivityID: activity.id,
+                token: ActivityKitTokenCodec.hex(token), accountID: activity.attributes.accountID)
+            let barrier = configuration, expected = revision
+            Task { @MainActor [weak self] in
+                await barrier?.value
+                guard let self, self.revision == expected,
+                      activity.activityState != .ended, activity.activityState != .dismissed else { return }
+                await self.owner.offer(candidate)
             }
         }
 
-        private func receivedPushToStartToken(_ tokenData: Data) {
-            let token = ActivityKitTokenCodec.hex(tokenData)
+        private func receivedPushToStartToken(_ data: Data) {
+            let token = ActivityKitTokenCodec.hex(data)
             guard !token.isEmpty else { return }
-            do {
-                try KeychainPushTokenStore(
-                    account: "live-activity-push-to-start-token"
-                ).save(token)
-            } catch {
-                return
+            if persistedPushToken != token {
+                do {
+                    try KeychainPushTokenStore(account: "live-activity-push-to-start-token").save(token)
+                    persistedPushToken = token
+                } catch { /* The current token can still be registered during this process. */ }
             }
-            desiredPushToStartToken = token
-            guard pushToStartRegistrationTask == nil else { return }
-            pushToStartRegistrationTask = Task { @MainActor [weak self] in
-                await self?.drainPushToStartRegistration()
-            }
-        }
-
-        private func drainPushToStartRegistration() async {
-            defer { pushToStartRegistrationTask = nil }
-            while let token = desiredPushToStartToken {
-                if registeredPushToStartToken == token {
-                    desiredPushToStartToken = nil
-                    return
-                }
-                let outcome = await Self.registerPushToStartToken(token)
-                guard desiredPushToStartToken == token else { continue }
-                if outcome == .registered {
-                    registeredPushToStartToken = token
-                }
-                desiredPushToStartToken = nil
+            let barrier = configuration, expected = revision
+            Task { @MainActor [weak self] in
+                await barrier?.value
+                guard let self, self.revision == expected else { return }
+                await self.owner.offerPushToStart(token)
             }
         }
+    }
 
-        private static func registerActivityToken(
-            _ candidate: LiveActivityTokenRegistrationCandidate
-        ) async -> LiveActivityTokenRegistrationAttempt {
-            guard let credential = try? KeychainDeviceCredentialStore().load() else {
-                return .retryable
-            }
-            guard candidate.matches(accountID: credential.accountId) else {
-                return .terminal
-            }
-            do {
-                try await HTTPMobileAPIClient(baseURL: apiOrigin).registerLiveActivityToken(
-                    credential: credential,
-                    activityId: candidate.activityID,
-                    registration: LiveActivityTokenRegistration(
-                        token: candidate.token,
-                        nativeActivityId: candidate.nativeActivityID,
-                        environment: apnsEnvironment,
-                        generation: candidate.generation
-                    )
-                )
-                return .registered
-            } catch MobileAPIError.reauthenticationRequired,
-                    MobileAPIError.forbidden,
-                    MobileAPIError.invalidRequest {
-                return .terminal
-            } catch {
-                return .retryable
-            }
-        }
+    private static var environment: String {
+        #if DEBUG
+        "sandbox"
+        #else
+        "production"
+        #endif
+    }
 
-        private static func registerPushToStartToken(
-            _ token: String
-        ) async -> LiveActivityTokenRegistrationOutcome {
-            await LiveActivityTokenRegistrationRetrier.run {
-                await uploadPushToStartToken(token)
-            }
-        }
-
-        private static func uploadPushToStartToken(
-            _ token: String
-        ) async -> LiveActivityTokenRegistrationAttempt {
-            guard
-                let credential = try? KeychainDeviceCredentialStore().load(),
-                let apnsToken = try? KeychainPushTokenStore().load()
-            else { return .retryable }
-            let settings = await UNUserNotificationCenter.current().notificationSettings()
-            let notificationsAuthorized = switch settings.authorizationStatus {
-            case .authorized, .provisional, .ephemeral: true
-            default: false
-            }
-            let deviceName = await UIDevice.current.name
-            let iosVersion = await UIDevice.current.systemVersion
-            do {
-                let heartbeat = DeviceHeartbeat(
-                    deviceId: credential.deviceId,
-                    installationId: try KeychainInstallationIDStore().loadOrCreate(),
-                    deviceName: deviceName,
-                    bundleId: Bundle.main.bundleIdentifier ?? "com.example.relo.notifications",
-                    appVersion: Bundle.main.object(
-                        forInfoDictionaryKey: "CFBundleShortVersionString"
-                    ) as? String ?? "0",
-                    appBuild: Bundle.main.object(
-                        forInfoDictionaryKey: "CFBundleVersion"
-                    ) as? String ?? "0",
-                    iosVersion: iosVersion,
-                    deviceModel: modelIdentifier,
-                    apnsToken: apnsToken,
-                    apnsEnvironment: apnsEnvironment,
-                    notificationAuthorization: notificationsAuthorized ? .authorized : .denied,
-                    liveActivityAuthorization: ActivityAuthorizationInfo().areActivitiesEnabled ? .authorized : .denied,
-                    liveActivityPushToStartToken: token
-                )
-                try await HTTPMobileAPIClient(baseURL: apiOrigin).heartbeat(
-                    credential: credential,
-                    heartbeat: heartbeat
-                )
-                return .registered
-            } catch MobileAPIError.reauthenticationRequired,
-                    MobileAPIError.forbidden,
-                    MobileAPIError.invalidRequest {
-                return .terminal
-            } catch {
-                return .retryable
-            }
-        }
-
-        private static var apiOrigin: URL {
-            RuntimeServerOrigin.current()
-                ?? URL(string: "https://relo.invalid")!
-        }
-
-        private static var apnsEnvironment: String {
-            #if DEBUG
-            "sandbox"
-            #else
-            "production"
-            #endif
-        }
-
-        private static var modelIdentifier: String {
-            var systemInfo = utsname()
-            uname(&systemInfo)
-            return withUnsafePointer(to: &systemInfo.machine) {
-                $0.withMemoryRebound(to: CChar.self, capacity: 1) {
-                    String(cString: $0)
-                }
-            }
+    private static var modelIdentifier: String {
+        var info = utsname(); uname(&info)
+        return withUnsafePointer(to: &info.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
         }
     }
 }

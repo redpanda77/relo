@@ -1,10 +1,13 @@
 import type { Handler } from "hono";
-import type { LiveActivityPresentationPolicy } from "@relo/notification-contracts";
 import type { Database } from "../db.js";
 import {
   parsePresentationPolicy,
   SYSTEM_PRESENTATION_POLICY,
 } from "../presentation-policy.js";
+import { accountOrRedirect,secureHtml } from "./http.js";
+import type { z } from "zod";
+import { accountDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/account";
+import { documentationDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/docs";
 
 type SystemDashboardAccount = {
   principalId: string;
@@ -20,30 +23,7 @@ type SystemDashboardShell = {
   account: { id: string; initial: string; name: string; email: string };
 };
 
-export type AccountDashboardBootstrap = {
-  version: 1;
-  kind: "account";
-  route: { path: "/dashboard/account" };
-  shell: SystemDashboardShell & { title: "Account"; active: "account" };
-  account: {
-    id: string;
-    name: string;
-    email: string;
-    serverOrigin: string;
-    authentication: "Better Auth email/password session";
-    liveActivityPolicy: LiveActivityPresentationPolicy;
-    liveActivityPolicySource: "account" | "system";
-  };
-  users: Array<{
-    id: string;
-    name: string;
-    email: string;
-    role: "owner" | "member";
-    disabled: boolean;
-    sessions: number;
-    devices: number;
-  }>;
-};
+export type AccountDashboardBootstrap = z.input<typeof accountDashboardBootstrapSchema>;
 
 export type DocumentationLink = { label: string; href: string };
 
@@ -53,18 +33,7 @@ export type DocumentationSection = {
   links: DocumentationLink[];
 };
 
-export type DocumentationDashboardBootstrap = {
-  version: 1;
-  kind: "docs";
-  route: { path: "/dashboard/docs" };
-  shell: SystemDashboardShell & {
-    title: "Documentation";
-    active: "docs";
-  };
-  introduction: string;
-  sections: DocumentationSection[];
-  machineLinks: DocumentationLink[];
-};
+export type DocumentationDashboardBootstrap = z.input<typeof documentationDashboardBootstrapSchema>;
 
 export type SystemDashboardBootstrap =
   | AccountDashboardBootstrap
@@ -83,7 +52,7 @@ const documentationSections: DocumentationSection[] = [
     title: "Send notifications",
     body: "Create a named service, copy its secret webhook URL without rendering it, and POST a JSON body. Ordinary notifications support a public HTTPS image, a validated HTTPS destination, explicit device targeting, and approval, yes/no, or text responses.",
     links: [
-      { label: "Manage services", href: "/dashboard/connections/services" },
+      { label: "Manage services", href: "/dashboard/connections" },
       { label: "Review history", href: "/dashboard/inbox/notifications" },
     ],
   },
@@ -93,7 +62,7 @@ const documentationSections: DocumentationSection[] = [
     links: [
       { label: "Connect the CLI", href: "/dashboard/account#connect-cli" },
       { label: "Review approvals", href: "/dashboard" },
-      { label: "Manage clients", href: "/dashboard/connections/clients" },
+      { label: "Manage clients", href: "/dashboard/connections" },
     ],
   },
   {
@@ -109,7 +78,7 @@ const documentationSections: DocumentationSection[] = [
     body: "Use delivery history for target-level APNs status and keep notification content concise enough for phone surfaces.",
     links: [
       { label: "Inspect delivery", href: "/dashboard/inbox/delivery" },
-      { label: "Inspect phones", href: "/dashboard/connections/phones" },
+      { label: "Inspect phones", href: "/dashboard/connections" },
     ],
   },
 ];
@@ -137,24 +106,6 @@ function shell(
       email: account.user.email,
     },
   };
-}
-
-async function accountOrRedirect(
-  context: any,
-  getAccount: SystemHandlerDependencies["getAccount"],
-): Promise<SystemDashboardAccount | Response> {
-  const account = await getAccount(context.req.raw.headers);
-  return account ?? context.redirect(`/?next=${encodeURIComponent(context.req.path)}`);
-}
-
-function secureHtml(context: any, html: string): Response {
-  context.header(
-    "content-security-policy",
-    "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-  );
-  context.header("cache-control", "private, no-store");
-  context.header("x-content-type-options", "nosniff");
-  return context.html(html);
 }
 
 export function createDashboardSystemHandlers(

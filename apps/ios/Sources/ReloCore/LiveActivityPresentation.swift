@@ -281,12 +281,21 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
                 self.statusEmphasis = statusEmphasis
             }
         }
+        public enum ProgressDisplay: String, Codable, Hashable, Sendable { case bar, ring }
+
         public let theme: LiveActivityDisplayPresentation.Theme
         public let roles: Roles
+        /// Absent means the linear bar; `ring` draws progress as a gauge with the percent inside.
+        public let progressDisplay: ProgressDisplay?
 
-        public init(theme: LiveActivityDisplayPresentation.Theme = .system, roles: Roles = .init()) {
-            self.theme = theme; self.roles = roles
+        public init(
+            theme: LiveActivityDisplayPresentation.Theme = .system, roles: Roles = .init(),
+            progressDisplay: ProgressDisplay? = nil
+        ) {
+            self.theme = theme; self.roles = roles; self.progressDisplay = progressDisplay
         }
+
+        public var drawsProgressAsRing: Bool { progressDisplay == .ring }
     }
 
     public struct Surfaces: Codable, Equatable, Hashable, Sendable {

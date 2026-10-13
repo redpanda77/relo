@@ -98,7 +98,7 @@ Before extracting or splitting an existing shared component:
 - `apps/server/src/web/dashboard-app.ts` is the approved React document/bootstrap seam.
 - `apps/server/src/web/dashboard-inbox.ts` owns the account-scoped Inbox projection and must stay aligned with lifecycle history semantics.
 - `apps/server/src/web/dashboard-connections.ts`, `dashboard-system.ts`, `dashboard-auth.ts`, and `dashboard-activity-history.ts` own capability-specific projections without defining lifecycle policy.
-- The Test Lab projection is the last route that must be extracted from `dashboardPage` before legacy dashboard rendering can be deleted.
+- The Test Lab route (`testLabPage` in `web.ts`) renders only the React app; the legacy server-rendered dashboard and its `/assets/relo-dashboard.{js,css}` were deleted.
 - Relo server receives exact committed archives from this laptop. Working-tree or partial-index builds are not deployment inputs.
 
 ## Generation contract consumption

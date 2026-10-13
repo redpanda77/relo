@@ -3,7 +3,6 @@ import * as React from "react"
 import type { LiveRunStatus, TestLabService } from "@/services/test-lab-service"
 
 export function useSelectedRunPolling({ runId, active, service, onStatus }: { runId?: string; active: boolean; service: TestLabService; onStatus: (status: LiveRunStatus) => void }) {
-  const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [visible, setVisible] = React.useState(() => document.visibilityState !== "hidden")
   const onStatusRef = React.useRef(onStatus)
@@ -22,7 +21,6 @@ export function useSelectedRunPolling({ runId, active, service, onStatus }: { ru
     let controller: AbortController | undefined
     const poll = async () => {
       controller = new AbortController()
-      setPending(true)
       try {
         const status = await service.getRunStatus(runId, controller.signal)
         if (stopped) return
@@ -32,8 +30,6 @@ export function useSelectedRunPolling({ runId, active, service, onStatus }: { ru
       } catch (cause) {
         if (stopped || (cause instanceof DOMException && cause.name === "AbortError")) return
         setError(cause instanceof Error ? cause.message : "Could not refresh this run.")
-      } finally {
-        if (!stopped) setPending(false)
       }
       if (!stopped) timer = window.setTimeout(() => void poll(), 3_000)
     }
@@ -45,5 +41,5 @@ export function useSelectedRunPolling({ runId, active, service, onStatus }: { ru
     }
   }, [active, runId, service, visible])
 
-  return { pending, error }
+  return { error }
 }

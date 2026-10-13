@@ -1,9 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { createHash, generateKeyPairSync,randomUUID } from "node:crypto";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { PostgresApnsRecipientResolver } from "./apns-recipient-resolver.js";
 import { createDatabase, type Database } from "./db.js";
 import { migrate } from "./migrate.js";
 import { createTransportTokenEncryption, type TransportTokenEncryption } from "./token-encryption.js";
+import { ApnsProviderCleanroom,type ApnsConnection,type TransportResult } from "./apns-provider-cleanroom.js";
 
 const encryption: TransportTokenEncryption = {
   encrypt: (token, purpose) => token === null ? null : `${purpose}:${token}`,
@@ -30,7 +31,7 @@ class FakeClient {
         ? { rowCount: 0, rows: [] }
         : { rowCount: 1, rows: [{ ciphertext: this.ciphertext, environment: this.environment }] };
     }
-    if (/^(UPDATE devices SET|DELETE FROM live_activity_update_tokens)/.test(text)) {
+    if (/^(UPDATE devices SET|UPDATE delivery_jobs SET|DELETE FROM live_activity_update_tokens)/.test(text)) {
       return { rowCount: 1, rows: [] };
     }
     return { rowCount: 0, rows: [] };
@@ -92,24 +93,28 @@ describe("durable PostgreSQL APNs recipient resolver", () => {
     expect(fake.poolQueries[0]!.text).not.toMatch(/FOR UPDATE/);
   });
 
-  test("holds a row lock through invalidation and commits the exact leased ciphertext", async () => {
+  test("commits authorization and releases the connection before returning a token snapshot", async () => {
     const ciphertext = "device.apns_token:leased-token";
     const fake = fakeDatabase(ciphertext);
     const resolver = new PostgresApnsRecipientResolver(options(fake.db));
     const lease = await resolver.acquire();
     expect(lease).not.toBeNull();
     expect(lease).toMatchObject({ token: "leased-token" });
+    expect(fake.clients[0]!.released).toBe(true);
     await lease!.invalidate({ environment: "sandbox", invalidatedAtMs: 1_800_000_000_123 });
     await lease!.release(true);
     const client = fake.clients[0]!;
     expect(client.statements.map(({ text }) => text.trim().split(/\s+/).slice(0, 3).join(" "))).toEqual([
       "BEGIN",
+      "SET LOCAL lock_timeout='250ms'",
+      "SET LOCAL statement_timeout='2s'",
       "SELECT d.apns_token AS",
-      "UPDATE devices SET",
+      "UPDATE delivery_jobs SET",
       "COMMIT",
     ]);
-    expect(client.statements[1]!.text).toMatch(/FOR UPDATE OF j,e,d/);
-    expect(client.statements[2]!.values).toEqual(["device-id", ciphertext]);
+    expect(client.statements[3]!.text).toMatch(/FOR UPDATE OF j,e,d/);
+    expect(client.statements[4]!.values).toEqual(["job-id","claim-token",lease!.generation]);
+    expect(fake.clients[1]!.statements[3]!.values).toEqual(["device-id", ciphertext]);
     expect(client.released).toBe(true);
     expect(resolver.invalidations).toEqual([{
       generation: createHash("sha256").update(ciphertext).digest("hex"),
@@ -123,6 +128,8 @@ describe("durable PostgreSQL APNs recipient resolver", () => {
     await expect(resolver.acquire()).resolves.toBeNull();
     expect(fake.clients[0]!.statements.map(({ text }) => text)).toEqual([
       "BEGIN",
+      "SET LOCAL lock_timeout='250ms'",
+      "SET LOCAL statement_timeout='2s'",
       expect.stringMatching(/FOR UPDATE OF j,e,d/),
       "ROLLBACK",
     ]);
@@ -141,14 +148,14 @@ describe("durable PostgreSQL APNs recipient resolver", () => {
     expect(lease).toMatchObject({ token: "update-token" });
     await lease!.invalidate({ environment: "sandbox" });
     await lease!.release(true);
-    expect(fake.clients[0]!.statements[1]!.text).toMatch(/FOR UPDATE OF j,e,d,activity,update_token/);
-    expect(fake.clients[0]!.statements[1]!.text).toMatch(/update_token\.generation=activity\.generation/);
-    expect(fake.clients[0]!.statements[1]!.text).toMatch(/activity\.generation=\$7/);
-    expect(fake.clients[0]!.statements[1]!.text).toMatch(/liveActivity,generation/);
-    expect(fake.clients[0]!.statements[1]!.values).toEqual([
+    expect(fake.clients[0]!.statements[3]!.text).toMatch(/FOR UPDATE OF j,e,d,activity,update_token/);
+    expect(fake.clients[0]!.statements[3]!.text).toMatch(/update_token\.generation=activity\.generation/);
+    expect(fake.clients[0]!.statements[3]!.text).toMatch(/activity\.generation=\$7/);
+    expect(fake.clients[0]!.statements[3]!.text).toMatch(/liveActivity,generation/);
+    expect(fake.clients[0]!.statements[3]!.values).toEqual([
       "job-id","claim-token","event-id","device-id","principal-id","activity-id",7,"sandbox",
     ]);
-    expect(fake.clients[0]!.statements[2]).toMatchObject({
+    expect(fake.clients[1]!.statements[3]).toMatchObject({
       text: expect.stringMatching(/^DELETE FROM live_activity_update_tokens/),
       values: ["activity-id", "device-id", 7, ciphertext],
     });
@@ -192,7 +199,7 @@ describe("durable PostgreSQL APNs recipient resolver", () => {
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const postgresSuite = databaseUrl ? describe : describe.skip;
 
-postgresSuite("PostgreSQL APNs dispatch lease integration", () => {
+postgresSuite("PostgreSQL APNs short dispatch authorization", () => {
   let db: Database;
   let principalId: string;
   let deviceId: string;
@@ -239,23 +246,94 @@ postgresSuite("PostgreSQL APNs dispatch lease integration", () => {
     if (db) await db.end();
   });
 
-  test("serializes token rotation until dispatch inspection releases the row", async () => {
+  beforeEach(async () => {
+    await db.query("UPDATE devices SET revoked_at=NULL,apns_token=$2 WHERE id=$1",
+      [deviceId,tokenEncryption.encrypt("initial-token","device.apns_token")]);
+    await db.query("UPDATE delivery_jobs SET recipient_authorized_at=NULL,recipient_generation=NULL WHERE id=$1",[deliveryJobId]);
+  });
+
+  test("a suspended 15-second provider response retains no database connection or lock", async () => {
     const resolver = new PostgresApnsRecipientResolver({
       db,encryption: tokenEncryption,kind: "notification",deliveryJobId,claimToken,principalId,deviceId,
       notificationEventId: eventId, environment: "sandbox",
     });
-    const lease = await resolver.acquire();
-    expect(lease).toMatchObject({ token: "initial-token" });
-    let rotated = false;
+    let opened!: () => void;
+    const streamOpened = new Promise<void>(resolve => { opened = resolve; });
+    const response = new Promise<TransportResult>(resolve => setTimeout(() => resolve({
+      kind: "response",status: 410,body: Buffer.from(JSON.stringify({ reason: "Unregistered",timestamp: Date.now() })),
+    }),15_000));
+    let usedTokenPath: string | undefined;
+    const connection: ApnsConnection = {
+      security: { tlsVersion: "TLSv1.3",alpnProtocol: "h2",authorized: true,
+        hostnameVerified: true,servername: "api.sandbox.push.apple.com" },
+      openStream(request) {
+        usedTokenPath = request.path;
+        opened();
+        return { streamId: 1,result: response,cancel() {} };
+      },
+      onPeerSettings: () => () => {},onGoaway: () => () => {},close() {},
+    };
+    const keys = generateKeyPairSync("ec",{ namedCurve: "prime256v1" });
+    const provider = new ApnsProviderCleanroom({
+      teamId: "TEAM123456",keyId: "KEY1234567",
+      privateKeyPem: keys.privateKey.export({ type: "pkcs8",format: "pem" }).toString(),
+      keyScope: "team-scoped",keyEnvironment: "sandbox",environment: "sandbox",
+      allowedTopics: ["com.example.app","com.example.app.push-type.liveactivity"],
+      bundleId: "com.example.app",configurationGeneration: "short-fence-test",
+    },{ open: async () => connection });
+    const sending = provider.sendAlert({ recipient: resolver,alert: "Short fence" });
+    await streamOpened;
+    expect(db.totalCount).toBe(db.idleCount);
     const replacement = tokenEncryption.encrypt("replacement-token", "device.apns_token")!;
-    const rotation = db.query("UPDATE devices SET apns_token=$2 WHERE id=$1", [deviceId,replacement])
-      .then(() => { rotated = true; });
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(rotated).toBe(false);
-    await lease!.release(true);
-    await rotation;
-    expect(rotated).toBe(true);
+    const rotation = await db.connect();
+    try {
+      await rotation.query("SET statement_timeout='1s'");
+      await rotation.query("UPDATE devices SET apns_token=$2 WHERE id=$1",[deviceId,replacement]);
+      await rotation.query("RESET statement_timeout");
+    } finally { rotation.release(); }
+    expect(usedTokenPath).toBe("/3/device/initial-token");
     await expect(resolver.resolve()).resolves.toMatchObject({ token: "replacement-token" });
+    expect(await sending).toMatchObject({ accepted: false,category: "invalid-recipient" });
+    await expect(resolver.resolve()).resolves.toMatchObject({ token: "replacement-token" });
+    expect(resolver.invalidations).toEqual([]);
+    expect(db.totalCount).toBe(db.idleCount);
+    await provider.close();
+  },20_000);
+
+  test("revocation before authorization prevents a snapshot; after authorization preserves in-flight evidence", async () => {
+    const resolver = new PostgresApnsRecipientResolver({
+      db,encryption: tokenEncryption,kind: "notification",deliveryJobId,claimToken,principalId,deviceId,
+      notificationEventId: eventId,environment: "sandbox",
+    });
+    await db.query("UPDATE devices SET revoked_at=now() WHERE id=$1",[deviceId]);
+    await expect(resolver.acquire()).resolves.toBeNull();
+    expect((await db.query("SELECT recipient_authorized_at FROM delivery_jobs WHERE id=$1",[deliveryJobId])).rows[0].recipient_authorized_at).toBeNull();
+    await db.query("UPDATE devices SET revoked_at=NULL WHERE id=$1",[deviceId]);
+    const snapshot = await resolver.acquire();
+    await db.query("UPDATE devices SET revoked_at=now(),apns_token=NULL WHERE id=$1",[deviceId]);
+    expect(snapshot!.token).toBe("initial-token");
+    const evidence = (await db.query("SELECT recipient_authorized_at,recipient_generation,state FROM delivery_jobs WHERE id=$1",[deliveryJobId])).rows[0];
+    expect(evidence).toMatchObject({ state: "processing",recipient_generation: snapshot!.generation });
+    expect(evidence.recipient_authorized_at).toBeInstanceOf(Date);
+    await expect(resolver.acquire()).resolves.toBeNull();
+    await snapshot!.release(true);
+  });
+
+  test("bounds contention and releases a failed authorization connection", async () => {
+    const blocker = await db.connect();
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT id FROM devices WHERE id=$1 FOR UPDATE",[deviceId]);
+    try {
+      const resolver = new PostgresApnsRecipientResolver({
+        db,encryption: tokenEncryption,kind: "notification",deliveryJobId,claimToken,principalId,deviceId,
+        notificationEventId: eventId,environment: "sandbox",
+      });
+      await expect(resolver.acquire()).rejects.toMatchObject({ code: "55P03" });
+      expect(db.totalCount-db.idleCount).toBe(1);
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+    }
   });
 
   test("commits status-authoritative invalidation against only the leased generation", async () => {
