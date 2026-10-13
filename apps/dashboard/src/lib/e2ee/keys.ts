@@ -40,7 +40,14 @@ export function indexedDbStore(name = "relo-e2ee", storeName = "kv"): KeyValueSt
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains(storeName)) request.result.createObjectStore(storeName)
       }
-      request.onsuccess = () => resolve(request.result)
+      request.onsuccess = () => {
+        // Sign-out deletes the database: close this connection so the deletion is never blocked.
+        request.result.onversionchange = () => {
+          request.result.close()
+          opened = null
+        }
+        resolve(request.result)
+      }
       request.onerror = () => reject(request.error ?? new Error("IndexedDB is unavailable."))
     })
     return opened

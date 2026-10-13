@@ -53,8 +53,8 @@ public actor E2EEKeyMaintenance {
         return await browserLinks.run(credential: credential, signer: ring.existingIdentitySigner(), now: now)
     }
 
-    /// Sign-out: deletes this phone's encryption keys, trusted computers, names and replay ledger,
-    /// so the next account starts with fresh keys and trusts nothing from the last one.
+    /// Sign-out: forgets trusted computers, linked browsers, names and the replay ledger, so the next
+    /// sign-in trusts nothing from the last one; the phone keeps its own keys and publishes them again.
     public func forget() {
         erase?()
         publishedFor = nil

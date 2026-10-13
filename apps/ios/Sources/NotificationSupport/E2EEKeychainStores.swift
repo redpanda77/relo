@@ -265,12 +265,14 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
 }
 
 public enum ReloEncryptionState {
-    /// Signing out ends this phone's encryption identity for the account: keys, trusted computers,
-    /// linked browsers, names and the replay ledger are deleted, so nothing carries over to another
-    /// account or server (and no browser link is ever renewed again).
+    /// Signing out forgets what this phone learned for the account: trusted computers, linked
+    /// browsers, names and the replay ledger are deleted (and no browser link is ever renewed again).
+    /// The phone's own keys stay in the Secure Enclave, like WhatsApp keeping its keys on a phone that
+    /// signs in again: computers recognise the same identity key under the new registration and keep
+    /// sealing without any check. Old prekeys still expire on the usual schedule.
     public static func forget(bundle: Bundle = .main) {
         let group = ReloKeyRing.sharedAccessGroup(bundle: bundle)
-        for account in [KeychainKeyRingStore.account, KeychainTrustedClientStore.account, KeychainNameBook.account,
+        for account in [KeychainTrustedClientStore.account, KeychainNameBook.account,
                         KeychainReplayLedger.account, KeychainLinkedBrowserStore.account] {
             var query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,

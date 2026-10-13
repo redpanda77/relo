@@ -8,6 +8,7 @@ import {
   sealedEnvelopesForBrowser,
   unlinkBrowser,
 } from "../linked-browsers.js";
+import { purgeUnreadableContent } from "../unreadable-content.js";
 import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
 
@@ -17,7 +18,7 @@ import type { WebRouteContext } from "./route-context.js";
  * phone linked, and only the browser can open them.
  */
 export function registerBrowserRoutes(app: Hono, shared: WebRouteContext): void {
-  const { db,accountAuth,accountMutationAccount } = shared;
+  const { db,accountAuth,accountMutationAccount,apnsMode } = shared;
 
   app.post("/api/dashboard/browser", async (context) => {
     const account = await accountMutationAccount(context);
@@ -42,6 +43,7 @@ export function registerBrowserRoutes(app: Hono, shared: WebRouteContext): void 
     const account = await accountMutationAccount(context);
     if (account instanceof Response) return account;
     const removed = await unlinkBrowser(db,account.principalId,context.req.param("browserId") ?? "");
+    if (removed) await purgeUnreadableContent(db,account.principalId,apnsMode);
     return removed ? context.body(null,204) : context.json({ error: "browser_not_found" },404);
   });
 

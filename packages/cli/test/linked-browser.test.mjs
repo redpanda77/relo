@@ -120,3 +120,36 @@ test("review M3: a link the phone has not re-signed for 14 days stops counting, 
     assert.ok(renewed.content.recipients.some((r) => r.device === browser.device.deviceId));
   } finally { h.cleanup(); }
 });
+
+test("a phone set up again (the old one signed out) is trusted automatically with a notice, like WhatsApp", async () => {
+  const h = harness();
+  try {
+    await ensureTrust({ client: h.client([phone.device]), config: { apiUrl }, dependencies: h.dependencies });
+    const fresh = endpoint("dev_00000000-0000-4000-8000-0000000000f1", "phone");
+    // While the trusted phone is still on the account, another phone waits for its approval.
+    await ensureTrust({ client: h.client([phone.device, fresh.device]), config: { apiUrl }, dependencies: h.dependencies });
+    let store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].level, "pending");
+    // The old phone signed out: the account's phone now is the new one, trusted with a notice.
+    await ensureTrust({ client: h.client([fresh.device]), config: { apiUrl }, dependencies: h.dependencies });
+    store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].level, "auto");
+    assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].notice.kind, "phone_replaced");
+    const sealed = await h.send([fresh.device]);
+    assert.deepEqual(sealed.alerts.map((alert) => alert.recipients[0].device), [fresh.device.deviceId]);
+  } finally { h.cleanup(); }
+});
+
+test("the same phone under a new device id (signed in again, same key) is trusted silently", async () => {
+  const h = harness();
+  try {
+    await ensureTrust({ client: h.client([phone.device]), config: { apiUrl }, dependencies: h.dependencies });
+    const again = { ...phone.device, deviceId: "dev_00000000-0000-4000-8000-0000000000f2" };
+    again.prekey = endpoint(again.deviceId, "phone").device.prekey;
+    await ensureTrust({ client: h.client([phone.device, again]), config: { apiUrl }, dependencies: h.dependencies });
+    const store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
+    const entry = store.trusted[trustKey(apiUrl, again.deviceId)];
+    assert.equal(entry.level, "auto");
+    assert.equal(entry.notice, undefined);
+  } finally { h.cleanup(); }
+});

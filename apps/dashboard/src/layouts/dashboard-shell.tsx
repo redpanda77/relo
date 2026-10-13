@@ -1,3 +1,4 @@
+import { revokeCurrentBrowser } from "@/lib/e2ee/browser-link"
 import { forgetBrowserKeys } from "@/lib/e2ee/keys"
 import {
   BookOpen,
@@ -118,13 +119,18 @@ function ProfileMenu({ shell }: { shell: Shell }) {
   const signOut = async () => {
     setPending(true)
     try {
-      const response = await fetch("/api/auth/sign-out", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      })
-      if (!response.ok) throw new Error("Sign out failed")
-      await forgetBrowserKeys()
+      await revokeCurrentBrowser()
+      try {
+        const response = await fetch("/api/auth/sign-out", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        })
+        if (!response.ok) throw new Error("Sign out failed")
+      } finally {
+        // Keys go even if the server's sign-out fails: nothing this browser could read stays readable.
+        await forgetBrowserKeys()
+      }
       window.location.assign("/")
     } finally {
       setPending(false)

@@ -32,6 +32,8 @@ export function trustNotices(store, apiUrl, now = Date.now()) {
       notes.push(entry.approval?.declined
         ? `${entry.name ?? entry.deviceId} was declined on your trusted phone and stays untrusted`
         : `a new phone (${entry.name ?? entry.deviceId}) waits for approval on your trusted phone`);
+    } else if (entry.notice?.kind === "phone_replaced" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
+      notes.push(`your phone ${entry.name ?? entry.deviceId} was set up again and is trusted; if you did not sign a phone in, run relo keys status`);
     } else if (entry.notice?.kind === "browser_linked" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
       notes.push(`browser ${entry.name ?? entry.deviceId} was linked from your phone and can read encrypted messages`);
     } else if (entry.notice?.kind === "security_code_changed" && now - Date.parse(entry.notice.at) < NOTICE_DAYS * 86_400_000) {
@@ -67,22 +69,33 @@ export async function ensureTrust({ client, config, dependencies }) {
   }
   const firstContact = !store.committed[config.apiUrl];
   const phones = devices.filter((device) => isPhoneId(device?.deviceId) && device?.kind !== "browser");
+  const known = trustedPhones(store, config.apiUrl);
+  const knownKeys = new Set(known.map((entry) => entry.publicKey));
+  const listed = new Set(phones.map((device) => device.deviceId));
+  // Like WhatsApp after a reinstall: when every phone this computer trusted is gone from the
+  // account (signed out, replaced), the account's phone is trusted again automatically, with a
+  // visible "set up again" notice. A phone that comes back with a key this computer already trusts
+  // (same phone, new registration) needs no notice at all.
+  const replaced = !firstContact && known.length > 0 && !known.some((entry) => listed.has(entry.deviceId));
   for (const device of phones) {
     if (!device?.identityKey?.publicKey) continue;
     const key = trustKey(config.apiUrl, device.deviceId);
     const pinned = store.trusted[key];
-    if (pinned?.publicKey === device.identityKey.publicKey) continue;
+    const sameKey = knownKeys.has(device.identityKey.publicKey);
     if (pinned && pinned.level === "pending") {
-      store.trusted[key] = { ...pinned, keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey };
+      store.trusted[key] = { ...pinned, keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
+        ...(sameKey || replaced ? { level: "auto", trustedAt: now,
+          notice: sameKey ? undefined : { kind: "phone_replaced", at: now } } : {}) };
       changed = true;
       continue;
     }
+    if (pinned?.publicKey === device.identityKey.publicKey) continue;
     if (pinned && store.strict) continue;
     store.trusted[key] = {
       deviceId: device.deviceId, name: device.name, keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
-      level: pinned || firstContact ? "auto" : "pending", trustedAt: now,
+      level: pinned || firstContact || sameKey || replaced ? "auto" : "pending", trustedAt: now,
       ...(pinned ? { notice: { kind: "security_code_changed", at: now, previousKeyId: pinned.keyId } }
-        : firstContact ? {} : { notice: { kind: "new_phone", at: now } }),
+        : firstContact || sameKey ? {} : replaced ? { notice: { kind: "phone_replaced", at: now } } : { notice: { kind: "new_phone", at: now } }),
     };
     changed = true;
   }

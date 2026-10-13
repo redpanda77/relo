@@ -111,6 +111,11 @@ Sealing and signed approvals start at once.
   messages?". One tap on Approve, signed by the trusted phone and bound to that question, makes the
   new phone trusted; Deny keeps it out for good. The new phone cannot approve itself. Without any
   trusted phone left, `relo keys verify` (a person) is the fallback.
+- **A phone set up again is trusted again, like WhatsApp after a reinstall.** Signing out keeps the
+  phone's own keys, so the same phone signing in again is recognised by its key with no notice.
+  When every phone a computer trusted has left the account, the account's new phone is trusted
+  automatically and every command shows "your phone was set up again" for a week. The trade-off is
+  WhatsApp's: a server that removes your phone and adds its own gets that visible notice, not a block.
 - **Verifying is optional.** `relo keys verify` and Settings → Security → Verify security code show
   the same 60-digit number, derived from the two identity keys like Signal's safety numbers.
   Confirming that they match upgrades the pairing to "verified".

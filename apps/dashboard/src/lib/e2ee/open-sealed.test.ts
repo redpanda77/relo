@@ -52,12 +52,15 @@ const contents: Record<string, unknown> = {
   ags_s1: { names: { [SESSION_PROJECT]: "relo-ios" } },
 }
 
+/** The envelope kind each row carries, as the CLI seals them. */
+const KINDS: Record<string, string> = { ntf_q1: "question", ntf_n1: "notice", act_a1: "card", ags_s1: "names" }
+
 afterEach(() => forgetNames())
 
 describe("openSealedTree", () => {
   it("replaces placeholders, resolves handles and leaves unopenable items locked", async () => {
     const fetchEnvelopes = vi.fn(async (ids: string[]) =>
-      Object.fromEntries(ids.filter((id) => id in contents).map((id) => [id, { id }]))
+      Object.fromEntries(ids.filter((id) => id in contents).map((id) => [id, { id, kind: KINDS[id] }]))
     )
     const original = page()
     const { tree, opened } = await openSealedTree(original, {
@@ -89,6 +92,18 @@ describe("openSealedTree", () => {
     expect(tree.filterOptions.projects).toEqual([PROJECT])
     expect(displayName(PROJECT)).toBe("relo")
     expect(displayName(UNKNOWN)).toBe("Encrypted topic")
+  })
+
+  it("review L4: an envelope of the wrong kind for its row stays locked, and a handle two envelopes name differently stays a handle", async () => {
+    const swapped: Record<string, string> = { ...KINDS, act_a1: "notice", ags_s1: "card" }
+    const conflicting: Record<string, unknown> = { ...contents, ntf_q1: { ...(contents.ntf_q1 as object), names: { [PROJECT]: "someone-else" } } }
+    const { tree } = await openSealedTree(page(), {
+      fetchEnvelopes: async (ids) => Object.fromEntries(ids.filter((id) => id in conflicting).map((id) => [id, { id, kind: swapped[id] }])),
+      open: async (envelope) => conflicting[(envelope as { id: string }).id] ?? null,
+    })
+    expect(tree.recentNotifications[0]!.activity).toMatchObject({ encrypted: true })
+    expect(tree.sessions[0]!.project).toBe(SESSION_PROJECT)
+    expect(tree.recentNotifications[0]!.context).toMatchObject({ project: PROJECT })
   })
 
   it("makes no request when nothing is sealed", async () => {

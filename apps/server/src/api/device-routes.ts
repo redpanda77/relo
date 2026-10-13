@@ -1,4 +1,5 @@
 import { registerActivityUpdateToken } from "../activity-token-registration.js";
+import { purgeUnreadableContent } from "../unreadable-content.js";
 import { browserKeys,linkBrowser,linkBrowserSchema,listLinkedBrowsers,unlinkBrowser } from "../linked-browsers.js";
 import { Hono } from "hono";
 import {  requireScope } from "../auth.js";
@@ -15,7 +16,7 @@ import { endToEndPolicy,setEndToEndRequired } from "../end-to-end-policy.js";
 
 /** Phone inventory, self-registration updates, Live Activity tokens and dismissals, and revocation. */
 export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
-  const { db,encryptedTransportToken } = shared;
+  const { db,encryptedTransportToken,apnsMode } = shared;
   app.get("/api/devices", requireScope("devices:read"), async (context) => {
     const auth = context.get("auth");
     const searchParams = new URL(context.req.url).searchParams;
@@ -93,6 +94,7 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
 
   app.delete("/api/devices/self/links/:browserId", requireScope("device:self"), async (context) => {
     const removed = await unlinkBrowser(db,context.get("auth").principalId,context.req.param("browserId") ?? "");
+    if (removed) await purgeUnreadableContent(db,context.get("auth").principalId,apnsMode);
     return removed ? context.body(null,204) : context.json({ error: "browser_not_found" },404);
   });
 
@@ -106,6 +108,8 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       const status = result.error === "device_not_found" ? 404 : result.error === "prekey_conflict" ? 409 : 400;
       return context.json({ error: result.error }, status);
     }
+    // A new identity: what was sealed only to the old one can never be opened again (E1, purge).
+    if (result.identityChanged) await purgeUnreadableContent(db,auth.principalId,apnsMode);
     return context.json({ keyId: result.keyId,identityChanged: result.identityChanged });
   });
 
@@ -281,6 +285,8 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       );
       await client.query("UPDATE delivery_jobs SET state='canceled',updated_at=now() WHERE device_id=$1 AND state IN ('pending','retry')", [auth.deviceId]);
       await client.query("COMMIT");
+      // Signing out: what only this phone could open is deleted (another phone's content stays).
+      await purgeUnreadableContent(db,auth.principalId,apnsMode);
       return context.body(null, 204);
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }

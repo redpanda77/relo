@@ -254,13 +254,23 @@ suite("bounded notification retention", () => {
     const oldEnded = await card("old-ended","ended",30);
     const recentEnded = await card("recent-ended","ended",2);
     const oldActive = await card("old-active","active",30);
+    // Production failed here: old cards with relationship and correlation evidence (append-only).
+    const oldSuccessor = await card("old-successor","ended",29);
+    const relationship = (await db.query<{ id: string }>(`INSERT INTO activity_relationships(principal_id,predecessor_activity_id,
+      successor_activity_id,kind,actor,reason,provenance) VALUES ($1,$2,$3,'continuation','cli','next_generation','runtime') RETURNING id`,
+    [principal,oldEnded,oldSuccessor])).rows[0]!.id;
+    const kept = (await db.query<{ id: string }>(`INSERT INTO activity_relationships(principal_id,predecessor_activity_id,
+      successor_activity_id,kind,actor,reason,provenance) VALUES ($1,$2,$3,'continuation','cli','next_generation','runtime') RETURNING id`,
+    [principal,recentEnded,oldActive])).rows[0]!.id;
+    await db.query(`INSERT INTO activity_correlation_decisions(principal_id,activity_id,relationship_id,outcome,matched_by,actor,reason,provenance)
+      VALUES ($1,$2,$3,'resumed','origin','cli','next_generation','runtime')`,[principal,oldSuccessor,relationship]);
 
     const client = await db.connect();
     try {
       await client.query("BEGIN");
       await client.query("SET LOCAL ROLE relo_runtime");
       const result = await runScheduledContentRetention(client as any,{ retentionHours: 10,releaseIdentity: "worker-test" });
-      expect(result.cardsPruned).toBe(1);
+      expect(result.cardsPruned).toBe(2);
       await client.query("COMMIT");
     } finally {
       client.release();
@@ -269,5 +279,9 @@ suite("bounded notification retention", () => {
       .rows.map(row => row.id).sort();
     expect(remaining).toEqual([recentEnded,oldActive].sort());
     expect(remaining).not.toContain(oldEnded);
+    expect((await db.query("SELECT id FROM activity_relationships WHERE principal_id=$1",[principal])).rows.map(row => row.id)).toEqual([kept]);
+    expect((await db.query("SELECT 1 FROM activity_correlation_decisions WHERE principal_id=$1",[principal])).rowCount).toBe(0);
+    // Outside retention the evidence stays append-only.
+    await expect(db.query("DELETE FROM activity_relationships WHERE id=$1",[kept])).rejects.toThrow(/append-only/);
   });
 });

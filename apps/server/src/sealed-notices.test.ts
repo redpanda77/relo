@@ -208,6 +208,11 @@ suite("sealed notices through the API (E3.1)",() => {
     expect(cardEvents.length).toBeGreaterThan(0);
     for (const item of cardEvents) expect(item.sealed).toEqual({ alert: alerts[0],content: sealed.content });
 
+    // The detail page of a card event opens the card's own envelope too (it was placeholders only).
+    const detail = await request("GET",`/api/inbox/${cardEvents[0].id}`,undefined,shown.credential);
+    expect(detail.status).toBe(200);
+    expect((detail.body.item ?? detail.body).sealed).toEqual({ alert: alerts[0],content: sealed.content });
+
     const wrongKind = { alerts: [envelope([shown.publicId])],content: envelope([shown.publicId]) };
     expect((await request("POST","/api/live-activities",{ key: "bad-card",title: "Encrypted card",status: "Updating…",
       context,deviceIds: [shown.publicId],sealed: wrongKind },owner)).body).toEqual({ error: "invalid_sealed_content" });

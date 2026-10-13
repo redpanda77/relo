@@ -71,6 +71,7 @@ import { dispatchDueInteractionCallbacks } from "./interaction-callbacks.js";
 import { notifyUnseenQuestionCards } from "./activity-commands/question-fallback.js";
 import { createNotificationContentCipher } from "./notification-content.js";
 import { runScheduledContentRetention } from "./notification-retention.js";
+import { purgeAllUnreadableContent } from "./unreadable-content.js";
 
 function projectLiveActivityInteraction(
   job: ClaimedDeliveryJob,
@@ -142,6 +143,20 @@ async function pruneExpiredContent(): Promise<void> {
   }
 }
 
+/** Content sealed only to readers that are gone (revoked devices, replaced keys) is deleted. */
+let unreadablePurgeDueAt = 0;
+async function purgeUnreadable(mode: "disabled" | "sandbox" | "production"): Promise<void> {
+  if (Date.now()<unreadablePurgeDueAt) return;
+  unreadablePurgeDueAt = Date.now()+CONTENT_RETENTION_INTERVAL_MS;
+  try {
+    const result = await purgeAllUnreadableContent(db,mode);
+    if (result.cardsEnded || result.eventsPurged) console.info(JSON.stringify({ event: "unreadable_content_purged",...result }));
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "unreadable_content_purge_failed",
+      message: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
 // Answer callbacks run beside APNs delivery in every mode; a slow endpoint never holds a push.
 const CALLBACK_POLL_MS = 2_000;
 const callbackLoop = (async () => {
@@ -182,6 +197,7 @@ if (config.APNS_MODE === "disabled") {
     cycle.expiredInteractions = await expireDueInteractiveActivities(db,"disabled");
     await reconcileSessions("disabled");
     await pruneExpiredContent();
+    await purgeUnreadable("disabled");
     cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
     if (Object.values(cycle).some((value) => value > 0)) {
       console.info(apnsOperationalLog("apns_worker_cycle",{ mode: "disabled",...cycle }));
@@ -238,6 +254,7 @@ if (config.APNS_MODE === "disabled") {
         cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
         await reconcileSessions(config.APNS_MODE);
         await pruneExpiredContent();
+        await purgeUnreadable(config.APNS_MODE);
         cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
         if (Object.values(cycle).some(value => value > 0)) {
           console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason: "maintenance",...cycle }));

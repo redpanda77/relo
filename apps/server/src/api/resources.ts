@@ -239,6 +239,7 @@ export function inboxActivitySummary(row: any) {
 }
 
 export const inboxActivityProjectionSql = `activity.id AS activity_summary_id,
+  activity.sealed AS activity_sealed,
   activity.origin_hash AS activity_summary_origin_hash,
   activity.conversation_id AS activity_summary_conversation_id,
   activity.work_item_id AS activity_summary_work_item_id,
@@ -339,7 +340,10 @@ export function inboxItemResource(
     receivedAt: row.received_at, openedAt: row.opened_at, createdAt: row.created_at_iso,
     destinationUrl: row.deep_link ?? null,
     privacy: inboxPrivacy(row.payload),
-    sealed: sealedForDevice(row.payload,auth.deviceId ? publicId("dev",auth.deviceId) : undefined),
+    // A card's events carry no envelope of their own: the card's latest sealed text opens them (E5),
+    // as in the history list, so the detail page shows the real card too.
+    sealed: sealedForDevice(row.payload,auth.deviceId ? publicId("dev",auth.deviceId) : undefined)
+      ?? sealedForDevice({ sealed: row.activity_sealed },auth.deviceId ? publicId("dev",auth.deviceId) : undefined),
     liveActivity: row.kind === "live_activity"
       ? projectedInboxLiveActivity(
         row.payload,row,auth.deviceId,auth.deviceCredentialVersion,credentialDerivationSecret,

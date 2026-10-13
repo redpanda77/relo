@@ -49,11 +49,23 @@ function collect(tree: unknown) {
   return { targets, sessions }
 }
 
-function namesIn(content: unknown, into: Map<string, string>) {
+/** Handles two envelopes name differently are ambiguous: they keep their handle (review L4). */
+function namesIn(content: unknown, into: Map<string, string>, conflicts: Set<string>) {
   if (!isNode(content) || !isNode(content.names)) return
   for (const [handle, name] of Object.entries(content.names)) {
-    if (FULL_HANDLE.test(handle) && text(name)) into.set(handle, name as string)
+    if (!FULL_HANDLE.test(handle) || !text(name)) continue
+    if (into.has(handle) && into.get(handle) !== name) conflicts.add(handle)
+    else into.set(handle, name as string)
   }
+}
+
+/** The envelope kinds a row id may carry: cards for act_, names for ags_, a notice, question or card for ntf_. */
+function kindFits(id: string, envelope: unknown): boolean {
+  const kind = isNode(envelope) ? envelope.kind : undefined
+  if (id.startsWith("act_")) return kind === "card"
+  if (id.startsWith("ags_")) return kind === "names"
+  if (id.startsWith("ntf_")) return kind === "notice" || kind === "question" || kind === "card"
+  return false
 }
 
 function applyContent(node: Node, content: Node) {
@@ -105,17 +117,25 @@ export async function openSealedTree<T>(tree: T, opener: SealedOpener): Promise<
   if (ids.length === 0) return { tree, opened: 0, names }
   const envelopes = await opener.fetchEnvelopes(ids)
   const contents = new Map<string, Node>()
+  const kinds = new Map<string, unknown>()
   await Promise.all(
     Object.entries(envelopes).map(async ([id, envelope]) => {
-      if (!ids.includes(id)) return
+      if (!ids.includes(id) || !kindFits(id, envelope)) return
       const content = await opener.open(envelope)
-      if (isNode(content)) contents.set(id, content)
+      if (isNode(content)) {
+        contents.set(id, content)
+        kinds.set(id, (envelope as { kind?: unknown }).kind)
+      }
     })
   )
-  for (const content of contents.values()) namesIn(content, names)
+  const conflicts = new Set<string>()
+  for (const content of contents.values()) namesIn(content, names, conflicts)
+  for (const handle of conflicts) names.delete(handle)
   let opened = 0
   for (const target of targets) {
-    const content = target.candidates.map((id) => contents.get(id)).find(Boolean)
+    // A card shows only card text: never a parent notice's or question's text (review L4).
+    const card = typeof target.node.id === "string" && target.node.id.startsWith("act_")
+    const content = target.candidates.filter((id) => !card || kinds.get(id) === "card").map((id) => contents.get(id)).find(Boolean)
     if (!content) continue
     applyContent(target.node, content)
     opened += 1

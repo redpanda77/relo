@@ -52,6 +52,11 @@ export class BrowserLink {
   private state: BrowserLinkState = { status: "starting" }
   private readonly listeners = new Set<() => void>()
   private keys: BrowserKeys | null = null
+
+  /** This browser's id, for revoking it on sign-out. */
+  browserIdForRevocation(): string | null {
+    return this.keys?.browserId ?? null
+  }
   private started: Promise<void> | null = null
   private timer: ReturnType<typeof setInterval> | null = null
   private readonly store: KeyValueStore
@@ -219,7 +224,8 @@ export class BrowserLink {
       const response = await this.fetcher("/api/dashboard/client-keys", { credentials: "same-origin", headers: { accept: "application/json" } })
       const payload = response.ok ? await readJson(response) : null
       if (Array.isArray(payload?.clients)) {
-        next = {}
+        // Trust on first use: a computer stays trusted once seen; the list only adds or updates keys.
+        next = { ...remembered }
         for (const client of payload.clients as Array<Record<string, unknown>>) {
           if (typeof client.clientId !== "string" || typeof client.keyId !== "string" || typeof client.publicKey !== "string") continue
           let publicKey: Bytes
@@ -272,6 +278,21 @@ let current: BrowserLink | null = null
 
 export function webCryptoAvailable() {
   return typeof indexedDB !== "undefined" && Boolean(globalThis.crypto?.subtle) && globalThis.isSecureContext !== false
+}
+
+/**
+ * Signing out: this browser revokes its own server record (review L5), so it stops being a
+ * recipient at once. Best effort; the keys are deleted afterwards either way.
+ */
+export async function revokeCurrentBrowser(fetcher: typeof fetch = fetch): Promise<void> {
+  const browserId = current?.browserIdForRevocation()
+  current?.stop()
+  if (!browserId) return
+  try {
+    await fetcher(`/api/dashboard/browser/${encodeURIComponent(browserId)}`, { method: "DELETE", credentials: "same-origin" })
+  } catch {
+    // Offline: the record is revoked by the server's cleanup or when the phone unlinks it.
+  }
 }
 
 /** The signed-in account's browser link, created once per page. */
