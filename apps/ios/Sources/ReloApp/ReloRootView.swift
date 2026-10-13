@@ -92,7 +92,7 @@ private struct ReloAttentionBanner: View {
                     Text(problem == .unreachable ? "Can't reach your Relo server" : "Notifications are off")
                         .font(.subheadline.weight(.semibold))
                     Text(problem == .unreachable
-                         ? "Check your connection. If your server is on Tailscale, make sure Tailscale is on."
+                         ? "Check your connection. If your server is on a private network or VPN, make sure it's connected."
                          : "Relo can't alert you or show Live Activities, so requests from your agents will be missed.")
                         .font(.footnote).foregroundStyle(Color.reloSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)

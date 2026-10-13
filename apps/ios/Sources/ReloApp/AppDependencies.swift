@@ -103,7 +103,8 @@ struct AppDependencies {
             tokenRegistrar: tokenRegistrar,
             encryptionKeys: E2EEKeyMaintenance(ring: .live(), publisher: HTTPMobileAPIClient(baseURL: origin),
                                                directory: HTTPMobileAPIClient(baseURL: origin), trust: .live(),
-                                               erase: { ReloEncryptionState.forget() }),
+                                               erase: { ReloEncryptionState.forget() },
+                                               browserLinks: BrowserLinkRenewal(browsers: .live(), linker: HTTPMobileAPIClient(baseURL: origin))),
             answerSigner: { ReloKeyRing.live().existingIdentitySigner() },
             makeCurrentCache: { scope in
                 FileCurrentStateCache(baseDirectory: reloDirectory.appendingPathComponent("current", isDirectory: true), scope: scope)

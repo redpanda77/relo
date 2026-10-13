@@ -57,6 +57,7 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/auth/sign-in/email": "sign-in",
   "POST /api/auth/sign-up/email": "sign-up",
   "POST /api/dashboard/browser": "registers the calling browser's own keys for the signed-in account",
+  "DELETE /api/dashboard/browser/:browserId": "the signed-in account revokes one of its own browsers; unlinkBrowser matches it by account",
   "POST /api/devices/self/links": "links a browser of the calling phone's own account; linkBrowser matches it by account",
   "POST /api/device-authorizations/start": "unauthenticated CLI login start",
   "POST /api/device-authorizations/token": "device code exchange",

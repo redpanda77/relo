@@ -68,11 +68,7 @@ public enum ReloBrowserLink {
     public static func request(
         for code: Code, phoneDeviceID: String, signer: any ReloIdentitySigning, now: Date = Date()
     ) throws -> ReloBrowserLinkRequest {
-        let signedAt = ReloKeyRing.timestamp(now)
-        let signature = try signer.sign(signingInput(
-            browserID: code.browserID, identityKey: code.identityKey, phoneDeviceID: phoneDeviceID, signedAt: signedAt))
-        return ReloBrowserLinkRequest(browserId: code.browserID, identityKey: code.identityKey, signedAt: signedAt,
-                                      signature: ReloE2EE.base64URL(signature))
+        try request(browserID: code.browserID, identityKey: code.identityKey, phoneDeviceID: phoneDeviceID, signer: signer, now: now)
     }
 }
 

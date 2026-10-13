@@ -39,17 +39,17 @@ cd relo
 
 ### 2. Choose the address your iPhone will use
 
-The default server listens only on `127.0.0.1:8180`. If the iPhone will connect through Tailscale,
-install Tailscale on the server and phone, join both to the same tailnet, and configure Serve:
+The default server listens only on `127.0.0.1:8180`. Pick one HTTPS address for the browser, iPhone
+and CLI; every install chooses its own, and each app asks for it at sign-in.
 
-```sh
-tailscale serve --bg http://127.0.0.1:8180
-tailscale serve status
-```
+- **Private (tailnet only):** install Tailscale on the server and phone, then
+  `tailscale serve --bg http://127.0.0.1:8180` and keep the `https://…ts.net` origin it prints. Use
+  Serve, not Funnel.
+- **Public behind a reverse proxy:** for example a Cloudflare Tunnel to `http://127.0.0.1:8180` with
+  Cloudflare Access in front of the browser pages. Set `RELO_CLIENT_IP_HEADER` so sign-in limits
+  apply per client. See [Remote access](docs/SELF-HOSTING.md#remote-access).
 
-Keep the exact `https://…ts.net` origin printed by Tailscale. Use Serve, not Funnel; Relo should
-remain private to the tailnet. A trusted local-network deployment may use another reachable origin,
-but public plaintext HTTP is not supported by the iPhone app.
+Public plaintext HTTP is not supported by the iPhone app.
 
 ### 3. Initialize secrets and configure the origin
 
@@ -58,7 +58,8 @@ but public plaintext HTTP is not supported by the iPhone app.
 ```
 
 Open `deploy/.env` and set `RELO_APP_URL` to the exact browser/iPhone origin chosen above. Do this
-before creating the owner account. Keep `RELO_BIND_ADDRESS=127.0.0.1` when using Tailscale Serve.
+before creating the owner account. Keep `RELO_BIND_ADDRESS=127.0.0.1`; Tailscale Serve and a tunnel
+both reach the loopback listener.
 
 The initializer creates protected PostgreSQL, Dashboard-authentication, and bootstrap-owner secrets.
 Do not paste `deploy/secrets/owner_token` into the Dashboard; the server consumes it internally.
@@ -98,8 +99,9 @@ Edit `Signing.local.xcconfig` and set:
 - `DEVELOPMENT_TEAM` to the Apple Developer Team ID;
 - `RELO_BUNDLE_ID` to a unique main App ID;
 - `RELO_APP_GROUP` to the App Group shared by the app and its extensions; and
-- `RELO_API_ORIGIN` to the exact `RELO_APP_URL` origin. In the `.xcconfig` file, preserve Xcode's
-  slash escape, for example `https:/$()/your-host.ts.net`.
+- optionally `RELO_API_ORIGIN` to your `RELO_APP_URL`, which pre-fills the server field. The app
+  always lets the person signing in enter their own server. In the `.xcconfig` file, preserve
+  Xcode's slash escape, for example `https:/$()/relo.example.com`.
 
 Open `apps/ios/Relo.xcodeproj` in Xcode. Select the **Relo** scheme and connected iPhone, leave
 automatic signing enabled for all three targets, and press **Run**. Direct Xcode builds use sandbox

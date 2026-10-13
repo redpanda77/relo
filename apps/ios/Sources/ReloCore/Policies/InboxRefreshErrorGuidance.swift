@@ -4,7 +4,7 @@ public enum InboxRefreshErrorGuidance {
     public static func message(for error: any Error) -> String {
         switch error as? InboxRemoteError {
         case .tailnetUnavailable:
-            "Tailnet unavailable"
+            "Server unreachable"
         case .incompatibleResponse:
             "Relo server returned incompatible activity data"
         case .unavailable, .cursorExpired:

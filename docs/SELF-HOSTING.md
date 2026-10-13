@@ -78,10 +78,15 @@ not download, inspect, or execute the target. Pergam pages, time-bounded MinIO l
 and other HTTPS destinations use the same field. If a signed link expires, the notification remains
 durable but the remote host decides whether the target is still available.
 
-## Private remote access
+## Remote access
 
-Keep the API bound to `127.0.0.1` by default. For access away from the local network, put the host and
-iPhone on the same Tailscale network, then expose the loopback service through
+Keep the API bound to `127.0.0.1`. `RELO_APP_URL` is the one origin browsers, the iPhone and the CLI
+use; every installation sets its own, and both apps ask for it at sign-in. Change it, restart the
+API and worker, then sign in again on each phone and computer.
+
+### Private: Tailscale Serve
+
+Put the host and iPhone on the same tailnet and expose the loopback service through
 [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve):
 
 ```sh
@@ -89,8 +94,45 @@ tailscale serve --bg http://127.0.0.1:8180
 tailscale serve status
 ```
 
-Set `RELO_APP_URL` to the exact `https://…ts.net` origin printed by Serve and restart the API. Use
-Serve, not Funnel: the endpoint should remain inside the tailnet. Do not expose port 8180 directly to
-the public internet.
+Set `RELO_APP_URL` to the exact `https://…ts.net` origin printed by Serve. Use Serve, not Funnel.
 
-Relo does not require a public inbound endpoint, but APNs requires outbound Apple access.
+### Public: Cloudflare Tunnel and Access
+
+A tunnel makes only outbound connections, so the host opens no inbound port:
+
+```yaml
+# cloudflared config for a named tunnel
+ingress:
+  - hostname: relo.example.com
+    service: http://127.0.0.1:8180
+  - service: http_status:404
+```
+
+Set `RELO_APP_URL=https://relo.example.com` and `RELO_CLIENT_IP_HEADER=cf-connecting-ip`. Without
+the header every request appears to come from the tunnel, so per-client sign-in limits become one
+shared limit. The header is believed only from a loopback or private peer.
+
+Relo's own sign-in protects the server on its own; read [HARDENING.md](HARDENING.md) for what that
+covers and what is still open. For an extra layer, put
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/) in front of the
+pages people open in a browser and let the app and CLI traffic through to Relo's own authentication
+(Access matches the most specific path). Every person then also needs to be on the Access list:
+
+| Path | Access policy |
+|---|---|
+| `relo.example.com` | Allow the people who use this server |
+| `relo.example.com/api`, `/hooks` | Bypass (iPhone, Lock Screen answers, CLI, webhooks) |
+| `relo.example.com/api/dashboard` | Allow |
+| `relo.example.com/api/auth/sign-in`, `/api/auth/sign-up` | Allow |
+
+The iPhone signs in through the same browser pages, so the Access login appears there once.
+Leave Bot Fight Mode off for the hostname and bypass the cache. Event streams send a keepalive every
+15 seconds, inside Cloudflare's idle timeout. Keep registration **Closed** or **Approval** on a
+public address. Cloudflare terminates TLS: end-to-end sealed content stays opaque to it, while
+credentials in transit and metadata do not ([what stays readable](END-TO-END-ENCRYPTION.md)).
+
+Other reverse proxies work the same way: proxy to the loopback listener, set `RELO_APP_URL` to the
+public origin and `RELO_CLIENT_IP_HEADER` to the header the proxy overwrites (never one a client can
+append to, such as `x-forwarded-for`).
+
+Relo needs no public inbound endpoint for APNs; it only makes outbound connections to Apple.

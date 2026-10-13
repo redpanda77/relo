@@ -56,6 +56,10 @@ export async function registerBrowser(
       input.identityKey],
   );
   if (updated.rows[0]) return { ok: true,browserId,linked: updated.rows[0].linked };
+  // A browser registered but never linked for a day is abandoned (storage cleared, signed out
+  // elsewhere): revoke it so it neither counts toward the limit nor lingers (review L5).
+  await db.query(`UPDATE linked_browsers SET revoked_at=now() WHERE principal_id=$1 AND revoked_at IS NULL
+    AND linked_at IS NULL AND last_seen_at<now()-interval '1 day'`,[principalId]);
   const count = await db.query<{ n: number }>(
     "SELECT count(*)::int AS n FROM linked_browsers WHERE principal_id=$1 AND revoked_at IS NULL",[principalId]);
   if ((count.rows[0]?.n ?? 0) >= MAX_BROWSERS) return { ok: false,error: "too_many_browsers" };

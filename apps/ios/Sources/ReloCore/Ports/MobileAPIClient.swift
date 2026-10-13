@@ -72,7 +72,7 @@ public enum DeliveryTransportStatusErrorGuidance {
         case MobileAPIError.forbidden:
             "This Relo server account cannot read delivery-path status."
         case MobileAPIError.tailnetUnavailable:
-            "The private Tailnet is unavailable."
+            "Your Relo server is unreachable."
         case MobileAPIError.invalidResponse:
             "Relo server returned an incompatible delivery-path status."
         case MobileAPIError.rateLimited(let seconds):

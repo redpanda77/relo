@@ -266,11 +266,12 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
 
 public enum ReloEncryptionState {
     /// Signing out ends this phone's encryption identity for the account: keys, trusted computers,
-    /// names and the replay ledger are deleted, so nothing carries over to another account or server.
+    /// linked browsers, names and the replay ledger are deleted, so nothing carries over to another
+    /// account or server (and no browser link is ever renewed again).
     public static func forget(bundle: Bundle = .main) {
         let group = ReloKeyRing.sharedAccessGroup(bundle: bundle)
         for account in [KeychainKeyRingStore.account, KeychainTrustedClientStore.account, KeychainNameBook.account,
-                        KeychainReplayLedger.account] {
+                        KeychainReplayLedger.account, KeychainLinkedBrowserStore.account] {
             var query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: "relo.e2ee",

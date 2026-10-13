@@ -2,19 +2,21 @@ import { ApiChangeListener } from "./api-change-listener.js";
 import { serve } from "@hono/node-server";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
+import { trustClientAddressHeader } from "./client-address.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { loadAccountAuthSecret, loadConfig, readSecretFile } from "./config.js";
 import { createAuthDatabase, createDatabase } from "./db.js";
 import { verifyCurrentTransportTokenEnvelopes } from "./token-encryption.js";
 
 const config = loadConfig();
+trustClientAddressHeader(config.RELO_CLIENT_IP_HEADER);
 const db = createDatabase(config.DATABASE_URL);
 const authDb = createAuthDatabase(config.DATABASE_URL);
 
 const accountAuthSecret = await loadAccountAuthSecret(config);
 await verifyCurrentTransportTokenEnvelopes(db);
 await bootstrapOwner(db, config.BOOTSTRAP_OWNER_HANDLE, await readSecretFile(config.BOOTSTRAP_OWNER_TOKEN_FILE));
-const accountAuth = createAccountAuth(authDb, config.APP_URL, accountAuthSecret);
+const accountAuth = createAccountAuth(authDb, config.APP_URL, accountAuthSecret, config.RELO_CLIENT_IP_HEADER);
 
 const changes = await ApiChangeListener.listen(db);
 

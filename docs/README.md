@@ -7,6 +7,7 @@ documents for contributors and operators:
   and release sequence;
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — runtime boundaries and ownership;
 - [`SELF-HOSTING.md`](SELF-HOSTING.md) — current installation and operation guidance;
+- [`HARDENING.md`](HARDENING.md) — what protects a publicly reachable server and the open gaps;
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) — local toolchain, tests, and contribution workflow; and
 - [`adr/`](adr/) — accepted architectural decisions.
 

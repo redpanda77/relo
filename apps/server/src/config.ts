@@ -6,6 +6,8 @@ const schema = z.object({
   HOST: z.string().default("127.0.0.1"),
   PORT: z.coerce.number().int().min(1).max(65535).default(8180),
   APP_URL: z.url().default("http://127.0.0.1:8180"),
+  /** Header a reverse proxy sets to the real client address, e.g. cf-connecting-ip or x-real-ip. */
+  RELO_CLIENT_IP_HEADER: optionalTrimmed(z.string().regex(/^[A-Za-z0-9-]{1,64}$/)),
   RELO_RELEASE_IDENTITY: z.string().trim()
     .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/).optional(),
   BETTER_AUTH_SECRET_FILE: z.string().optional(),

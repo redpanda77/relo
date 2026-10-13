@@ -54,7 +54,7 @@ public extension DeviceRegistrationPolicy {
         case .accountDisabled:
             return .init(message: "This Relo server account is disabled.", accountEffect: .disabled)
         case .tailnetUnavailable:
-            return .init(message: "Tailnet unavailable. Connect Tailscale, then retry device registration.",
+            return .init(message: "Server unreachable. Check your connection; Relo will retry device registration.",
                          retry: .scheduled(retryAfterSeconds: nil))
         case .idempotencyConflict:
             return .init(message: "Registration changed while it was being saved. Relo will retry automatically.",

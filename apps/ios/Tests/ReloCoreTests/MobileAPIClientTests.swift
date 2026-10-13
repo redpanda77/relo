@@ -241,7 +241,7 @@ final class MobileAPIClientTests: XCTestCase {
         )
         XCTAssertEqual(
             DeliveryTransportStatusErrorGuidance.message(for: MobileAPIError.tailnetUnavailable),
-            "The private Tailnet is unavailable."
+            "Your Relo server is unreachable."
         )
         XCTAssertEqual(
             DeliveryTransportStatusErrorGuidance.message(for: MobileAPIError.invalidResponse),
@@ -396,7 +396,7 @@ final class MobileAPIClientTests: XCTestCase {
             XCTFail("A tailnet transport failure must not be reported as a server or cache failure")
         } catch let error as InboxRemoteError {
             XCTAssertEqual(error, .tailnetUnavailable)
-            XCTAssertEqual(InboxRefreshErrorGuidance.message(for: error), "Tailnet unavailable")
+            XCTAssertEqual(InboxRefreshErrorGuidance.message(for: error), "Server unreachable")
         }
 
         StubURLProtocol.handler = { request in

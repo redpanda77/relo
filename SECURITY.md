@@ -19,7 +19,8 @@ privately until a fix and disclosure plan are ready.
 
 Relo is self-hosted. Operators are responsible for TLS, account access, server updates, Apple
 credentials, and network exposure. See [the self-hosting guide](docs/SELF-HOSTING.md) for the
-supported deployment boundary.
+supported deployment boundary, and [the hardening guide](docs/HARDENING.md) for what protects a
+publicly reachable server and the gaps that are still open.
 
 ## End-to-end encryption
 

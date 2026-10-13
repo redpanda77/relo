@@ -280,7 +280,7 @@ final class AppModel {
         // A brief outage (a redeploy) stays silent; the banner waits out `OutageBannerPolicy.grace`.
         if currentState?.connection == .offline, outageBannerShown { return true }
         if case .failed(let message) = registrationState,
-           message.hasPrefix("Tailnet") || message.contains("unavailable") { return true }
+           message.hasPrefix("Server unreachable") || message.contains("unavailable") { return true }
         return false
     }
     /// Linked, live, and the first counts are in: the deck's HUD has something true to show.

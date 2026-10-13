@@ -4,6 +4,7 @@ import { type InteractionChangeHub } from "./interaction-change-hub.js";
 import type { CurrentChangeHub } from "./current-change-hub.js";
 import { SubjectAdmissionError } from "./relevance/commands.js";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
   
@@ -39,6 +40,8 @@ import { registerNotificationRoutes } from "./api/interaction-routes.js";
 import type { ApiRouteContext } from "./api/route-context.js";
 export { inboxItemResource } from "./api/resources.js";
 
+export const MAX_REQUEST_BODY_BYTES = 1_048_576;
+
 export type AppDependencies = {
   interactionChanges?: InteractionChangeHub;
   currentChanges?: CurrentChangeHub;
@@ -58,6 +61,22 @@ export function createApp(
   const app = new Hono();
   const apnsMode = dependencies?.apnsMode ?? "disabled";
   const integratedDependencies = dependencies && "accountAuth" in dependencies ? dependencies : null;
+
+  // Every route answers whoever can reach the server; nothing legitimate sends more than this.
+  app.use("*", bodyLimit({ maxSize: MAX_REQUEST_BODY_BYTES,
+    onError: (context) => context.json({ error: "payload_too_large" }, 413) }));
+  if (integratedDependencies?.appUrl.startsWith("https://")) {
+    app.use("*", async (context, next) => {
+      await next();
+      try {
+        if (!context.res.headers.has("strict-transport-security")) {
+          context.res.headers.set("strict-transport-security", "max-age=31536000");
+        }
+      } catch {
+        // A proxied Response can carry immutable headers; it is not a page a browser pins.
+      }
+    });
+  }
   const tokenEncryption = dependencies?.credentialDerivationSecret
     ? createTransportTokenEncryption(dependencies.credentialDerivationSecret)
     : null;

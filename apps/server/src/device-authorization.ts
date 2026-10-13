@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AccountAuth } from "./account-auth.js";
+import { clientAddress } from "./client-address.js";
 import { generateToken, hashMachineToken, hashToken } from "./auth.js";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
@@ -171,15 +171,8 @@ export function normalizeUserCode(value: string): string | undefined {
 }
 
 export function authorizationRateLimitBuckets(context?: Context): string[] {
-  const buckets = ["global"];
-  if (!context) return buckets;
-  try {
-    const address = getConnInfo(context).remote.address;
-    if (address) buckets.push(`client:${address}`);
-  } catch {
-    // Hono's in-memory request harness has no transport socket. Production uses the Node adapter.
-  }
-  return buckets;
+  const address = clientAddress(context);
+  return address ? ["global", `client:${address}`] : ["global"];
 }
 
 function limited(store: Map<string, number[]>, key: string, limit: number, windowMs: number): boolean {

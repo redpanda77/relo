@@ -105,3 +105,18 @@ test("review H2: the server cannot relabel the trusted phone as a browser and re
     assert.equal(store.trusted[trustKey(apiUrl, browser.device.deviceId)], undefined);
   } finally { h.cleanup(); }
 });
+
+test("review M3: a link the phone has not re-signed for 14 days stops counting, so unlinking cannot be ignored", async () => {
+  const h = harness();
+  try {
+    await ensureTrust({ client: h.client([phone.device]), config: { apiUrl }, dependencies: h.dependencies });
+    const signedAt = new Date(Date.now() - 15 * 86_400_000).toISOString();
+    const old = { deviceId: phone.device.deviceId, signedAt, signature: b64u(signBytes(phone.identity.privateKey,
+      linkSigningInput({ browserId: browser.device.deviceId, identityKey: browser.device.identityKey.publicKey,
+        phoneDeviceId: phone.device.deviceId, signedAt }))) };
+    const sealed = await h.send([phone.device, { ...browser.device, link: old }]);
+    assert.ok(sealed.content.recipients.every((r) => r.device !== browser.device.deviceId));
+    const renewed = await h.send([phone.device, { ...browser.device, link: link() }]);
+    assert.ok(renewed.content.recipients.some((r) => r.device === browser.device.deviceId));
+  } finally { h.cleanup(); }
+});

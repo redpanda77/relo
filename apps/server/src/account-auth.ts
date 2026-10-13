@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { bearer } from "better-auth/plugins";
 import type { Database } from "./db.js";
 
-export function createAccountAuth(authDb: Database, baseURL: string, secret: string) {
+export function createAccountAuth(authDb: Database, baseURL: string, secret: string, clientIpHeader?: string) {
   return betterAuth({
     appName: "Relo Notifications",
     baseURL,
@@ -58,6 +58,8 @@ export function createAccountAuth(authDb: Database, baseURL: string, secret: str
     },
     advanced: {
       useSecureCookies: baseURL.startsWith("https://"),
+      // Session records keep the proxy's client address, not a client-supplied X-Forwarded-For.
+      ...(clientIpHeader ? { ipAddress: { ipAddressHeaders: [clientIpHeader.toLowerCase()] } } : {}),
     },
     plugins: [bearer()],
   });

@@ -110,5 +110,12 @@ suite("linked browsers (docs/END-TO-END-ENCRYPTION.md, Linked browsers)",() => {
     expect((await call(phoneCredential,"DELETE",`/api/devices/self/links/${mine.browserId}`)).status).toBe(204);
     expect((await call(session,"GET",sealedPath,undefined,{ "x-relo-browser": mine.browserId })).status).toBe(403);
     expect((await call(apiKey,"GET","/api/devices/keys")).body.devices.some((device: any) => device.deviceId === mine.browserId)).toBe(false);
+
+    // Signing out: a browser revokes its own record; another browser of the account is untouched.
+    const second = browser();
+    expect((await call(session,"POST","/api/dashboard/browser",second.body)).status).toBe(200);
+    expect((await call(session,"DELETE",`/api/dashboard/browser/${second.browserId}`)).status).toBe(204);
+    expect((await call(session,"GET",`/api/dashboard/browser/${second.browserId}`)).status).toBe(404);
+    expect((await call(session,"DELETE",`/api/dashboard/browser/brw_${randomUUID()}`)).status).toBe(404);
   });
 });

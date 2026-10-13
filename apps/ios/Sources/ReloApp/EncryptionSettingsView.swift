@@ -20,8 +20,10 @@ final class EncryptionSecurityModel {
     private(set) var phase: Phase = .loading
     private(set) var phoneKeyID: String?
     private(set) var computers: [Computer] = []
-    /// Web Dashboard browsers this phone linked; nil until the server answers.
-    private(set) var browsers: [ReloLinkedBrowser]?
+    /// Web Dashboard browsers this phone linked and keeps re-signing (the local list, not the server's).
+    private(set) var browsers: [ReloLocalLinkedBrowser] = []
+    /// Browsers the server lists as linked that this phone does not vouch for; nil until the server answers.
+    private(set) var serverOnlyBrowsers: [ReloLinkedBrowser]?
     private(set) var browsersProblem: String?
     private(set) var linking = false
     var linkResult: LinkResult?
@@ -31,12 +33,34 @@ final class EncryptionSecurityModel {
         let title: String
         let message: String
     }
+    /// A browser to unlink: one this phone vouches for, or one only the server lists.
+    enum UnlinkTarget: Identifiable, Equatable {
+        case local(ReloLocalLinkedBrowser)
+        case serverOnly(ReloLinkedBrowser)
+
+        var id: String { browserID }
+        var browserID: String {
+            switch self {
+            case .local(let browser): browser.browserId
+            case .serverOnly(let browser): browser.browserId
+            }
+        }
+        var name: String {
+            switch self {
+            case .local(let browser): browser.name
+            case .serverOnly(let browser): browser.name
+            }
+        }
+    }
+
     private let ring: ReloKeyRing
     private let trust: ReloTrustedClients
+    private let linked: ReloLinkedBrowsers
 
-    init(ring: ReloKeyRing = .live(), trust: ReloTrustedClients = .live()) {
+    init(ring: ReloKeyRing = .live(), trust: ReloTrustedClients = .live(), linked: ReloLinkedBrowsers = .live()) {
         self.ring = ring
         self.trust = trust
+        self.linked = linked
     }
 
     var statusLine: String {
@@ -76,9 +100,17 @@ final class EncryptionSecurityModel {
     }
 
     func loadBrowsers(credential: DeviceCredential?, linker: (any BrowserLinking)?) async {
+        do {
+            browsers = try linked.all()
+        } catch {
+            browsersProblem = "Relo could not read the browsers this iPhone linked."
+            return
+        }
         guard let credential, let linker else { return }
         do {
-            browsers = try await linker.linkedBrowsers(credential: credential)
+            let listed = try await linker.linkedBrowsers(credential: credential)
+            let mine = Set(browsers.map(\.browserId))
+            serverOnlyBrowsers = listed.filter { !mine.contains($0.browserId) }
             browsersProblem = nil
         } catch {
             browsersProblem = Self.message(for: error, doing: "load linked browsers")
@@ -100,25 +132,46 @@ final class EncryptionSecurityModel {
         linking = true
         defer { linking = false }
         do {
-            let request = try ReloBrowserLink.request(for: code, phoneDeviceID: credential.deviceId, signer: signer)
-            let linked = try await linker.linkBrowser(credential: credential, request: request)
-            var list = (browsers ?? []).filter { $0.browserId != linked.browserId }
-            list.insert(linked, at: 0)
-            browsers = list
+            let now = Date()
+            let request = try ReloBrowserLink.request(for: code, phoneDeviceID: credential.deviceId, signer: signer, now: now)
+            let accepted = try await linker.linkBrowser(credential: credential, request: request)
+            // Only browsers in this list are ever re-signed; without it the link lapses in 14 days.
+            try linked.remember(browserID: code.browserID, identityKey: code.identityKey, name: accepted.name, signedAt: now)
+            browsers = (try? linked.all()) ?? browsers
+            serverOnlyBrowsers?.removeAll { $0.browserId == accepted.browserId }
             linkResult = LinkResult(title: "Browser linked",
-                                    message: "\(linked.name) can now read your encrypted Relo messages.")
+                                    message: "\(accepted.name) can now read your encrypted Relo messages.")
         } catch {
             linkResult = LinkResult(title: "Not linked", message: Self.message(for: error, doing: "link the browser"))
         }
     }
 
-    func unlink(_ browser: ReloLinkedBrowser, credential: DeviceCredential?, linker: (any BrowserLinking)?) async {
+    /// The local entry goes first, so this phone never re-signs the link even if the server keeps it.
+    func unlink(_ target: UnlinkTarget, credential: DeviceCredential?, linker: (any BrowserLinking)?) async {
+        if case .local(let browser) = target {
+            do {
+                try linked.forget(browserID: browser.browserId)
+                browsers.removeAll { $0.browserId == browser.browserId }
+            } catch {
+                linkResult = LinkResult(title: "Not unlinked", message: "Relo could not update the browsers this iPhone linked.")
+                return
+            }
+        }
         guard let credential, let linker else { return }
         do {
-            try await linker.unlinkBrowser(credential: credential, browserID: browser.browserId)
-            browsers?.removeAll { $0.browserId == browser.browserId }
+            try await linker.unlinkBrowser(credential: credential, browserID: target.browserID)
+            serverOnlyBrowsers?.removeAll { $0.browserId == target.browserID }
         } catch {
-            linkResult = LinkResult(title: "Not unlinked", message: Self.message(for: error, doing: "unlink \(browser.name)"))
+            var message = Self.message(for: error, doing: "unlink \(target.name)")
+            if case .local = target {
+                message += " This iPhone no longer renews the link, so computers stop trusting it within 14 days."
+            }
+            linkResult = LinkResult(title: "Not unlinked on the server", message: message)
+            if case .local(let browser) = target {
+                let listed = ReloLinkedBrowser(browserId: browser.browserId, name: browser.name,
+                                               linkedAt: browser.linkedAt.ISO8601Format())
+                serverOnlyBrowsers = (serverOnlyBrowsers ?? []).filter { $0.browserId != browser.browserId } + [listed]
+            }
         }
     }
 
@@ -145,7 +198,7 @@ struct EncryptionSettingsView: View {
     @State private var security = EncryptionSecurityModel()
     @State private var scanning = false
     @State private var pendingCode: ReloBrowserLink.Code?
-    @State private var pendingUnlink: ReloLinkedBrowser?
+    @State private var pendingUnlink: EncryptionSecurityModel.UnlinkTarget?
 
     private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
 
@@ -223,10 +276,10 @@ struct EncryptionSettingsView: View {
         }
         .confirmationDialog("Unlink this browser?", isPresented: Binding(
             get: { pendingUnlink != nil }, set: { if !$0 { pendingUnlink = nil } }
-        ), titleVisibility: .visible, presenting: pendingUnlink) { browser in
-            Button("Unlink \(browser.name)", role: .destructive) {
+        ), titleVisibility: .visible, presenting: pendingUnlink) { target in
+            Button("Unlink \(target.name)", role: .destructive) {
                 pendingUnlink = nil
-                Task { await security.unlink(browser, credential: model.credential, linker: linker) }
+                Task { await security.unlink(target, credential: model.credential, linker: linker) }
             }
             Button("Cancel", role: .cancel) { pendingUnlink = nil }
         } message: { _ in
@@ -239,19 +292,17 @@ struct EncryptionSettingsView: View {
 
     @ViewBuilder private var browsersSection: some View {
         Section {
-            ForEach(security.browsers ?? []) { browser in
+            ForEach(security.browsers) { browser in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(browser.name)
-                    if let linked = browser.linkedDate {
-                        Text("Linked \(linked.formatted(.relative(presentation: .named)))")
-                            .font(.footnote).foregroundStyle(Color.reloSecondaryText)
-                    }
+                    Text("Linked \(browser.linkedAt.formatted(.relative(presentation: .named)))")
+                        .font(.footnote).foregroundStyle(Color.reloSecondaryText)
                 }
                 .swipeActions {
-                    Button("Unlink", role: .destructive) { pendingUnlink = browser }
+                    Button("Unlink", role: .destructive) { pendingUnlink = .local(browser) }
                 }
                 .contextMenu {
-                    Button("Unlink", systemImage: "xmark.circle", role: .destructive) { pendingUnlink = browser }
+                    Button("Unlink", systemImage: "xmark.circle", role: .destructive) { pendingUnlink = .local(browser) }
                 }
             }
             if let problem = security.browsersProblem {
@@ -269,9 +320,24 @@ struct EncryptionSettingsView: View {
             .disabled(security.linking || model.credential == nil)
             .accessibilityIdentifier("link-browser")
         } header: { Text("Linked browsers") } footer: {
-            Text("Scan the QR code on Relo's web Dashboard. A linked browser can read your encrypted messages until you unlink it.")
+            Text("Scan the QR code on Relo's web Dashboard. A linked browser can read your encrypted messages until you unlink it. This iPhone renews each link; computers stop trusting a browser 14 days after the last renewal.")
         }
         .listRowBackground(ReloListRowBackground())
+        if let serverOnly = security.serverOnlyBrowsers, !serverOnly.isEmpty {
+            Section {
+                ForEach(serverOnly) { browser in
+                    LabeledContent {
+                        Button("Unlink", role: .destructive) { pendingUnlink = .serverOnly(browser) }
+                            .buttonStyle(.borderless)
+                    } label: {
+                        Text(browser.name).font(.footnote)
+                    }
+                }
+            } header: { Text("Listed by the server, not linked from this iPhone") } footer: {
+                Text("This iPhone does not renew these links, so computers stop trusting them within 14 days.")
+            }
+            .listRowBackground(ReloListRowBackground())
+        }
     }
 }
 

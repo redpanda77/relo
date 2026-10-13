@@ -6,6 +6,7 @@ import {
   registerBrowserSchema,
   SEALED_ENVELOPE_IDS_MAX,
   sealedEnvelopesForBrowser,
+  unlinkBrowser,
 } from "../linked-browsers.js";
 import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
@@ -34,6 +35,14 @@ export function registerBrowserRoutes(app: Hono, shared: WebRouteContext): void 
     const status = await browserStatus(db,account.principalId,context.req.param("browserId") ?? "");
     context.header("cache-control","private, no-store");
     return status ? context.json(status) : context.json({ error: "browser_not_found" },404);
+  });
+
+  // Signing out: the browser revokes its own record before deleting its keys (review L5).
+  app.delete("/api/dashboard/browser/:browserId", async (context) => {
+    const account = await accountMutationAccount(context);
+    if (account instanceof Response) return account;
+    const removed = await unlinkBrowser(db,account.principalId,context.req.param("browserId") ?? "");
+    return removed ? context.body(null,204) : context.json({ error: "browser_not_found" },404);
   });
 
   app.get("/api/dashboard/client-keys", async (context) => {

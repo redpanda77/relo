@@ -8,6 +8,8 @@ import { fromB64u, linkSigningInput, verifyBytes } from "./e2ee.mjs";
 import { ensureIdentity, keyStorePath, saveKeyStore, trustKey } from "./keystore.mjs";
 
 const NOTICE_DAYS = 7;
+/** A browser link signed longer ago than this no longer counts; the phone re-signs links it keeps. */
+export const LINK_DAYS = 14;
 
 /** Phones are dev_ ids and browsers brw_ ids; a server cannot relabel one as the other. */
 export const isPhoneId = (id) => typeof id === "string" && id.startsWith("dev_");
@@ -107,8 +109,12 @@ function browserTrust(store, apiUrl, device, now) {
   const phone = link?.deviceId ? store.trusted[trustKey(apiUrl, link.deviceId)] : undefined;
   let valid = false;
   try {
+    // Like WhatsApp Web: a link lasts LINK_DAYS unless the phone re-signs it, so unlinking on the
+    // phone takes effect even if the server keeps listing the browser.
+    const age = Date.parse(now) - Date.parse(link.signedAt);
     valid = Boolean(phone && phone.kind !== "browser" && phone.level !== "pending" && phone.publicKey
       && device.identityKey?.publicKey && typeof link.signedAt === "string"
+      && age < LINK_DAYS * 86_400_000 && age > -5 * 60_000
       && verifyBytes(fromB64u(phone.publicKey, { length: 65 }), linkSigningInput({ browserId: device.deviceId,
         identityKey: device.identityKey.publicKey, phoneDeviceId: link.deviceId, signedAt: link.signedAt }),
       fromB64u(link.signature, { length: 64 })));
