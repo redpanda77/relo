@@ -37,9 +37,10 @@ public enum LiveActivityResponseRequestFactory {
             "idempotencyKey": response.idempotencyKey,
         ]
         // The phone's signature over this answer, made when it was queued (E4.2).
-        let signature = [ReloAnswerSigning.keyIDField, ReloAnswerSigning.signedAtField, ReloAnswerSigning.signatureField]
+        let signature = [ReloAnswerSigning.keyIDField, ReloAnswerSigning.signedAtField, ReloAnswerSigning.signatureField,
+                         ReloAnswerSigning.questionField, ReloAnswerSigning.questionSignatureField]
             .reduce(into: [String: String]()) { fields, key in fields[key] = response.value[key] }
-        if signature.count == 3 { body["signature"] = signature }
+        if signature.count >= 3 { body["signature"] = signature }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }

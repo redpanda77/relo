@@ -71,7 +71,12 @@ struct ReloActivityAttributes: Codable {
             let decodedPresentation = try LiveActivityPresentation(from: decoder)
             sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
             // Opened on this phone: every surface shows the real text instead of the placeholders.
-            let opened = sealed.flatMap(ReloSealedCards.open).map(decodedPresentation.applying) ?? decodedPresentation
+            let text = sealed.flatMap(ReloSealedCards.open)
+            var opened = text.map(decodedPresentation.applying) ?? decodedPresentation
+            // A sealed question shows only the prompt this phone opened, never text the server wrote.
+            if sealed?.kind == "question" {
+                opened = opened.replacingSubtitle(text?.summary ?? ReloSealedCards.promptPlaceholder)
+            }
             // Opaque project and topic handles show their real names (E2.5).
             presentation = opened.resolvingNames(ReloSealedCards.knownNames())
             updatedAt = try Self.decodeDate(.updatedAt, from: values)

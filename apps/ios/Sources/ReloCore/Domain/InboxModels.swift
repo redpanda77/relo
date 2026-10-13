@@ -3,15 +3,28 @@ import Foundation
 public struct InboxContext: Codable, Equatable, Sendable {
     public let providerName: String?
     public let producerKind: String?
-    public let computer: String?
-    public let project: String?
+    /// Stored as received (opaque handles for encrypted work); read through the names below.
+    private let storedComputer: String?
+    private let storedProject: String?
     public let providerThreadId: String?
     public let providerWorkItemId: String?
-    public let threadName: String?
-    public let taskTitle: String?
+    private let storedThreadName: String?
+    private let storedTaskTitle: String?
     public let threadNameSource: String?
     public let taskTitleSource: String?
-    public let account: String?
+    private let storedAccount: String?
+
+    public var computer: String? { ReloNames.display(storedComputer) }
+    public var project: String? { ReloNames.display(storedProject) }
+    public var threadName: String? { ReloNames.display(storedThreadName) }
+    public var taskTitle: String? { ReloNames.display(storedTaskTitle) }
+    public var account: String? { ReloNames.display(storedAccount) }
+
+    private enum CodingKeys: String, CodingKey {
+        case providerName, producerKind, providerThreadId, providerWorkItemId, threadNameSource, taskTitleSource
+        case storedComputer = "computer", storedProject = "project", storedThreadName = "threadName"
+        case storedTaskTitle = "taskTitle", storedAccount = "account"
+    }
 
     public init(
         providerName: String? = nil,
@@ -26,15 +39,15 @@ public struct InboxContext: Codable, Equatable, Sendable {
         taskTitleSource: String? = nil,
         account: String? = nil
     ) {
-        self.account = account
+        self.storedAccount = account
         self.providerName = providerName
         self.producerKind = producerKind
-        self.computer = computer
-        self.project = project
+        self.storedComputer = computer
+        self.storedProject = project
         self.providerThreadId = providerThreadId
         self.providerWorkItemId = providerWorkItemId
-        self.threadName = threadName
-        self.taskTitle = taskTitle
+        self.storedThreadName = threadName
+        self.storedTaskTitle = taskTitle
         self.threadNameSource = threadNameSource
         self.taskTitleSource = taskTitleSource
     }

@@ -37,6 +37,7 @@ import type {
   NotificationSummary,
 } from "@/features/inbox/types"
 import { Page } from "@/components/page"
+import { EncryptedText } from "@/components/atoms/encrypted-text"
 import { formatDashboardDate } from "@/features/inbox/utils"
 import { semanticStatusTone } from "@/lib/status-tone"
 import { cn } from "@/lib/utils"
@@ -320,7 +321,7 @@ export function DeliveryRow({
               >
                 /
               </span>
-              {delivery.title}
+              {delivery.encrypted ? <EncryptedText className="align-middle font-normal" /> : delivery.title}
             </h3>
             <StateBadge value={delivery.state} />
           </div>
@@ -395,7 +396,7 @@ export function DeliveryRow({
     <a
       href={`/dashboard/inbox/notifications/${encodeURIComponent(delivery.notificationId)}`}
       className="group block min-w-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      aria-label={`Open delivery for ${delivery.title}, ${delivery.state}`}
+      aria-label={`Open delivery for ${delivery.encrypted ? "encrypted item" : delivery.title}, ${delivery.state}`}
     >
       {content}
     </a>

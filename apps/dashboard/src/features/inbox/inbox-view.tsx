@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import { fetchDashboardRoute } from "@/app/dashboard-route-loader"
 import { NowHud } from "@/components/organisms/now-hud"
 import { Empty, Page, Section } from "@/components/page"
+import { EncryptedText } from "@/components/atoms/encrypted-text"
+import { displayName } from "@/lib/encrypted"
 import { SIGNAL_CSS } from "@/lib/signal"
 import { LiveNowList, NowAllClear, NowSection } from "@/features/inbox/now-all-clear"
 import { AgentsSection } from "@/features/inbox/agents-section"
@@ -75,7 +77,7 @@ export function InboxView({
     ? notifications
     : notifications.filter((item) => notificationProject(item).key === project)
   const projectOptions = history
-    ? history.filterOptions.projects.map((name) => ({ key: name, name }))
+    ? history.filterOptions.projects.map((name) => ({ key: name, name: displayName(name) }))
     : notificationProjectOptions(notifications)
   const selectedProject = history ? (history.route.filters.project ?? "") : project
   const chooseProject = (value: string) => {
@@ -264,13 +266,21 @@ export function InboxView({
                       </time>
                     ) : null}
                   </div>
-                  <h3 className="mt-2 text-[15px] font-medium text-foreground">{response.title}</h3>
-                  <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{response.prompt}</p>
+                  {response.encrypted ? (
+                    <h3 className="mt-2 text-[15px] font-medium text-muted-foreground">
+                      <EncryptedText />
+                    </h3>
+                  ) : (
+                    <>
+                      <h3 className="mt-2 text-[15px] font-medium text-foreground">{response.title}</h3>
+                      <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{response.prompt}</p>
+                    </>
+                  )}
                   <div className="mt-3 flex justify-end">
                     <Button
                       size="sm"
                       className="min-h-11 sm:min-h-8"
-                      aria-label={`Open ${response.title}`}
+                      aria-label={response.encrypted ? "Open encrypted item" : `Open ${response.title}`}
                       onClick={() => void open(response.notificationId, response.source)}
                     >
                       Open <ArrowRight aria-hidden="true" />
@@ -317,7 +327,7 @@ export function InboxView({
             new Map(
               [...allCards, ...runningCards].map(({ notification, card }) => [
                 card.id,
-                { title: card.title, open: () => void open(card.id, notificationContext(notification)) },
+                { title: card.title, encrypted: card.encrypted, open: () => void open(card.id, notificationContext(notification)) },
               ])
             )
           }

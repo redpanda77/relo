@@ -3,6 +3,7 @@ import * as React from "react"
 
 import {
   logDetail,
+  openLabel,
   quietFor,
   quietLabel,
   signalOf,
@@ -15,6 +16,7 @@ import { agentQuietText, quietMs, type AgentSession } from "@/features/inbox/ses
 import { OriginMeta, RuntimeClock, StepBar } from "@/features/inbox/activity-card"
 import { SIGNALS, SIGNAL_CSS, type Signal } from "@/lib/signal"
 import { cn } from "@/lib/utils"
+import { EncryptedText } from "@/components/atoms/encrypted-text"
 
 /**
  * The monospaced caption that opens every Now section: the title in muted text and the count in
@@ -84,13 +86,13 @@ export function LiveNowList({
                   open()
                 }
               }}
-              aria-label={`Open ${card.title}`}
+              aria-label={openLabel(card)}
               className={cn("holo-card block w-full cursor-pointer space-y-2.5 p-4 text-left", `tone-${tone}`)}
               data-quiet={quiet != null || undefined}
             >
               <div className="flex min-w-0 items-baseline justify-between gap-3">
                 <h3 className="min-w-0 text-[15px] leading-snug font-medium text-foreground [overflow-wrap:anywhere]">
-                  {card.title}
+                  {card.encrypted ? <EncryptedText className="text-muted-foreground" /> : card.title}
                 </h3>
                 {/* A quiet card whose agent is still running says so in one line below, not twice. */}
                 {quiet != null && !agent ? (
@@ -262,7 +264,7 @@ export function TodayLog({
             <button
               type="button"
               onClick={() => onOpen(card.id)}
-              aria-label={`Open ${card.title}`}
+              aria-label={openLabel(card)}
               className="flex min-h-[52px] w-full items-center gap-3 rounded-[14px] bg-white/[0.04] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07]"
             >
               <span
@@ -273,7 +275,11 @@ export function TodayLog({
                 {bang ? "!" : <Icon className="size-3.5" />}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-foreground">{card.title}</span>
+                {card.encrypted ? (
+                  <EncryptedText className="max-w-full text-sm font-medium text-muted-foreground" />
+                ) : (
+                  <span className="block truncate text-sm font-medium text-foreground">{card.title}</span>
+                )}
                 <span className="micro block truncate text-[10px] tracking-[0.06em]">{logDetail(card)}</span>
               </span>
               <time className="micro shrink-0 normal-case" dateTime={card.at ?? undefined}>{timeOfDay(card.at)}</time>

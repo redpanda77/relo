@@ -1,5 +1,6 @@
 import { clockLabel, type Tone } from "@/features/inbox/activity-model"
 import type { InboxOverview } from "@/features/inbox/types"
+import { displayNameOrNull } from "@/lib/encrypted"
 
 export type AgentSession = NonNullable<InboxOverview["sessions"]>[number]
 export type SessionPresence = AgentSession["presence"]
@@ -22,7 +23,7 @@ export function harnessLabel(harness: string): string {
 
 /** "MacBook · work", whichever exist; null when neither is known. */
 export function sessionGroupLabel(session: Pick<AgentSession, "computer" | "account">): string {
-  const parts = [session.computer, session.account].map((part) => part?.trim()).filter(Boolean)
+  const parts = [session.computer, session.account].map(displayNameOrNull).filter(Boolean)
   return parts.length ? parts.join(" · ") : "Unknown computer"
 }
 

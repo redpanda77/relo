@@ -73,6 +73,8 @@ const activitySummarySchema = z.object({
   presentationPresetId: z.string().nullable(),
   presentationPresetRevision: z.number().nullable(),
   presentationPolicySource: z.string().nullable(),
+  // End-to-end sealed (ADR 0005): the readable text is a placeholder; the Dashboard has no key.
+  encrypted: z.boolean().optional(),
   // Card digest, additive: matches what the iPhone History row shows.
   outcome: z.enum(["completed", "failed"]).nullable().optional(),
   steps: z
@@ -84,6 +86,8 @@ const activitySummarySchema = z.object({
 
 const questionSchema = z.object({
   kind: z.string(),
+  // End-to-end sealed (ADR 0005): the readable text is a placeholder; the Dashboard has no key.
+  encrypted: z.boolean().optional(),
   prompt: z.string(),
   state: z.string(),
   respondedAt: nullableDate,
@@ -92,6 +96,8 @@ const questionSchema = z.object({
 
 const notificationSummarySchema = z.object({
   id: z.string(),
+  // End-to-end sealed (ADR 0005): the readable text is a placeholder; the Dashboard has no key.
+  encrypted: z.boolean().optional(),
   title: z.string(),
   body: z.string(),
   source: z.string(),
@@ -135,6 +141,8 @@ const notificationSummarySchema = z.object({
 const deliverySummarySchema = z.object({
   id: z.string(),
   notificationId: z.string(),
+  // End-to-end sealed (ADR 0005): the readable text is a placeholder; the Dashboard has no key.
+  encrypted: z.boolean().optional(),
   title: z.string(),
   source: z.string(),
   deviceName: z.string(),
@@ -174,6 +182,7 @@ export const inboxOverviewSchema = z.object({
   pendingResponses: z.array(
     z.object({
       notificationId: z.string(),
+      encrypted: z.boolean().optional(),
       title: z.string(),
       source: z.string(),
       kind: z.string(),
@@ -252,6 +261,7 @@ export const notificationDetailSchema = z.object({
   shell: inboxShellSchema,
   notification: z.object({
     id: z.string(),
+    encrypted: z.boolean().optional(),
     source: z.string(),
     serviceTitle: z.string().nullable(),
     kind: z.string(),
@@ -277,6 +287,7 @@ export const notificationDetailSchema = z.object({
       threadHistory: z.array(
         z.object({
           id: z.string(),
+          encrypted: z.boolean().optional(),
           generation: z.number().int().positive(),
           state: z.string(),
           title: z.string(),
@@ -319,6 +330,7 @@ export const notificationDetailSchema = z.object({
           relatedActivity: z.object({
             id: z.string(),
             title: z.string(),
+            encrypted: z.boolean().optional(),
             state: z.string(),
             generation: z.number().int().positive(),
           }),
@@ -345,6 +357,7 @@ export const notificationDetailSchema = z.object({
   interaction: z
     .object({
       kind: z.string(),
+      encrypted: z.boolean().optional(),
       state: z.string(),
       action: z.string().nullable(),
       prompt: z.string(),

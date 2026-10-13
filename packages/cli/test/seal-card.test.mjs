@@ -33,7 +33,7 @@ test("the server sees only placeholders and counts; the merged text keeps earlie
   assert.deepEqual(mergedCardText(first, { status: "Testing", detail: null, steps: { labels: ["Build", "Test", "Ship"], current: 2 } }),
     { title: "Deploy 0.12", status: "Testing", progressLabel: "3 of 10", steps: ["Build", "Test", "Ship"] });
   const long = fitCardText({ title: "T".repeat(80), status: "S".repeat(60), detail: "D".repeat(240), steps: Array(8).fill("L".repeat(40)) });
-  assert.ok(Buffer.byteLength(JSON.stringify(long)) <= 500);
+  assert.ok(Buffer.byteLength(JSON.stringify(long)) <= 700);
 });
 
 test("the card cache is private, per card, and forgotten when the card ends", async () => {

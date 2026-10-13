@@ -15,6 +15,7 @@ import type * as React from "react"
 
 import {
   metaLine,
+  openLabel,
   projectColor,
   runtimeLabel,
   stepStates,
@@ -23,6 +24,7 @@ import {
   type Outcome,
   type OutcomeKind,
 } from "@/features/inbox/activity-model"
+import { EncryptedText } from "@/components/atoms/encrypted-text"
 import { useTicker } from "@/lib/ticker"
 import { cn } from "@/lib/utils"
 
@@ -128,7 +130,11 @@ export function DecisionStrip({ card }: { card: ActivityCard }) {
         "border-[color-mix(in_srgb,var(--tone)_26%,transparent)] bg-[color-mix(in_srgb,var(--tone)_9%,transparent)]"
       )}
     >
-      <span className="min-w-0 truncate text-foreground/90">{decision.prompt}</span>
+      {decision.encrypted ? (
+        <EncryptedText className="text-foreground/90" />
+      ) : (
+        <span className="min-w-0 truncate text-foreground/90">{decision.prompt}</span>
+      )}
       <ArrowRight className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
       <span className="shrink-0 font-medium" style={{ color: "color-mix(in srgb, var(--tone) 80%, white)" }}>
         {decision.answer}
@@ -155,7 +161,7 @@ function Body({ card }: { card: ActivityCard }) {
       {card.origin ? <OriginMeta card={card} className="mt-1 max-w-full" /> : null}
       <div className="mt-2 flex min-w-0 items-start justify-between gap-3">
         <h3 className="min-w-0 text-[15px] leading-snug font-medium text-foreground [overflow-wrap:anywhere]">
-          {card.title}
+          {card.encrypted ? <EncryptedText className="text-muted-foreground" /> : card.title}
         </h3>
         <OutcomeBadge outcome={card.outcome} />
       </div>
@@ -218,7 +224,7 @@ export function ActivityCardRow({
               onOpen()
             }
           }}
-          aria-label={`Open ${card.title}`}
+          aria-label={openLabel(card)}
           className={cn(cls, "cursor-pointer")}
           data-live={card.outcome.kind === "running" || card.outcome.kind === "needs-you"}
         >

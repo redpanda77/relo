@@ -208,34 +208,39 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
         self.accessGroup = accessGroup
     }
 
-    public func names() -> [String: String] {
-        lock.withLock { load() }
-    }
+    private typealias Entry = ReloNames.Entry
+    /// Rows read names on every render; the Keychain is read at most once a second per process.
+    private var cached: (at: Date, names: [String: String])?
 
-    public func learn(_ names: [String: String]) {
-        let accepted = ReloNames.accepted(names)
-        guard !accepted.isEmpty else { return }
+    public func names() -> [String: String] {
         lock.withLock {
-            var current = load()
-            let before = current
-            current.merge(accepted) { _, new in new }
-            if current.count > ReloNames.capacity {
-                for key in current.keys.sorted().prefix(current.count - ReloNames.capacity) { current.removeValue(forKey: key) }
-            }
-            if current != before { save(current) }
+            if let cached, Date().timeIntervalSince(cached.at) < 1 { return cached.names }
+            let names = load().mapValues(\.name)
+            cached = (Date(), names)
+            return names
         }
     }
 
-    private func load() -> [String: String] {
+    public func learn(_ names: [String: String], sender: String) {
+        lock.withLock {
+            let current = load()
+            let learned = ReloNames.learning(names, sender: sender, into: current)
+            if learned != current { save(learned) }
+            cached = (Date(), learned.mapValues(\.name))
+        }
+    }
+
+    private func load() -> [String: Entry] {
         var query = baseQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return [:] }
-        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+        // A book saved before senders were recorded holds plain names; it is replaced from envelopes.
+        return (try? JSONDecoder().decode([String: Entry].self, from: data)) ?? [:]
     }
 
-    private func save(_ names: [String: String]) {
+    private func save(_ names: [String: Entry]) {
         guard let data = try? JSONEncoder().encode(names) else { return }
         let attributes: [String: Any] = [
             kSecValueData as String: data,
@@ -256,5 +261,23 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         return query
+    }
+}
+
+public enum ReloEncryptionState {
+    /// Signing out ends this phone's encryption identity for the account: keys, trusted computers,
+    /// names and the replay ledger are deleted, so nothing carries over to another account or server.
+    public static func forget(bundle: Bundle = .main) {
+        let group = ReloKeyRing.sharedAccessGroup(bundle: bundle)
+        for account in [KeychainKeyRingStore.account, KeychainTrustedClientStore.account, KeychainNameBook.account,
+                        KeychainReplayLedger.account] {
+            var query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: "relo.e2ee",
+                kSecAttrAccount as String: account,
+            ]
+            if let group { query[kSecAttrAccessGroup as String] = group }
+            SecItemDelete(query as CFDictionary)
+        }
     }
 }

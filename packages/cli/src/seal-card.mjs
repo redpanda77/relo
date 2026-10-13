@@ -9,11 +9,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { identityKeys } from "./keystore.mjs";
-import { opaqueIdentity, sealablePhones, sealNotice, trustFor } from "./seal-notice.mjs";
+import { opaqueIdentity, sealablePhones, sealingUnavailable, sealNotice, trustFor } from "./seal-notice.mjs";
+import { loadKnownNames } from "./opaque-names.mjs";
 
 export const SEALED_CARD_TITLE = "Encrypted card";
 export const SEALED_CARD_STATUS = "Updating…";
-const MAX_CARD_TEXT_BYTES = 500;
+const MAX_CARD_TEXT_BYTES = 700;
 const CARD_ID = /^act_[0-9a-f-]{36}$/u;
 
 export function sealedCardDirectory(env = process.env) {
@@ -48,26 +49,27 @@ export async function forgetCardText(directory, cardId) {
 }
 
 /** The card text after this command: the previous text with this command's fields applied. */
-export function mergedCardText(previous, body) {
-  const text = { ...(previous ?? {}) };
+export function mergedCardText(previous, body, reserved = 0) {
+  const { names: _names, ...earlier } = previous ?? {};
+  const text = { ...earlier };
   for (const field of ["title", "status", "detail", "progressLabel"]) {
     if (body[field] === null) delete text[field];
     else if (typeof body[field] === "string") text[field] = body[field];
   }
   if (Array.isArray(body.steps?.labels)) text.steps = [...body.steps.labels];
-  return fitCardText(text);
+  return fitCardText(text, MAX_CARD_TEXT_BYTES - reserved);
 }
 
 /** Keeps the sealed text within two 256-byte blocks so the push stays small. */
-export function fitCardText(text) {
+export function fitCardText(text, limit = MAX_CARD_TEXT_BYTES) {
   const fitted = { ...text };
   const size = () => Buffer.byteLength(JSON.stringify(fitted));
   const shorten = (value, length) => ([...value].length > length ? `${[...value].slice(0, length - 1).join("")}…` : value);
-  if (size() > MAX_CARD_TEXT_BYTES && fitted.detail) fitted.detail = shorten(fitted.detail, 80);
-  if (size() > MAX_CARD_TEXT_BYTES) delete fitted.detail;
-  if (size() > MAX_CARD_TEXT_BYTES) delete fitted.progressLabel;
-  if (size() > MAX_CARD_TEXT_BYTES && fitted.steps) fitted.steps = fitted.steps.map((label) => shorten(label, 14));
-  if (size() > MAX_CARD_TEXT_BYTES && fitted.title) fitted.title = shorten(fitted.title, 40);
+  if (size() > limit && fitted.detail) fitted.detail = shorten(fitted.detail, 80);
+  if (size() > limit) delete fitted.detail;
+  if (size() > limit) delete fitted.progressLabel;
+  if (size() > limit && fitted.steps) fitted.steps = fitted.steps.map((label) => shorten(label, 14));
+  if (size() > limit && fitted.title) fitted.title = shorten(fitted.title, 40);
   return fitted;
 }
 
@@ -93,15 +95,19 @@ export async function sealCardRequest({ body, cardId, key, client, config, depen
   if (!trust) return { body, text: null };
   const { store, devices } = trust;
   const { eligible } = sealablePhones(store, config.apiUrl, devices, deviceIds);
-  if (eligible.length === 0) return { body, text: null };
+  if (eligible.length === 0) {
+    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    return { body, text: null };
+  }
   const previous = cardId ? await loadCardText(sealedCardDirectory(dependencies.env), cardId) : null;
-  const text = mergedCardText(previous, body);
   // The card's project, topic and task go to the server as handles; the phone gets the names (E2.5).
+  // Every update carries them (from this command or the card's cache), so the phone always can name them.
   const identity = await opaqueIdentity(store, body.context, dependencies);
-  const named = Object.keys(identity.names).length && Buffer.byteLength(JSON.stringify({ ...text, names: identity.names })) <= 760
-    ? { ...text, names: identity.names } : text;
+  let names = { ...(previous?.names ?? {}), ...identity.names };
+  if (Object.keys(names).length === 0 && cardId) names = await namesForCard(client, cardId, dependencies);
+  const text = { ...mergedCardText(previous, body, Buffer.byteLength(JSON.stringify(names))), ...(Object.keys(names).length ? { names } : {}) };
   const sealed = sealNotice({ kind: "card", sender: identityKeys(store), idempotencyKey: key, phones: eligible,
-    content: named, alert: named });
+    content: text, alert: text });
   const placeholder = placeholderCardBody(body);
   if (identity.context) placeholder.context = identity.context;
   return { body: { ...placeholder, sealed }, text };
@@ -111,4 +117,16 @@ export async function sealCardRequest({ body, cardId, key, client, config, depen
 export async function cardStepLabelsFor(cardId, serverLabels, dependencies) {
   const cached = await loadCardText(sealedCardDirectory(dependencies.env), cardId);
   return Array.isArray(cached?.steps) && cached.steps.length === serverLabels?.length ? cached.steps : serverLabels;
+}
+
+/** Names this computer knows for the handles in a card's context (a card sealed before names travelled). */
+async function namesForCard(client, cardId, dependencies) {
+  try {
+    const context = (await client.getActivity(cardId))?.activity?.context ?? {};
+    const known = await loadKnownNames(dependencies.env);
+    return Object.fromEntries(Object.values(context).filter((value) => typeof value === "string" && known[value])
+      .map((handle) => [handle, known[handle]]));
+  } catch {
+    return {};
+  }
 }

@@ -8,7 +8,7 @@ import Foundation
 public enum ReloE2EE {
     public static let version = "relo.e2e.v1"
     public static let kinds: Set<String> = ["notice", "question", "card", "card-update", "reply", "grouping-key"]
-    static let ciphersuite = HPKE.Ciphersuite.P256_SHA256_AES_GCM_256
+    public static let ciphersuite = HPKE.Ciphersuite.P256_SHA256_AES_GCM_256
     static let wrapInfo = Data("relo.e2e.v1 content-key".utf8)
     static let padBlock = 256
     static let maximumPlaintext = 64 * 1024
@@ -138,6 +138,14 @@ public extension ReloE2EE {
         interactionID: String, notificationID: String, deviceID: String, value: String, respondedAt: String
     ) -> Data {
         Data(["\(version) answer", interactionID, notificationID, deviceID, value, respondedAt].joined(separator: "\n").utf8)
+    }
+
+    /// An answer to a sealed question also signs the context of the question envelope the phone
+    /// opened: a value only the asking CLI chose, so the server cannot move the approval elsewhere.
+    static func questionAnswerSigningInput(
+        interactionID: String, notificationID: String, deviceID: String, value: String, respondedAt: String, question: String
+    ) -> Data {
+        Data(["\(version) answer-to", interactionID, notificationID, deviceID, value, respondedAt, question].joined(separator: "\n").utf8)
     }
 
     static func signingInput(_ envelope: ReloEnvelope) -> Data {

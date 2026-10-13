@@ -1,4 +1,5 @@
 import type { NotificationSummary } from "@/features/inbox/types"
+import { displayName, displayNameOrNull } from "@/lib/encrypted"
 import { hierarchy } from "@/lib/format"
 
 export type NotificationProjectOption = {
@@ -25,7 +26,7 @@ export function notificationProject(
   if (notification.resources) {
     return {
       key: notification.resources.project.id,
-      name: notification.resources.project.name,
+      name: displayName(notification.resources.project.name),
       direct: notification.resources.project.isDirect,
     }
   }
@@ -33,7 +34,7 @@ export function notificationProject(
   if (context.project) {
     return {
       key: `project:${context.project}`,
-      name: context.project,
+      name: displayName(context.project),
       direct: false,
     }
   }
@@ -61,6 +62,6 @@ export function notificationContext(notification: NotificationSummary): string {
   return hierarchy(
     notification.source,
     project.direct ? null : project.name,
-    context.threadName
+    displayNameOrNull(context.threadName)
   )
 }

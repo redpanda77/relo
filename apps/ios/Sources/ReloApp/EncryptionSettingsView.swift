@@ -45,8 +45,14 @@ final class EncryptionSecurityModel {
         do {
             let state = try ring.store.load() ?? ring.maintain()
             phoneKeyID = ReloE2EE.keyID(publicKeyX963: state.identity.publicKey)
-            let clients = try await directory.clientKeys(credential: credential)
+            var clients = try await directory.clientKeys(credential: credential)
             try trust.autoTrust(clients)
+            // A computer the phone still trusts but the server no longer lists stays visible.
+            let listed = Set(clients.map(\.clientId))
+            clients += try trust.all().filter { !listed.contains($0.clientId) }.map {
+                ReloClientKey(clientId: $0.clientId, name: "\($0.name) (no longer listed by the server)", keyId: $0.keyId,
+                              publicKey: $0.publicKey, changedAt: "")
+            }
             computers = try clients.map { client in
                 Computer(client: client, trust: try trust.trust(of: client), notice: try trust.notice(for: client),
                          safetyNumber: try trust.safetyNumber(phoneIdentity: state.identity.publicKey, client: client))
@@ -91,7 +97,7 @@ struct EncryptionSettingsView: View {
                                         if computer.trust == .verified { Text("Verified") }
                                     }
                                     if let notice = computer.notice {
-                                        Text("Security code changed \(notice.at.formatted(.relative(presentation: .named)))")
+                                        Text("\(notice.kind == "new_computer" ? "Added" : "Security code changed") \(notice.at.formatted(.relative(presentation: .named)))")
                                             .font(.footnote).foregroundStyle(Color.reloSecondaryText)
                                     }
                                 }

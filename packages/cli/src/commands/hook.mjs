@@ -115,7 +115,8 @@ export async function processHook({ positionals, options, dependencies }) {
     // Once this computer seals for a phone, project, computer and account go out as handles (E2.5).
     const plainLabels = { project, computer: await computerFor(dependencies, config),
       account: label(detectAccount(env, dependencies.accountProbes).account, 40) };
-    const labels = await hookLabels(plainLabels, config?.apiUrl, dependencies).catch(() => plainLabels);
+    // On any failure send no labels rather than readable ones.
+    const labels = await hookLabels(plainLabels, config?.apiUrl, dependencies).catch(() => ({}));
     project = labels.project;
     const { computer, account } = labels;
     // The card key the activity commands derive for this session, so the server can link card and session.

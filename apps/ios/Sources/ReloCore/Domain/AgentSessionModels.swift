@@ -25,19 +25,28 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
 
     public let id: String
     public let harness: String
-    public let computer: String?
-    public let account: String?
-    public let project: String?
+    /// Stored as received (opaque handles for encrypted work); read through the names below.
+    private let storedComputer: String?
+    private let storedAccount: String?
+    private let storedProject: String?
+    public var computer: String? { ReloNames.display(storedComputer) }
+    public var account: String? { ReloNames.display(storedAccount) }
+    public var project: String? { ReloNames.display(storedProject) }
     public let state: String
     public let startedAt: Date
     public let lastEventAt: Date
     public let card: Card?
     public let presence: Presence
 
+    private enum CodingKeys: String, CodingKey {
+        case id, harness, state, startedAt, lastEventAt, card, presence
+        case storedComputer = "computer", storedAccount = "account", storedProject = "project"
+    }
+
     public init(id: String, harness: String, computer: String? = nil, account: String? = nil, project: String? = nil,
                 state: String = "active", startedAt: Date, lastEventAt: Date, card: Card? = nil, presence: Presence) {
-        self.id = id; self.harness = harness; self.computer = computer; self.account = account
-        self.project = project; self.state = state; self.startedAt = startedAt; self.lastEventAt = lastEventAt
+        self.id = id; self.harness = harness; self.storedComputer = computer; self.storedAccount = account
+        self.storedProject = project; self.state = state; self.startedAt = startedAt; self.lastEventAt = lastEventAt
         self.card = card; self.presence = presence
     }
 }

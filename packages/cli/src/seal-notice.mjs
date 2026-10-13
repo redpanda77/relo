@@ -7,8 +7,11 @@
 // while any other input gets unrelated values.
 import { createHash, createHmac } from "node:crypto";
 import { b64u, fromB64u, sealEnvelope, verifyPrekey } from "./e2ee.mjs";
-import { identityKeys, trustKey } from "./keystore.mjs";
-import { ensureTrust } from "./trust.mjs";
+import { identityKeys, subkey, trustKey } from "./keystore.mjs";
+import { approvePendingPhones } from "./phone-approval.mjs";
+import { ensureTrust, trustNotices, trustedPhones } from "./trust.mjs";
+import { keyStorePath, loadKeyStore } from "./keystore.mjs";
+import { EXIT, ReloError } from "./errors.mjs";
 import { groupingKey, loadKnownNames, opaqueContext, rememberNames } from "./opaque-names.mjs";
 
 const MAX_ALERT_PLAINTEXT = 760;
@@ -20,24 +23,42 @@ function withNames(content, names, limit) {
   return limit === undefined || Buffer.byteLength(JSON.stringify(named)) <= limit ? named : content;
 }
 
-const STORE_ERRORS = new Set(["ENOENT", "EACCES", "EROFS", "ENOTDIR", "EPERM"]);
+const MAX_PREKEY_AGE_MS = 30 * 86_400_000;
 
 /**
- * This computer's trust, established automatically (trust on first use), or null when it cannot be
- * (an older server without key routes, an unwritable key store). A failure other than the local key
- * store is reported, so readable fallback is never silent.
+ * This computer's trust, established automatically, or null when this computer has never sealed for
+ * this server and the server cannot do end-to-end encryption (an older server, no key store).
+ * Once a phone is trusted, anything that would downgrade to readable text fails closed: a server
+ * that hides the phone's keys must not be able to make the CLI send readable content.
  */
 export async function trustFor({ client, config, dependencies, notes }) {
+  let known = null;
   try {
-    return await ensureTrust({ client, config, dependencies });
+    known = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
   } catch (error) {
-    // A server without key routes (older than 0.11) and a key store that cannot be written are not
-    // failures to report; anything else is, so a readable fallback is never silent.
+    if (!STORE_ERRORS.has(error?.code)) throw error;
+  }
+  const committed = known?.identity && trustedPhones(known, config.apiUrl).length > 0;
+  try {
+    const trust = await ensureTrust({ client, config, dependencies });
+    notes?.push(...await approvePendingPhones({ client, apiUrl: config.apiUrl, store: trust.store, devices: trust.devices, dependencies }));
+    notes?.push(...trustNotices(trust.store, config.apiUrl, dependencies.now?.() ?? Date.now()));
+    return { ...trust, committed: committed || trustedPhones(trust.store, config.apiUrl).length > 0 };
+  } catch (error) {
+    if (committed) throw sealingUnavailable(error?.message);
+    // Never sealed for this server: a server without key routes or a test double stays readable.
     const unsupported = error?.status === 404 || error instanceof TypeError || STORE_ERRORS.has(error?.code);
     if (!unsupported) notes?.push(`not end-to-end encrypted: ${error?.message ?? "keys unavailable"}`);
     return null;
   }
 }
+
+export function sealingUnavailable(reason) {
+  return new ReloError(`End-to-end encryption is on for this server but the phone's keys are unavailable${reason ? ` (${reason})` : ""}. Nothing was sent.`,
+    { code: "E2EE_UNAVAILABLE", exitCode: EXIT.API, details: { hint: "Open Relo on the iPhone, then retry; relo keys status shows the phones" } });
+}
+
+const STORE_ERRORS = new Set(["ENOENT", "EACCES", "EROFS", "ENOTDIR", "EPERM"]);
 
 /** The opaque work identity for a sealed request (E2.5), and the names to seal for the phone. */
 export async function opaqueIdentity(store, context, dependencies) {
@@ -57,7 +78,8 @@ export function sealablePhones(store, apiUrl, devices, requestedDeviceIds) {
   for (const device of devices) {
     if (requestedDeviceIds && !requestedDeviceIds.includes(device.deviceId)) continue;
     const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
-    const usable = pinned && pinned.publicKey === device.identityKey.publicKey && device.prekey
+    const fresh = device.prekey && Date.now() - Date.parse(device.prekey.createdAt) < MAX_PREKEY_AGE_MS;
+    const usable = pinned && pinned.level !== "pending" && pinned.publicKey === device.identityKey.publicKey && fresh
       && verifyPrekey({ identityPublicKey: fromB64u(pinned.publicKey, { length: 65 }), prekey: { ...device.prekey, deviceId: device.deviceId } });
     if (usable) eligible.push({ deviceId: device.deviceId, prekeyId: device.prekey.prekeyId, publicKey: fromB64u(device.prekey.publicKey, { length: 65 }) });
     else skipped.push(device.deviceId);
@@ -79,7 +101,7 @@ export function fitAlert({ title, summary }) {
 export function sealNotice({ sender, idempotencyKey, phones, content, sentAt, kind = "notice", alert, names }) {
   const plaintext = withNames(sentAt === undefined ? { ...content } : { ...content, sentAt }, names);
   const recipients = [...phones].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
-  const seed = createHmac("sha256", sender.privateKey).update([
+  const seed = createHmac("sha256", subkey(sender.privateKey, "seal-seed")).update([
     `relo.e2e.v1 seal-${kind}`, idempotencyKey,
     ...recipients.map((phone) => `${phone.deviceId} ${phone.prekeyId} ${b64u(phone.publicKey)}`),
     createHash("sha256").update(JSON.stringify(plaintext)).digest("hex"),
@@ -111,7 +133,10 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
   if (!trust) return body;
   const { store, devices } = trust;
   const { eligible, skipped } = sealablePhones(store, config.apiUrl, devices, body.deviceIds);
-  if (eligible.length === 0) return body;
+  if (eligible.length === 0) {
+    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    return body;
+  }
   const identity = await opaqueIdentity(store, body.context, dependencies);
   const sealed = sealNotice({
     sender: identityKeys(store), idempotencyKey: key, phones: eligible, names: identity.names,
@@ -137,7 +162,10 @@ export async function sealQuestion({ title, prompt, key, client, config, depende
   if (!trust) return null;
   const { store, devices } = trust;
   const { eligible, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
-  if (eligible.length === 0) return null;
+  if (eligible.length === 0) {
+    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    return null;
+  }
   if (skipped.length) notes.push(`question end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys see a placeholder`);
   const identity = await opaqueIdentity(store, context, dependencies);
   const sealed = sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible,

@@ -85,7 +85,7 @@ public enum InboxHierarchyProjection {
         if let project = item.resources?.project {
             return InboxProjectIdentity(
                 id: project.id,
-                name: project.name,
+                name: ReloNames.display(project.name) ?? project.name,
                 isDirect: project.isDirect,
                 paletteSlot: project.palette.slot,
                 paletteGeneration: project.palette.generation,

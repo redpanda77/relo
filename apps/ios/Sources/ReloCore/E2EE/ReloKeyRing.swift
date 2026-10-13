@@ -25,6 +25,16 @@ public struct ReloStoredKey: Codable, Equatable, Sendable {
     public var kind: Kind
     public var data: Data
     public var publicKey: Data
+    /// True when the key opens envelopes while the iPhone is locked (after its first unlock since
+    /// boot), so notifications and the Lock Screen show real text. Absent on keys made before this.
+    public var usableWhileLocked: Bool? = nil
+
+    public init(kind: Kind, data: Data, publicKey: Data, usableWhileLocked: Bool? = nil) {
+        self.kind = kind
+        self.data = data
+        self.publicKey = publicKey
+        self.usableWhileLocked = usableWhileLocked
+    }
 }
 
 public struct ReloStoredPrekey: Codable, Equatable, Sendable {
@@ -85,7 +95,11 @@ public struct ReloKeyRing: Sendable {
         let original = try store.load()
         var state = try original ?? ReloKeyRingState(identity: factory.makeIdentity(), prekeys: [])
         let current = state.prekeys.first { $0.retiredAt == nil }
-        let due = current.map { (Self.date($0.createdAt) ?? .distantPast).addingTimeInterval(policy.rotationInterval) <= now } ?? true
+        // A prekey that only works while unlocked is replaced at once (the Lock Screen needs it).
+        let due = current.map {
+            (Self.date($0.createdAt) ?? .distantPast).addingTimeInterval(policy.rotationInterval) <= now
+                || $0.key.usableWhileLocked != true
+        } ?? true
         if due {
             state.prekeys = state.prekeys.map { prekey in
                 var retired = prekey
@@ -164,7 +178,8 @@ public struct ReloSoftwareKeyFactory: ReloKeyFactory {
 
     public func makePrekey() throws -> ReloStoredKey {
         let key = P256.KeyAgreement.PrivateKey()
-        return ReloStoredKey(kind: .software, data: key.rawRepresentation, publicKey: key.publicKey.x963Representation)
+        return ReloStoredKey(kind: .software, data: key.rawRepresentation, publicKey: key.publicKey.x963Representation,
+                             usableWhileLocked: true)
     }
 
     public func signer(for identity: ReloStoredKey) throws -> any ReloIdentitySigning {
@@ -175,50 +190,6 @@ public struct ReloSoftwareKeyFactory: ReloKeyFactory {
     public func opener(for prekey: ReloStoredKey) throws -> any ReloPrekeyOpening {
         guard prekey.kind == .software else { throw ReloE2EEError.prekeyUnavailable }
         return ReloSoftwarePrekey(privateKey: try P256.KeyAgreement.PrivateKey(rawRepresentation: prekey.data))
-    }
-}
-
-/// Keys created inside the Secure Enclave: the private scalar never leaves it, and the stored blob
-/// is useless on any other device.
-public struct ReloSecureEnclaveKeyFactory: ReloKeyFactory {
-    public init() {}
-
-    public static var isAvailable: Bool { SecureEnclave.isAvailable }
-
-    public func makeIdentity() throws -> ReloStoredKey {
-        let key = try SecureEnclave.P256.Signing.PrivateKey()
-        return ReloStoredKey(kind: .secureEnclave, data: key.dataRepresentation, publicKey: key.publicKey.x963Representation)
-    }
-
-    public func makePrekey() throws -> ReloStoredKey {
-        let key = try SecureEnclave.P256.KeyAgreement.PrivateKey()
-        return ReloStoredKey(kind: .secureEnclave, data: key.dataRepresentation, publicKey: key.publicKey.x963Representation)
-    }
-
-    public func signer(for identity: ReloStoredKey) throws -> any ReloIdentitySigning {
-        guard identity.kind == .secureEnclave else { return try ReloSoftwareKeyFactory().signer(for: identity) }
-        return SecureEnclaveIdentity(key: try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: identity.data))
-    }
-
-    public func opener(for prekey: ReloStoredKey) throws -> any ReloPrekeyOpening {
-        guard prekey.kind == .secureEnclave else { return try ReloSoftwareKeyFactory().opener(for: prekey) }
-        return SecureEnclavePrekey(key: try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: prekey.data))
-    }
-
-    private struct SecureEnclaveIdentity: ReloIdentitySigning {
-        let key: SecureEnclave.P256.Signing.PrivateKey
-        var publicKeyX963: Data { key.publicKey.x963Representation }
-        func sign(_ message: Data) throws -> Data { try key.signature(for: message).rawRepresentation }
-    }
-
-    private struct SecureEnclavePrekey: ReloPrekeyOpening {
-        let key: SecureEnclave.P256.KeyAgreement.PrivateKey
-        func openContentKey(encapsulatedKey: Data, ciphertext: Data, info: Data, aad: Data) throws -> Data {
-            var recipient = try HPKE.Recipient(
-                privateKey: key, ciphersuite: ReloE2EE.ciphersuite, info: info, encapsulatedKey: encapsulatedKey
-            )
-            return try recipient.open(ciphertext, authenticating: aad)
-        }
     }
 }
 

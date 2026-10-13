@@ -8,11 +8,13 @@ import {
   type AgentSession,
 } from "@/features/inbox/sessions-model"
 import { NowSection } from "@/features/inbox/now-all-clear"
+import { EncryptedText } from "@/components/atoms/encrypted-text"
+import { displayName } from "@/lib/encrypted"
 import { SIGNAL_CSS } from "@/lib/signal"
 import { useTicker } from "@/lib/ticker"
 import { cn } from "@/lib/utils"
 
-export type SessionCardLink = { title: string; open: () => void }
+export type SessionCardLink = { title: string; encrypted?: boolean; open: () => void }
 
 function PresenceChip({ session, syncedAt, now }: { session: AgentSession; syncedAt: number; now: number }) {
   const view = presenceView(session, now, syncedAt)
@@ -46,7 +48,7 @@ function SessionRow({
       <div className="min-w-0">
         <p className="truncate text-[15px] leading-snug font-medium text-foreground">
           {harnessLabel(session.harness)}
-          {session.project ? <span className="text-muted-foreground">{` · ${session.project}`}</span> : null}
+          {session.project ? <span className="text-muted-foreground">{` · ${displayName(session.project)}`}</span> : null}
         </p>
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
           {elapsed ? <span className="micro tabular-nums normal-case tracking-wide" data-part="elapsed">{elapsed}</span> : null}
@@ -54,11 +56,11 @@ function SessionRow({
             <button
               type="button"
               onClick={link.open}
-              aria-label={`Open ${link.title}`}
+              aria-label={link.encrypted ? "Open encrypted item" : `Open ${link.title}`}
               className="micro max-w-full cursor-pointer truncate normal-case tracking-wide underline-offset-2 hover:underline"
               style={{ color: SIGNAL_CSS.running }}
             >
-              {link.title}
+              {link.encrypted ? <EncryptedText /> : link.title}
             </button>
           ) : null}
         </div>

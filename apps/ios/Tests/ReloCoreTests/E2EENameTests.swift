@@ -9,7 +9,7 @@ final class E2EENameTests: XCTestCase {
         private let lock = NSLock()
         private var stored: [String: String] = [:]
         func names() -> [String: String] { lock.withLock { stored } }
-        func learn(_ names: [String: String]) { lock.withLock { stored.merge(ReloNames.accepted(names)) { _, new in new } } }
+        func learn(_ names: [String: String], sender: String) { lock.withLock { stored.merge(ReloNames.accepted(names)) { _, new in new } } }
     }
     private final class RingStore: ReloKeyRingStore, @unchecked Sendable {
         private let lock = NSLock()
@@ -58,6 +58,36 @@ final class E2EENameTests: XCTestCase {
         guard case .opened = sealed.open(envelope, deviceID: "dev_1") else { return XCTFail("opened") }
         XCTAssertEqual(book.names(), [project: "relo"])
         XCTAssertEqual(ReloNames.resolve(json: Data(#"{"p":"\#(project)"}"#.utf8), book.names()), Data(#"{"p":"relo"}"#.utf8))
+    }
+
+    func testNamesAreKeptPerSenderSoOneComputerCannotRelabelAnother() {
+        var book = ReloNames.learning([project: "relo"], sender: "key-a", into: [:])
+        book = ReloNames.learning([project: "bank-transfer", topic: "deploy"], sender: "key-b", into: book)
+        XCTAssertEqual(book[project]?.name, "relo", "another computer cannot rename a handle")
+        XCTAssertEqual(book[topic], ReloNames.Entry(name: "deploy", sender: "key-b"))
+        book = ReloNames.learning([project: "relo-private"], sender: "key-a", into: book)
+        XCTAssertEqual(book[project]?.name, "relo-private", "the computer that named it may rename it")
+        XCTAssertEqual(ReloNames.learning(["not-a-handle": "x"], sender: "key-a", into: [:]), [:])
+    }
+
+    func testRowsStoredBeforeTheirNamesArrivedShowNamesOnceLearned() throws {
+        let computer = "c-vrs7dnttsuaskvum"
+        let stored = try JSONDecoder().decode(InboxContext.self, from: Data(
+            #"{"project":"\#(project)","threadName":"\#(topic)","computer":"\#(computer)"}"#.utf8))
+        ReloSealedCards.installNames { [:] }
+        XCTAssertEqual(stored.project, project, "unknown handles stay handles")
+        let book = [project: "relo", topic: "E2EE rollout", computer: "Work Mac"]
+        ReloSealedCards.installNames { book }
+        defer { ReloSealedCards.installNames { [:] } }
+        XCTAssertEqual(stored.project, "relo")
+        XCTAssertEqual(stored.threadName, "E2EE rollout")
+        XCTAssertEqual(stored.originLabel, "Work Mac")
+        // The stored form keeps the handle: names live only in this phone's Keychain.
+        XCTAssertTrue(String(decoding: try JSONEncoder().encode(stored), as: UTF8.self).contains(project))
+        let session = try ReloWireJSON.decoder().decode(AgentSession.self, from: Data(
+            #"{"id":"s1","harness":"claude-code","computer":"\#(computer)","project":"\#(project)","state":"active","startedAt":"2026-10-13T17:00:00.000Z","lastEventAt":"2026-10-13T17:00:00.000Z","presence":"working"}"#.utf8))
+        XCTAssertEqual(session.project, "relo")
+        XCTAssertEqual(AgentSessionsProjection.groupTitle(session), "Work Mac")
     }
 
     func testCardIdentityLabelsShowRealNames() {

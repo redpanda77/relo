@@ -538,6 +538,25 @@ final class AppModel {
         }
     }
 
+    /// The context of the sealed question this phone opened for `notificationID`, or nil when the
+    /// question was not sealed or could not be opened (then only the plain signature is sent).
+    func openedSealedQuestionContext(notificationID: String) -> String? {
+        let placeholders: Set<String> = ["Private notification", ReloSealedCards.promptPlaceholder, "Encrypted question"]
+        if let item = items.first(where: { $0.id == notificationID }), let sealed = item.sealed, sealed.content.kind == "question",
+           let prompt = item.interaction?.prompt, !placeholders.contains(prompt) {
+            return sealed.content.context
+        }
+        if let cached = currentState?.snapshot.pending?.entries.values.first(where: { $0.item.notificationId == notificationID })?.item,
+           let sealed = cached.sealed, sealed.content.kind == "question", !placeholders.contains(cached.summary) {
+            return sealed.content.context
+        }
+        if let subject = currentState?.snapshot.subjects.values.first(where: { $0.projection.notificationId == notificationID })?.projection,
+           let sealed = subject.sealed, sealed.content.kind == "question", !placeholders.contains(subject.summary) {
+            return sealed.content.context
+        }
+        return nil
+    }
+
     /// This phone's identity signer for answers; nil in previews and tests.
     @ObservationIgnored var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)?
 
@@ -1486,8 +1505,10 @@ final class AppModel {
             interactionID: interactionID,
             serverOrigin: serverURL
         )
-        // Signed once, here, so the queued answer retries with identical bytes (E4.2).
-        let pending = ReloAnswerSigning.sign(unsigned, signer: answerSigner?())
+        // Signed once, here, so the queued answer retries with identical bytes (E4.2), and bound to the
+        // sealed question this phone opened and showed.
+        let pending = ReloAnswerSigning.sign(unsigned, signer: answerSigner?(),
+                                             question: openedSealedQuestionContext(notificationID: notificationID))
         var selectedResponse = pending
         do {
             let enqueue = try await pendingResponseStore.enqueue(pending)
@@ -1924,6 +1945,8 @@ final class AppModel {
             self.accountState = .signedOut
             try? await liveActivityCoordinator.clearSelectedAccount()
             try? await pendingResponseStore.clearSelectedAccount()
+            await encryptionKeys?.forget()
+            encryptionKeysProblem = nil
             try signOutProgressStore.delete()
             return true
         } catch {

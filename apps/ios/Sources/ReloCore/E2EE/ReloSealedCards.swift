@@ -94,3 +94,11 @@ public extension LiveActivityPresentation {
                                         behavior: behavior, appearance: appearance, privacy: privacy)
     }
 }
+
+public extension LiveActivityPresentation {
+    func replacingSubtitle(_ value: String) -> LiveActivityPresentation {
+        LiveActivityPresentation(header: header, title: title, subtitle: value, status: status, components: components,
+                                 surfaces: surfaces, identity: identity, state: state, behavior: behavior,
+                                 appearance: appearance, privacy: privacy)
+    }
+}

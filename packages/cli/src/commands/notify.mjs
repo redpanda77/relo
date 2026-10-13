@@ -1,5 +1,5 @@
 import { sealNoticeRequest, sealQuestion } from "../seal-notice.mjs";
-import { verifyAnswer } from "../answer-verify.mjs";
+import { rememberQuestion, verifyAnswer } from "../answer-verify.mjs";
 import { saveCardText, sealCardRequest, sealedCardDirectory } from "../seal-card.mjs";
 import { parseDuration, requireText, validateDestinationUrl, validatePublicHttpsUrl } from "../args.mjs";
 import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
@@ -89,6 +89,7 @@ export const ANSWER_LABELS = { approved: "Approved", denied: "Denied", yes: "Yes
 export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
   command, idempotencyKey, context, title }) {
   const identity = context ?? creationContext(options, stdin, undefined, dependencies.creationDefaults(), ASK_EXAMPLE);
+  const askedAt = new Date(dependencies.now());
   const questionTitle = requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80);
   const deviceIds = await resolveTargetDevices(client, options.device.length > 0 ? options.device : []);
   // Sealed end to end for this computer's verified phones (E4.1).
@@ -107,6 +108,7 @@ export async function askInApp({ prompt, type, expiresInSeconds, wait, timeoutSe
   if (!wait) return result(command, data, { message });
   const id = created?.interaction?.id;
   if (!id) throw new ApiError("Interaction response did not include an ID.", { code: "INVALID_API_RESPONSE" });
+  if (sealed) await rememberQuestion(dependencies.env, { interactionId: id, questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
   try {
     const waited = await waitForInteraction(client, id, timeoutSeconds, dependencies);
     return result(command, mergeCreatedAndWaitedInteraction(data, waited), { message });
@@ -212,6 +214,7 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
   const callback = await callbackOption(options, stdin, dependencies);
   const notes = [];
   // Sealed end to end for this computer's verified phones (E4.1); the card shows a placeholder.
+  const askedAt = new Date(dependencies.now());
   const sealed = (await sealQuestion({ title: card.title, prompt, key: idempotencyKey, client, config, dependencies, notes }))?.sealed;
   let createdRaw;
   try {
@@ -228,6 +231,8 @@ export async function askOnCard({ prompt, type, labels, expiresInSeconds, wait, 
       command, idempotencyKey, title: card.title });
   }
   const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt: sealed ? undefined : prompt });
+  if (sealed) await rememberQuestion(dependencies.env, { interactionId: created.interaction.id,
+    questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
   const data = { ...created, card: { id: card.id, createdForQuestion: createdByAsk }, endToEnd: Boolean(sealed) };
   if (!wait) return result(command, data, { notes });
   // A card started only for this question ends once answered, unless an agent session keeps
@@ -320,7 +325,7 @@ export function interactionResult(payload) {
   });
 }
 
-export async function waitForInteraction(client, id, timeoutSeconds, dependencies) {
+export async function waitForInteraction(client, id, timeoutSeconds, dependencies, expected = {}) {
   const deadline = dependencies.now() + timeoutSeconds * 1_000;
   let latest = { interaction: { id, state: "pending" } };
   while (dependencies.now() < deadline) {
@@ -329,7 +334,9 @@ export async function waitForInteraction(client, id, timeoutSeconds, dependencie
     const pollSeconds = Math.min(300, remainingSeconds);
     latest = await client.waitForInteraction(id, pollSeconds);
     // A positive answer is acted on only when a phone this computer verified signed it (E4.2).
-    if (interactionState(latest) !== "pending") return verifyAnswer(interactionResult(latest), client, dependencies);
+    if (interactionState(latest) !== "pending") {
+      return verifyAnswer(interactionResult(latest), client, dependencies, { interactionId: id, ...expected });
+    }
     if (dependencies.now() >= deadline) break;
     const elapsedMilliseconds = Math.max(0, dependencies.now() - startedAt);
     if (elapsedMilliseconds < pollSeconds * 1_000) {
@@ -338,7 +345,7 @@ export async function waitForInteraction(client, id, timeoutSeconds, dependencie
       );
     }
   }
-  return verifyAnswer(interactionResult(latest), client, dependencies);
+  return verifyAnswer(interactionResult(latest), client, dependencies, { interactionId: id, ...expected });
 }
 
 export function mergeCreatedAndWaitedInteraction(created, waited) {

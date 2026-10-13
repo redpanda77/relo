@@ -4,74 +4,99 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { verifyAnswer } from "../src/answer-verify.mjs";
-import { answerSigningInput, b64u, generateKeyPair, keyId, signBytes } from "../src/e2ee.mjs";
+import { rememberQuestion, verifyAnswer } from "../src/answer-verify.mjs";
+import { answerSigningInput, b64u, generateKeyPair, keyId, questionAnswerSigningInput, signBytes } from "../src/e2ee.mjs";
 import { ensureIdentity, saveKeyStore, trustKey } from "../src/keystore.mjs";
 
 const apiUrl = "https://relo.example";
 const deviceId = "dev_00000000-0000-4000-8000-00000000000a";
+const interactionId = "int_00000000-0000-4000-8000-000000000001";
+const askedAt = "2026-10-13T17:00:00.000Z";
+const signedAt = "2026-10-13T17:01:00.000Z";
+const now = () => Date.parse("2026-10-13T17:02:00.000Z");
 
-function signed(phone, { state = "approved", value = "approve", response = {}, signer = phone } = {}) {
-  const signedAt = "2026-10-13T17:00:00.000Z";
-  const interaction = { id: "int_1", eventId: "ntf_1", state, respondingDevice: { id: deviceId, name: "iPhone" } };
-  const signature = signBytes(signer.privateKey, answerSigningInput({ interactionId: "int_1", notificationId: "ntf_1", deviceId, value, respondedAt: signedAt }));
-  return { interaction: { ...interaction, response: { ...response, e2eeKeyId: keyId(signer.publicKey), e2eeSignedAt: signedAt, e2eeSignature: b64u(signature) } } };
+/** An answer as the phone sends it: the legacy signature plus one bound to the question's context. */
+function signed(phone, { id = interactionId, state = "approved", value = "approve", question = "ntf:question-1",
+  response = {}, signer = phone, at = signedAt } = {}) {
+  const fields = { interactionId: id, notificationId: "ntf_1", deviceId, value, respondedAt: at };
+  return { interaction: { id, eventId: "ntf_1", state, respondingDevice: { id: deviceId, name: "iPhone" },
+    response: { ...response, e2eeKeyId: keyId(signer.publicKey), e2eeSignedAt: at,
+      e2eeSignature: b64u(signBytes(signer.privateKey, answerSigningInput(fields))),
+      ...(question ? { e2eeQuestion: question,
+        e2eeQuestionSignature: b64u(signBytes(signer.privateKey, questionAnswerSigningInput({ ...fields, question }))) } : {}) } } };
 }
 
-async function setup(trust) {
+async function setup({ trust = true, level = "auto" } = {}) {
   const folder = mkdtempSync(join(tmpdir(), "relo-answer-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "state", "cards") };
   const phone = generateKeyPair();
   if (trust) {
     const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
-    store.trusted[trustKey(apiUrl, deviceId)] = { publicKey: b64u(phone.publicKey) };
+    store.trusted[trustKey(apiUrl, deviceId)] = { deviceId, publicKey: b64u(phone.publicKey), level };
     await saveKeyStore(env.RELO_KEY_STORE_PATH, store);
   }
-  return { phone, dependencies: { configPath: () => join(folder, "config.json"), env }, client: { apiUrl },
+  return { phone, env, dependencies: { configPath: () => join(folder, "config.json"), env, now }, client: { apiUrl },
     cleanup: () => rmSync(folder, { recursive: true, force: true }) };
 }
 
-const refused = (promise) => assert.rejects(promise, (error) => error.exitCode === 4 && error.details.state === "unverified");
+const refused = (promise, reason) => assert.rejects(promise,
+  (error) => error.exitCode === 4 && error.details.state === "unverified" && (!reason || error.details.reason === reason));
 
-test("without verified phones the answer passes through unchanged", async () => {
-  const { phone, dependencies, client, cleanup } = await setup(false);
+test("without a trusted phone the answer passes through unchanged", async () => {
+  const { dependencies, client, cleanup } = await setup({ trust: false });
   try {
-    const payload = { interaction: { id: "int_1", state: "approved" } };
-    assert.equal(await verifyAnswer(payload, client, dependencies), payload);
-    assert.ok(signed(phone));
+    const payload = { interaction: { id: interactionId, state: "approved" } };
+    assert.equal(await verifyAnswer(payload, client, dependencies, { interactionId }), payload);
   } finally { cleanup(); }
 });
 
-test("a trusted phone's signed approval, yes and reply are accepted", async () => {
-  const { phone, dependencies, client, cleanup } = await setup(true);
+test("an approval bound to the sealed question this CLI asked is accepted, also after a resume", async () => {
+  const { phone, env, dependencies, client, cleanup } = await setup();
   try {
-    assert.equal((await verifyAnswer(signed(phone), client, dependencies)).verified, true);
-    assert.equal((await verifyAnswer(signed(phone, { state: "yes", value: "yes" }), client, dependencies)).verified, true);
+    await rememberQuestion(env, { interactionId, questionContext: "ntf:question-1", askedAt });
+    const accepted = await verifyAnswer(signed(phone), client, dependencies, { interactionId });
+    assert.equal(accepted.verified, true);
+    // An unsealed question (the phone had no keys) is checked with the plain signature.
+    const plain = await verifyAnswer(signed(phone, { question: null }), client, dependencies, { interactionId });
+    assert.equal(plain.verified, true);
+  } finally { cleanup(); }
+});
+
+test("the review's attacks are refused: replays, re-targeted approvals, stale and pending-phone answers", async () => {
+  const { phone, env, dependencies, client, cleanup } = await setup();
+  try {
+    await rememberQuestion(env, { interactionId, questionContext: "ntf:question-1", askedAt });
+    const expected = { interactionId };
+    // H1: yesterday's signed approval for another interaction, returned for this wait.
+    await refused(verifyAnswer(signed(phone, { id: "int_00000000-0000-4000-8000-0000000000ff" }), client, dependencies, expected),
+      "the answer is for another question");
+    // H4: the phone approved a different (benign) question's envelope.
+    await refused(verifyAnswer(signed(phone, { question: "ntf:benign" }), client, dependencies, expected),
+      "the phone approved a different question");
+    // A signature from before this question existed.
+    await refused(verifyAnswer(signed(phone, { at: "2026-10-12T09:00:00.000Z" }), client, dependencies, expected),
+      "the answer was not signed for this question");
+    // A sealed question answered without the binding signature.
+    await refused(verifyAnswer(signed(phone, { question: null }), client, dependencies, expected),
+      "the phone approved a different question");
+    await refused(verifyAnswer(signed(phone, { signer: generateKeyPair() }), client, dependencies, expected), "signed by a different key");
+    await refused(verifyAnswer(signed(phone, { value: "deny" }), client, dependencies, expected), "the signature does not match");
+    const unsigned = { interaction: { id: interactionId, eventId: "ntf_1", state: "approved", respondingDevice: { id: deviceId } } };
+    await refused(verifyAnswer(unsigned, client, dependencies, expected), "the answer is not signed");
+    // L3: "completed" counts as a positive answer and needs a signature too.
+    await refused(verifyAnswer({ interaction: { ...unsigned.interaction, state: "completed" } }, client, dependencies, expected));
     const text = "Ship it";
-    const reply = signed(phone, { state: "replied", value: `answer:${createHash("sha256").update(text).digest("hex")}`, response: { response: text } });
-    assert.equal((await verifyAnswer(reply, client, dependencies)).verified, true);
+    const reply = signed(phone, { state: "replied", value: `answer:${createHash("sha256").update(text).digest("hex")}`,
+      response: { response: "Edited by the server" } });
+    await refused(verifyAnswer(reply, client, dependencies, expected), "the signature does not match");
+    const denied = { interaction: { id: interactionId, state: "denied" } };
+    assert.equal(await verifyAnswer(denied, client, dependencies, expected), denied, "refusing to act is always safe");
   } finally { cleanup(); }
 });
 
-test("a forged, unsigned, re-targeted or foreign-phone approval is refused", async () => {
-  const { phone, dependencies, client, cleanup } = await setup(true);
+test("H2: an answer from a pending (server-added) phone is refused, and verification never trusts on the way", async () => {
+  const { phone, dependencies, client, cleanup } = await setup({ level: "pending" });
   try {
-    const unsigned = { interaction: { id: "int_1", eventId: "ntf_1", state: "approved", respondingDevice: { id: deviceId }, response: { action: "approve" } } };
-    await refused(verifyAnswer(unsigned, client, dependencies));
-    await refused(verifyAnswer(signed(phone, { signer: generateKeyPair() }), client, dependencies));
-    // The phone said "deny"; the server reports "approved".
-    await refused(verifyAnswer(signed(phone, { value: "deny" }), client, dependencies));
-    // A signature for another question replayed onto this one.
-    const replayed = signed(phone);
-    replayed.interaction.id = "int_2";
-    await refused(verifyAnswer(replayed, client, dependencies));
-    const otherPhone = signed(phone);
-    otherPhone.interaction.respondingDevice.id = "dev_00000000-0000-4000-8000-00000000000b";
-    await refused(verifyAnswer(otherPhone, client, dependencies));
-    const editedReply = signed(phone, { state: "replied", value: `answer:${createHash("sha256").update("No").digest("hex")}`, response: { response: "Yes, deploy" } });
-    await refused(verifyAnswer(editedReply, client, dependencies));
-    // Negative answers never need a signature: refusing to act is always safe.
-    const denied = { interaction: { id: "int_1", state: "denied" } };
-    assert.equal(await verifyAnswer(denied, client, dependencies), denied);
+    await refused(verifyAnswer(signed(phone, { question: null }), client, dependencies, { interactionId }));
   } finally { cleanup(); }
 });

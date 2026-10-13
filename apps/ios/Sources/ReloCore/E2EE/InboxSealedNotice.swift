@@ -35,7 +35,8 @@ public extension InboxItem {
         let decoder = JSONDecoder()
         let notice = open(sealed.content, id).flatMap { try? decoder.decode(ReloSealedNoticeContent.self, from: $0) }
             ?? sealed.alert.flatMap { open($0, id) }.flatMap { try? decoder.decode(ReloSealedNoticeContent.self, from: $0) }
-        guard let notice else { return self }
+        // Not openable here: show placeholders, never text the server put next to the envelope.
+        guard let notice else { return lockedPlaceholder() }
         let body = notice.body
         let summary = notice.summary ?? body.map { String($0.prefix(240)) } ?? notice.title
         return InboxItem(
@@ -99,16 +100,19 @@ struct ReloOpenedRowText {
             ?? (object["body"] as? String).map { String($0.prefix(240)) }
     }
 
-    func title(replacing current: String) -> String {
-        guard Self.titlePlaceholders.contains(current), let title, !Self.titlePlaceholders.contains(title) else { return current }
-        return String(title.prefix(200))
+    /// A sealed row shows only text from its envelope or a placeholder, never other server-written text.
+    static func title(_ text: ReloOpenedRowText?, replacing current: String) -> String {
+        if let title = text?.title, !titlePlaceholders.contains(title), !title.isEmpty { return String(title.prefix(200)) }
+        return titlePlaceholders.contains(current) ? current : "Encrypted notification"
     }
 
-    func summary(replacing current: String) -> String {
-        guard let summary else { return current }
-        if Self.summaryPlaceholders.contains(current) { return String(summary.prefix(240)) }
-        if let status, current.contains("Updating…") { return String(current.replacingOccurrences(of: "Updating…", with: status).prefix(240)) }
-        return current
+    /// The server may only shape a card's summary around "Updating…" (step counts); the status comes from the envelope.
+    static func summary(_ text: ReloOpenedRowText?, replacing current: String) -> String {
+        if let status = text?.status, current.contains("Updating…") {
+            return String(current.replacingOccurrences(of: "Updating…", with: status).prefix(240))
+        }
+        if let summary = text?.summary, !summary.isEmpty { return String(summary.prefix(240)) }
+        return summaryPlaceholders.contains(current) || current.contains("Updating…") ? current : "Open Relo on your iPhone to read this."
     }
 
     func status(replacing current: String?) -> String? {
@@ -120,15 +124,18 @@ struct ReloOpenedRowText {
 public extension CurrentSubjectProjection {
     /// Live now with the real text: opens this phone's envelope and replaces the placeholders.
     func openingSealed(_ open: ReloSealedOpener) -> CurrentSubjectProjection {
-        guard let sealed, let text = ReloOpenedRowText(sealed, itemID: notificationId ?? subjectId, open: open) else { return self }
+        guard let sealed else { return self }
+        let text = ReloOpenedRowText(sealed, itemID: notificationId ?? subjectId, open: open)
         return CurrentSubjectProjection(
             subjectId: subjectId, notificationId: notificationId, kind: kind, version: version,
-            title: text.title(replacing: title), summary: text.summary(replacing: summary), source: source,
+            title: ReloOpenedRowText.title(text, replacing: title), summary: ReloOpenedRowText.summary(text, replacing: summary),
+            source: source,
             createdAt: createdAt, updatedAt: updatedAt, occurredAt: occurredAt, acceptedAt: acceptedAt, readAt: readAt,
             currentUntil: currentUntil, freshUntil: freshUntil, deliverUntil: deliverUntil, freshness: freshness,
             interaction: interaction,
             activity: activity.map { CurrentActivity(id: $0.id, generation: $0.generation, sequence: $0.sequence,
-                                                      status: text.status(replacing: $0.status), progress: $0.progress) },
+                                                      status: text?.status(replacing: $0.status) ?? $0.status,
+                                                      progress: $0.progress) },
             resources: resources, sealed: sealed
         )
     }
@@ -136,10 +143,13 @@ public extension CurrentSubjectProjection {
 
 public extension PendingCurrentDecision {
     func openingSealed(_ open: ReloSealedOpener) -> PendingCurrentDecision {
-        guard let sealed, let text = ReloOpenedRowText(sealed, itemID: notificationId, open: open) else { return self }
+        guard let sealed else { return self }
+        let text = ReloOpenedRowText(sealed, itemID: notificationId, open: open)
+        let fallbackTitle = sealed.content.kind == "question" && !ReloOpenedRowText.titlePlaceholders.contains(title) ? "Encrypted question" : title
         return PendingCurrentDecision(
             subjectId: subjectId, notificationId: notificationId, version: version, kind: kind,
-            title: text.title(replacing: title), summary: text.summary(replacing: summary), source: source,
+            title: ReloOpenedRowText.title(text, replacing: fallbackTitle),
+            summary: ReloOpenedRowText.summary(text, replacing: summary), source: source,
             createdAt: createdAt, readAt: readAt, urgencyRank: urgencyRank, interaction: interaction, sealed: sealed
         )
     }
@@ -204,5 +214,22 @@ public extension InboxRepairResponse {
             return summary
         }
         return opened
+    }
+}
+
+extension InboxItem {
+    func lockedPlaceholder() -> InboxItem {
+        guard let sealed else { return self }
+        let question = sealed.content.kind == "question"
+        return InboxItem(
+            id: id, kind: kind, sourceName: sourceName, sourceImageUrl: nil,
+            title: question ? "Encrypted question" : "Encrypted notification",
+            detail: question ? "Open Relo on your iPhone to read this question." : "Open Relo on your iPhone to read this.", content: nil,
+            readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
+            apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
+            destinationUrl: nil, privacy: .private, liveActivity: liveActivity, activitySummary: activitySummary,
+            interaction: interaction.map { $0.replacingPrompt(ReloSealedCards.promptPlaceholder) }, context: context,
+            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed
+        )
     }
 }

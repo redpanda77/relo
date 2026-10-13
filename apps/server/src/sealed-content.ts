@@ -99,6 +99,9 @@ export const answerSignatureSchema = z.object({
   e2eeKeyId: z.string().regex(/^k_[A-Za-z0-9_-]{22}$/),
   e2eeSignedAt: z.iso.datetime(),
   e2eeSignature: b64u(64),
+  /** The sealed question's context and a signature binding the answer to it (review H1/H4). */
+  e2eeQuestion: binding.optional(),
+  e2eeQuestionSignature: b64u(64).optional(),
 }).strict();
 
 /** Envelopes without their randomized ECDSA signatures: what an exact retry must repeat. */

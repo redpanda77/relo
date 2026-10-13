@@ -44,6 +44,8 @@ export type DashboardPagination = {
 
 export type DashboardNotificationSummary = {
   id: string;
+  /** True when the text is sealed end to end: title and body are placeholders (ADR 0005). */
+  encrypted: boolean;
   title: string;
   body: string;
   source: string;
@@ -119,6 +121,8 @@ export type DashboardActivitySummary = {
   presentationPresetId: string | null;
   presentationPresetRevision: number | null;
   presentationPolicySource: string | null;
+  /** True when the card's text is sealed end to end: title, status and steps are placeholders. */
+  encrypted: boolean;
   /** Card digest (additive): how the work ended, step progress and update count. */
   outcome?: "completed" | "failed" | null;
   steps?: { done: number; total: number; current: string | null } | null;
@@ -128,6 +132,7 @@ export type DashboardActivitySummary = {
 
 export type DashboardQuestion = {
   kind: string;
+  encrypted: boolean;
   prompt: string;
   state: string;
   respondedAt: string | null;
@@ -137,6 +142,7 @@ export type DashboardQuestion = {
 export type DashboardDeliverySummary = {
   id: string;
   notificationId: string;
+  encrypted: boolean;
   title: string;
   source: string;
   deviceName: string;
@@ -307,6 +313,7 @@ function activitySummary(row: Record<string, any>): DashboardActivitySummary | n
     presentationPresetRevision: row.activity_presentation_preset_revision == null
       ? null : number(row.activity_presentation_preset_revision),
     presentationPolicySource: optionalString(row.activity_presentation_policy_source),
+    encrypted: row.activity_encrypted === true,
     outcome: row.activity_outcome === "completed" || row.activity_outcome === "failed"
       ? row.activity_outcome : null,
     updates: row.activity_updates == null ? null : number(row.activity_updates),
@@ -337,6 +344,7 @@ function questionDigest(value: unknown): DashboardQuestion | null {
   if (!question.prompt || !question.state) return null;
   return {
     kind: String(question.kind ?? "approval"),
+    encrypted: question.encrypted === true,
     prompt: String(question.prompt),
     state: String(question.state),
     respondedAt: isoDate(question.respondedAt),
@@ -380,6 +388,8 @@ function notificationSummary(
     : null;
   return {
     id: publicId("ntf", String(row.id)),
+    // A card is sealed when its row keeps envelopes; anything else when its event does.
+    encrypted: activity ? activity.encrypted : row.event_encrypted === true,
     title: String(row.title ?? "Untitled notification"),
     body: String(row.body ?? ""),
     source: String(row.source ?? "Unknown source"),
@@ -418,6 +428,7 @@ function deliverySummary(row: Record<string, any>): DashboardDeliverySummary {
   return {
     id: publicId("job",String(row.id)),
     notificationId: publicId("ntf", String(row.event_id)),
+    encrypted: row.encrypted === true,
     title: String(row.title ?? "Untitled notification"),
     source: String(row.source ?? "Unknown source"),
     deviceName: String(row.device_name ?? "Unnamed device"),
@@ -552,6 +563,7 @@ const activityProjectionSql = `a.id AS live_activity_id,
     a.presentation_preset_id AS activity_presentation_preset_id,
     a.presentation_preset_revision AS activity_presentation_preset_revision,
     a.presentation_policy_source AS activity_presentation_policy_source,
+    a.sealed IS NOT NULL AS activity_encrypted,
     CASE WHEN a.state<>'active' AND a.presentation#>>'{state,kind}' IN ('completed','failed')
       THEN a.presentation#>>'{state,kind}' END AS activity_outcome,
     GREATEST(a.sequence,0)+1 AS activity_updates,
@@ -563,6 +575,10 @@ const activityProjectionSql = `a.id AS live_activity_id,
         CASE WHEN jsonb_typeof(a.presentation->'components')='array' THEN a.presentation->'components' ELSE '[]'::jsonb END) component
         WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1),'[]'::jsonb)) step
     ) AS activity_steps`;
+
+/** Whether an event carries end-to-end envelopes; only this boolean ever leaves the server. */
+const eventEncryptedSql = (alias: string) => `(jsonb_typeof(${alias}.payload->'sealed')='object'
+    OR jsonb_typeof(${alias}.payload#>'{liveActivity,sealed}')='object')`;
 
 const activityJoinSql = `LEFT JOIN live_activities a
     ON a.principal_id=e.principal_id
@@ -585,6 +601,7 @@ const logicalNotificationKeySql = `CASE
 const notificationListSql = `SELECT e.id,e.source,e.kind,e.title,e.body,e.deep_link,e.state,e.read_at,e.withdrawn_at,e.created_at,
     e.requester_credential_id,e.requester_service_id,
     e.payload->'context' AS event_context,e.origin_hash AS event_origin_hash,
+    ${eventEncryptedSql("e")} AS event_encrypted,
     ${activityProjectionSql},
     COALESCE(a.source_resource_id,e.source_resource_id) AS resource_source_id,
     resource_source.kind AS resource_source_kind,
@@ -598,7 +615,7 @@ const notificationListSql = `SELECT e.id,e.source,e.kind,e.title,e.body,e.deep_l
     COALESCE(a.conversation_id,e.conversation_id) AS resource_conversation_id,
     COALESCE(a.work_item_id,e.work_item_id) AS resource_work_item_id,
     targets.device_names,response.action AS response_action,response.responded_at,
-    (SELECT jsonb_build_object('kind',q.kind,'state',q.state,'respondedAt',q.responded_at,'expiresAt',q.expires_at,
+    (SELECT jsonb_build_object('kind',q.kind,'state',q.state,'encrypted',${eventEncryptedSql("qe")},'respondedAt',q.responded_at,'expiresAt',q.expires_at,
         'prompt',CASE WHEN (qe.payload->>'privacy'='private' OR qe.payload#>>'{liveActivity,privacy}'='private')
           THEN 'Private notification' ELSE left(q.prompt,240) END)
       FROM interaction_requests q JOIN notification_events qe ON qe.id=q.notification_event_id
@@ -663,7 +680,7 @@ export function createDashboardInboxHandlers(
       ),
       db.query<any>(
         `SELECT r.kind,r.prompt,r.state,r.created_at,r.expires_at,e.id AS event_id,
-          e.source,e.title,targets.device_names
+          e.source,e.title,targets.device_names,${eventEncryptedSql("e")} AS encrypted
         FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id
         LEFT JOIN LATERAL (
           SELECT array_agg(d.name ORDER BY d.name,d.id) AS device_names
@@ -712,6 +729,7 @@ export function createDashboardInboxHandlers(
       },
       pendingResponses: pendingResponses.rows.map((row) => ({
         notificationId: publicId("ntf", String(row.event_id)),
+        encrypted: row.encrypted === true,
         title: String(row.title),
         source: String(row.source),
         kind: String(row.kind),
@@ -848,7 +866,7 @@ export function createDashboardInboxHandlers(
         j.canonical_intent_sha256,j.device_projection_sha256,j.apns_payload_sha256,
         j.last_error_message,j.accepted_at,j.created_at,j.updated_at,e.payload,
         resolution.action AS reconciliation_action,
-        e.id AS event_id,e.title,e.source,d.name AS device_name
+        e.id AS event_id,e.title,e.source,d.name AS device_name,${eventEncryptedSql("e")} AS encrypted
       FROM delivery_jobs j JOIN notification_events e ON e.id=j.notification_event_id
       JOIN devices d ON d.id=j.device_id
       LEFT JOIN delivery_reconciliation_resolutions resolution ON resolution.delivery_job_id=j.id
@@ -890,6 +908,7 @@ export function createDashboardInboxHandlers(
         e.created_at,e.updated_at,e.target_mode,s.title AS service_title,
         content.body_ciphertext,content.body_format,
         COALESCE(e.payload->>'privacy',e.payload#>>'{liveActivity,privacy}','standard') AS privacy,
+        ${eventEncryptedSql("e")} AS event_encrypted,
         (SELECT component->'items' FROM jsonb_array_elements(
           CASE WHEN jsonb_typeof(a.presentation->'components')='array' THEN a.presentation->'components' ELSE '[]'::jsonb END) component
           WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1) AS activity_step_items,
@@ -924,7 +943,7 @@ export function createDashboardInboxHandlers(
           j.canonical_intent_sha256,j.device_projection_sha256,j.apns_payload_sha256,
           j.last_error_message,j.accepted_at,j.created_at,j.updated_at,e.id AS event_id,e.title,e.source,
           e.payload,resolution.action AS reconciliation_action,
-          d.name AS device_name
+          d.name AS device_name,${eventEncryptedSql("e")} AS encrypted
         FROM delivery_jobs j JOIN notification_events e ON e.id=j.notification_event_id
         JOIN devices d ON d.id=j.device_id
         LEFT JOIN delivery_reconciliation_resolutions resolution ON resolution.delivery_job_id=j.id
@@ -948,7 +967,8 @@ export function createDashboardInboxHandlers(
         : Promise.resolve({ rows: [], rowCount: 0 }),
       row.live_activity_id && (row.activity_conversation_id || row.activity_origin_hash)
         ? db.query<any>(
-            `SELECT id,generation,state,title,status,context,created_at,updated_at,ended_at,terminal_reason
+            `SELECT id,generation,state,title,status,context,created_at,updated_at,ended_at,terminal_reason,
+              sealed IS NOT NULL AS encrypted
             FROM live_activities
             WHERE principal_id=$1 AND ${row.activity_conversation_id
               ? "conversation_id=$2"
@@ -975,6 +995,7 @@ export function createDashboardInboxHandlers(
               relationship.provenance,relationship.created_at,
               predecessor.id AS predecessor_id,predecessor.title AS predecessor_title,
               predecessor.state AS predecessor_state,predecessor.generation AS predecessor_generation,
+              predecessor.sealed IS NOT NULL AS predecessor_encrypted,successor.sealed IS NOT NULL AS successor_encrypted,
               successor.id AS successor_id,successor.title AS successor_title,
               successor.state AS successor_state,successor.generation AS successor_generation
             FROM activity_relationships relationship
@@ -1004,6 +1025,9 @@ export function createDashboardInboxHandlers(
     const safe = safeDestination(row.deep_link);
     const interaction = request.rows[0];
     const responseText = canonicalResponseText(interaction?.response);
+    const notificationEncrypted = row.live_activity_id
+      ? row.activity_encrypted === true
+      : row.event_encrypted === true;
     const bootstrap: NotificationDetailBootstrap = {
       version: 1,
       kind: "notification-detail",
@@ -1021,6 +1045,7 @@ export function createDashboardInboxHandlers(
       }),
       notification: {
         id: publicId("ntf", String(row.id)),
+        encrypted: notificationEncrypted,
         source: String(row.source),
         serviceTitle:
           row.service_title == null ? null : String(row.service_title),
@@ -1051,6 +1076,7 @@ export function createDashboardInboxHandlers(
             stepItems: stepItems(row.activity_step_items, row.privacy === "private"),
             threadHistory: threadHistory.rows.map((related) => ({
               id: publicId("act", String(related.id)),
+              encrypted: related.encrypted === true,
               generation: Math.max(1, number(related.generation)),
               state: String(related.state ?? "unknown"),
               title: String(related.title ?? "Untitled activity"),
@@ -1097,6 +1123,9 @@ export function createDashboardInboxHandlers(
                   title: String(outgoing
                     ? relationship.successor_title
                     : relationship.predecessor_title),
+                  encrypted: (outgoing
+                    ? relationship.successor_encrypted
+                    : relationship.predecessor_encrypted) === true,
                   state: String(outgoing
                     ? relationship.successor_state
                     : relationship.predecessor_state),
@@ -1127,6 +1156,8 @@ export function createDashboardInboxHandlers(
       interaction: interaction
         ? {
             kind: String(interaction.kind),
+            // The prompt is a placeholder when the question or its card is sealed.
+            encrypted: row.event_encrypted === true || row.activity_encrypted === true,
             state: String(interaction.state),
             action:
               interaction.response_action === "answer"

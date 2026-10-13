@@ -84,7 +84,7 @@ function service(): AccountService {
   }))
   const serverState = () => ({
     registrationMode: "approval" as const,
-    accounts: accounts.map(({ approved: _approved, ...account }) => account),
+    accounts: accounts.map(({ approved, ...account }) => { void approved; return account }),
   })
   return {
     setRegistrationMode: vi.fn().mockResolvedValue(undefined),

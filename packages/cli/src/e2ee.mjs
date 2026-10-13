@@ -354,6 +354,14 @@ export function answerSigningInput({ interactionId, notificationId, deviceId, va
   return Buffer.from([`${E2EE_VERSION} answer`, interactionId, notificationId, deviceId, value, respondedAt].join("\n"));
 }
 
+/**
+ * An answer to a sealed question also signs the context of the question envelope the phone opened,
+ * a value only the asking CLI chose, so a server cannot move an approval to another question.
+ */
+export function questionAnswerSigningInput({ interactionId, notificationId, deviceId, value, respondedAt, question }) {
+  return Buffer.from([`${E2EE_VERSION} answer-to`, interactionId, notificationId, deviceId, value, respondedAt, question].join("\n"));
+}
+
 export function verifyAnswer({ identityPublicKey, answer }) {
   return verifyBytes(identityPublicKey, answerSigningInput(answer), fromB64u(answer.signature, { length: 64, name: "signature" }));
 }

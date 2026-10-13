@@ -7,11 +7,11 @@
 // handles back. Handles are lowercase base32 so the server's case folding and label limits keep
 // them intact. Each computer has its own grouping key: the same project used from two computers
 // gets two handles, and the phone shows the same name for both.
-import { createHash, createHmac, hkdfSync, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { sealedCardDirectory } from "./seal-card.mjs";
-import { identityKeys, keyStorePath, loadKeyStore } from "./keystore.mjs";
+import { identityKeys, keyStorePath, loadKeyStore, subkey } from "./keystore.mjs";
 
 export const HANDLE_PATTERN = /^[ptwca]-[a-z2-7]{16}$/u;
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
@@ -19,7 +19,7 @@ const NAME_FIELDS = { project: "p", threadName: "t", taskTitle: "w", computer: "
 const MAX_REMEMBERED_NAMES = 2_000;
 
 export function groupingKey(identityPrivateKey) {
-  return Buffer.from(hkdfSync("sha256", identityPrivateKey, Buffer.from("relo.e2e.v1 grouping"), Buffer.from("names"), 32));
+  return subkey(identityPrivateKey, "grouping");
 }
 
 function base32(bytes, length) {

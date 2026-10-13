@@ -5,7 +5,9 @@ import Foundation
 /// remembers handle → name and puts the names back wherever server data arrives.
 public protocol ReloNameBook: Sendable {
     func names() -> [String: String]
-    func learn(_ names: [String: String])
+    /// Names carried by an envelope from `sender` (its key id). A handle another sender already named
+    /// is never overwritten, so one computer cannot relabel another computer's projects.
+    func learn(_ names: [String: String], sender: String)
 }
 
 public enum ReloNames {
@@ -18,6 +20,26 @@ public enum ReloNames {
     }
 
     /// Keeps only well-formed handles with short, single-line names.
+    /// A learned name and the computer (sender key id) that taught it.
+    public struct Entry: Codable, Equatable, Sendable {
+        public var name: String
+        public var sender: String
+        public init(name: String, sender: String) { self.name = name; self.sender = sender }
+    }
+
+    /// Adds `names` from `sender`: a handle another sender already named keeps its name, so one
+    /// computer cannot relabel another computer's projects. The oldest-sorted handles fall out past capacity.
+    public static func learning(_ names: [String: String], sender: String, into book: [String: Entry]) -> [String: Entry] {
+        var book = book
+        for (handle, name) in accepted(names) where book[handle] == nil || book[handle]?.sender == sender {
+            book[handle] = Entry(name: name, sender: sender)
+        }
+        if book.count > capacity {
+            for key in book.keys.sorted().prefix(book.count - capacity) { book.removeValue(forKey: key) }
+        }
+        return book
+    }
+
     public static func accepted(_ names: [String: String]) -> [String: String] {
         names.filter { isHandle($0.key) && !$0.value.isEmpty && $0.value.count <= 160 && !$0.value.contains("\n") }
     }
@@ -26,6 +48,13 @@ public enum ReloNames {
     public static func carried(in plaintext: Data) -> [String: String] {
         struct Carrier: Decodable { let names: [String: String]? }
         return accepted((try? JSONDecoder().decode(Carrier.self, from: plaintext))?.names ?? [:])
+    }
+
+    /// `value` with any handle replaced by the name this phone learned for it. Applied when a row is
+    /// shown, so rows stored before their names arrived still show names (E2.5).
+    public static func display(_ value: String?) -> String? {
+        guard let value, value.contains(handle) else { return value }
+        return resolve(value, ReloSealedCards.knownNames())
     }
 
     public static func resolve(_ text: String, _ names: [String: String]) -> String {

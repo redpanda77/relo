@@ -723,6 +723,79 @@ describe("Inbox feature contracts", () => {
     expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull()
   })
 
+  it("shows a lock instead of sealed placeholders and never shows a handle", () => {
+    const sealedContext = { ...emptyContext, project: "p-abcdefghijklmnop", threadName: "t-abcdefghijklmnop" }
+    const sealedNotice = {
+      ...notification,
+      id: "ntf_66666666-6666-4666-8666-666666666666",
+      kind: "notification",
+      state: "recorded",
+      encrypted: true,
+      title: "Encrypted notification",
+      body: "Open Relo on your iPhone to read this.",
+      source: "Claude Code",
+      context: sealedContext,
+    }
+    render(
+      <InboxFeature
+        bootstrap={{
+          ...overview,
+          approvalRequests: [],
+          pendingResponses: [{ ...overview.pendingResponses[0]!, encrypted: true, title: "Encrypted question",
+            prompt: "Open Relo on your iPhone to read this question." }],
+          recentNotifications: [sealedNotice],
+        }}
+        service={service()}
+      />
+    )
+    const activity = within(screen.getByRole("list", { name: "Activity" }))
+    expect(activity.getByText("End-to-end encrypted · open on iPhone to read")).toBeVisible()
+    expect(activity.getByLabelText("Claude Code › Encrypted project › Encrypted topic")).toBeVisible()
+    expect(activity.getByRole("button", { name: "Open encrypted item" })).toBeVisible()
+    const needsYou = within(screen.getByRole("list", { name: "Needs you" }))
+    expect(needsYou.getByText("End-to-end encrypted · open on iPhone to read")).toBeVisible()
+    const page = document.body.textContent ?? ""
+    for (const hidden of ["Encrypted notification", "Encrypted question", "Open Relo on your iPhone", "p-abcdefghijklmnop", "t-abcdefghijklmnop"])
+      expect(page).not.toContain(hidden)
+  })
+
+  it("opens a sealed question as a lock pointing to the iPhone, keeping its state", () => {
+    const sealedPrompt = "Open Relo on your iPhone to read this question."
+    const detail = {
+      version: 1,
+      kind: "notification-detail",
+      route: { path: `/dashboard/inbox/notifications/${eventId}`, backHref: "/dashboard/inbox/notifications" },
+      shell: { ...shell, active: "inbox-notifications", title: "Notification" },
+      notification: {
+        ...notification,
+        encrypted: true,
+        title: "Encrypted question",
+        body: sealedPrompt,
+        kind: "question",
+        serviceTitle: null,
+        privacy: "private",
+        targetMode: "explicit",
+        updatedAt: now,
+        expiresAt: now,
+        readAt: now,
+        destination: { state: "not-set", href: null },
+      },
+      activity: null,
+      interaction: {
+        kind: "approval", encrypted: true, state: "expired", action: null, prompt: sealedPrompt,
+        responseText: null, respondingDevice: null, createdAt: now, expiresAt: now, respondedAt: null,
+      },
+      deliveries: [],
+      evidenceTimeline: [],
+      receipts: [],
+    } as unknown as NotificationDetail
+    render(<InboxFeature bootstrap={detail} service={service()} />)
+    expect(screen.getByText("End-to-end encrypted · open on iPhone to read")).toBeVisible()
+    expect(screen.getByText("Expired without an answer")).toBeVisible()
+    expect(document.body.textContent).not.toContain("Encrypted question")
+    expect(document.body.textContent).not.toContain(sealedPrompt)
+  })
+
   it("filters the recent list by project without a round trip", () => {
     const other = {
       ...notification,

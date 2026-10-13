@@ -33,7 +33,7 @@ it".
 | Adversary | After this program |
 | --- | --- |
 | Someone with a database dump or backup, or a stolen disk | Sees ciphertext and metadata. Expired content is gone. Older ciphertext is undecryptable once the phone rotates its keys. |
-| The server operator or admin, including a malicious one with full control of the code it runs | Cannot read content and cannot forge content or answers. Can still see metadata, delay or drop messages, and deny service. Cannot add a device the CLI will encrypt to without that device being verified. |
+| The server operator or admin, including a malicious one with full control of the code it runs | Cannot read content and cannot forge content or answers. Can still see metadata, delay or drop messages, and deny service. A phone the server adds after the first one is recorded as *pending*: the CLI does not seal to it and refuses its answers until a phone the computer already trusts approves it (a signed, end-to-end encrypted yes/no question) or a person runs `relo keys verify`. Once a computer trusts a phone, it never falls back to readable text: if it cannot seal, the command fails (`E2EE_UNAVAILABLE`). |
 | Apple Push Notification service | Sees ciphertext, the device token, size and timing. |
 | Another account on the same server | No access, as today (ADR 0004). Encryption now backs this up. |
 | An attacker on the network | TLS, as today. |
@@ -70,11 +70,15 @@ These are standard primitives only, with no Relo-specific crypto:
 - **HPKE (RFC 9180)**, using DHKEM(P-256, HKDF-SHA256), HKDF-SHA256 and AES-256-GCM.
   - P-256 is the curve the iPhone's Secure Enclave supports.
   - CryptoKit provides HPKE on iOS 17 and later. Relo's minimum is iOS 17.2.
-  - The CLI uses `@hpke/core` on Node's WebCrypto.
+  - The CLI implements RFC 9180 base mode on `node:crypto` primitives (`packages/cli/src/e2ee.mjs`),
+    so it keeps zero dependencies; the shared test vectors prove it matches CryptoKit.
 - **ECDSA P-256 (SHA-256)** for signatures.
 - Content is encrypted once with a random 256-bit key using AES-256-GCM. That key is then wrapped
-  with HPKE separately for each recipient device. Associated data (AAD) binds the envelope to its
-  kind, account, sender key, idempotency key and recipient.
+  with HPKE separately for each recipient device. Associated data (AAD) binds the body to the
+  version, kind, `context` and sender key id, and each wrapped key additionally to its device and
+  prekey. `context` is a value the CLI chooses for each message (for a notice, a hash of its
+  idempotency key), so the server cannot move an envelope to another message without the phone
+  noticing; the phone's replay ledger refuses a context seen under another notification.
 - Cross-implementation test vectors live in `packages/contracts/fixtures/e2ee-v1/`. CryptoKit and
   Node each seal and open the other's vectors.
 
@@ -100,6 +104,13 @@ Sealing and signed approvals start at once.
 - **A key change** (a reinstall, a new phone, `relo keys rotate`) is trusted again automatically and
   keeps working. It leaves a visible, non-blocking notice: "security code changed" in
   `relo keys status` and on the phone's Settings → Security.
+- **A new phone is approved on a phone you already have.** The first phone is trusted on first use.
+  A phone that appears later (an iPad, a replacement iPhone) stays *pending*, so a server cannot add
+  its own "phone" to read everything. Each computer sends your trusted phones an end-to-end
+  encrypted question: "“iPad” signed in to your Relo account. Allow it to read your encrypted
+  messages?". One tap on Approve, signed by the trusted phone and bound to that question, makes the
+  new phone trusted; Deny keeps it out for good. The new phone cannot approve itself. Without any
+  trusted phone left, `relo keys verify` (a person) is the fallback.
 - **Verifying is optional.** `relo keys verify` and Settings → Security → Verify security code show
   the same 60-digit number, derived from the two identity keys like Signal's safety numbers.
   Confirming that they match upgrades the pairing to "verified".
@@ -115,15 +126,18 @@ a security code change. People who want more can verify once, or use strict mode
 ```json
 {
   "v": "relo.e2e.v1",
-  "suite": "p256-sha256-aes256gcm",
-  "kind": "notice | question | card | card-update | reply",
-  "sender": { "keyId": "cli_…", "sig": "base64url" },
-  "aad": { "account": "…", "idempotencyKey": "…" },
-  "body": { "nonce": "…", "ct": "…" },
-  "recipients": [ { "deviceId": "…", "prekeyId": "…", "enc": "…", "wrappedKey": "…" } ],
-  "pad": 512
+  "kind": "notice | question | card | card-update | reply | grouping-key",
+  "context": "ntf:…",
+  "sender": "k_…",
+  "recipients": [ { "device": "dev_…", "prekey": "pk_…", "enc": "…", "key": "…" } ],
+  "nonce": "…",
+  "ct": "…",
+  "sig": "…"
 }
 ```
+
+`sig` is the sender identity's ECDSA signature over every other field. The plaintext is padded to
+256-byte blocks before encryption.
 
 The sealed plaintext is one JSON object containing every user-text field of that kind. For
 example, a notice holds title, summary, body and context labels. A card holds title, status, step
@@ -151,7 +165,11 @@ fields that the CLI computes from plaintext before sealing:
 ### Answers that the server cannot forge
 
 - An approval, denial, yes or no is signed by the device identity key over `{interactionId,
-  notificationId, deviceId, value, respondedAt}`.
+  notificationId, deviceId, value, respondedAt}`. For a sealed question the phone also signs the
+  same fields plus the `context` of the envelope it opened (`relo.e2e.v1 answer-to`), and only when it
+  actually opened that question. The CLI requires this second signature for a question it sealed,
+  checks that it names the interaction it is waiting for and that it was made after the question was
+  asked, so the server can neither replay an old approval nor show the phone a different question.
 - The server stores the signature next to the state it already keeps, so cards and callbacks still
   work. The CLI accepts `approved` only when the signature verifies against a trusted device.
   `relo ask --approval` keeps its contract: exit 0 with state `approved`, now with a verified
@@ -223,10 +241,12 @@ Built and tested in source, **not yet in a release**:
 | E6.3 Replay protection | Done in source: the iPhone remembers which notification first carried each envelope context, in the shared Keychain, and blocks the same envelope under another notification ("A repeated encrypted message was blocked"). |
 | E5 Sealed cards | Done in source: `relo activity start/update/end` seal the card's title, status, detail, step labels and progress label for verified phones. The server stores placeholders ("Encrypted card", "Updating…", "Step n") and the latest envelopes (migration `0082`), and each phone's Live Activity push carries its own envelope. The phone opens it while decoding the card state, so the Lock Screen, Dynamic Island and Watch show the real text; words the server writes itself ("Approved", "Expired") are kept. A question folded into a card shows its real prompt the same way. The CLI keeps each card's text in a private local cache (0600, removed when the card ends) so an update can seal the whole card. |
 | E6.1 Enforcement | Done in source: `relo keys require on` (a person at a terminal) makes the account refuse readable notices, questions and card text from CLI keys with `end_to_end_required` (migration `0083`); webhooks and server-made messages are unaffected and labelled. The card `relo ask` starts is sealed too. |
-| E6.4 Proof | Done: `apps/server/src/compromised-server.test.ts` runs the real `relo` CLI against a real server for a verified phone (notice, card with steps, an update, a question), then searches every row of every table for the agent's words and finds none; a control run without a verified phone proves the search finds readable text. Still open: an external review of the protocol and code. |
+| E6.4 Proof | Done: `apps/server/src/compromised-server.test.ts` runs the real `relo` CLI against a real server for a verified phone (notice, card with steps, an update, a question), then searches every row of every table for the agent's words, project and computer names and finds none; a control run with the policy off proves the search finds readable text. An internal adversarial review (13 October 2026) found and fixed: approvals replayable across questions and re-targetable to another question (now bound to the interaction, the question's context and the time asked); server-added phones trusted silently (now *pending*); readable fallback after a key problem (now fails closed); a card key that leaked the project name (now keyed); a new computer added without notice on the phone (now "Added …" on Settings → Security, which also lists computers the server stopped listing); one computer able to rename another's projects (names are kept per sender); server text shown on unopened sealed rows (now placeholders); encryption state kept across sign-out (now deleted). `packages/cli/test/e2ee-review.test.mjs` and the iOS `E2EE*Tests` cover them. The key, client-key and policy routes need no extra scope: they return public keys and a flag only. Still open: an external review of the protocol and code. |
 | E2.5 Opaque names | Done in source: the CLI sends keyed handles (`p-…`, `t-…`, `w-…`, `c-…`, `a-…`) for project, topic, task, computer and account, keyed per computer, and seals the names (agent-session hooks too); the iPhone remembers handle → name and shows the names everywhere (inbox, history, Now, cards). The same project used from two computers has two handles but one name on the phone. |
 | Default policy | Encryption is required automatically once a phone of the account has keys (migration `0084`): CLI keys then must seal. `relo keys require off` (a person) turns it off; `on` and `auto` need nobody. |
-| Phone surfaces | Every feed the iPhone reads carries that phone's envelopes next to the placeholders: inbox detail and history, the snapshot, current state (Now → Live now) and pending decisions, plus Live Activity pushes. The app opens them on arrival, so no screen shows "Encrypted card" or a handle when the phone holds the key. The web Dashboard has no key by design and shows placeholders and handles. |
+| Phone surfaces | Every feed the iPhone reads carries that phone's envelopes next to the placeholders: inbox detail and history, the snapshot, current state (Now → Live now) and pending decisions, plus Live Activity pushes. The app opens them on arrival, so no screen shows "Encrypted card" or a handle when the phone holds the key. The web Dashboard has no key by design: its JSON carries only an `encrypted` flag (never the envelopes), and it shows a lock with "End-to-end encrypted · open on iPhone to read" in place of a sealed title, body, status or prompt (time, state, source and step counts stay), and names handles "Encrypted project", "Encrypted topic", "Encrypted task", "Encrypted computer" or "Encrypted account". |
+| Locked phone | Fixed in source (P0): CryptoKit's default made Secure Enclave keys usable only while unlocked, so the Lock Screen and notifications stayed on placeholders. Prekeys are now Secure Enclave keys usable after the first unlock since boot (like WhatsApp's and Signal's message keys), and an older unlock-only prekey is replaced at once. The identity key still needs the phone unlocked, so approving still needs an unlocked phone. |
+| Names on stored rows | Fixed in source (P0): rows the app stored before a name arrived kept showing handles; handles are now swapped for names when a row is shown, and only the handle is stored. |
 | Everything else | Open, in the order below. |
 
 ## Delivery plan
@@ -246,7 +266,7 @@ live. Work happens in this order.
     - in the widget while it renders a Live Activity on a locked device after first unlock.
   - The widget can sign an answer.
   - Outcome: the Live Activity route is chosen.
-- **E0.3 — Interop test vectors.** CryptoKit and `@hpke/core` each open the other's envelopes;
+- **E0.3 — Interop test vectors.** CryptoKit and the CLI's `node:crypto` HPKE each open the other's envelopes;
   vectors are committed under `packages/contracts/fixtures/e2ee-v1/`.
 
 ### Phase E1 — Reduce what the server keeps (needs no keys)

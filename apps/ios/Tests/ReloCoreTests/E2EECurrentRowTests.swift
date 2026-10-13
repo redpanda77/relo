@@ -61,10 +61,10 @@ final class E2EECurrentRowTests: XCTestCase {
         XCTAssertEqual(opened.title, "Deploy 0.15")
         XCTAssertEqual(opened.summary, "Testing")
         XCTAssertEqual(opened.activity?.status, "Testing")
-        // A card started readable and sealed later keeps its own title.
+        // A sealed card shows the envelope's title, never a title the server wrote.
         let mixed = row(id: "act_00000000-0000-4000-8000-000000000002", title: "Automatic E2E rollout", summary: "Approved · Updating…",
                         status: "Approved · Updating…", sealed: InboxSealedNotice(alert: card, content: card)).openingSealed(sealed.opener)
-        XCTAssertEqual(mixed.title, "Automatic E2E rollout")
+        XCTAssertEqual(mixed.title, "Deploy 0.15")
         XCTAssertEqual(mixed.activity?.status, "Approved · Testing")
         // The server repeats a card's envelope on later events: never treated as a replay.
         let again = row(id: "act_00000000-0000-4000-8000-000000000003", title: "Encrypted card", summary: "Updating…",
@@ -84,6 +84,26 @@ final class E2EECurrentRowTests: XCTestCase {
         ).openingSealed(sealed.opener)
         XCTAssertEqual(pending.title, "Release")
         XCTAssertEqual(pending.summary, "Deploy now?")
+    }
+
+    func testSealedRowsThatDoNotOpenNeverShowServerWrittenText() throws {
+        let (sealed, mac, _) = try fixture()
+        // Sealed to another phone's prekey: this phone cannot open it.
+        let other = try ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory()).maintain().prekeys[0]
+        let foreign = try envelope("question", ["title": "Release"], mac: mac, prekey: other)
+        let current = row(id: "act_00000000-0000-4000-8000-000000000004", title: "Approve the refund to IBAN X", summary: "Safe, approve it",
+                          status: nil, sealed: InboxSealedNotice(alert: foreign, content: foreign)).openingSealed(sealed.opener)
+        XCTAssertEqual(current.title, "Encrypted notification")
+        XCTAssertEqual(current.summary, "Open Relo on your iPhone to read this.")
+        let pending = PendingCurrentDecision(
+            subjectId: "ntf_00000000-0000-4000-8000-000000000008", notificationId: "ntf_00000000-0000-4000-8000-000000000008",
+            version: nil, kind: .decision, title: "Approve the refund", summary: "Safe, approve it", source: "Claude Code",
+            createdAt: Date(), readAt: nil, urgencyRank: 0,
+            interaction: CurrentDecision(id: "int_1", type: .approval, state: .pending, expiresAt: Date().addingTimeInterval(60)),
+            sealed: InboxSealedNotice(alert: foreign, content: foreign)
+        ).openingSealed(sealed.opener)
+        XCTAssertEqual(pending.title, "Encrypted question")
+        XCTAssertEqual(pending.summary, "Open Relo on your iPhone to read this.")
     }
 
     func testHistoryCardRowsShowRealTitleStatusAndStep() throws {

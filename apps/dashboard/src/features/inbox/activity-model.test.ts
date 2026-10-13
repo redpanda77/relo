@@ -157,4 +157,31 @@ describe("origin, runtime and agent time", () => {
     expect(agentTimeLabel(720)).toBe("12m")
     expect(agentTimeLabel(5)).toBe("0m")
   })
+
+  it("hides a sealed card's placeholders and names its handles without showing them", () => {
+    const sealedContext = {
+      ...context, project: "p-abcdefghijklmnop", threadName: "t-abcdefghijklmnop",
+      computer: "c-abcdefghijklmnop", account: "a-abcdefghijklmnop",
+    }
+    const card = cardFor(summary({
+      encrypted: true, title: "Encrypted card", context: sealedContext,
+      activity: activity({ encrypted: true, title: "Encrypted card", status: "Updating…", context: sealedContext,
+        steps: { done: 1, total: 3, current: "Step 2" } }),
+      question: { kind: "approval", prompt: "Open Relo on your iPhone to read this question.", state: "pending",
+        respondedAt: null, expiresAt: null, encrypted: true },
+    }), now)
+    expect(card.encrypted).toBe(true)
+    expect(card.title).toBe("End-to-end encrypted · open on iPhone to read")
+    expect(card.summary).toBeNull()
+    expect(card.steps).toEqual({ done: 1, total: 3, current: null })
+    expect(card.project?.name).toBe("Encrypted project")
+    expect(card.topic).toBe("Encrypted topic")
+    expect(card.origin).toBe("Encrypted computer · Encrypted account")
+    expect(card.decision).toMatchObject({ encrypted: true, prompt: "End-to-end encrypted · open on iPhone to read", pending: true })
+    expect(card.outcome.kind).toBe("running")
+
+    const readable = cardFor(summary({ activity: activity({}) }), now)
+    expect(readable.encrypted).toBe(false)
+    expect(readable.title).toBe("Ship build")
+  })
 })

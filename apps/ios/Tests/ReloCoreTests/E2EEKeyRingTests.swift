@@ -95,21 +95,17 @@ final class E2EEKeyRingTests: XCTestCase {
         XCTAssertNotNil(ReloKeyRing.date(keys.prekey.createdAt))
     }
 
-    func testSecureEnclaveKeysOpenEnvelopesAndSignAnswers() throws {
-        guard ReloSecureEnclaveKeyFactory.isAvailable else { throw XCTSkip("No Secure Enclave on this machine.") }
-        let ring = ReloKeyRing(store: MemoryStore(), factory: ReloSecureEnclaveKeyFactory())
-        let state = try ring.maintain(now: start)
-        XCTAssertEqual(state.identity.kind, .secureEnclave)
-        let sender = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
-        let envelope = try ReloE2EE.seal(
-            kind: "notice", context: "acct:a/idem:se", sender: sender,
-            recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)], content: Data(#"{"t":"enclave"}"#.utf8)
-        )
-        let opened = try ReloE2EE.open(envelope, deviceID: "dev_1", prekey: ring.prekeyOpener(state: state),
-                                       trustedSenders: [ReloE2EE.keyID(publicKeyX963: sender.publicKeyX963): sender.publicKeyX963])
-        XCTAssertEqual(opened, Data(#"{"t":"enclave"}"#.utf8))
-        let answer = ReloE2EE.answerSigningInput(interactionID: "int_1", notificationID: "ntf_1", deviceID: "dev_1", value: "approved", respondedAt: "now")
-        let signature = try ring.identitySigner(state: state).sign(answer)
-        XCTAssertTrue(ReloE2EE.verify(signature: signature, message: answer, publicKeyX963: state.identity.publicKey))
+    func testAPrekeyThatOnlyWorksWhileUnlockedIsReplacedAtOnce() throws {
+        let store = MemoryStore()
+        let ring = ReloKeyRing(store: store, factory: ReloSoftwareKeyFactory())
+        var legacy = try ring.maintain(now: start)
+        XCTAssertEqual(legacy.prekeys[0].key.usableWhileLocked, true)
+        legacy.prekeys[0].key.usableWhileLocked = nil
+        try store.save(legacy)
+        let fixed = try ring.maintain(now: start.addingTimeInterval(hour))
+        XCTAssertEqual(fixed.prekeys.count, 2)
+        XCTAssertEqual(fixed.prekeys[0].key.usableWhileLocked, true)
+        XCTAssertEqual(fixed.prekeys[1].retiredAt, start.addingTimeInterval(hour), "the old prekey still opens late envelopes")
+        XCTAssertEqual(try ring.maintain(now: start.addingTimeInterval(2 * hour)), fixed)
     }
 }

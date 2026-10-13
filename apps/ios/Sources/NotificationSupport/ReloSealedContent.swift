@@ -66,7 +66,7 @@ public struct ReloSealedContent: Sendable {
             if envelope.kind != "card", let itemID, let ledger,
                !ledger.admit(context: envelope.context, itemID: itemID, now: now) { return .replayed }
             let carried = ReloNames.carried(in: data)
-            if !carried.isEmpty { nameBook?.learn(carried) }
+            if !carried.isEmpty { nameBook?.learn(carried, sender: envelope.sender) }
             return .opened(data)
         } catch ReloE2EEError.untrustedSender {
             return .unverifiedSender

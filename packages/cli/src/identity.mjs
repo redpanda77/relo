@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+import { loadIdentitySync, subkey } from "./keystore.mjs";
 import { existsSync } from "node:fs";
 import { homedir, hostname as osHostname } from "node:os";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
@@ -275,11 +276,15 @@ export function shortHash(value) {
  * card; elsewhere the card is identified by source › project › topic. --name overrides both.
  */
 export function cardKey({ name, context, env }) {
-  if (name !== undefined) return name;
+  // With an encryption identity the key is keyed, so the server cannot test guesses of names (E2.5).
+  const identity = name !== undefined || !agentSession(env) ? loadIdentitySync(env ?? process.env) : null;
+  const keyed = (value) => (identity
+    ? createHmac("sha256", subkey(identity, "card-keys")).update(value).digest("hex").slice(0, 24) : shortHash(value));
+  if (name !== undefined) return identity ? `name-${keyed(name)}` : name;
   const session = agentSession(env);
   if (session) return `session-${session.agent}-${shortHash(session.id)}`;
   if (!context?.providerName || !context?.project || !context?.threadName) return undefined;
-  return `work-${shortHash([context.providerName, context.project, context.threadName].join("\u0000"))}`;
+  return `work-${keyed([context.providerName, context.project, context.threadName].join("\u0000"))}`;
 }
 
 export function partialIdentity(options, stdin, defaults) {

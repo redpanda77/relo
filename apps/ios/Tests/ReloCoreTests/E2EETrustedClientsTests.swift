@@ -35,6 +35,7 @@ final class E2EETrustedClientsTests: XCTestCase {
         XCTAssertTrue(try trust.autoTrust([reinstalled]))
         XCTAssertEqual(try trust.trust(of: reinstalled), .auto)
         XCTAssertEqual(try trust.notice(for: reinstalled)?.previousKeyId, entry.keyId)
+        XCTAssertEqual(try trust.notice(for: reinstalled)?.kind, "security_code_changed")
         XCTAssertNil(try trust.trustedSenders()[entry.keyId], "the old key no longer opens anything")
 
         try trust.markVerified(reinstalled)
@@ -45,6 +46,20 @@ final class E2EETrustedClientsTests: XCTestCase {
         var forged = client(P256.Signing.PrivateKey(), id: "key_2")
         forged.keyId = entry.keyId
         XCTAssertFalse(try trust.autoTrust([forged]), "a key id that does not match its key is ignored")
+    }
+
+    func testASecondComputerIsTrustedWithANewComputerNoticeAndStaysListed() throws {
+        let trust = ReloTrustedClients(store: MemoryStore())
+        let first = client(P256.Signing.PrivateKey())
+        XCTAssertTrue(try trust.autoTrust([first]))
+        XCTAssertNil(try trust.notice(for: first), "the first computer is trusted silently")
+        let second = client(P256.Signing.PrivateKey(), id: "key_2")
+        XCTAssertTrue(try trust.autoTrust([first, second]))
+        XCTAssertEqual(try trust.notice(for: second)?.kind, "new_computer")
+        XCTAssertNil(try trust.notice(for: second)?.previousKeyId)
+        // The server stops listing a computer: the phone still shows it, because it still opens its messages.
+        XCTAssertFalse(try trust.autoTrust([first]))
+        XCTAssertEqual(Set(try trust.all().map(\.clientId)), ["key_1", "key_2"])
     }
 
     func testRefusesAKeyIdThatDoesNotMatchItsKeyAndMatchesTheCLISafetyNumber() throws {

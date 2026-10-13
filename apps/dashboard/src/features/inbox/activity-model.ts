@@ -2,6 +2,7 @@ import {
   notificationProject,
 } from "@/features/inbox/notification-project"
 import type { NotificationSummary } from "@/features/inbox/types"
+import { displayName, displayNameOrNull, ENCRYPTED_TEXT } from "@/lib/encrypted"
 import { SIGNALS, type NowMix, type Signal } from "@/lib/signal"
 
 /** The neon tones of the app. Meaning, not decoration: each one is a state. */
@@ -40,6 +41,8 @@ export type CardSteps = { done: number; total: number; current: string | null }
 
 export type Decision = {
   prompt: string
+  /** The prompt is sealed end to end: prompt holds the "open on iPhone" text. */
+  encrypted: boolean
   answer: string
   pending: boolean
   declined: boolean
@@ -48,6 +51,11 @@ export type Decision = {
 
 export type ActivityCard = {
   id: string
+  /**
+   * Sealed end to end (ADR 0005): the Dashboard has no key, so title says "open on iPhone" and
+   * summary is empty. Metadata (time, state, steps count, source) still shows.
+   */
+  encrypted: boolean
   source: string
   project: { name: string; slot: number } | null
   topic: string | null
@@ -138,12 +146,15 @@ export function typeLabel(kind: string, questionKind: string | null): string {
 
 function decisionFor(
   question: NonNullable<NotificationSummary["question"]>,
-  now: number
+  now: number,
+  sealed = false
 ): Decision {
   const pending = isPending(question.state, question.expiresAt, now)
   const known = ANSWERS[question.state]
+  const encrypted = sealed || question.encrypted === true
   return {
-    prompt: question.prompt,
+    prompt: encrypted ? ENCRYPTED_TEXT : question.prompt,
+    encrypted,
     answer: pending
       ? "Waiting for you"
       : known
@@ -169,7 +180,9 @@ export function cardFor(notification: NotificationSummary, now = Date.now()): Ac
   const { activity, question } = notification
   const isCard = notification.kind === "live_activity"
   const context = activity?.context ?? notification.context
-  const title = context.taskTitle ?? activity?.title ?? notification.title
+  const encrypted = notification.encrypted === true || activity?.encrypted === true
+  const readableTitle = displayName(context.taskTitle ?? activity?.title ?? notification.title)
+  const title = encrypted ? ENCRYPTED_TEXT : readableTitle
   // A card's own state wins; a plain question or message is described by its answer.
   const outcome: Outcome = isCard
     ? activity
@@ -183,19 +196,24 @@ export function cardFor(notification: NotificationSummary, now = Date.now()): Ac
 
   const project = notificationProject(notification)
   const palette = notification.resources?.project.palette.slot
-  const steps = activity?.steps && activity.steps.total > 0 ? activity.steps : null
+  const steps = activity?.steps && activity.steps.total > 0
+    ? encrypted ? { ...activity.steps, current: null } : activity.steps
+    : null
   const status = activity?.status?.trim() || null
   const body = notification.body.trim()
-  const summary =
-    (isCard ? status : null) ??
-    question?.prompt ??
-    (body && !sameText(body, title) ? body : null)
+  const summary = encrypted
+    ? null
+    : (isCard ? status : null) ??
+      (question?.encrypted ? ENCRYPTED_TEXT : question?.prompt) ??
+      (body && !sameText(body, title) ? body : null)
+  const topic = displayNameOrNull(context.threadName)
 
   return {
     id: notification.id,
+    encrypted,
     source: notification.source,
     project: project.direct ? null : { name: project.name, slot: palette ?? hashSlot(project.name) },
-    topic: context.threadName && !sameText(context.threadName, title) ? context.threadName : null,
+    topic: topic && !sameText(topic, title) ? topic : null,
     type: typeLabel(notification.kind, isCard ? null : (question?.kind ?? null)),
     title,
     summary: summary && !sameText(summary, title) ? summary : null,
@@ -208,14 +226,19 @@ export function cardFor(notification: NotificationSummary, now = Date.now()): Ac
     updates: activity?.updates ?? null,
     steps,
     progress: steps ? null : (activity?.progress ?? null),
-    decision: isCard && question ? decisionFor(question, now) : null,
+    decision: isCard && question ? decisionFor(question, now, encrypted) : null,
     unread: !notification.readAt && !notification.withdrawnAt,
   }
 }
 
+/** The accessible name of a card's open control; a sealed card never names its placeholder. */
+export function openLabel(card: Pick<ActivityCard, "encrypted" | "title">): string {
+  return card.encrypted ? "Open encrypted item" : `Open ${card.title}`
+}
+
 /** "MacBook · work": which computer and which agent account a card came from. */
 export function originLabel(context: { computer?: string | null; account?: string | null }): string | null {
-  const parts = [context.computer, context.account].map((part) => part?.trim()).filter(Boolean)
+  const parts = [context.computer, context.account].map(displayNameOrNull).filter(Boolean)
   return parts.length ? parts.join(" · ") : null
 }
 

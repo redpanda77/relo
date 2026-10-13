@@ -25,7 +25,10 @@ public struct ReloClientKey: Codable, Equatable, Sendable, Identifiable {
 public struct ReloTrustedClient: Codable, Equatable, Sendable {
     public struct Notice: Codable, Equatable, Sendable {
         public var at: Date
-        public var previousKeyId: String
+        /// The replaced key for a "security code changed" notice; absent for a new computer.
+        public var previousKeyId: String?
+        /// "security_code_changed" or "new_computer"; absent in notices saved before this field existed.
+        public var kind: String?
     }
 
     public var clientId: String
@@ -67,6 +70,9 @@ public struct ReloTrustedClients: Sendable {
         return pinned.isVerified ? .verified : .auto
     }
 
+    /// Every computer this phone trusts, including ones the server no longer lists.
+    public func all() throws -> [ReloTrustedClient] { try store.load() }
+
     public func notice(for client: ReloClientKey) throws -> ReloTrustedClient.Notice? {
         try store.load().first(where: { $0.clientId == client.clientId && $0.publicKey == client.publicKey })?.notice
     }
@@ -76,6 +82,8 @@ public struct ReloTrustedClients: Sendable {
     public func autoTrust(_ clients: [ReloClientKey], now: Date = Date()) throws -> Bool {
         var pinned = try store.load()
         var changed = false
+        // The first computer is trusted silently; any computer after it leaves a visible notice.
+        let firstContact = pinned.isEmpty
         for client in clients {
             guard let key = try? ReloE2EE.data(base64URL: client.publicKey, length: 65, field: "client_key"),
                   ReloE2EE.keyID(publicKeyX963: key) == client.keyId else { continue }
@@ -85,7 +93,8 @@ public struct ReloTrustedClients: Sendable {
             let entry = ReloTrustedClient(
                 clientId: client.clientId, name: client.name, keyId: client.keyId, publicKey: client.publicKey,
                 verifiedAt: now, level: "auto",
-                notice: previous.map { .init(at: now, previousKeyId: $0.keyId) }
+                notice: previous.map { .init(at: now, previousKeyId: $0.keyId, kind: "security_code_changed") }
+                    ?? (firstContact ? nil : .init(at: now, previousKeyId: nil, kind: "new_computer"))
             )
             if let existing { pinned[existing] = entry } else { pinned.append(entry) }
             changed = true

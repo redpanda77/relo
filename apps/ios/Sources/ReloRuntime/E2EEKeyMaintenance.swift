@@ -9,10 +9,13 @@ public actor E2EEKeyMaintenance {
     private let publisher: any DeviceKeyPublishing
     private let directory: (any ClientKeyDirectory)?
     private let trust: ReloTrustedClients?
+    private let erase: (@Sendable () -> Void)?
     private var publishedFor: String?
 
     public init(ring: ReloKeyRing, publisher: any DeviceKeyPublishing,
-                directory: (any ClientKeyDirectory)? = nil, trust: ReloTrustedClients? = nil) {
+                directory: (any ClientKeyDirectory)? = nil, trust: ReloTrustedClients? = nil,
+                erase: (@Sendable () -> Void)? = nil) {
+        self.erase = erase
         self.ring = ring
         self.publisher = publisher
         self.directory = directory
@@ -38,5 +41,12 @@ public actor E2EEKeyMaintenance {
         )
         publishedFor = marker
         return true
+    }
+
+    /// Sign-out: deletes this phone's encryption keys, trusted computers, names and replay ledger,
+    /// so the next account starts with fresh keys and trusts nothing from the last one.
+    public func forget() {
+        erase?()
+        publishedFor = nil
     }
 }

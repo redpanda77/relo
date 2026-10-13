@@ -439,6 +439,13 @@ enum LiveActivityResponseActivityPresenter {
         matchingActivity(for: response) != nil
     }
 
+    /// The sealed question's context when this card shows a prompt opened on this phone.
+    static func openedQuestionContext(for response: PendingNotificationResponse) -> String? {
+        guard let state = matchingActivity(for: response)?.content.state, let sealed = state.sealed, sealed.kind == "question",
+              state.presentation.subtitle != ReloSealedCards.promptPlaceholder else { return nil }
+        return sealed.context
+    }
+
     @discardableResult
     static func present(
         _ confirmation: LiveActivityResponseConfirmation,
@@ -610,8 +617,9 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
         guard let responseAction = NotificationInteractionAction(rawValue: action) else {
             return .result()
         }
-        // Signed with this phone's identity key so the CLI can trust the button (E4.2).
-        let requested = ReloAnswerSigning.sign(PendingNotificationResponse.liveActivity(
+        // Signed with this phone's identity key so the CLI can trust the button (E4.2), bound to the
+        // sealed question this card showed when its prompt was opened on this phone.
+        let unsignedRequest = PendingNotificationResponse.liveActivity(
             accountID: accountID,
             deviceID: deviceID,
             notificationID: notificationID,
@@ -621,7 +629,9 @@ struct ReloLiveActivityResponseIntent: LiveActivityIntent {
             action: responseAction,
             credential: credential,
             expiresAt: expiresAt
-        ), signer: ReloKeyRing.live().existingIdentitySigner())
+        )
+        let requested = ReloAnswerSigning.sign(unsignedRequest, signer: ReloKeyRing.live().existingIdentitySigner(),
+            question: LiveActivityResponseActivityPresenter.openedQuestionContext(for: unsignedRequest))
         guard LiveActivityResponseActivityPresenter.hasExactActivity(for: requested) else {
             return .result()
         }

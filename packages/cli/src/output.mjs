@@ -32,6 +32,8 @@ function interactionFields(data) {
     id: interaction?.id,
     state: interaction?.state ?? interaction?.status,
     response: typeof interaction?.response === "string" ? interaction.response : undefined,
+    // A phone's signature on the approval was checked (end-to-end encryption, E4.2).
+    verified: data?.verified === true ? true : undefined,
   };
 }
 

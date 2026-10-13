@@ -3,9 +3,11 @@
 // One file, e2ee.json, next to config.json and protected the same way (0600 in a 0700 folder,
 // owned by the current user, no symlinks). It holds this computer's P-256 identity key and the
 // phone identity keys a person verified with a safety number. The CLI seals only to those phones.
+import { lstatSync, readFileSync } from "node:fs";
 import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { hkdfSync, randomBytes } from "node:crypto";
+import { configPath } from "./config.mjs";
 import { AuthError } from "./errors.mjs";
 import { b64u, fromB64u, generateKeyPair, keyId, publicKeyFor } from "./e2ee.mjs";
 
@@ -101,10 +103,32 @@ export function trustKey(apiUrl, deviceId) {
   return `${apiUrl}|${deviceId}`;
 }
 
-/** "verified" or "auto" when the pinned key matches; "changed" only while strict mode holds a change; "new" before first use. */
+/** "verified" or "auto" when the pinned key matches; "pending" for a phone added later that a person has not accepted; "changed" only while strict mode holds a change; "new" before first use. */
 export function trustState(store, apiUrl, device) {
   const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
   if (!pinned) return "new";
+  if (pinned.level === "pending") return "pending";
   if (pinned.publicKey !== device.identityKey.publicKey) return "changed";
   return pinned.level === "auto" ? "auto" : "verified";
+}
+
+/**
+ * A separate key for each use of the identity key (seal seeds, name handles, card keys), so the
+ * ECDSA scalar is never used directly as an HMAC key.
+ */
+export function subkey(identityPrivateKey, label) {
+  return Buffer.from(hkdfSync("sha256", identityPrivateKey, Buffer.from(`relo.e2e.v1 ${label}`), Buffer.from(label), 32));
+}
+
+/** This computer's identity private key, read synchronously, or null without a usable key store. */
+export function loadIdentitySync(env = process.env) {
+  try {
+    const path = keyStorePath(configPath({ env }), env);
+    const info = lstatSync(path);
+    if (!info.isFile() || info.isSymbolicLink() || (process.platform !== "win32" && (info.mode & 0o077) !== 0)) return null;
+    const store = JSON.parse(readFileSync(path, "utf8"));
+    return store?.identity?.privateKey ? fromB64u(store.identity.privateKey, { length: 32 }) : null;
+  } catch {
+    return null;
+  }
 }

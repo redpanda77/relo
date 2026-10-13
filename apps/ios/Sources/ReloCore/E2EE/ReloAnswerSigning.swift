@@ -8,6 +8,8 @@ public enum ReloAnswerSigning {
     public static let keyIDField = "e2eeKeyId"
     public static let signedAtField = "e2eeSignedAt"
     public static let signatureField = "e2eeSignature"
+    public static let questionField = "e2eeQuestion"
+    public static let questionSignatureField = "e2eeQuestionSignature"
 
     /// What the signature covers for an action: the action itself, or a digest of a typed reply.
     public static func signedValue(action: NotificationInteractionAction, value: [String: String]) -> String {
@@ -19,9 +21,12 @@ public enum ReloAnswerSigning {
     }
 
     /// The response with its signature added, or unchanged when there is no key or no interaction id.
+    /// `question` is the context of the sealed question envelope this phone opened and showed; the
+    /// CLI that asked requires a signature over it, so an approval cannot be moved to another question.
     public static func sign(
         _ response: PendingNotificationResponse,
         signer: (any ReloIdentitySigning)?,
+        question: String? = nil,
         now: Date = Date()
     ) -> PendingNotificationResponse {
         guard let signer, let interactionID = response.interactionID, response.value[signatureField] == nil else { return response }
@@ -35,6 +40,16 @@ public enum ReloAnswerSigning {
         value[keyIDField] = ReloE2EE.keyID(publicKeyX963: signer.publicKeyX963)
         value[signedAtField] = signedAt
         value[signatureField] = ReloE2EE.base64URL(signature)
+        if let question {
+            let bound = ReloE2EE.questionAnswerSigningInput(
+                interactionID: interactionID, notificationID: response.notificationID, deviceID: response.deviceID,
+                value: signedValue(action: response.action, value: response.value), respondedAt: signedAt, question: question
+            )
+            if let questionSignature = try? signer.sign(bound) {
+                value[questionField] = question
+                value[questionSignatureField] = ReloE2EE.base64URL(questionSignature)
+            }
+        }
         return PendingNotificationResponse(
             accountID: response.accountID, deviceID: response.deviceID, notificationID: response.notificationID,
             action: response.action, value: value, idempotencyKey: response.idempotencyKey, expiresAt: response.expiresAt,

@@ -14,9 +14,15 @@ const signature = () => ({
   e2eeSignature: randomBytes(64).toString("base64url"),
 });
 
+/** Review H1/H4: the phone also signs the sealed question's context it opened. */
+const bound = () => ({ ...signature(),e2eeQuestion: "ntf:7f0c2b",e2eeQuestionSignature: randomBytes(64).toString("base64url") });
+
 describe("answer signature shape",() => {
-  test("accepts exactly the three signed fields",() => {
+  test("accepts exactly the signed fields, with or without the question binding",() => {
     expect(answerSignatureSchema.safeParse(signature()).success).toBe(true);
+    expect(answerSignatureSchema.safeParse(bound()).success).toBe(true);
+    expect(answerSignatureSchema.safeParse({ ...bound(),e2eeQuestion: "has space" }).success).toBe(false);
+    expect(answerSignatureSchema.safeParse({ ...bound(),e2eeQuestionSignature: "short" }).success).toBe(false);
     expect(answerSignatureSchema.safeParse({ ...signature(),extra: "x" }).success).toBe(false);
     expect(answerSignatureSchema.safeParse({ ...signature(),e2eeSignature: "short" }).success).toBe(false);
   });
@@ -56,7 +62,7 @@ suite("signed answers through the API (E4.2)",() => {
     const asked = await request("POST","/api/interactions",{ title: "Deploy",prompt: "Deploy to production?",type: "approval",
       deviceIds: [`dev_${id}`] },owner);
     expect(asked.status).toBe(201);
-    const signed = signature();
+    const signed = bound();
     const answered = await request("POST",`/api/notifications/${asked.body.eventId}/interactions`,{
       kind: "approve",value: signed,idempotencyKey: "ios:answer-signature-1",expectedInteractionId: asked.body.interaction.id,
     },credential);

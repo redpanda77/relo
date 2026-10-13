@@ -1,5 +1,8 @@
 import { ArrowUpRight, Check, ChevronDown, Copy, Laptop, RotateCcw, Smartphone } from "lucide-react"
 import { useEffect, useState } from "react"
+import type * as React from "react"
+
+import { EncryptedText } from "@/components/atoms/encrypted-text"
 
 import {
   DeliveryChain,
@@ -16,6 +19,7 @@ import {
 } from "@/features/inbox/activity-model"
 import type { NotificationDetail } from "@/features/inbox/types"
 import { formatDashboardDate } from "@/features/inbox/utils"
+import { displayName, displayNameOrNull } from "@/lib/encrypted"
 import { relativeTime } from "@/lib/format"
 import { useTicker } from "@/lib/ticker"
 import { semanticStatusTone } from "@/lib/status-tone"
@@ -224,7 +228,7 @@ export function NotificationDetailBody({
   detail: NotificationDetail
   context?: string
   service: InboxService
-  heading?: (title: string) => React.ReactNode
+  heading?: (title: React.ReactNode) => React.ReactNode
   /** "panel" draws its own padded header, body, and pinned footer. */
   variant?: "page" | "panel"
 }) {
@@ -246,7 +250,11 @@ export function NotificationDetailBody({
   const canReactivate =
     activity?.state === "active" &&
     activity.presentationLeases.some((lease) => lease.state === "not_presented")
-  const title = activity?.context.taskTitle ?? event.title
+  // Sealed end to end (ADR 0005): the Dashboard has no key, so it points to the iPhone instead.
+  const encrypted = event.encrypted === true || activity?.encrypted === true
+  const promptEncrypted = encrypted || interaction?.encrypted === true
+  const title = encrypted ? "" : displayName(activity?.context.taskTitle ?? event.title)
+  const titleNode = encrypted ? <EncryptedText className="text-muted-foreground" /> : title
   const status = headline(detail, withdrawal === "done")
   const cardOutcome =
     activity && !interaction && withdrawal !== "done"
@@ -267,7 +275,7 @@ export function NotificationDetailBody({
   const origin = activity ? originLabel(activity.context) : null
   const identity = context
     ? context.split(" › ")
-    : [event.source, activity?.context.project, activity?.context.threadName]
+    : [event.source, displayNameOrNull(activity?.context.project), displayNameOrNull(activity?.context.threadName)]
   const chips = [
     ...identity.filter((part): part is string => Boolean(part)).map((text, index) => ({
       key: `id-${index}`, text, label: ["Source", "Project", "Topic"][index] ?? "Context",
@@ -276,9 +284,10 @@ export function NotificationDetailBody({
     { key: "created", text: formatDashboardDate(event.createdAt), label: "Created" },
   ]
   const body = event.body.trim()
-  const showBody = Boolean(body) && body !== interaction?.prompt.trim() && body !== title
-  const showPrompt =
-    Boolean(interaction?.prompt.trim()) && interaction!.prompt.trim() !== title
+  const showBody = !encrypted && Boolean(body) && body !== interaction?.prompt.trim() && body !== title
+  const showPrompt = promptEncrypted
+    ? !encrypted
+    : Boolean(interaction?.prompt.trim()) && interaction!.prompt.trim() !== title
   const pendingAnswer =
     interaction && !interaction.respondedAt && !interaction.action && !isExpired(interaction.expiresAt)
 
@@ -305,9 +314,9 @@ export function NotificationDetailBody({
           ) : null}
         </div>
         {heading ? (
-          heading(title)
+          heading(titleNode)
         ) : (
-          <h2 className="text-2xl font-light tracking-tight sm:text-3xl [overflow-wrap:anywhere]">{title}</h2>
+          <h2 className="text-2xl font-light tracking-tight sm:text-3xl [overflow-wrap:anywhere]">{titleNode}</h2>
         )}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {cardOutcome ? (
@@ -326,7 +335,7 @@ export function NotificationDetailBody({
               {status.text}
             </span>
           )}
-          {activity?.status ? (
+          {activity?.status && !encrypted ? (
             <span className="text-sm text-muted-foreground">{activity.status}</span>
           ) : null}
         </div>
@@ -335,7 +344,7 @@ export function NotificationDetailBody({
       <div className={cn("space-y-8", panel && "flex-1 py-6", pad)}>
         {activity ? (
           <>
-            {activity.detail ? (
+            {activity.detail && !encrypted ? (
               <p className="text-sm leading-6 text-muted-foreground">{activity.detail}</p>
             ) : null}
             {stepItems.length ? (
@@ -403,7 +412,9 @@ export function NotificationDetailBody({
               Your answer
             </h3>
             {showPrompt ? (
-              <p className="text-[15px] leading-7">{interaction.prompt}</p>
+              <p className="text-[15px] leading-7">
+                {promptEncrypted ? <EncryptedText className="text-muted-foreground" /> : interaction.prompt}
+              </p>
             ) : null}
             {pendingAnswer ? (
               <p className="flex items-start gap-2.5 text-sm text-muted-foreground">

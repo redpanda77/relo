@@ -153,3 +153,20 @@ test("the key store refuses loose permissions and corrupted identities, and test
     rmSync(folder, { recursive: true, force: true });
   }
 });
+
+test("a phone added after the first waits as pending until a person verifies it", async () => {
+  const first = phone("Owner iPhone", "dev_00000000-0000-4000-8000-000000000001");
+  const second = phone("Second phone", "dev_00000000-0000-4000-8000-000000000002");
+  const h = harness({ devices: [first.resource], tty: true, answer: true });
+  try {
+    await h.run("status");
+    h.state.devices = [first.resource, second.resource];
+    const devices = (await h.run("status")).data.devices;
+    assert.deepEqual(devices.map((device) => device.trust), ["auto", "pending"]);
+    await assert.rejects(h.run("verify", [second.resource.deviceId], { stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");
+    assert.equal((await h.run("verify", [second.resource.deviceId])).data.trust, "verified");
+    assert.equal((await h.run("status")).data.devices[1].trust, "verified");
+  } finally {
+    h.cleanup();
+  }
+});
