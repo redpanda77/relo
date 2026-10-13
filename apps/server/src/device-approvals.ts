@@ -147,6 +147,38 @@ async function sendApprovalNotice(
   },{ apnsMode,contentCipher });
 }
 
+/**
+ * A computer's first key on an account that already has one: the phones hold it as pending until the
+ * owner approves it in Settings → Security (docs/HARDENING.md, gap 3), so tell them once. The first
+ * computer is trusted on first contact and needs no notice.
+ */
+export async function announceNewComputer(
+  db: Database,principalId: string,apiKeyId: string,keyId: string,apnsMode: ApnsMode,contentCipher: NotificationContentCipher | null,
+): Promise<boolean> {
+  const computer = await db.query<{ label: string; others: boolean }>(
+    `SELECT k.label,EXISTS (SELECT 1 FROM client_identity_keys c JOIN principal_api_keys o ON o.id=c.api_key_id
+       WHERE c.principal_id=$1 AND c.api_key_id<>$2 AND o.revoked_at IS NULL) AS others
+     FROM principal_api_keys k WHERE k.id=$2 AND k.principal_id=$1`,[principalId,apiKeyId]);
+  if (!computer.rows[0]?.others) return false;
+  const phones = await db.query<{ id: string }>(
+    `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
+     WHERE d.principal_id=$1 AND d.revoked_at IS NULL`,[principalId]);
+  if (!phones.rowCount) return false;
+  const idempotencyKey = `computer-approval:${apiKeyId}:${keyId}`;
+  await createNotification(db,{ kind: "owner",principalId },{
+    idempotencyKey,
+    requestHash: createHash("sha256").update(idempotencyKey).digest("hex"),
+    sourceName: "Relo",
+    title: "New computer wants access",
+    content: prepareNotificationContent({ body: `“${computer.rows[0].label}” signed in to your Relo account. Approve or decline it in Settings → Security.` }),
+    imageUrl: null,deepLink: "relo://settings/security",
+    payload: { computerApproval: { clientId: publicId("key",apiKeyId) } },
+    deviceIds: phones.rows.map((row) => row.id),
+    originHash: null,
+  },{ apnsMode,contentCipher });
+  return true;
+}
+
 /** The worker's pass: devices already waiting before this existed (or whose notice failed) get theirs. */
 export async function requestAllPendingApprovals(db: Database,apnsMode: ApnsMode,contentCipher: NotificationContentCipher | null): Promise<number> {
   const waiting = await db.query<{ principal_id: string; device_id: string }>(

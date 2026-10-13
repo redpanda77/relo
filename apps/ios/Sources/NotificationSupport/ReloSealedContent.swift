@@ -89,7 +89,7 @@ public struct ReloSealedContent: Sendable {
             let names = nameBook?.names() ?? [:]
             return (ReloNames.resolve(alert.title, names), ReloNames.resolve(alert.summary ?? "", names))
         case .unverifiedSender:
-            return ("Relo", "Encrypted message from a new computer. Open Relo to read it.")
+            return ("Relo", "Encrypted message from a new computer. Approve it in Relo → Settings → Security to read it.")
         case .replayed:
             return ("Relo", "A repeated encrypted message was blocked.")
         case .unavailable:

@@ -1026,6 +1026,15 @@ suite("Relo API persistence boundaries", () => {
     const replay = await createApp(db).request(hookPath,{ method: "POST", headers, body: requestBody });
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ ok: true, eventId: body.eventId, idempotent: true });
+    // HARDENING gap 7: the secret may travel in a header instead of the path; same service, same event.
+    const secret = hookPath.split("/").at(-1)!;
+    const viaHeader = await createApp(db).request("/hooks",{ method: "POST",
+      headers: { ...headers, authorization: `Bearer ${secret}` }, body: requestBody });
+    expect(viaHeader.status, await viaHeader.clone().text()).toBe(200);
+    expect(await viaHeader.json()).toMatchObject({ ok: true, eventId: body.eventId, idempotent: true });
+    const wrongHeader = await createApp(db).request("/hooks",{ method: "POST",
+      headers: { ...headers, "x-relo-webhook-secret": `hook_${"A".repeat(43)}` }, body: requestBody });
+    expect(wrongHeader.status).toBe(404);
     const conflict = await createApp(db).request(hookPath,{
       method: "POST", headers, body: JSON.stringify({ ...JSON.parse(requestBody), body: "Changed" }),
     });

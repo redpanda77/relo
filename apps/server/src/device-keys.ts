@@ -198,20 +198,21 @@ export const publishClientKeySchema = z.object({ identityKey: b64u(65) }).strict
 export async function publishClientKey(
   db: Pick<Database,"query">,
   input: { principalId: string; apiKeyId: string; identityKey: string },
-): Promise<{ ok: true; keyId: string; changed: boolean } | { ok: false; error: "invalid_identity_key" }> {
+): Promise<{ ok: true; keyId: string; changed: boolean; created: boolean } | { ok: false; error: "invalid_identity_key" }> {
   const identity = Buffer.from(input.identityKey,"base64url");
   if (!verifyingKey(identity)) return { ok: false,error: "invalid_identity_key" };
   const keyId = e2eeKeyId(identity);
-  const result = await db.query<{ changed: boolean }>(
+  const result = await db.query<{ changed: boolean; created: boolean }>(
     `WITH previous AS (SELECT public_key FROM client_identity_keys WHERE api_key_id=$1)
      INSERT INTO client_identity_keys(api_key_id,principal_id,key_id,public_key) VALUES ($1,$2,$3,$4)
      ON CONFLICT (api_key_id) DO UPDATE SET key_id=EXCLUDED.key_id,public_key=EXCLUDED.public_key,
        changed_at=CASE WHEN client_identity_keys.public_key=EXCLUDED.public_key
          THEN client_identity_keys.changed_at ELSE now() END
-     RETURNING COALESCE((SELECT public_key FROM previous)<>$4,false) AS changed`,
+     RETURNING COALESCE((SELECT public_key FROM previous)<>$4,false) AS changed,
+       NOT EXISTS (SELECT 1 FROM previous) AS created`,
     [input.apiKeyId,input.principalId,keyId,input.identityKey],
   );
-  return { ok: true,keyId,changed: Boolean(result.rows[0]?.changed) };
+  return { ok: true,keyId,changed: Boolean(result.rows[0]?.changed),created: Boolean(result.rows[0]?.created) };
 }
 
 export type ClientKeyResource = { clientId: string; name: string; keyId: string; publicKey: string; changedAt: string };

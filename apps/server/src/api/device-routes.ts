@@ -1,5 +1,5 @@
 import { registerActivityUpdateToken } from "../activity-token-registration.js";
-import { approveDevice,approveDeviceSchema,declineDevice,pendingDevices,requestDeviceApproval } from "../device-approvals.js";
+import { announceNewComputer,approveDevice,approveDeviceSchema,declineDevice,pendingDevices,requestDeviceApproval } from "../device-approvals.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
 import { browserKeys,linkBrowser,linkBrowserSchema,listLinkedBrowsers,unlinkBrowser } from "../linked-browsers.js";
 import { Hono } from "hono";
@@ -153,6 +153,12 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       principalId: auth.principalId,apiKeyId: auth.credentialId,identityKey: parsed.data.identityKey,
     });
     if (!result.ok) return context.json({ error: result.error }, 400);
+    // A computer after the account's first waits for approval on the phones: tell them once.
+    if (result.created) {
+      await announceNewComputer(db,auth.principalId,auth.credentialId,result.keyId,apnsMode,notificationContentCipher).catch((error) => {
+        console.warn(JSON.stringify({ event: "computer_approval_request_failed",message: error instanceof Error ? error.message : String(error) }));
+      });
+    }
     return context.json({ keyId: result.keyId,changed: result.changed });
   });
 
@@ -172,6 +178,9 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
     if (!body || !(typeof body.required === "boolean" || body.required === null) || Object.keys(body).length !== 1) {
       return context.json({ error: "invalid_request" },400);
     }
+    // A CLI key may only make the requirement stricter (on, or auto). Turning it off needs the owner
+    // signed in to the Dashboard, so a stolen key cannot weaken it (docs/HARDENING.md, gap 5).
+    if (body.required === false) return context.json({ error: "turn_off_in_dashboard" },403);
     await setEndToEndRequired(db,auth.principalId,body.required as boolean | null);
     return context.json(await endToEndPolicy(db,auth.principalId));
   });

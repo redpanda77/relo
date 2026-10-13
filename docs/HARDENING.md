@@ -38,26 +38,27 @@ server and the gaps that are still open, in priority order. Each gap names the c
 An account is one email and password (minimum 8 characters, `account-auth.ts`). Anyone who learns
 the password can sign in from anywhere. From the Dashboard they can also sign the owner's phone out
 and sign in their own: computers trust it again with a "phone set up again" notice (gap 4), unless
-strict mode is on. Sign-in limits are per address and overall, not per account. Plan: passkeys or TOTP for Dashboard sign-in, required for
+strict mode is on. Sign-in also backs off per account (gap 2). Plan: passkeys or TOTP for Dashboard sign-in, required for
 the admin on a public origin, and a check against known-breached passwords.
 
-### 2. Sign-in limits can be used to lock people out
+### 2. Sign-in limits can be used to lock people out (closed)
 
-The overall sign-in limit (120 per minute) slows distributed guessing, but an attacker who fills it
-blocks everyone, the owner included, for as long as they keep sending about two attempts a second.
-Refused attempts are not counted, so the block ends a minute after they stop. The limits are in
-memory, so a restart clears them. Plan:
-per-account backoff that grows with failures, a separate budget for clients that have signed in
-successfully before, and an optional challenge (for example Cloudflare Turnstile) after repeated
-failures.
+Closed on 14 October 2026 (`auth-throttle.ts`). After five wrong passwords for one email, that
+account's next sign-in waits 1 second, doubling with each further failure up to 15 minutes; other
+accounts are unaffected. A browser that has signed in to the account before carries a signed
+`relo_known_device` cookie (HttpOnly, `Secure` on HTTPS) and skips both the account wait and the
+overall limit, so someone guessing, or filling the limits on purpose, cannot lock the owner out of
+their own browser. The limits and the cookie key are in memory: a restart clears both. A challenge
+(for example Cloudflare Turnstile) can still be added in front of the proxy.
 
-### 3. The iPhone trusts any new computer key
+### 3. The iPhone trusts any new computer key (closed)
 
-The phone pins every computer key the server lists, with only a notice for the second and later
-ones (`apps/ios/Sources/ReloCore/E2EE/ReloTrustedClients.swift`, `autoTrust`). Someone with the
-account password can create a CLI key and send readable-looking notices and questions that the phone
-accepts. Plan: hold a new computer as pending until a trusted phone or computer approves it, the
-way the CLI already holds new phones (`packages/cli/src/trust.mjs`).
+Closed on 14 October 2026: the computers present when the phone signs in are trusted on first use,
+and any computer that appears after that is *pending* on the phone until the owner approves it in
+Settings → Security (`apps/ios/Sources/ReloCore/E2EE/ReloTrustedClients.swift`). The server sends
+the phones a plain "New computer wants access" notification when a second or later computer
+publishes its key (`device-approvals.ts`, `announceNewComputer`). A trusted computer's changed key is
+still trusted again with a notice (gap 4).
 
 ### 4. The CLI re-trusts a changed or replaced phone
 
@@ -66,28 +67,33 @@ new phone once every phone it trusted has left the account, are trusted again wi
 ("security code changed", "phone set up again"; `packages/cli/src/trust.mjs`). A compromised server,
 or anyone with the account password (gap 1), can therefore swap in its own phone key, read new
 content and accept approvals signed by it. `relo keys strict on` holds both as pending until a
-person runs `relo keys verify`. Plan: make strict the default on a public origin.
+person runs `relo keys verify`. This is the owner's accepted trade-off (ADR 0005: Signal/WhatsApp-style
+automatic trust, encryption always on); strict mode is the option for anyone who wants verification.
 
-### 5. Any CLI key can turn off the encryption requirement
+### 5. Any CLI key can turn off the encryption requirement (closed)
 
-`PUT /api/end-to-end/policy` accepts any CLI credential (`apps/server/src/api/device-routes.ts`).
-The CLI's own fail-closed rule still holds, but a stolen key can change the server-side requirement.
-Plan: require a Dashboard session, or a CLI key with an explicit admin scope.
+Closed on 14 October 2026: `PUT /api/end-to-end/policy` lets a CLI key only make the requirement
+stricter (on, or auto); turning it off answers `turn_off_in_dashboard` and needs the owner signed in
+to the Dashboard (`PUT /api/dashboard/end-to-end/policy`). A stolen CLI key can no longer weaken it.
 
-### 6. "Open" registration on a public origin
+### 6. "Open" registration on a public origin (closed)
 
-Open registration with no per-account quotas lets anyone create accounts and consume server and APNs
-capacity. Plan: refuse Open when `RELO_APP_URL` is a public address, or add quotas first.
+Closed on 14 October 2026: when `APP_URL` is a public HTTPS address (a `*.ts.net` name counts),
+Open registration acts as Approval, and the admin page refuses to choose Open with
+`open_registration_needs_private_origin` (`server-accounts.ts`, `registrationMode`). Open stays
+available on a loopback or private origin.
 
-### 7. Webhook secrets travel in the URL path
+### 7. Webhook secrets travel in the URL path (closed)
 
-Service webhooks authenticate with a secret in `/hooks/:secret`, so the secret can appear in proxy
-and CDN logs. Plan: accept the secret in a header and keep the path form for compatibility.
+Closed on 14 October 2026: `POST /hooks` and `/hooks/live-activities…` take the secret in
+`Authorization: Bearer hook_…` or `X-Relo-Webhook-Secret`, so it stays out of proxy, CDN and access
+logs (`services.ts`, `registerHeaderSecretWebhooks`). The `/hooks/:secret` form keeps working for
+existing integrations; prefer the header for new ones.
 
 ## Operator checklist for a public address
 
 1. Use a long, unique password for every account until gap 1 is closed.
-2. Keep registration Closed or Approval.
+2. Keep registration Closed or Approval (a public origin no longer allows Open).
 3. Set `RELO_CLIENT_IP_HEADER` to the header your proxy overwrites, never `x-forwarded-for`.
 4. Run `relo keys strict on` on every computer. After that, a changed key or a phone set up again
    needs `relo keys verify` before computers seal to it.

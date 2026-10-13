@@ -69,8 +69,11 @@ final class EncryptionSecurityModel {
         self.linked = linked
     }
 
+    /// Computers that appeared after this phone's first contact and wait for the owner here.
+    var waitingComputers: [Computer] { computers.filter { $0.trust == .pending } }
+
     var statusLine: String {
-        let names = computers.map(\.client.name)
+        let names = computers.filter { $0.trust == .auto || $0.trust == .verified }.map(\.client.name)
         switch names.count {
         case 0: return "Messages are end-to-end encrypted as soon as a computer signs in to this account."
         case 1: return "End-to-end encrypted with \(names[0])."
@@ -246,6 +249,20 @@ final class EncryptionSecurityModel {
         }
     }
 
+    /// The owner approved a waiting computer on this phone: its encrypted messages open from now on.
+    func approveComputer(_ computer: Computer) {
+        guard (try? trust.approve(clientId: computer.client.clientId, keyId: computer.client.keyId)) != nil,
+              let index = computers.firstIndex(of: computer) else { return }
+        computers[index].trust = .auto
+    }
+
+    /// Declined: the computer stays listed and opens nothing on this iPhone.
+    func declineComputer(_ computer: Computer) {
+        guard (try? trust.decline(clientId: computer.client.clientId, keyId: computer.client.keyId)) != nil,
+              let index = computers.firstIndex(of: computer) else { return }
+        computers[index].trust = .declined
+    }
+
     func markVerified(_ computer: Computer) {
         guard (try? trust.markVerified(computer.client)) != nil,
               let index = computers.firstIndex(of: computer) else { return }
@@ -261,6 +278,8 @@ struct EncryptionSettingsView: View {
     @State private var pendingUnlink: EncryptionSecurityModel.UnlinkTarget?
     @State private var pendingApproval: ReloPendingDevice?
     @State private var pendingDecline: ReloPendingDevice?
+    @State private var computerApproval: EncryptionSecurityModel.Computer?
+    @State private var computerDecline: EncryptionSecurityModel.Computer?
     @Environment(\.scenePhase) private var scenePhase
 
     private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
@@ -268,6 +287,12 @@ struct EncryptionSettingsView: View {
 
     private func refreshPending() async {
         await security.loadPending(credential: model.credential, approver: approver)
+    }
+
+    /// Waiting phones and waiting computers ("New computer wants access" opens this screen too).
+    private func refreshAll() async {
+        await refreshPending()
+        await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory)
     }
 
     var body: some View {
@@ -281,13 +306,14 @@ struct EncryptionSettingsView: View {
                 await security.load(credential: model.credential, directory: model.apiClient as? any ClientKeyDirectory)
             }
             // The list refreshes on foreground and when the "New device wants access" notification opens it.
-            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await refreshPending() } } }
-            .onChange(of: model.securitySettingsRequests) { _, _ in Task { await refreshPending() } }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await refreshAll() } } }
+            .onChange(of: model.securitySettingsRequests) { _, _ in Task { await refreshAll() } }
     }
 
     private var list: some View {
         List {
             pendingDevicesSection
+            waitingComputersSection
             switch security.phase {
             case .loading:
                 ProgressView().frame(maxWidth: .infinity)
@@ -302,11 +328,12 @@ struct EncryptionSettingsView: View {
                 .listRowBackground(ReloListRowBackground())
                 if !security.computers.isEmpty {
                     Section {
-                        ForEach(security.computers) { computer in
+                        ForEach(security.computers.filter { $0.trust != .pending }) { computer in
                             NavigationLink { ComputerVerificationView(security: security, computer: computer) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     LabeledContent(computer.client.name) {
                                         if computer.trust == .verified { Text("Verified") }
+                                        if computer.trust == .declined { Text("Declined") }
                                     }
                                     if let notice = computer.notice {
                                         Text("\(notice.kind == "new_computer" ? "Added" : "Security code changed") \(notice.at.formatted(.relative(presentation: .named)))")
@@ -398,6 +425,61 @@ struct EncryptionSettingsView: View {
             Button("Cancel", role: .cancel) { pendingDecline = nil }
         } message: { _ in
             Text("It will be signed out.")
+        }
+        .confirmationDialog(computerApproval.map { "Approve \($0.client.name)?" } ?? "", isPresented: Binding(
+            get: { computerApproval != nil }, set: { if !$0 { computerApproval = nil } }
+        ), titleVisibility: .visible, presenting: computerApproval) { computer in
+            Button("Approve") {
+                computerApproval = nil
+                security.approveComputer(computer)
+            }
+            Button("Cancel", role: .cancel) { computerApproval = nil }
+        } message: { _ in
+            Text("This iPhone will show its encrypted messages and questions.")
+        }
+        .confirmationDialog(computerDecline.map { "Decline \($0.client.name)?" } ?? "", isPresented: Binding(
+            get: { computerDecline != nil }, set: { if !$0 { computerDecline = nil } }
+        ), titleVisibility: .visible, presenting: computerDecline) { computer in
+            Button("Decline", role: .destructive) {
+                computerDecline = nil
+                security.declineComputer(computer)
+            }
+            Button("Cancel", role: .cancel) { computerDecline = nil }
+        } message: { _ in
+            Text("This iPhone will not open anything it sends. Remove its key in the Dashboard to sign it out.")
+        }
+    }
+
+    /// "New computer wants access": a CLI key that appeared after this phone's first contact. Its
+    /// encrypted messages stay closed until the owner approves it here (docs/HARDENING.md, gap 3).
+    @ViewBuilder private var waitingComputersSection: some View {
+        if !security.waitingComputers.isEmpty {
+            Section {
+                ForEach(security.waitingComputers) { computer in
+                    VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(computer.client.name).font(.body.weight(.semibold))
+                            if let notice = computer.notice {
+                                Text("Signed in \(notice.at.formatted(.relative(presentation: .named)))")
+                                    .font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                            }
+                            Text("Key \(computer.client.keyId)").font(.footnote.monospaced()).foregroundStyle(Color.reloSecondaryText)
+                        }
+                        HStack(spacing: 12) {
+                            Button("Approve") { computerApproval = computer }
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("approve-computer")
+                            Button("Decline", role: .destructive) { computerDecline = computer }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("decline-computer")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: { Text("New computer wants access") } footer: {
+                Text("Approve only a computer you just signed in to Relo yourself. Until then, this iPhone does not open what it sends.")
+            }
+            .listRowBackground(ReloListRowBackground())
         }
     }
 

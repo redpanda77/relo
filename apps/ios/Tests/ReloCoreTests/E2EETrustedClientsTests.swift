@@ -48,15 +48,40 @@ final class E2EETrustedClientsTests: XCTestCase {
         XCTAssertFalse(try trust.autoTrust([forged]), "a key id that does not match its key is ignored")
     }
 
-    func testASecondComputerIsTrustedWithANewComputerNoticeAndStaysListed() throws {
+    func testALaterComputerWaitsForApprovalOnThePhoneAndStaysListed() throws {
         let trust = ReloTrustedClients(store: MemoryStore())
         let first = client(P256.Signing.PrivateKey())
-        XCTAssertTrue(try trust.autoTrust([first]))
-        XCTAssertNil(try trust.notice(for: first), "the first computer is trusted silently")
-        let second = client(P256.Signing.PrivateKey(), id: "key_2")
-        XCTAssertTrue(try trust.autoTrust([first, second]))
+        let alongside = client(P256.Signing.PrivateKey(), id: "key_0")
+        XCTAssertTrue(try trust.autoTrust([first, alongside]))
+        XCTAssertNil(try trust.notice(for: first), "the computers present at first contact are trusted silently")
+        XCTAssertEqual(try trust.trust(of: alongside), .auto)
+        let secondKey = P256.Signing.PrivateKey()
+        let second = client(secondKey, id: "key_2")
+        XCTAssertTrue(try trust.autoTrust([first, alongside, second]))
         XCTAssertEqual(try trust.notice(for: second)?.kind, "new_computer")
         XCTAssertNil(try trust.notice(for: second)?.previousKeyId)
+        // HARDENING gap 3: someone with the account password cannot add a computer the phone believes.
+        XCTAssertEqual(try trust.trust(of: second), .pending)
+        XCTAssertNil(try trust.trustedSenders()[second.keyId])
+        XCTAssertEqual(try trust.pending().map(\.clientId), ["key_2"])
+        // A new key behind a computer that was never approved still waits.
+        let rekeyed = client(P256.Signing.PrivateKey(), id: "key_2")
+        XCTAssertTrue(try trust.autoTrust([first, alongside, rekeyed]))
+        XCTAssertEqual(try trust.trust(of: rekeyed), .pending)
+        XCTAssertThrowsError(try trust.approve(clientId: "key_2", keyId: second.keyId), "approval names the key the owner saw")
+        try trust.approve(clientId: "key_2", keyId: rekeyed.keyId)
+        XCTAssertEqual(try trust.trust(of: rekeyed), .auto)
+        XCTAssertNotNil(try trust.trustedSenders()[rekeyed.keyId])
+        // A declined computer opens nothing and is not asked about again for the same key.
+        let stranger = client(P256.Signing.PrivateKey(), id: "key_3")
+        try trust.autoTrust([first, stranger])
+        try trust.decline(clientId: "key_3", keyId: stranger.keyId)
+        XCTAssertFalse(try trust.autoTrust([first, stranger]))
+        XCTAssertEqual(try trust.trust(of: stranger), .declined)
+        XCTAssertNil(try trust.trustedSenders()[stranger.keyId])
+        XCTAssertEqual(try trust.pending(), [])
+        try trust.forget(clientId: "key_3")
+        try trust.forget(clientId: "key_0")
         // The server stops listing a computer: the phone still shows it, because it still opens its messages.
         XCTAssertFalse(try trust.autoTrust([first]))
         XCTAssertEqual(Set(try trust.all().map(\.clientId)), ["key_1", "key_2"])

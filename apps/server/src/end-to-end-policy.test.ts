@@ -1,4 +1,5 @@
 import { randomBytes,randomUUID } from "node:crypto";
+import { setEndToEndRequired } from "./end-to-end-policy.js";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import { createApp } from "./app.js";
 import { generateToken,hashToken } from "./auth.js";
@@ -83,7 +84,9 @@ suite("require end-to-end encryption (E6.1)",() => {
     expect(await request("POST",`/api/live-activities/${card.body.activity.id}/wait`,{ type: "approval",prompt: "Plain?",expiresInSeconds: 60 },owner))
       .toMatchObject(refused);
 
-    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ required: false,mode: "off" });
+    // A CLI key cannot turn it off (HARDENING gap 5); the owner does it signed in to the Dashboard.
+    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ error: "turn_off_in_dashboard" });
+    await setEndToEndRequired(db,principalId,false);
     expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(201);
   });
 
@@ -94,7 +97,9 @@ suite("require end-to-end encryption (E6.1)",() => {
       VALUES ($1,$2,'k_AAAAAAAAAAAAAAAAAAAAAA',$3)`,[device.id,principalId,"A".repeat(87)]);
     expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: true,mode: "auto" });
     expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(409);
-    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ required: false,mode: "off" });
+    // A CLI key cannot turn it off (HARDENING gap 5); the owner does it signed in to the Dashboard.
+    expect((await request("PUT","/api/end-to-end/policy",{ required: false },owner)).body).toEqual({ error: "turn_off_in_dashboard" });
+    await setEndToEndRequired(db,principalId,false);
     expect((await request("POST","/api/notifications",{ sourceName: "Claude Code",title: "Plain",body: "Readable",context },owner)).status).toBe(201);
     expect((await request("PUT","/api/end-to-end/policy",{ required: null },owner)).body).toEqual({ required: true,mode: "auto" });
     await db.query("UPDATE devices SET revoked_at=now() WHERE id=$1",[device.id]);

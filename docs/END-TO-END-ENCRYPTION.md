@@ -107,6 +107,11 @@ Sealing and signed approvals start at once.
 - **A new phone is approved on a phone you already have.** The first phone is trusted on first use.
   A phone that appears later stays *pending* until a trusted phone approves it in Settings → Security
   (see "New devices are approved on a trusted phone" below); the server cannot add a phone of its own.
+- **A new computer is approved on the phone.** The computers already on the account when the phone
+  signs in are trusted on first use. A computer that appears later is *pending* on the phone: the
+  phones get a "New computer wants access" notification, and nothing it sends opens until the owner
+  approves it in Settings → Security (Decline keeps it closed). So someone with the account password
+  cannot add a computer whose messages and questions the phone believes.
 - **A phone set up again is trusted again, like WhatsApp after a reinstall.** Signing out keeps the
   phone's own keys, so the same phone signing in again is recognised by its key with no notice.
   When every phone a computer trusted has left the account, the account's new phone is trusted

@@ -10,6 +10,7 @@ import { QUESTION_CEILING_SECONDS,QUESTION_SECONDS } from "../question-policy.js
 import { maxQuestionSeconds,setMaxQuestionSeconds } from "../question-wait.js";
 import { PRIVATE_CALLBACK_POLICIES,privateCallbackPolicy } from "../callback-destinations.js";
 import type { WebRouteContext } from "./route-context.js";
+import { isPublicHttpsUrl } from "../url-policy.js";
 
 /** ADR 0004: the server admin decides who may register and who keeps access. No account data here. */
 export function registerServerAdminRoutes(app: Hono, shared: WebRouteContext): void {
@@ -24,7 +25,7 @@ export function registerServerAdminRoutes(app: Hono, shared: WebRouteContext): v
     const account = await serverAdminAccount(context);
     if (account instanceof Response) return account;
     context.header("cache-control","private, no-store");
-    return context.json({ registrationMode: await registrationMode(db),maxQuestionSeconds: await maxQuestionSeconds(db),
+    return context.json({ registrationMode: await registrationMode(db,shared.appUrl),maxQuestionSeconds: await maxQuestionSeconds(db),
       privateCallbacks: await privateCallbackPolicy(db),accounts: await listServerAccounts(db) });
   });
 
@@ -32,6 +33,11 @@ export function registerServerAdminRoutes(app: Hono, shared: WebRouteContext): v
     const account = await serverAdminAccount(context);
     if (account instanceof Response) return account;
     const input = z.object({ mode: z.enum(registrationModes) }).strict().parse(await context.req.json());
+    // No open registration on a public origin: anyone could create accounts (HARDENING gap 6).
+    if (input.mode === "open" && isPublicHttpsUrl(shared.appUrl)) {
+      return context.json({ error: "open_registration_needs_private_origin",
+        message: "Open registration is only for a private server. Use Approval on a public address." },409);
+    }
     await setRegistrationMode(db,input.mode);
     return context.json({ registrationMode: input.mode });
   });

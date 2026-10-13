@@ -366,6 +366,7 @@
 		E791E499972DF15DC33283EB /* ReloHistoryPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1859D2B992D3B137C73BDB9F /* ReloHistoryPreferences.swift */; };
 		EBE4BDBBCEE7A918C2DE5769 /* ReloNotificationSupport.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 409D7B8018796792CEE8A426 /* ReloNotificationSupport.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		EC2FFC8C8C69924642B5B948 /* ReloPersistence.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = E3447BFDEB55CDEF3138218A /* ReloPersistence.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		EC5E87BD61DB38DA2F5943B0 /* SealedLiveActivityKeychainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDDF3121922F5E0EF416A87 /* SealedLiveActivityKeychainTests.swift */; };
 		EDC8597B0CC7539DDF384E4E /* InboxPresentationProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE23F575A8D5540F425697CC /* InboxPresentationProjection.swift */; };
 		EF9612BC437A172F91AFA960 /* HTTPNotificationReceiptSourceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6909DDE050903915274B616 /* HTTPNotificationReceiptSourceTests.swift */; };
 		EFAC632CE0509656FC38D8B8 /* ReloActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5452C59DB04FF8024AEC25 /* ReloActivityAttributes.swift */; };
@@ -1012,6 +1013,7 @@
 		BE788A7F36F2A2D88E916502 /* HTTPNotificationReceiptSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPNotificationReceiptSource.swift; sourceTree = "<group>"; };
 		BE9C039019E2D14EEE01732C /* NotificationReceiptFileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationReceiptFileTests.swift; sourceTree = "<group>"; };
 		BEDBFB1A45D330850F38C49B /* E2EEBrowserLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EEBrowserLinkTests.swift; sourceTree = "<group>"; };
+		BEDDF3121922F5E0EF416A87 /* SealedLiveActivityKeychainTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SealedLiveActivityKeychainTests.swift; sourceTree = "<group>"; };
 		C02DD05C426F9AFEC5F77537 /* DurableActionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableActionCoordinatorTests.swift; sourceTree = "<group>"; };
 		C0A0C03EADAAE46A86A5ED91 /* ReloAtmosphere.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloAtmosphere.swift; sourceTree = "<group>"; };
 		C0C455D79BCAB5FE567EBD4B /* NotificationReceiptStores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationReceiptStores.swift; sourceTree = "<group>"; };
@@ -1711,6 +1713,7 @@
 				F427F63BCA93DC456A86AF49 /* NotificationSelectionTests.swift */,
 				32652B179CB0BAB9DD18929A /* OfflineCurrentSourceFixture.swift */,
 				BA2B734AD4AFEFEE40D533D3 /* ResponseLatencyBaselineTests.swift */,
+				BEDDF3121922F5E0EF416A87 /* SealedLiveActivityKeychainTests.swift */,
 			);
 			name = ReloAppTests;
 			path = Tests/ReloAppTests;
@@ -2536,6 +2539,7 @@
 				8CC1775C8F8F048DFBB3D568 /* NotificationSelectionTests.swift in Sources */,
 				AEA06746544BABCE9560D9C2 /* OfflineCurrentSourceFixture.swift in Sources */,
 				7EBD9678224C0ED867C38CE3 /* ResponseLatencyBaselineTests.swift in Sources */,
+				EC5E87BD61DB38DA2F5943B0 /* SealedLiveActivityKeychainTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3148,7 +3152,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 56;
+				CURRENT_PROJECT_VERSION = 57;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3162,7 +3166,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.9.44;
+				MARKETING_VERSION = 0.9.45;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3321,7 +3325,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 56;
+				CURRENT_PROJECT_VERSION = 57;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -3341,7 +3345,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.9.44;
+				MARKETING_VERSION = 0.9.45;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

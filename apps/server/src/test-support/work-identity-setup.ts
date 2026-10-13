@@ -12,6 +12,7 @@ const createPaths = [
   /^\/api\/live-activities$/,
   /^\/hooks\/hook_[A-Za-z0-9_-]{43}$/,
   /^\/hooks\/hook_[A-Za-z0-9_-]{43}\/live-activities$/,
+  /^\/hooks(\/live-activities)?$/,
 ];
 
 function withFixtureIdentity(path: string, init: RequestInit | undefined): RequestInit | undefined {

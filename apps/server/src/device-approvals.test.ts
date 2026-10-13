@@ -1,4 +1,4 @@
-import { randomBytes,randomUUID } from "node:crypto";
+import { createECDH,randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import { createApp } from "./app.js";
 import { generateToken,hashToken } from "./auth.js";
@@ -9,6 +9,7 @@ import { migrate } from "./migrate.js";
 import { createNotificationContentCipher } from "./notification-content.js";
 
 const b64 = (length: number) => randomBytes(length).toString("base64url");
+const p256 = () => { const ecdh = createECDH("prime256v1"); return ecdh.generateKeys().toString("base64url"); };
 const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 suite("new devices are approved on a trusted phone",() => {
@@ -80,6 +81,26 @@ suite("new devices are approved on a trusted phone",() => {
     // A new identity on the iPad needs a new approval.
     await db.query("UPDATE device_identity_keys SET public_key=$2 WHERE device_id=$1",[ipad.id,b64(65)]);
     expect((await call(cli,"GET","/api/devices/keys")).body.devices.find((device: any) => device.deviceId === ipad.publicId).approval).toBeNull();
+  });
+
+  test("a second computer's first key tells the phones once; the first computer needs no notice",async () => {
+    const trusted = await phone("iPhone",60);
+    const computer = async (label: string) => {
+      const token = generateToken();
+      await db.query("INSERT INTO principal_api_keys(principal_id,label,token_hash,scopes) VALUES ($1,$2,$3,ARRAY['devices:read'])",
+        [principalId,label,hashToken(token)]);
+      return token;
+    };
+    const notices = async () => (await db.query(`SELECT e.title,e.deep_link,array_agg(t.device_id) AS targets FROM notification_events e
+      JOIN notification_event_targets t ON t.notification_event_id=e.id WHERE e.principal_id=$1 GROUP BY e.id`,[principalId])).rows;
+    const studio = await computer("Studio Mac");
+    expect((await call(studio,"PUT","/api/clients/self/keys",{ identityKey: p256() })).status).toBe(200);
+    expect(await notices()).toEqual([]);
+    const laptop = await computer("Laptop");
+    const identityKey = p256();
+    expect((await call(laptop,"PUT","/api/clients/self/keys",{ identityKey })).status).toBe(200);
+    expect((await call(laptop,"PUT","/api/clients/self/keys",{ identityKey })).status).toBe(200);
+    expect(await notices()).toEqual([{ title: "New computer wants access",deep_link: "relo://settings/security",targets: [trusted.id] }]);
   });
 
   test("declining signs the newer device out",async () => {

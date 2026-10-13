@@ -156,7 +156,7 @@ export function createDashboardSystemHandlers(
       },
       users: users.rows,
       server: await isServerAdmin(db,owner.user.id)
-        ? { registrationMode: await registrationMode(db),maxQuestionSeconds: await maxQuestionSeconds(db),
+        ? { registrationMode: await registrationMode(db,serverOrigin),maxQuestionSeconds: await maxQuestionSeconds(db),
             privateCallbacks: await privateCallbackPolicy(db),accounts: await listServerAccounts(db) }
         : null,
     };

@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { z } from "zod";
 import { lockAccountLifecycle } from "../account-lifecycle.js";
-import { authAttemptLimited } from "../auth-throttle.js";
+import { accountBackoff,authAttemptLimited,isKnownDevice,recordSignInFailure,recordSignInSuccess } from "../auth-throttle.js";
 import { apnsTransportTruth } from "../delivery-observability.js";
 import {
   createAccountPrincipal,isServerAdmin,registrationMode,requestAccountApproval,signInRefusal,
@@ -35,7 +35,7 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
       await client.query("BEGIN");
       await lockAccountLifecycle(client);
       const claimed = Boolean((await client.query("SELECT 1 FROM account_identities LIMIT 1")).rowCount);
-      const mode = claimed ? await registrationMode(client) : null;
+      const mode = claimed ? await registrationMode(client,shared.appUrl) : null;
       if (mode === "closed") {
         await client.query("ROLLBACK");
         return context.json({ error: "registration_closed" },403);
@@ -109,15 +109,24 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
   });
 
   app.post("/api/auth/sign-in/email", async (context) => {
-    const throttled = authAttemptLimited(context,"sign-in");
+    const input = await context.req.raw.clone().json().catch(() => null) as { email?: unknown; rememberMe?: unknown } | null;
+    const email = typeof input?.email === "string" ? input.email : "";
+    const knownDevice = email !== "" && isKnownDevice(context,email);
+    const throttled = authAttemptLimited(context,"sign-in",Date.now(),knownDevice) ?? (knownDevice ? null : accountBackoff(context,email));
     if (throttled) return throttled;
-    const input = await context.req.raw.clone().json().catch(() => null) as { rememberMe?: unknown } | null;
     if (!input || input.rememberMe !== true) return context.json({ error: "invalid_request" }, 400);
     const response = await accountAuth.handler(context.req.raw);
-    if (!response.ok) return response;
+    if (!response.ok) {
+      if (email && response.status === 401) recordSignInFailure(email);
+      return response;
+    }
     const payload = await response.clone().json().catch(() => null) as { user?: { id?: string } } | null;
     const refusal = payload?.user?.id ? await signInRefusal(db,payload.user.id) : "account_disabled";
-    if (!refusal) return response;
+    if (!refusal) {
+      const signedIn = new Response(response.body,response);
+      signedIn.headers.append("set-cookie",recordSignInSuccess(email,shared.appUrl.startsWith("https://")));
+      return signedIn;
+    }
     if (payload?.user?.id) await db.query("DELETE FROM auth.sessions WHERE user_id=$1",[payload.user.id]);
     return context.json({ error: refusal },403);
   });

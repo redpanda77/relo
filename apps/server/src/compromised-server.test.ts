@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { setEndToEndRequired } from "./end-to-end-policy.js";
 import { createECDH,createHash,generateKeyPairSync,randomUUID,sign } from "node:crypto";
 import { mkdtempSync,rmSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,7 @@ suite("a compromised server holds no readable content (E6.4)",() => {
   let server: ServerType;
   let apiUrl: string;
   let folder: string;
+  let principalId: string;
   let env: NodeJS.ProcessEnv;
 
   beforeAll(async () => {
@@ -37,7 +39,7 @@ suite("a compromised server holds no readable content (E6.4)",() => {
     await migrate(db);
     await db.query("TRUNCATE owner_principals, request_rate_limits CASCADE");
     await bootstrapOwner(db,"owner","compromised_server_owner_abcdefghijklmnopqrstu");
-    const principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner'")).rows[0].id;
+    principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner'")).rows[0].id;
     const app = createApp(db,{ apnsMode: "sandbox",credentialDerivationSecret: "compromised-server-secret-with-32-characters" });
     server = await new Promise<ServerType>((resolve) => {
       const started = serve({ fetch: app.fetch,port: 0,hostname: "127.0.0.1" },() => resolve(started));
@@ -122,7 +124,8 @@ suite("a compromised server holds no readable content (E6.4)",() => {
     // With a phone that has keys, readable content is refused by default; the owner can turn that off.
     expect((await call("POST","/api/notifications",{ sourceName: "Control",title: `${plain} title`,body: `${plain} body`,
       context: { project: "relo",threadName: "Control" } })).status).toBe(409);
-    expect((await call("PUT","/api/end-to-end/policy",{ required: false })).status).toBe(200);
+    expect((await call("PUT","/api/end-to-end/policy",{ required: false })).status).toBe(403);
+    await setEndToEndRequired(db,principalId,false);
     expect((await call("POST","/api/notifications",{ sourceName: "Control",title: `${plain} title`,body: `${plain} body`,
       context: { project: "relo",threadName: "Control" } })).status).toBe(201);
     expect((await tableLeaks(plain)).length).toBeGreaterThan(0);

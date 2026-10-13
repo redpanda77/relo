@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isPublicHttpsUrl } from "./url-policy.js";
 import { hashPassword } from "better-auth/crypto";
 import { z } from "zod";
 import type { ApnsMode } from "./activities.js";
@@ -30,10 +31,15 @@ export type ServerAccount = {
   admin: boolean; createdAt: string; devices: number; sessions: number;
 };
 
-export async function registrationMode(db: Queryable): Promise<RegistrationMode> {
+/**
+ * The registration mode in force. On a public origin "open" acts as "approval": open registration
+ * with no quotas would let anyone on the internet create accounts (docs/HARDENING.md, gap 6).
+ */
+export async function registrationMode(db: Queryable,appUrl?: string): Promise<RegistrationMode> {
   const result = await db.query<{ registration_mode: RegistrationMode }>(
     "SELECT registration_mode FROM server_settings WHERE singleton");
-  return result.rows[0]?.registration_mode ?? "closed";
+  const mode = result.rows[0]?.registration_mode ?? "closed";
+  return mode === "open" && appUrl && isPublicHttpsUrl(appUrl) ? "approval" : mode;
 }
 
 export async function setRegistrationMode(db: Database, mode: RegistrationMode): Promise<void> {

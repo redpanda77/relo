@@ -301,7 +301,35 @@ export function registerServiceApiRoutes(app: Hono, db: Database, appUrl?: strin
   });
 }
 
+/**
+ * Webhook secrets may travel in a header instead of the URL path, so proxies, CDNs and access logs
+ * never record them (docs/HARDENING.md, gap 7): `POST /hooks` and `/hooks/live-activities…` with
+ * `Authorization: Bearer hook_…` (or `X-Relo-Webhook-Secret`) are served exactly like the path form,
+ * which stays for compatibility.
+ */
+function registerHeaderSecretWebhooks(app: Hono): void {
+  app.use("/hooks/*",async (context,next) => {
+    const url = new URL(context.req.url);
+    const headerForm = url.pathname === "/hooks" || url.pathname === "/hooks/" || url.pathname.startsWith("/hooks/live-activities");
+    if (!headerForm) return next();
+    const bearer = context.req.header("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
+    const secret = bearer ?? context.req.header("x-relo-webhook-secret");
+    if (!secret || !/^hook_[A-Za-z0-9_-]{43}$/.test(secret)) return context.json({ ok: false,error: "unknown_webhook" },404);
+    url.pathname = `/hooks/${secret}${url.pathname.replace(/^\/hooks\/?/,"/").replace(/\/$/,"")}`;
+    return app.fetch(await forwarded(context,url),context.env);
+  });
+}
+
+/** The same request at the path form's URL; the body is read through Hono, which may have read it already. */
+async function forwarded(context: { req: { method: string; raw: Request; arrayBuffer: () => Promise<ArrayBuffer> } },url: URL): Promise<Request> {
+  const method = context.req.method;
+  const init: RequestInit = { method,headers: context.req.raw.headers };
+  if (method !== "GET" && method !== "HEAD") init.body = await context.req.arrayBuffer();
+  return new Request(url,init);
+}
+
 function registerServiceActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMode): void {
+  registerHeaderSecretWebhooks(app);
   app.post("/hooks/:secret/live-activities", async (context) => {
     const secret = context.req.param("secret");
     const service = await serviceForSecret(db,secret);

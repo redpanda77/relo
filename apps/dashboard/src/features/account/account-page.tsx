@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
 import { ServerAdminCard } from "@/features/account/server-admin"
+import { EncryptionPolicyCard } from "@/features/encryption-policy/encryption-policy-card"
 import { LinkBrowserSection } from "@/features/linked-browser/link-browser-card"
 import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
@@ -213,6 +214,8 @@ export function AccountPage({
 
         <AccountGroup title="Security">
           <PendingDevicesNotice variant="card" />
+
+          <EncryptionPolicyCard />
 
           <LinkBrowserSection accountId={initial.shell.account.id} />
         </AccountGroup>

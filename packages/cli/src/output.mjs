@@ -259,6 +259,10 @@ function friendly(error, group) {
   const wait = error.details?.retryAfterSeconds;
   const noun = NOUN[group] ?? "item";
   switch (error.code) {
+    case "TURN_OFF_IN_DASHBOARD":
+    case "turn_off_in_dashboard":
+      return { message: "Turning end-to-end encryption off needs the owner signed in to the Dashboard.",
+        hint: "Open the Relo Dashboard → Account → Security; computers can only turn it on" };
     case "END_TO_END_REQUIRED":
     case "end_to_end_required":
       return { message: "This account requires end-to-end encryption and this computer could not seal the content.",

@@ -10,6 +10,7 @@ import {
 } from "../linked-browsers.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
 import { pendingDevices } from "../device-approvals.js";
+import { endToEndPolicy,setEndToEndRequired } from "../end-to-end-policy.js";
 import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
 
@@ -55,6 +56,24 @@ export function registerBrowserRoutes(app: Hono, shared: WebRouteContext): void 
     context.header("cache-control","private, no-store");
     return context.json({ devices: (await pendingDevices(db,account.principalId))
       .map(({ deviceId,name,model,registeredAt,keyId }) => ({ deviceId,name,model,registeredAt,keyId })) });
+  });
+
+  // The owner, signed in, may set the end-to-end requirement to on, auto or off (gap 5).
+  app.get("/api/dashboard/end-to-end/policy", async (context) => {
+    const account = await getOwnerAccount(db,accountAuth,context.req.raw.headers);
+    if (!account) return context.json({ error: "unauthorized" },401);
+    return context.json(await endToEndPolicy(db,account.principalId));
+  });
+
+  app.put("/api/dashboard/end-to-end/policy", async (context) => {
+    const account = await accountMutationAccount(context);
+    if (account instanceof Response) return account;
+    const body = await context.req.json().catch(() => null) as { required?: unknown } | null;
+    if (!body || !(typeof body.required === "boolean" || body.required === null) || Object.keys(body).length !== 1) {
+      return context.json({ error: "invalid_request" },400);
+    }
+    await setEndToEndRequired(db,account.principalId,body.required as boolean | null);
+    return context.json(await endToEndPolicy(db,account.principalId));
   });
 
   app.get("/api/dashboard/client-keys", async (context) => {
