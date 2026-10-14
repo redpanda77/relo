@@ -263,12 +263,14 @@ export class ReloApiClient {
   }
 
   /** Hook traffic: no retries, a 2 s ceiling, so an agent is never held up. */
-  sendAgentSessionEvent(body) {
-    return this.request("POST", "/api/agent-sessions/events", { body, timeoutMs: 2_000 }).catch(sessionsUnsupported);
+  sendAgentSessionEvent(body, { timeoutMs = 2_000 } = {}) {
+    return this.request("POST", "/api/agent-sessions/events", { body, timeoutMs }).catch(sessionsUnsupported);
   }
 
-  listAgentSessions() {
-    return this.request("GET", "/api/agent-sessions").catch(sessionsUnsupported);
+  /** `phases` (e.g. ["working","waiting"]) lists only those; a server before phases ignores the filter. */
+  listAgentSessions({ phases } = {}) {
+    return this.request("GET", "/api/agent-sessions", phases?.length ? { query: { phase: phases.join(",") } } : {})
+      .catch(sessionsUnsupported);
   }
 
   ready() {

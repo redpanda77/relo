@@ -7,7 +7,7 @@ import { assertAllowedOptions, assertNoExtra, result, validateDeviceId } from ".
 
 const USAGE = "Usage: relo keys status | relo keys approve PHONE [--yes] | relo keys remove PHONE | relo keys verify DEVICE_ID"
   + " | relo keys forget DEVICE_ID | relo keys rotate | relo keys require on|auto|off | relo keys strict on|off";
-const PHONE_SCREEN = "Settings → Security → Verify security code on the iPhone";
+const PHONE_SCREEN = "Settings → Devices → this computer → Advanced on the iPhone";
 const DASHBOARD_REMOVE = "Dashboard → Account → Security → Devices → Remove";
 
 function needsPerson(action, hint) {
@@ -167,7 +167,7 @@ export async function runKeysCommand(command) {
         ...(model ? [`  Model:       ${model}`] : []),
         ...(device.registeredAt ? [`  Signed in:   ${when(device.registeredAt)}`] : []),
         ...(device.lastSeenAt ? [`  Last seen:   ${when(device.lastSeenAt)}`] : []),
-        `  Key id:      ${device.identityKey.keyId}   (shown under it in Relo → Settings → Security on ${trustedPhonesLabel(store, apiUrl)})`,
+        `  Key id:      ${device.identityKey.keyId}   (shown under it in Relo → Settings → Devices on ${trustedPhonesLabel(store, apiUrl)})`,
         `  Code starts: ${number.split(" ")[0]}   (${PHONE_SCREEN.replace("the iPhone", "that phone")})`,
         `  Id:          ${device.deviceId}`,
         "",
@@ -201,7 +201,7 @@ export async function runKeysCommand(command) {
     const device = findPhone(rest[0], phones);
     const label = phoneLabel(device);
     return result("keys.remove", { deviceId: device.deviceId, name: device.name, removed: false, where: DASHBOARD_REMOVE },
-      { message: `A computer cannot sign a phone out. Remove ${label} in the Relo ${DASHBOARD_REMOVE} (or Decline it in Relo → Settings → Security on ${trustedPhonesLabel(store, apiUrl)}).` });
+      { message: `A computer cannot sign a phone out. Remove ${label} in the Relo ${DASHBOARD_REMOVE} (or Decline it in Relo → Settings → Devices on ${trustedPhonesLabel(store, apiUrl)}).` });
   }
 
   if (action === "verify") {
@@ -209,7 +209,7 @@ export async function runKeysCommand(command) {
     assertNoExtra(rest, 1, USAGE);
     const { store, devices } = await ensureTrust({ client, config, dependencies });
     if (devices.some((entry) => entry?.deviceId === rest[0] && entry.kind === "browser")) {
-      throw new UsageError("A browser is linked from Relo on the iPhone (Settings → Security → Link a browser), not verified here.");
+      throw new UsageError("A browser is linked from Relo on the iPhone (Settings → Devices → Link a browser), not verified here.");
     }
     const device = findPhone(rest[0], listedPhones(store, apiUrl, devices));
     const deviceId = device.deviceId;

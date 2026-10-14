@@ -12,18 +12,26 @@ import { join } from "node:path";
 import { assertAllowedOptions, definedFields, result } from "../support.mjs";
 import { agentSession, cardKey, detectAccount, detectAgent, repositoryName } from "../identity.mjs";
 
-export const HOOK_EVENTS = ["start", "prompt", "tool", "stop", "end"];
+export const HOOK_EVENTS = ["start", "prompt", "tool", "stop", "wait", "end"];
+
+/**
+ * Claude Code Notification types that mean the session is blocked on the owner (a permission or an
+ * input prompt). Others (idle_prompt a minute after a turn, auth_success, …) are not sent.
+ */
+export const WAITING_NOTIFICATIONS = ["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"];
 
 /**
  * Harnesses with documented hook events, and how their event names map to Relo's.
  *  - Claude Code: code.claude.com/docs/en/hooks. Settings `hooks.<Event>[].hooks[]`, stdin JSON with session_id,
- *    cwd, hook_event_name, transcript_path.
+ *    cwd, hook_event_name, transcript_path; notification_type on Notification; agent_id inside a subagent, which
+ *    shares its parent's session_id, so a subagent is never a session of its own.
  *  - Gemini CLI: geminicli.com/docs/hooks. Same settings shape (`hooks.<Event>[].hooks[]`, timeout in ms), same
  *    base stdin fields. Its shell carries no session id, so its cards are not linked unless RELO_SESSION is set.
  */
 export const HOOK_HARNESSES = {
   "claude-code": { label: "Claude Code", events: {
-    SessionStart: "start", UserPromptSubmit: "prompt", PostToolUse: "tool", Stop: "stop", SessionEnd: "end" },
+    SessionStart: "start", UserPromptSubmit: "prompt", PostToolUse: "tool", Stop: "stop", Notification: "wait", SessionEnd: "end" },
+  matchers: { Notification: WAITING_NOTIFICATIONS.join("|") },
   linksCard: true },
   gemini: { label: "Gemini CLI", events: {
     SessionStart: "start", BeforeAgent: "prompt", AfterTool: "tool", AfterAgent: "stop", SessionEnd: "end" },
@@ -32,6 +40,9 @@ export const HOOK_HARNESSES = {
 
 export const TOOL_COALESCE_MS = 60_000;
 const STDIN_TIMEOUT_MS = 1_500;
+const SEND_BUDGET_MS = 2_500;
+const SEND_RETRY_WITHIN_MS = 500;
+const SEND_RETRY_PAUSE_MS = 100;
 
 const sessionHash = (harness, id) => createHash("sha256").update(`${harness}:${id}`).digest("base64url");
 const label = (value, maximum) => {
@@ -51,16 +62,58 @@ async function readInput(dependencies) {
   }
 }
 
-/** True when a tool event for this session was already sent within the last minute (and records this one). */
+const stateFile = (directory, prefix, session) => join(directory, `${prefix}-${session.slice(0, 24)}`);
+const readStamp = async (file) => {
+  try { const value = Number(await readFile(file, "utf8")); return Number.isFinite(value) ? value : undefined; } catch { return undefined; }
+};
+
+/**
+ * True when a tool event for this session was sent within the last minute and nothing has reset the window
+ * since. Any other event (start, prompt, stop, end) resets it, so the first tool event after a Stop always goes
+ * out and turns an idle session active again (background subagents keep working after the main turn ends).
+ */
 async function coalesced(directory, session, now) {
-  const file = join(directory, `tool-${session.slice(0, 24)}`);
+  const last = await readStamp(stateFile(directory, "tool", session));
+  if (last === undefined || now - last >= TOOL_COALESCE_MS || now < last) return false;
+  const reset = await readStamp(stateFile(directory, "reset", session));
+  return !(reset !== undefined && reset >= last);
+}
+
+/** Records a tool event only once the server took it, so a failed send never suppresses the next minute. */
+async function recordToolSent(directory, session, at) {
   try {
-    const last = Number(await readFile(file, "utf8"));
-    if (Number.isFinite(last) && now - last < TOOL_COALESCE_MS && now >= last) return true;
-  } catch { /* first tool event of this session */ }
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(file, String(now), { mode: 0o600 });
-  return false;
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(stateFile(directory, "tool", session), String(at), { mode: 0o600 });
+  } catch { /* best effort */ }
+}
+
+/**
+ * Opens the coalescing window again. A reset stamp (not a delete) so a tool send still in flight from before
+ * the Stop, which records its own earlier time, cannot close the window behind it.
+ */
+async function resetToolWindow(directory, session, at) {
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(stateFile(directory, "reset", session), String(at), { mode: 0o600 });
+  } catch { /* best effort */ }
+}
+
+/**
+ * One send, plus one quick retry when the network failed fast (refused, reset, DNS), all inside ~2.5 s so
+ * a hook stays well within the harness's 5 s budget. Server answers (4xx/5xx) and timeouts are not retried.
+ */
+async function send(client, body) {
+  const started = performance.now();
+  try {
+    return await client.sendAgentSessionEvent(body);
+  } catch (error) {
+    const elapsed = performance.now() - started;
+    if (error?.code !== "NETWORK_ERROR" || elapsed > SEND_RETRY_WITHIN_MS) throw error;
+    await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_PAUSE_MS));
+    const remaining = SEND_BUDGET_MS - (performance.now() - started);
+    if (remaining < 250) throw error;
+    return client.sendAgentSessionEvent(body, { timeoutMs: Math.min(2_000, Math.floor(remaining)) });
+  }
 }
 
 /**
@@ -121,12 +174,20 @@ export async function processHook({ positionals, options, dependencies }) {
     const event = HOOK_EVENTS.includes(named) ? named : harness.events[input.hook_event_name];
     const id = typeof input.session_id === "string" ? input.session_id.trim() : "";
     if (!event || !id || id.length > 500) return { sent: false, reason: "no_session" };
+    // Only a prompt that blocks on the owner is a wait (the matcher filters too; older harnesses may not).
+    if (event === "wait" && !WAITING_NOTIFICATIONS.includes(input.notification_type)) return { sent: false, reason: "not_waiting" };
+    // A subagent's own lifecycle is not the session's: its tool events count toward the parent session.
+    if (typeof input.agent_id === "string" && input.agent_id && ["start", "stop", "end"].includes(event)) {
+      return { sent: false, reason: "subagent" };
+    }
     const session = sessionHash(harnessName, id);
     const now = dependencies.now();
     const stateDirectory = dependencies.hookStateDirectory;
     if (event === "tool" && await coalesced(stateDirectory, session, now)) return { sent: false, reason: "coalesced" };
     if (event === "end") {
-      for (const prefix of ["tool", "names"]) await rm(join(stateDirectory, `${prefix}-${session.slice(0, 24)}`), { force: true }).catch(() => {});
+      for (const prefix of ["tool", "reset", "names"]) await rm(stateFile(stateDirectory, prefix, session), { force: true }).catch(() => {});
+    } else if (event !== "tool") {
+      await resetToolWindow(stateDirectory, session, now);
     }
 
     const config = await dependencies.loadConfig(dependencies.configPath());
@@ -152,7 +213,8 @@ export async function processHook({ positionals, options, dependencies }) {
       : harness.linksCard ? cardKey({ env: { CLAUDE_CODE_SESSION_ID: id } }) : undefined;
     const body = definedFields({ session, harness: harnessName, event, at: new Date(now).toISOString(),
       project, computer, account, cardKey: label(key, 100), sealedNames: sealedNames?.envelope });
-    await client.sendAgentSessionEvent(body);
+    await send(client, body);
+    if (event === "tool") await recordToolSent(stateDirectory, session, now);
     if (sealedNames) await writeFile(sealedNames.marker, sealedNames.digest, { mode: 0o600 }).catch(() => {});
     return { sent: true, event };
   } catch (error) {

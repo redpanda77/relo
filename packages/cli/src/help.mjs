@@ -24,7 +24,7 @@ Exit: 0 ok/approved/yes/chosen · 5 denied/no · 4 still open (resume) · 8 clos
       2 usage · 3 auth (relo auth login) · 1 server · 6 network · 7 no phone got it
 relo doctor: ready? (follow next.run) · relo auth login (agents: prints the link, then relo auth login --wait) · relo test (once)
 relo skill install --agent <claude-code|codex|opencode|gemini|amp|cursor|copilot> · relo skill status (owner's choice)
-relo keys status: end-to-end encryption is automatic · a new phone waits: relo keys approve PHONE (a person), or approve it on your trusted iPhone → Settings → Security
+relo keys status: end-to-end encryption is automatic · a new phone waits: relo keys approve PHONE (a person), or approve it on your trusted iPhone → Settings → Devices
 relo update [--check] [--rollback]: new CLI release (owner's choice; doctor warns "update":"behind")
 relo setup: owner's choice, never automatic (--hooks: session hooks; --mcp: MCP server entry for shell-less harnesses) · relo sessions · --dry-run checks a command without sending · relo help identity · relo help all (every flag) · relo schema [COMMAND] (JSON)`;
 
@@ -161,14 +161,16 @@ Sign-in and phones
       Optional. Without hooks Relo works fully: cards go stale and end on their own. With hooks, the server also knows
       when a session is alive, shows quiet agents as quiet instead of ending their card, and ends a forgotten card as
       soon as the session ends. Nothing installs them but this command; doctor never suggests them. One marked entry per event in ONE settings file
-      (Claude Code: SessionStart, UserPromptSubmit, PostToolUse, Stop, SessionEnd in ~/.claude/settings.json or
+      (Claude Code: SessionStart, UserPromptSubmit, PostToolUse, Stop, Notification (permission/input prompts only), SessionEnd in ~/.claude/settings.json or
       <repo>/.claude/settings.json; Gemini CLI: ~/.gemini/settings.json or <repo>/.gemini/settings.json), each running
       "relo hook EVENT" (timeout 5). Entries are recognised by that command, so setup is idempotent and --remove deletes
       only Relo's. "relo hook" sends the session id hash, event, project, computer, account and card key; never prompts,
       tool input/output or transcript paths. It prints nothing, exits 0 always, and RELO_DEBUG=1 logs its errors to a file.
       Result: {"ok":true,"file","action":"created|updated|unchanged|moved|removed","hooks":["SessionStart",…]}.
-  relo sessions       {"ok":true,"sessions":[{harness,computer,account,project,presence,lastEventAt,card}]}
-      presence: working | quiet (card silent) | no_card | ended | lost.
+  relo sessions [--live]  {"ok":true,"sessions":[{harness,computer,account,project,phase,state,presence,lastEventAt,card}],"counts":{working,waiting,idle,ended,lost}}
+      phase: working (mid-turn) | waiting (permission/input prompt, or a turn that ended in the last 5 min) | idle (open,
+      nothing new) | ended | lost. --live lists only working and waiting; counts cover every phase. Subagents share their
+      session. presence: working | quiet (card silent) | no_card | ended | lost.
   Advanced: delivery reconcile, evidence timeline|metrics.
 
 Links (--url): https:// pages, an app scheme (your-app://incidents/42) or shortcuts://run-shortcut?name=...

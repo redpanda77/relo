@@ -89,7 +89,7 @@ test("a waiting phone's note names it, the phone that can approve it, and the ex
     await h.trust([owner.device, second.device]);
     const notes = trustNotices(await h.store(), apiUrl);
     assert.deepEqual(notes, ["Work phone (iPhone 16) is waiting for approval: run `relo keys approve work-phone`, approve it on"
-      + " your iPhone 17 Pro in Relo → Settings → Security, or remove it (Dashboard → Account → Security → Devices → Remove)"]);
+      + " your iPhone 17 Pro in Relo → Settings → Devices, or remove it (Dashboard → Account → Security → Devices → Remove)"]);
   } finally { h.cleanup(); }
 });
 

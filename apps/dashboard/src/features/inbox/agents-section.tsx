@@ -70,7 +70,10 @@ function SessionRow({
   )
 }
 
-/** Live agent sessions by computer · account, with the recent ones folded away. Hidden without sessions. */
+/**
+ * Working and waiting agent sessions by computer · account; idle ones (open, nothing new) and the
+ * recent ended ones each fold into one line. Hidden without sessions.
+ */
 export function AgentsSection({
   sessions,
   cards,
@@ -86,9 +89,9 @@ export function AgentsSection({
   const now = useTicker(enabled)
   if (!enabled) return null
   const view = groupSessions(sessions, now)
-  if (view.liveCount === 0 && view.recent.length === 0) return null
+  if (view.liveCount === 0 && view.idle.length === 0 && view.recent.length === 0) return null
   return (
-    <NowSection title="Agents" count={view.liveCount} color={SIGNAL_CSS.running}>
+    <NowSection title="Agents" count={view.workingCount} color={SIGNAL_CSS.running}>
       {view.live.map((group) => (
         <div key={group.key} className="holo-card tone-cyan p-4" role="group" aria-label={group.label}>
           <span className="micro inline-flex items-center gap-1.5 normal-case tracking-wide">
@@ -109,6 +112,16 @@ export function AgentsSection({
           </ul>
         </div>
       ))}
+      {view.idle.length > 0 ? (
+        <details className="group">
+          <summary className="micro cursor-pointer select-none">{`${view.idle.length} idle`}</summary>
+          <ul aria-label="Idle agent sessions" className="mt-1 divide-y divide-white/5">
+            {view.idle.map((session) => (
+              <SessionRow key={session.id} session={session} syncedAt={syncedAt} now={now} live={false} />
+            ))}
+          </ul>
+        </details>
+      ) : null}
       {view.recent.length > 0 ? (
         <details className="group">
           <summary className="micro cursor-pointer select-none">{`Recent ${view.recent.length}`}</summary>

@@ -12,6 +12,8 @@ struct ReloApp: App {
     @State private var model: AppModel
     @StateObject private var notificationNavigation = NotificationNavigationCoordinator.shared
     @Environment(\.scenePhase) private var scenePhase
+    /// True at launch and after a real trip to the background, until `foregrounded()` completes.
+    @State private var needsForegrounding = true
 
     init() {
         let dependencies = AppDependencies.live()
@@ -33,8 +35,21 @@ struct ReloApp: App {
                 }
                 .task(id: scenePhase) {
                     guard !AppLaunchEnvironment.isHostedTest else { return }
-                    guard scenePhase == .active else { model.backgrounded(); return }
-                    await model.foregrounded()
+                    switch scenePhase {
+                    case .background:
+                        model.backgrounded()
+                        needsForegrounding = true
+                    case .active:
+                        // Only a return from the background (or launch) does the foreground work.
+                        // `.inactive` (Control Center, Notification Center, the app switcher, a
+                        // screenshot) keeps the stream and connection as they are, so coming back
+                        // from it needs nothing. A pass cut short by a phase change runs again.
+                        guard needsForegrounding else { return }
+                        await model.foregrounded()
+                        if !Task.isCancelled { needsForegrounding = false }
+                    default:
+                        return
+                    }
                 }
                 .onReceive(notificationNavigation.$notificationID.compactMap { $0 }) { notificationID in
                     notificationNavigation.consume(notificationID)

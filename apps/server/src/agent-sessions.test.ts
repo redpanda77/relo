@@ -1,6 +1,9 @@
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
-import { agentSessionListResponseSchema,inboxSnapshotResponseSchema } from "@relo/notification-contracts";
+import {
+  AGENT_SESSION_WAITING_AFTER_STOP_SECONDS,AGENT_SESSION_WAITING_ON_PROMPT_SECONDS,agentSessionListResponseSchema,
+  agentSessionPhase,inboxSnapshotResponseSchema,
+} from "@relo/notification-contracts";
 import { createApp } from "./app.js";
 import { generateToken,hashToken } from "./auth.js";
 import { bootstrapOwner } from "./bootstrap.js";
@@ -10,7 +13,7 @@ import { expireDueActivities } from "./activities.js";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import {
   SESSION_IDLE_LOST_AFTER_SECONDS,SESSION_LIST_MAX,SESSION_LOST_AFTER_SECONDS,SESSION_LOST_CARD_GRACE_SECONDS,
-  listAgentSessions,reconcileAgentSessions,
+  listAgentSessions,readAgentSessions,reconcileAgentSessions,
 } from "./agent-sessions.js";
 
 const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -195,6 +198,7 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       const key = cardKeyFor(hash);
       const id = await startCard(key);
       await event({ session: hash,event: "start",cardKey: key });
+      await event({ session: hash,event: "prompt" });
       return { key,id };
     }
     const operations = async (activityId: string) => (await db.query(
@@ -411,19 +415,121 @@ suite("Agent sessions: events, read model and the reconciler",() => {
     });
   });
 
+  describe("phases: working, waiting, idle",() => {
+    const phaseOf = async (hash = S1) => {
+      const id = `ags_${(await row(hash)).id}`;
+      return (await listAgentSessions(db,principalId)).find(session => session.id === id)?.phase;
+    };
+
+    test("a prompt or tool is working; a stop waits five minutes, then is idle",async () => {
+      await event({ event: "prompt" });
+      expect(await phaseOf()).toBe("working");
+      await event({ event: "stop" });
+      expect(await phaseOf()).toBe("waiting");
+      await ago(S1,AGENT_SESSION_WAITING_AFTER_STOP_SECONDS+5);
+      expect(await phaseOf()).toBe("idle");
+      await event({ event: "tool" });
+      expect(await phaseOf()).toBe("working");
+    });
+
+    test("a permission or input prompt (wait) is waiting for an hour, stored between turns",async () => {
+      await event({ event: "prompt" });
+      expect((await event({ event: "wait" })).body.state).toBe("idle");
+      expect(await row()).toMatchObject({ state: "idle",last_event: "wait" });
+      await ago(S1,AGENT_SESSION_WAITING_ON_PROMPT_SECONDS-60);
+      expect(await phaseOf()).toBe("waiting");
+      await ago(S1,AGENT_SESSION_WAITING_ON_PROMPT_SECONDS+60);
+      expect(await phaseOf()).toBe("idle");
+      // A wait never revives an ended session.
+      await event({ event: "end" });
+      expect((await event({ event: "wait" })).body.state).toBe("ended");
+    });
+
+    test("a session that only started is idle and is not lost after the mid-turn threshold",async () => {
+      await event({ event: "start" });
+      expect(await phaseOf()).toBe("idle");
+      await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
+      expect(await reconcile()).toMatchObject({ lost: 0 });
+      expect(await phaseOf()).toBe("idle");
+      await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
+      expect(await phaseOf()).toBe("lost");
+      expect(await reconcile()).toMatchObject({ lost: 1 });
+    });
+
+    test("a start in the middle of a turn (after a compaction) keeps it working; after a stop it is idle",async () => {
+      await event({ event: "tool" });
+      await event({ event: "start" });
+      expect(await row()).toMatchObject({ state: "active",last_event: "tool" });
+      expect(await phaseOf()).toBe("working");
+      await event({ event: "stop" });
+      await event({ event: "start" });
+      expect(await row()).toMatchObject({ state: "active",last_event: "start" });
+      expect(await phaseOf()).toBe("idle");
+    });
+
+    test("?phase= lists only those phases, live first; counts cover every phase; a bad phase is a 400",async () => {
+      const [working,waiting,idle,ended] = ["w","x","i","e"].map(sessionHash);
+      await event({ session: working,event: "tool" });
+      await event({ session: waiting,event: "stop" });
+      await event({ session: idle,event: "stop" }); await ago(idle,AGENT_SESSION_WAITING_AFTER_STOP_SECONDS+5);
+      await event({ session: ended,event: "end" });
+      const all = await request("GET","/api/agent-sessions");
+      expect(all.body.sessions.map((session: any) => session.phase)).toEqual(["working","waiting","idle","ended"]);
+      const live = await request("GET","/api/agent-sessions?phase=working,waiting");
+      expect(live.status).toBe(200);
+      expect(agentSessionListResponseSchema.parse(live.body).sessions.map(session => session.phase)).toEqual(["working","waiting"]);
+      expect(live.body.counts).toEqual({ working: 1,waiting: 1,idle: 1,ended: 1,lost: 0 });
+      expect((await request("GET","/api/agent-sessions?phase=idle")).body.sessions).toHaveLength(1);
+      expect((await request("GET","/api/agent-sessions?phase=asleep")).status).toBe(400);
+      expect((await request("GET","/api/agent-sessions?other=1")).status).toBe(400);
+    });
+
+    test("the server's phase and the shared rule agree",async () => {
+      for (const [hash,events,seconds] of [
+        [sessionHash("a"),["prompt"],0],[sessionHash("b"),["stop"],60],[sessionHash("c"),["stop"],AGENT_SESSION_WAITING_AFTER_STOP_SECONDS+60],
+        [sessionHash("d"),["wait"],600],[sessionHash("e"),["start"],0],[sessionHash("f"),["end"],0],
+      ] as const) {
+        for (const name of events) await event({ session: hash,event: name });
+        await ago(hash,seconds);
+      }
+      for (const session of await listAgentSessions(db,principalId)) {
+        expect(agentSessionPhase(session,Date.now())).toBe(session.phase);
+      }
+    });
+
+    test("a wait after a stop wakes the current-state stream; a second wait does not",async () => {
+      await event({ event: "stop",at: new Date(Date.now()-3_000).toISOString() });
+      const client = await db.connect();
+      const hints: string[] = [];
+      client.on("notification",message => { if (message.channel === "relo_current_changes") hints.push(message.payload ?? ""); });
+      try {
+        await client.query("LISTEN relo_current_changes");
+        await event({ event: "wait",at: new Date(Date.now()-2_000).toISOString() });
+        await event({ event: "wait",at: new Date(Date.now()-1_000).toISOString() });
+        await new Promise(resolve => setTimeout(resolve,200));
+        expect(hints).toHaveLength(1);
+      } finally {
+        await client.query("UNLISTEN relo_current_changes");
+        client.release();
+      }
+    });
+  });
+
   describe("read model and exposure",() => {
     test("lists the last 24 hours, at most 20, live sessions first, with a silent session reading as lost",async () => {
       for (let i = 0; i < SESSION_LIST_MAX+4; i += 1) {
-        await event({ session: sessionHash(`many-${i}`),event: "start",computer: `mac-${i}` });
+        await event({ session: sessionHash(`many-${i}`),event: "prompt",computer: `mac-${i}` });
       }
       await event({ session: sessionHash("old"),event: "start" });
       await db.query("UPDATE agent_sessions SET last_event_at=now()-interval '25 hours' WHERE session_hash=$1",[sessionHash("old")]);
       await event({ session: sessionHash("ended"),event: "start" }); await event({ session: sessionHash("ended"),event: "end" });
       await ago(sessionHash("many-0"),SESSION_LOST_AFTER_SECONDS+30);
-      const listed = await listAgentSessions(db,principalId);
+      const read = await readAgentSessions(db,principalId);
+      const listed = read.sessions;
       expect(listed).toHaveLength(SESSION_LIST_MAX);
       expect(listed.some(session => session.computer === "mac-0")).toBe(false);
-      expect(agentSessionListResponseSchema.parse({ sessions: listed }).sessions).toHaveLength(SESSION_LIST_MAX);
+      expect(agentSessionListResponseSchema.parse(read).sessions).toHaveLength(SESSION_LIST_MAX);
+      expect(read.counts).toEqual({ working: SESSION_LIST_MAX+3,waiting: 0,idle: 0,ended: 1,lost: 1 });
       expect(listed.every(session => session.state === "active")).toBe(true);
       await db.query("DELETE FROM agent_sessions WHERE session_hash NOT IN ($1,$2)",[sessionHash("many-0"),sessionHash("ended")]);
       expect((await listAgentSessions(db,principalId)).map(session => session.state)).toEqual(["ended","lost"]);
@@ -434,11 +540,13 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       const key = cardKeyFor(S1);
       const id = await startCard(key);
       await event({ event: "start",project: "relo",computer: "mac",account: "work",cardKey: key });
+      await event({ event: "prompt" });
       const { body } = await request("GET","/api/agent-sessions");
       expect(body.sessions).toHaveLength(1);
+      expect(body.counts).toEqual({ working: 1,waiting: 0,idle: 0,ended: 0,lost: 0 });
       expect(body.sessions[0]).toEqual({
         id: expect.stringMatching(/^ags_[0-9a-f-]{36}$/),harness: "claude-code",computer: "mac",account: "work",project: "relo",
-        state: "active",startedAt: expect.any(String),lastEventAt: expect.any(String),
+        state: "active",phase: "working",lastEvent: "prompt",startedAt: expect.any(String),lastEventAt: expect.any(String),
         card: { id,state: "active",quietForSeconds: expect.any(Number) },presence: "working",
       });
     });
@@ -476,7 +584,7 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       const token = generateToken();
       await db.query("INSERT INTO principal_api_keys(principal_id,label,token_hash) VALUES ($1,'k',$2)",[other,hashToken(token)]);
       const read = await request("GET","/api/agent-sessions",undefined,token);
-      expect(read.body).toEqual({ sessions: [] });
+      expect(read.body).toEqual({ sessions: [],counts: { working: 0,waiting: 0,idle: 0,ended: 0,lost: 0 } });
       // The same hash on another account is its own session.
       expect((await request("POST","/api/agent-sessions/events",{ session: S1,harness: "codex",event: "start" },token)).status).toBe(200);
       expect((await db.query("SELECT count(*)::int AS n FROM agent_sessions")).rows[0].n).toBe(2);

@@ -102,6 +102,134 @@ test("tool events are coalesced to one a minute per session; other sessions and 
   assert.equal(box.sent.at(-1).event, "end");
 });
 
+test("a Notification is a wait only for a prompt that blocks on the owner; the next tool event goes out at once", async () => {
+  const box = await hookBox({ input: { session_id: SESSION_ID, hook_event_name: "PostToolUse", cwd: tmpdir() } });
+  await box.run(["hook", "tool"]);
+  for (const type of ["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]) {
+    box.stdin = { session_id: SESSION_ID, hook_event_name: "Notification", notification_type: type, message: "Claude needs your permission" };
+    box.clock += 1_000;
+    await box.run(["hook", "wait"]);
+    assert.equal(box.sent.at(-1).event, "wait", type);
+  }
+  const count = box.sent.length;
+  for (const type of ["idle_prompt", "auth_success", undefined]) {
+    box.stdin = { session_id: SESSION_ID, hook_event_name: "Notification", notification_type: type };
+    await box.run(["hook", "wait"]);
+    // Mapped from the event name alone too.
+    await box.run(["hook"]);
+  }
+  assert.equal(box.sent.length, count, "idle and other notifications are not sent");
+  assert.equal(box.sent.some((body) => "message" in body), false, "the notification text is never sent");
+  box.stdin = { session_id: SESSION_ID, hook_event_name: "PostToolUse", cwd: tmpdir() };
+  box.clock += 1_000;
+  await box.run(["hook", "tool"]);
+  assert.equal(box.sent.at(-1).event, "tool", "the approved tool turns the session working again at once");
+});
+
+test("a subagent is never a session of its own: its start, stop and end are skipped, its tool events count for the parent", async () => {
+  const box = await hookBox();
+  for (const [name, event] of [["SessionStart", "start"], ["Stop", "stop"], ["SessionEnd", "end"]]) {
+    box.stdin = { session_id: SESSION_ID, agent_id: "agent-1", agent_type: "Explore", hook_event_name: name };
+    await box.run(["hook", event]);
+  }
+  assert.equal(box.sent.length, 0);
+  box.stdin = { session_id: SESSION_ID, agent_id: "agent-1", hook_event_name: "PostToolUse", cwd: tmpdir() };
+  await box.run(["hook", "tool"]);
+  assert.equal(box.sent.length, 1);
+  assert.equal(box.sent[0].session, createHash("sha256").update(`claude-code:${SESSION_ID}`).digest("base64url"), "the parent's session");
+});
+
+test("a stop (or prompt, start) reopens the tool window: the first tool event after it is sent at once", async () => {
+  const box = await hookBox({ input: { session_id: SESSION_ID, hook_event_name: "PostToolUse", cwd: tmpdir() } });
+  await box.run(["hook", "tool"]);
+  box.clock += 5_000;
+  await box.run(["hook", "stop"]);
+  box.clock += 5_000;
+  await box.run(["hook", "tool"]);
+  assert.deepEqual(box.sent.map((body) => body.event), ["tool", "stop", "tool"], "background work after a Stop turns the session active again");
+  box.clock += 5_000;
+  await box.run(["hook", "tool"]);
+  assert.equal(box.sent.length, 3, "after that tool event the window coalesces again");
+  for (const event of ["prompt", "start"]) {
+    box.clock += 1_000;
+    await box.run(["hook", event]);
+    box.clock += 1_000;
+    await box.run(["hook", "tool"]);
+    assert.equal(box.sent.at(-1).event, "tool", `a tool event right after ${event} is sent`);
+  }
+});
+
+test("a tool send still in flight when the Stop lands cannot close the window behind it", async () => {
+  const box = await hookBox({ input: { session_id: SESSION_ID, hook_event_name: "PostToolUse", cwd: tmpdir() } });
+  const toolStartedAt = box.clock;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = box.deps();
+  const client = { sendAgentSessionEvent: async (body) => { await gate; box.sent.push(body); return { ok: true }; } };
+  const inFlight = cli(["hook", "tool"], { ...slow, clientFactory: () => client, now: () => toolStartedAt });
+  box.clock += 2_000;
+  await box.run(["hook", "stop"]);
+  release();
+  await inFlight;
+  box.clock += 2_000;
+  await box.run(["hook", "tool"]);
+  assert.deepEqual(box.sent.map((body) => body.event), ["stop", "tool", "tool"]);
+});
+
+test("the coalescing stamp is written only after a successful send", async () => {
+  const box = await hookBox({ input: { session_id: SESSION_ID, hook_event_name: "PostToolUse", cwd: tmpdir() } });
+  let failing = true;
+  const deps = box.deps();
+  const inner = deps.clientFactory;
+  const run = () => cli(["hook", "tool"], { ...deps, now: () => box.clock, clientFactory: (config) => {
+    const real = inner(config);
+    return { ...real, sendAgentSessionEvent: async (body) => {
+      if (failing) throw Object.assign(new Error("Relo API returned HTTP 503"), { code: "API_ERROR", status: 503 });
+      return real.sendAgentSessionEvent(body);
+    } };
+  } });
+  await run();
+  assert.equal(box.sent.length, 0);
+  assert.equal(existsSync(join(box.state, "hooks", `tool-${createHash("sha256").update(`claude-code:${SESSION_ID}`).digest("base64url").slice(0, 24)}`)), false);
+  failing = false;
+  box.clock += 1_000;
+  await run();
+  assert.equal(box.sent.length, 1, "the failed send did not suppress the next tool event");
+  box.clock += 1_000;
+  await run();
+  assert.equal(box.sent.length, 1, "a successful send starts the window");
+});
+
+test("a fast network failure is retried once; a server error and a slow failure are not", async () => {
+  const attempts = { network: 0, server: 0 };
+  const network = await hookBox();
+  network.deps = ((make) => () => {
+    const deps = make();
+    const inner = deps.clientFactory;
+    return { ...deps, clientFactory: (config) => ({ ...inner(config), sendAgentSessionEvent: async (body, options) => {
+      attempts.network += 1;
+      if (attempts.network === 1) throw Object.assign(new Error("connect ECONNRESET"), { code: "NETWORK_ERROR" });
+      assert.ok(options.timeoutMs > 0 && options.timeoutMs <= 2_000, "the retry fits the remaining budget");
+      network.sent.push(body);
+      return { ok: true };
+    } }) };
+  })(network.deps);
+  await network.run(["hook", "stop"]);
+  assert.equal(attempts.network, 2);
+  assert.equal(network.sent.length, 1);
+
+  const server = await hookBox();
+  server.deps = ((make) => () => {
+    const deps = make();
+    return { ...deps, clientFactory: () => ({ sendAgentSessionEvent: async () => {
+      attempts.server += 1;
+      throw Object.assign(new Error("HTTP 500"), { code: "API_ERROR", status: 500 });
+    } }) };
+  })(server.deps);
+  assert.equal((await server.run(["hook", "stop"])).exitCode, 0);
+  assert.equal(attempts.server, 1);
+});
+
 test("a hook never fails and never prints, whatever goes wrong", async () => {
   const cases = {
     "server down": await hookBox({ fail: new Error("connect ECONNREFUSED") }),
@@ -193,20 +321,55 @@ test("relo sessions prints a compact list", async () => {
     state: "active", startedAt: "2026-10-13T10:00:00Z", lastEventAt: "2026-10-13T10:05:00Z", presence: "quiet",
     card: { id: "act_11111111-1111-4111-8111-111111111111", state: "active", quietForSeconds: 840 } },
   { id: "ags_22222222-2222-4222-8222-222222222222", harness: "gemini", computer: null, account: "work", project: null,
-    state: "active", startedAt: "2026-10-13T10:00:00Z", lastEventAt: "2026-10-13T10:06:00Z", presence: "no_card", card: null }];
+    state: "idle", startedAt: "2026-10-13T10:00:00Z", lastEventAt: "2026-10-13T10:06:00Z", presence: "no_card", card: null }];
   const deps = cardDependencies({ listAgentSessions: async () => ({ sessions }) });
   const out = await cli(["sessions"], deps);
   assert.equal(out.exitCode, EXIT.OK);
   assert.deepEqual(out.line, { ok: true, sessions: [
-    { harness: "claude-code", computer: "Studio", project: "relo", presence: "quiet", lastEventAt: "2026-10-13T10:05:00Z", card: { state: "active", quietForSeconds: 840 } },
-    { harness: "gemini", account: "work", presence: "no_card", lastEventAt: "2026-10-13T10:06:00Z" },
+    { harness: "claude-code", computer: "Studio", project: "relo", state: "active", presence: "quiet", lastEventAt: "2026-10-13T10:05:00Z", card: { state: "active", quietForSeconds: 840 } },
+    { harness: "gemini", account: "work", state: "idle", presence: "no_card", lastEventAt: "2026-10-13T10:06:00Z" },
   ] });
   assert.equal((await cli(["sessions", "extra"], deps)).exitCode, EXIT.USAGE);
 });
 
+test("relo sessions shows phases and counts; --live asks the server for working and waiting only", async () => {
+  const counts = { working: 1, waiting: 1, idle: 4, ended: 2, lost: 0 };
+  const asked = [];
+  const sessions = [
+    { harness: "claude-code", project: "relo", phase: "working", state: "active", presence: "no_card", lastEventAt: "2026-10-13T10:05:00Z", card: null },
+    { harness: "claude-code", project: "relo", phase: "waiting", state: "idle", presence: "no_card", lastEventAt: "2026-10-13T10:04:00Z", card: null },
+  ];
+  const deps = cardDependencies({ listAgentSessions: async (options) => { asked.push(options); return { sessions, counts }; } });
+  const out = await cli(["sessions", "--live"], deps);
+  assert.equal(out.exitCode, EXIT.OK);
+  assert.deepEqual(asked, [{ phases: ["working", "waiting"] }]);
+  assert.deepEqual(out.line.counts, counts);
+  assert.deepEqual(out.line.sessions.map((session) => session.phase), ["working", "waiting"]);
+  await cli(["sessions"], deps);
+  assert.deepEqual(asked.at(-1), {});
+
+  // A server before phases ignores the filter: --live keeps only the mid-turn sessions.
+  const old = cardDependencies({ listAgentSessions: async () => ({ sessions: [
+    { harness: "claude-code", state: "active", presence: "no_card", lastEventAt: "2026-10-13T10:05:00Z" },
+    { harness: "claude-code", state: "idle", presence: "no_card", lastEventAt: "2026-10-13T10:04:00Z" }] }) });
+  const legacy = await cli(["sessions", "--live"], old);
+  assert.deepEqual(legacy.line.sessions.map((session) => session.state), ["active"]);
+  assert.equal(legacy.line.counts, undefined);
+});
+
+test("the API client sends ?phase= only when asked", async () => {
+  const urls = [];
+  const client = new ReloApiClient({ apiUrl: "https://relo.example", token: "x".repeat(44),
+    fetchImpl: async (url) => { urls.push(String(url)); return Response.json({ sessions: [], counts: {} }); } });
+  await client.listAgentSessions();
+  await client.listAgentSessions({ phases: ["working", "waiting"] });
+  assert.deepEqual(urls.map((url) => new URL(url).search), ["", "?phase=working%2Cwaiting"]);
+});
+
 // ---- relo setup --hooks ---------------------------------------------------------------------------
 
-const EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd"];
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "Notification", "SessionEnd"];
+const WAIT_MATCHER = "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input";
 const stringify = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
 async function setupBox(options) {
@@ -226,6 +389,8 @@ test("--global --agent claude-code --hooks writes one marked entry per event", a
   const written = JSON.parse(await readFile(box.global, "utf8"));
   assert.deepEqual(Object.keys(written.hooks), EVENTS);
   assert.deepEqual(written.hooks.PostToolUse, [{ hooks: [{ type: "command", command: "relo hook tool", timeout: 5 }] }]);
+  assert.deepEqual(written.hooks.Notification, [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", timeout: 5 }] }],
+    "only prompts that block on the owner run the hook");
   for (const [name, event] of [["SessionStart", "start"], ["UserPromptSubmit", "prompt"], ["Stop", "stop"], ["SessionEnd", "end"]]) {
     assert.equal(written.hooks[name][0].hooks[0].command, `relo hook ${event}`);
     assert.equal(written.hooks[name][0].hooks[0].timeout, 5);
@@ -267,7 +432,8 @@ test("setup --hooks keeps everything else, and --remove restores the file exactl
   assert.deepEqual(Object.keys(settings), ["model", "permissions", "hooks", "env"], "key order kept");
   assert.equal(settings.hooks.PostToolUse.length, 2, "the other PostToolUse hook is still there");
   assert.equal(settings.hooks.PostToolUse[0].hooks[0].command, "prettier --write");
-  assert.deepEqual(settings.hooks.Notification, [{ hooks: [{ type: "command", command: "say done" }] }]);
+  assert.deepEqual(settings.hooks.Notification, [{ hooks: [{ type: "command", command: "say done" }] },
+    { matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", timeout: 5 }] }], "the owner's own group is untouched");
   const removed = await box.run(["setup", "--hooks", "--remove"]);
   assert.deepEqual(removed.line, { ok: true, file: "~/.claude/settings.json", action: "removed", hooks: EVENTS });
   assert.equal(await readFile(box.global, "utf8"), original, "byte for byte");
@@ -404,9 +570,10 @@ test("doctor never suggests hooks: the compact line has no hooks, and --full onl
   assert.equal(JSON.stringify(full.line.data.next ?? {}).toLowerCase().includes("hook"), false);
 });
 
-test("relo hook against an older server (404 or 400) or an offline one is silent, exits 0 and sends exactly once", async () => {
+test("relo hook against an older server (404 or 400) or an offline one is silent, exits 0, sends once (offline: one quick retry)", async () => {
+  const offline = () => { throw new TypeError("fetch failed"); };
   for (const respond of [() => Response.json({ error: "not_found" }, { status: 404 }), () => Response.json({ error: "invalid_request" }, { status: 400 }),
-    () => { throw new TypeError("fetch failed"); }, () => Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "1" } })]) {
+    offline, () => Response.json({ error: "rate_limited" }, { status: 429, headers: { "retry-after": "1" } })]) {
     const state = await mkdtemp(join(tmpdir(), "relo-hook-old-"));
     let requests = 0;
     const slept = [];
@@ -421,8 +588,8 @@ test("relo hook against an older server (404 or 400) or an offline one is silent
     assert.equal(out.exitCode, 0);
     assert.deepEqual(out.stdout, []);
     assert.deepEqual(out.stderr, []);
-    assert.equal(requests, 1, "no retry");
-    assert.deepEqual(slept, [], "never waits");
+    assert.equal(requests, respond === offline ? 2 : 1, "only a fast network failure is retried, once");
+    assert.deepEqual(slept, [], "never waits on the server's retry-after");
   }
 });
 
@@ -439,4 +606,17 @@ test("a server without the sessions API: relo sessions says so, relo hook stays 
     configPath: () => join(state, "c.json") });
   assert.equal(hook.exitCode, 0);
   assert.deepEqual(hook.stdout, []);
+});
+
+test("setup --hooks puts Relo's matcher on its own Notification group, never on a shared one", async () => {
+  const box = await setupBox();
+  await mkdir(join(box.home, ".claude"), { recursive: true });
+  await writeFile(box.global, stringify({ hooks: {
+    Notification: [{ hooks: [{ type: "command", command: "relo hook wait", timeout: 5 }] }],
+    Stop: [{ matcher: "", hooks: [{ type: "command", command: "relo hook stop", timeout: 5 }, { type: "command", command: "mine" }] }],
+  } }));
+  assert.equal((await box.run(["setup", "--global", "--agent", "claude-code", "--hooks"])).line.action, "updated");
+  const settings = JSON.parse(await readFile(box.global, "utf8"));
+  assert.deepEqual(settings.hooks.Notification, [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", timeout: 5 }] }]);
+  assert.equal(settings.hooks.Stop[0].matcher, "", "a shared group keeps the owner's matcher");
 });

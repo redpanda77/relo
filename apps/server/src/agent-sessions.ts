@@ -1,5 +1,12 @@
+import {
+  AGENT_SESSION_PHASES,
+  AGENT_SESSION_WAITING_AFTER_STOP_SECONDS,
+  AGENT_SESSION_WAITING_ON_PROMPT_SECONDS,
+  type AgentSessionCounts,
+  type AgentSessionEventName,
+  type AgentSessionPhase,
+} from "@relo/notification-contracts";
 import type {
-  AgentSessionEventName,
   AgentSessionEventRequest,
   AgentSessionState,
   AgentSessionSummary,
@@ -38,20 +45,46 @@ const RECONCILE_BATCH = 50;
 export const SESSION_CARD_STATUS_ENDED = "Session ended";
 export const SESSION_CARD_STATUS_LOST = "Session lost";
 
-/** SQL condition: the session in `alias` has been silent past its state's lost threshold. */
-export function sessionSilentSql(alias: string): string {
-  return `((${alias}.state='active' AND ${alias}.last_event_at<=now()-interval '${SESSION_LOST_AFTER_SECONDS} seconds')
-    OR (${alias}.state='idle' AND ${alias}.last_event_at<=now()-interval '${SESSION_IDLE_LOST_AFTER_SECONDS} seconds'))`;
+/**
+ * SQL condition: the session in `alias` is between turns, so silence is normal: it stopped, waits on
+ * a prompt, or only started (a Desktop session opened and not prompted yet).
+ */
+function betweenTurnsSql(alias: string): string {
+  return `(${alias}.state='idle' OR (${alias}.state='active' AND ${alias}.last_event='start'))`;
 }
 
+/** SQL condition: the session in `alias` has been silent past its state's lost threshold. */
+export function sessionSilentSql(alias: string): string {
+  return `((${alias}.state='active' AND NOT ${betweenTurnsSql(alias)}
+      AND ${alias}.last_event_at<=now()-interval '${SESSION_LOST_AFTER_SECONDS} seconds')
+    OR (${betweenTurnsSql(alias)} AND ${alias}.last_event_at<=now()-interval '${SESSION_IDLE_LOST_AFTER_SECONDS} seconds'))`;
+}
+
+/** Phase order in the lists: working, waiting, idle, then the settled ones. */
+const phaseRankSql = (column: string) => `CASE ${column} WHEN 'working' THEN 0 WHEN 'waiting' THEN 1 WHEN 'idle' THEN 2 ELSE 3 END`;
+
+/** SQL expression: the phase of the session in `alias` now (agentSessionPhase in the contracts). */
+export function sessionPhaseSql(alias: string): string {
+  return `CASE
+    WHEN ${sessionSilentSql(alias)} THEN 'lost'
+    WHEN ${alias}.state IN ('ended','lost') THEN ${alias}.state
+    WHEN ${alias}.state='active' AND ${alias}.last_event<>'start' THEN 'working'
+    WHEN ${alias}.last_event='wait'
+      AND ${alias}.last_event_at>now()-interval '${AGENT_SESSION_WAITING_ON_PROMPT_SECONDS} seconds' THEN 'waiting'
+    WHEN ${alias}.last_event='stop'
+      AND ${alias}.last_event_at>now()-interval '${AGENT_SESSION_WAITING_AFTER_STOP_SECONDS} seconds' THEN 'waiting'
+    ELSE 'idle' END`;
+}
+
+/** A wait (permission or input prompt) is stored like a stop: between turns, the card rules agree. */
 const STATE_AFTER_EVENT: Record<AgentSessionEventName, AgentSessionState> = {
-  start: "active", prompt: "active", tool: "active", stop: "idle", end: "ended",
+  start: "active", prompt: "active", tool: "active", stop: "idle", wait: "idle", end: "ended",
 };
 
 /**
  * Stores one event. Idempotent (the same event again leaves the same row) and ordered by the
  * event's own time: an event older than the newest one seen changes nothing. An ended session is
- * brought back only by a strictly newer start, prompt or tool event; a stop never revives it.
+ * brought back only by a strictly newer start, prompt or tool event; a stop or wait never revives it.
  * Returns the stored state after the event.
  */
 export async function recordAgentSessionEvent(
@@ -80,7 +113,9 @@ export async function recordAgentSessionEvent(
        started_at=CASE WHEN EXCLUDED.last_event='start' AND agent_sessions.state IN ('ended','lost')
          THEN EXCLUDED.last_event_at ELSE agent_sessions.started_at END,
        last_event_at=EXCLUDED.last_event_at,
-       last_event=EXCLUDED.last_event,
+       -- A start in the middle of a turn (SessionStart after a compaction) keeps it working.
+       last_event=CASE WHEN EXCLUDED.last_event='start' AND agent_sessions.state='active'
+         THEN agent_sessions.last_event ELSE EXCLUDED.last_event END,
        ended_at=CASE
          WHEN EXCLUDED.state<>'ended' THEN NULL
          WHEN agent_sessions.state='ended' THEN agent_sessions.ended_at
@@ -109,25 +144,41 @@ export async function recordAgentSessionEvent(
  * `principal`, a SQL expression such as "$1". It is an expression so the inbox snapshot reads it
  * inside its single statement; `mapAgentSessionRows` turns the rows into the contract shape.
  */
-export function agentSessionRowsSql(principal: string): string {
-  return `(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.ord),'[]'::jsonb) FROM (
-    SELECT s.id,s.harness,s.computer,s.account,s.project,s.started_at,s.last_event_at,s.sealed_names,
-      CASE WHEN ${sessionSilentSql("s")} THEN 'lost' ELSE s.state END AS state,
-      card.id AS card_id,card.state AS card_state,
-      floor(extract(epoch FROM GREATEST(now()-card.updated_at,interval '0')))::int AS card_quiet_seconds,
-      (card.stale_at IS NOT NULL AND card.stale_at<=now()) AS card_past_stale,
-      row_number() OVER (ORDER BY
-        (s.state IN ('active','idle') AND NOT ${sessionSilentSql("s")}) DESC,
-        s.last_event_at DESC,s.id) AS ord
-    FROM agent_sessions s
-    LEFT JOIN LATERAL (
-      SELECT a.id,a.state::text AS state,a.updated_at,a.stale_at FROM live_activities a
-      WHERE s.card_key IS NOT NULL AND a.principal_id=s.principal_id AND a.activity_key=s.card_key
-        AND a.state='active' AND a.presentation IS NOT NULL
-      ORDER BY a.updated_at DESC,a.id DESC LIMIT 1
-    ) card ON true
-    WHERE s.principal_id=${principal} AND s.last_event_at>now()-interval '${SESSION_LIST_WINDOW_HOURS} hours'
-    ORDER BY ord LIMIT ${SESSION_LIST_MAX}) x)`;
+export function agentSessionRowsSql(principal: string,phases?: readonly AgentSessionPhase[]): string {
+  const filter = phases?.length ? `WHERE x.phase IN (${phases.map(phase => `'${phaseLiteral(phase)}'`).join(",")})` : "";
+  return `(SELECT COALESCE(jsonb_agg(to_jsonb(y) ORDER BY y.ord),'[]'::jsonb) FROM (
+    SELECT x.*,row_number() OVER (ORDER BY ${phaseRankSql("x.phase")},x.last_event_at DESC,x.id) AS ord
+    FROM (
+      SELECT s.id,s.harness,s.computer,s.account,s.project,s.started_at,s.last_event_at,s.last_event,s.sealed_names,
+        CASE WHEN ${sessionSilentSql("s")} THEN 'lost' ELSE s.state END AS state,
+        ${sessionPhaseSql("s")} AS phase,
+        card.id AS card_id,card.state AS card_state,
+        floor(extract(epoch FROM GREATEST(now()-card.updated_at,interval '0')))::int AS card_quiet_seconds,
+        (card.stale_at IS NOT NULL AND card.stale_at<=now()) AS card_past_stale
+      FROM agent_sessions s
+      LEFT JOIN LATERAL (
+        SELECT a.id,a.state::text AS state,a.updated_at,a.stale_at FROM live_activities a
+        WHERE s.card_key IS NOT NULL AND a.principal_id=s.principal_id AND a.activity_key=s.card_key
+          AND a.state='active' AND a.presentation IS NOT NULL
+        ORDER BY a.updated_at DESC,a.id DESC LIMIT 1
+      ) card ON true
+      WHERE s.principal_id=${principal} AND s.last_event_at>now()-interval '${SESSION_LIST_WINDOW_HOURS} hours'
+    ) x ${filter}
+    ORDER BY ord LIMIT ${SESSION_LIST_MAX}) y)`;
+}
+
+/** Only the known phase names reach the SQL text. */
+function phaseLiteral(phase: AgentSessionPhase): AgentSessionPhase {
+  if (!(AGENT_SESSION_PHASES as readonly string[]).includes(phase)) throw new Error(`unknown phase ${phase}`);
+  return phase;
+}
+
+/** SQL expression (a jsonb object): the account's sessions in the list window by phase, all phases present. */
+export function agentSessionCountsSql(principal: string): string {
+  return `(SELECT jsonb_build_object(${AGENT_SESSION_PHASES.map(phase =>
+    `'${phase}',count(*) FILTER (WHERE c.phase='${phase}')`).join(",")}) FROM (
+      SELECT ${sessionPhaseSql("s")} AS phase FROM agent_sessions s
+      WHERE s.principal_id=${principal} AND s.last_event_at>now()-interval '${SESSION_LIST_WINDOW_HOURS} hours') c)`;
 }
 
 /** `withSealedNames` only for phones: the Dashboard and the CLI never receive envelopes. */
@@ -142,6 +193,8 @@ export function mapAgentSessionRows(rows: any[],{ withSealedNames = false } = {}
       account: row.account ?? null,
       project: row.project ?? null,
       state,
+      phase: row.phase as AgentSessionPhase,
+      lastEvent: row.last_event as AgentSessionEventName,
       startedAt: new Date(row.started_at).toISOString(),
       lastEventAt: new Date(row.last_event_at).toISOString(),
       card: row.card_id ? {
@@ -157,23 +210,36 @@ export function mapAgentSessionRows(rows: any[],{ withSealedNames = false } = {}
 }
 
 /**
- * Live and recent sessions of an account with how each relates to its card. A session silent past
- * the lost threshold reads as lost even before the worker records it.
+ * Live and recent sessions of an account with how each relates to its card, optionally only some
+ * phases. A session silent past the lost threshold reads as lost even before the worker records it.
  */
 export async function listAgentSessions(
   db: Pick<Database,"query">,
   principalId: string,
+  { phases }: { phases?: readonly AgentSessionPhase[] | undefined } = {},
 ): Promise<AgentSessionSummary[]> {
-  const result = await db.query<{ sessions: any[] }>(`SELECT ${agentSessionRowsSql("$1::uuid")} AS sessions`,[principalId]);
-  return mapAgentSessionRows(result.rows[0]?.sessions ?? []);
+  return (await readAgentSessions(db,principalId,{ phases })).sessions;
+}
+
+/** The listing and, whatever the filter, how many sessions of the list window are in each phase. */
+export async function readAgentSessions(
+  db: Pick<Database,"query">,
+  principalId: string,
+  { phases }: { phases?: readonly AgentSessionPhase[] | undefined } = {},
+): Promise<{ sessions: AgentSessionSummary[]; counts: AgentSessionCounts }> {
+  const result = await db.query<{ sessions: any[]; counts: AgentSessionCounts }>(
+    `SELECT ${agentSessionRowsSql("$1::uuid",phases)} AS sessions,${agentSessionCountsSql("$1::uuid")} AS counts`,[principalId]);
+  const counts = Object.fromEntries(AGENT_SESSION_PHASES.map(phase =>
+    [phase,Number(result.rows[0]?.counts?.[phase] ?? 0)])) as AgentSessionCounts;
+  return { sessions: mapAgentSessionRows(result.rows[0]?.sessions ?? []),counts };
 }
 
 export type AgentSessionReconcileResult = { lost: number; cardsEnded: number; pruned: number };
 
 /**
  * One idempotent pass over the session rules, safe to run from any number of workers:
- *  1. Active with no event for SESSION_LOST_AFTER_SECONDS, or idle for SESSION_IDLE_LOST_AFTER_SECONDS,
- *     becomes lost.
+ *  1. Mid-turn with no event for SESSION_LOST_AFTER_SECONDS, or between turns (stopped, waiting on a
+ *     prompt, or only started) for SESSION_IDLE_LOST_AFTER_SECONDS, becomes lost.
  *  2. The active card of an ended session, or of a session lost for SESSION_LOST_CARD_GRACE_SECONDS,
  *     ends ("Session ended" / "Session lost") through the same terminal path as card expiry, unless
  *     a question on it is still open; the pass after the question settles ends it.
@@ -188,7 +254,7 @@ export async function reconcileAgentSessions(
 ): Promise<AgentSessionReconcileResult> {
   const lost = await db.query(
     `UPDATE agent_sessions s SET state='lost',
-       ended_at=s.last_event_at+make_interval(secs=>CASE WHEN s.state='idle' THEN $2::double precision ELSE $1::double precision END),
+       ended_at=s.last_event_at+make_interval(secs=>CASE WHEN ${betweenTurnsSql("s")} THEN $2::double precision ELSE $1::double precision END),
        ended_reason='lost',updated_at=now()
      WHERE ${sessionSilentSql("s")}`,
     [SESSION_LOST_AFTER_SECONDS,SESSION_IDLE_LOST_AFTER_SECONDS],

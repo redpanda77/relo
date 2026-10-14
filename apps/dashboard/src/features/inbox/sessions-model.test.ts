@@ -19,7 +19,7 @@ const id = (n: number) => `ags_00000000-0000-0000-0000-${String(n).padStart(12, 
 function session(n: number, patch: Partial<AgentSession> = {}): AgentSession {
   return {
     id: id(n), harness: "claude-code", computer: "Studio", account: "work", project: "relo", state: "active",
-    startedAt: "2026-08-07T10:47:57Z", lastEventAt: "2026-08-07T11:59:00Z", card: null, presence: "no_card", ...patch,
+    phase: "working", lastEvent: "tool", startedAt: "2026-08-07T10:47:57Z", lastEventAt: "2026-08-07T11:59:00Z", card: null, presence: "no_card", ...patch,
   }
 }
 const card = { id: "act_00000000-0000-0000-0000-000000000001", state: "active" as const, quietForSeconds: 840 }
@@ -61,7 +61,7 @@ describe("quiet text", () => {
 
 describe("groupSessions", () => {
   it("hides everything without sessions", () => {
-    expect(groupSessions(undefined, now)).toEqual({ live: [], liveCount: 0, recent: [] })
+    expect(groupSessions(undefined, now)).toEqual({ live: [], liveCount: 0, workingCount: 0, idle: [], recent: [] })
   })
   it("orders working, quiet, no card within a group, groups by their best session", () => {
     const view = groupSessions(
@@ -89,6 +89,28 @@ describe("groupSessions", () => {
     )
     expect(view.live).toEqual([])
     expect(view.recent.map((s) => s.id)).toEqual([id(2), id(1)])
+  })
+  it("shows working and waiting sessions; idle ones fold away, and a finished turn turns idle after five minutes", () => {
+    const view = groupSessions(
+      [
+        session(1, { presence: "working", card }),
+        session(2, { state: "idle", lastEvent: "stop", lastEventAt: "2026-08-07T11:58:00Z" }),
+        session(3, { state: "idle", lastEvent: "stop", lastEventAt: "2026-08-07T11:50:00Z" }),
+        session(4, { state: "idle", lastEvent: "wait", lastEventAt: "2026-08-07T11:30:00Z" }),
+        session(5, { state: "active", lastEvent: "start" }),
+        session(6, { state: "idle", lastEvent: "stop", lastEventAt: "2026-08-07T04:00:00Z" }),
+      ],
+      now
+    )
+    expect(view.live.flatMap((group) => group.sessions.map((s) => s.id))).toEqual([id(1), id(2), id(4)])
+    expect(view.workingCount).toBe(1)
+    expect(view.idle.map((s) => s.id)).toEqual([id(5), id(3), id(6)])
+    expect(presenceView(session(2, { state: "idle", lastEvent: "stop", lastEventAt: "2026-08-07T11:58:00Z" }), now, now))
+      .toEqual({ label: "done, waiting for you", tone: "yellow" })
+    expect(presenceView(session(4, { state: "idle", lastEvent: "wait", lastEventAt: "2026-08-07T11:30:00Z" }), now, now).label)
+      .toBe("needs your input")
+    expect(presenceView(session(6, { state: "idle", lastEvent: "stop", lastEventAt: "2026-08-07T04:00:00Z" }), now, now))
+      .toEqual({ label: "idle 8 h", tone: "neutral" })
   })
   it("indexes quiet sessions by card", () => {
     const quiet = session(1, { presence: "quiet", card })

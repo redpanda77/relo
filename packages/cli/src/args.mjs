@@ -21,6 +21,7 @@ const BOOLEAN_OPTIONS = new Set([
   "markdown",
   "no-wait",
   "full",
+  "live",
   "clear",
   "next-step",
   "global",

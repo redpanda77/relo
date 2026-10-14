@@ -76,7 +76,8 @@ public enum ReloDeviceModelName {
         "iPhone17,5": "iPhone 16e",
         "iPhone18,1": "iPhone 17 Pro", "iPhone18,2": "iPhone 17 Pro Max", "iPhone18,3": "iPhone 17", "iPhone18,4": "iPhone Air",
         "iPhone18,5": "iPhone 17e",
-        "iPhone19,2": "iPhone 18 Pro", "iPhone19,3": "iPhone 18 Pro Max",
+        // 2026 models, from public device lists (not an Apple source), as on the server.
+        "iPhone19,2": "iPhone 18 Pro", "iPhone19,3": "iPhone 18 Pro Max", "iPhone19,7": "iPhone 18 Pro Max",
         "iPad13,18": "iPad", "iPad13,19": "iPad", "iPad15,7": "iPad", "iPad15,8": "iPad",
         "iPad14,1": "iPad mini", "iPad14,2": "iPad mini", "iPad16,1": "iPad mini", "iPad16,2": "iPad mini",
         "iPad13,16": "iPad Air", "iPad13,17": "iPad Air",

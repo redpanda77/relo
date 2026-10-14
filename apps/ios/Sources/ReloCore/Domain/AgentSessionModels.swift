@@ -33,6 +33,8 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     public var account: String? { ReloNames.display(storedAccount) }
     public var project: String? { ReloNames.display(storedProject) }
     public let state: String
+    /// The last hook event (start, prompt, tool, stop, wait, end); older servers omit it.
+    public var lastEvent: String? = nil
     public let startedAt: Date
     public let lastEventAt: Date
     public let card: Card?
@@ -41,15 +43,16 @@ public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
     public var sealedNames: ReloEnvelope? = nil
 
     private enum CodingKeys: String, CodingKey {
-        case id, harness, state, startedAt, lastEventAt, card, presence, sealedNames
+        case id, harness, state, lastEvent, startedAt, lastEventAt, card, presence, sealedNames
         case storedComputer = "computer", storedAccount = "account", storedProject = "project"
     }
 
     public init(id: String, harness: String, computer: String? = nil, account: String? = nil, project: String? = nil,
-                state: String = "active", startedAt: Date, lastEventAt: Date, card: Card? = nil, presence: Presence) {
+                state: String = "active", lastEvent: String? = nil, startedAt: Date, lastEventAt: Date, card: Card? = nil,
+                presence: Presence) {
         self.id = id; self.harness = harness; self.storedComputer = computer; self.storedAccount = account
-        self.storedProject = project; self.state = state; self.startedAt = startedAt; self.lastEventAt = lastEventAt
-        self.card = card; self.presence = presence
+        self.storedProject = project; self.state = state; self.lastEvent = lastEvent; self.startedAt = startedAt
+        self.lastEventAt = lastEventAt; self.card = card; self.presence = presence
     }
 }
 
@@ -57,8 +60,8 @@ public extension AgentSession {
     /// The same session read as lost, keeping its names and card.
     func markedLost() -> AgentSession {
         var copy = AgentSession(id: id, harness: harness, computer: storedComputer, account: storedAccount,
-                                project: storedProject, state: "lost", startedAt: startedAt, lastEventAt: lastEventAt,
-                                card: card, presence: .lost)
+                                project: storedProject, state: "lost", lastEvent: lastEvent, startedAt: startedAt,
+                                lastEventAt: lastEventAt, card: card, presence: .lost)
         copy.sealedNames = sealedNames
         return copy
     }
@@ -72,18 +75,49 @@ public enum AgentSessionsProjection {
     /// an idle session (waiting for the owner) sends nothing, so it is lost only much later.
     public static let activeLostAfter: TimeInterval = 15 * 60
     public static let idleLostAfter: TimeInterval = 8 * 3_600
+    /// The server's waiting windows (agentSessionPhase in the contracts): a turn that just ended,
+    /// and a permission or input prompt.
+    public static let waitingAfterStop: TimeInterval = 5 * 60
+    public static let waitingOnPrompt: TimeInterval = 60 * 60
+
+    /// What the owner sees: working mid-turn; waiting on a prompt or right after a turn; idle (open,
+    /// nothing new: a Desktop session left open); ended; lost.
+    public enum Phase: Int, Comparable, Sendable {
+        case working, waiting, idle, ended, lost
+        public static func < (a: Phase, b: Phase) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// Between turns, so silence is normal: stopped, waiting on a prompt, or only started.
+    static func isBetweenTurns(_ session: AgentSession) -> Bool {
+        session.state == "idle" || (session.state == "active" && session.lastEvent == "start")
+    }
+
+    /// The phase now, by the same rule as the server, so a list read a while ago settles on its own.
+    public static func phase(_ session: AgentSession, now: Date) -> Phase {
+        switch session.presence {
+        case .ended: return .ended
+        case .lost: return .lost
+        case .working, .quiet, .noCard: break
+        }
+        if session.state == "active" { return session.lastEvent == "start" ? .idle : .working }
+        guard session.state == "idle" else { return .idle }
+        let age = now.timeIntervalSince(session.lastEventAt)
+        if session.lastEvent == "wait" && age <= waitingOnPrompt { return .waiting }
+        if session.lastEvent == "stop" && age <= waitingAfterStop { return .waiting }
+        return .idle
+    }
 
     /// The sessions as they stand now: a live session silent past its state's threshold reads as
     /// lost, as the server would report it, even when the list was fetched before it went silent.
     public static func settled(_ sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.map { session in
             guard isLive(session) else { return session }
-            let limit = session.state == "idle" ? idleLostAfter : activeLostAfter
+            let limit = isBetweenTurns(session) ? idleLostAfter : activeLostAfter
             return now.timeIntervalSince(session.lastEventAt) > limit ? session.markedLost() : session
         }
     }
 
-    /// How many agents are idle now, waiting for the owner.
+    /// How many agents are open but not working (waiting for the owner or idle).
     public static func idleCount(_ sessions: [AgentSession]) -> Int {
         sessions.filter(isIdle).count
     }
@@ -125,14 +159,15 @@ public enum AgentSessionsProjection {
     }
 
     /// Live and in the middle of a turn. After the agent's turn ends (Stop) the server sets the
-    /// state to "idle": the agent is waiting for the owner, so it is not running.
+    /// state to "idle": the agent is waiting for the owner, so it is not running. A session that
+    /// only started (opened, never prompted) is not running either.
     public static func isRunning(_ session: AgentSession) -> Bool {
-        isLive(session) && session.state == "active"
+        isLive(session) && session.state == "active" && session.lastEvent != "start"
     }
 
-    /// Live but between turns, waiting for the owner.
+    /// Live but not mid-turn: waiting for the owner, or idle.
     public static func isIdle(_ session: AgentSession) -> Bool {
-        isLive(session) && session.state == "idle"
+        isLive(session) && !isRunning(session)
     }
 
     /// How many agents are running now (the HUD's AGENTS and the Agents section's count).
@@ -140,21 +175,25 @@ public enum AgentSessionsProjection {
         sessions.filter(isRunning).count
     }
 
-    /// Running first (working, quiet, no card), then idle, then ended, then lost.
-    static func order(_ session: AgentSession) -> Int {
-        if isLive(session) && !isRunning(session) { return 3 }
-        let base = rank(session.presence)
-        return base >= 3 ? base + 1 : base
+    /// Working first (working, quiet, no card), then waiting, then idle, then ended, then lost.
+    static func order(_ session: AgentSession, now: Date) -> Int {
+        switch phase(session, now: now) {
+        case .working: rank(session.presence)
+        case .waiting: 10
+        case .idle: 11
+        case .ended: 12
+        case .lost: 13
+        }
     }
 
-    /// Live sessions first (running, then idle), then ended or lost within the last hour. Within a
+    /// Live sessions first (working, waiting, idle), then ended or lost within the last hour. Within a
     /// group, newest started first: a tool event never moves a row.
     public static func visible(_ sessions: [AgentSession], now: Date) -> [AgentSession] {
         sessions.filter { session in
             isLive(session) || now.timeIntervalSince(session.lastEventAt) <= recentWindow
         }
         .sorted {
-            let (a, b) = (order($0), order($1))
+            let (a, b) = (order($0, now: now), order($1, now: now))
             if a != b { return a < b }
             if $0.startedAt != $1.startedAt { return $0.startedAt > $1.startedAt }
             return $0.id < $1.id
@@ -201,9 +240,13 @@ public enum AgentSessionsProjection {
     }
 
     /// The row's status line: "working", "no update for 14 min", "running, no card",
-    /// "idle, waiting for you", "ended", "lost contact".
+    /// "needs your input", "done, waiting for you", "idle 2 h", "ended", "lost contact".
     public static func statusPhrase(_ session: AgentSession, fetchedAt: Date, now: Date) -> String {
-        if isIdle(session) { return "idle, waiting for you" }
+        switch phase(session, now: now) {
+        case .waiting: return session.lastEvent == "wait" ? "needs your input" : "done, waiting for you"
+        case .idle: return "idle \(durationPhrase(now.timeIntervalSince(session.lastEventAt)))"
+        case .working, .ended, .lost: break
+        }
         switch session.presence {
         case .working: return "working"
         case .quiet: return quietPhrase(session, fetchedAt: fetchedAt, now: now)

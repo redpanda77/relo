@@ -10,7 +10,7 @@ import { HOOK_HARNESSES } from "./commands/hook.mjs";
 import { repositoryRoot } from "./setup.mjs";
 
 export const HOOK_COMMAND_PREFIX = "relo hook ";
-const EVENT_ORDER = ["start", "prompt", "tool", "stop", "end"];
+const EVENT_ORDER = ["start", "prompt", "tool", "stop", "wait", "end"];
 
 /** Per harness: settings paths (docs: code.claude.com/docs/en/settings, geminicli.com/docs/hooks) and hook timeout. */
 export const HOOK_TARGETS = {
@@ -93,6 +93,7 @@ export function planHooks(path, current, agent, { remove = false } = {}) {
   const names = Object.entries(HOOK_HARNESSES[agent].events)
     .sort(([, a], [, b]) => EVENT_ORDER.indexOf(a) - EVENT_ORDER.indexOf(b)).map(([name]) => name);
   const eventOf = HOOK_HARNESSES[agent].events;
+  const matcherOf = HOOK_HARNESSES[agent].matchers ?? {};
   if (current === undefined) {
     if (remove) return { action: "unchanged", hooks: [] };
   }
@@ -127,10 +128,13 @@ export function planHooks(path, current, agent, { remove = false } = {}) {
   for (const name of names) {
     const wanted = { type: "command", command: target.command(eventOf[name]), timeout: target.timeout };
     const groups = Array.isArray(settings.hooks[name]) ? settings.hooks[name] : [];
+    const matcher = matcherOf[name];
     let found = false;
     const next = groups.map((group) => {
       if (!Array.isArray(group?.hooks) || !group.hooks.some(isRelo)) return group;
       found = true;
+      // A group of Relo's alone carries Relo's matcher; a shared group keeps the owner's.
+      const own = matcher !== undefined && group.hooks.every(isRelo) ? { matcher } : {};
       let placed = false;
       const hooks = group.hooks.flatMap((hook) => {
         if (!isRelo(hook)) return [hook];
@@ -138,9 +142,9 @@ export function planHooks(path, current, agent, { remove = false } = {}) {
         placed = true;
         return [{ ...hook, ...wanted }];
       });
-      return { ...group, hooks };
+      return { ...group, ...own, hooks };
     });
-    if (!found) next.push({ hooks: [wanted] });
+    if (!found) next.push(matcher === undefined ? { hooks: [wanted] } : { matcher, hooks: [wanted] });
     settings.hooks[name] = next;
   }
   const created = current === undefined;

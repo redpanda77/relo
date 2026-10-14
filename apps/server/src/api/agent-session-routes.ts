@@ -1,6 +1,8 @@
-import { agentSessionEventRequestSchema,type AgentSessionEventResponse } from "@relo/notification-contracts";
+import {
+  agentSessionEventRequestSchema,agentSessionListQuerySchema,type AgentSessionEventResponse,type AgentSessionListResponse,
+} from "@relo/notification-contracts";
 import type { Context,Hono } from "hono";
-import { listAgentSessions,recordAgentSessionEvent } from "../agent-sessions.js";
+import { readAgentSessions,recordAgentSessionEvent } from "../agent-sessions.js";
 import { consumeRateLimit } from "../rate-limit.js";
 import { sealedEnvelopeSchema } from "../sealed-content.js";
 import type { ApiRouteContext } from "./route-context.js";
@@ -13,7 +15,8 @@ const RATE_FAMILY = "agent-session-events";
 /**
  * Agent sessions API. Writing needs `sessions:write`; keys issued before the scope existed are
  * accepted through `activities:write`, which already controls the session's card. Reading needs
- * `activities:read` or `sessions:write`. Phones read the same list inside the inbox snapshot.
+ * `activities:read` or `sessions:write`; `?phase=working,waiting` lists only those phases, and the
+ * counts cover every phase. Phones read the same list inside the inbox snapshot.
  */
 export function registerAgentSessionRoutes(app: Hono,shared: ApiRouteContext): void {
   const { db } = shared;
@@ -43,8 +46,10 @@ export function registerAgentSessionRoutes(app: Hono,shared: ApiRouteContext): v
       return context.json({ error: "forbidden" },403);
     }
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
+    const query = agentSessionListQuerySchema.safeParse(context.req.query());
+    if (!query.success) return context.json({ error: "invalid_request" },400);
     context.header("Cache-Control","no-store");
-    return context.json({ sessions: await listAgentSessions(db,auth.principalId) });
+    return context.json(await readAgentSessions(db,auth.principalId,{ phases: query.data.phase }) satisfies AgentSessionListResponse);
   });
 
   async function rateLimited(context: Context,principalId: string,credentialId: string) {

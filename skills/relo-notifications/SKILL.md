@@ -16,7 +16,7 @@ relo activity end --status "Live on production"
 rare buzz for a finished outcome. Never a question, never progress. **One card per agent**: in an agent
 session (Claude Code, Codex, OpenCode, Gemini CLI, Cursor; any other harness: `RELO_SOURCE="<harness>"` and
 `RELO_SESSION=<stable id>`) every command lands on the session's card; a second start, update or ask never makes
-another. Elsewhere reuse the same `--topic`. Flags: `relo help all`, `relo schema activity update`.
+another. Subagents run no relo commands. Elsewhere reuse the same `--topic`. Flags: `relo help all`, `relo schema activity update`.
 
 ## Identity
 Every start, ask and notify requires nonempty source, project, and topic. Only the **topic** is

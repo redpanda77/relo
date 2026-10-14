@@ -1,3 +1,5 @@
+import { agentSessionPhase, type AgentSessionPhase } from "@relo/notification-contracts"
+
 import { clockLabel, type Tone } from "@/features/inbox/activity-model"
 import type { InboxOverview } from "@/features/inbox/types"
 import { displayNameOrNull } from "@/lib/encrypted"
@@ -32,6 +34,15 @@ const PRESENCE_RANK: Record<SessionPresence, number> = { working: 0, quiet: 1, n
 
 export const isLivePresence = (presence: SessionPresence) =>
   presence === "working" || presence === "quiet" || presence === "no_card"
+
+/**
+ * The phase now, by the server's rule (agentSessionPhase), so the list settles without a refetch:
+ * a turn that ended five minutes ago is idle now.
+ */
+export function sessionPhase(session: AgentSession, now: number): AgentSessionPhase {
+  if (!isLivePresence(session.presence)) return session.presence === "lost" ? "lost" : "ended"
+  return agentSessionPhase({ state: session.state, lastEvent: session.lastEvent ?? null, lastEventAt: session.lastEventAt }, now)
+}
 
 /** How long a session's ended/lost row stays listed. */
 export const RECENT_WINDOW_MS = 24 * 60 * 60_000
@@ -72,6 +83,13 @@ export function sessionElapsed(session: Pick<AgentSession, "startedAt">, now: nu
 export type PresenceView = { label: string; tone: Tone }
 
 export function presenceView(session: AgentSession, now: number, syncedAt: number): PresenceView {
+  const phase = sessionPhase(session, now)
+  if (phase === "waiting") {
+    return { label: session.lastEvent === "wait" ? "needs your input" : "done, waiting for you", tone: "yellow" }
+  }
+  if (phase === "idle") {
+    return { label: `idle ${quietDuration(Math.max(0, now - new Date(session.lastEventAt).valueOf()))}`, tone: "neutral" }
+  }
   switch (session.presence) {
     case "working":
       return { label: "working", tone: "cyan" }
@@ -91,14 +109,22 @@ export function presenceView(session: AgentSession, now: number, syncedAt: numbe
 export type SessionGroup = { key: string; label: string; sessions: AgentSession[] }
 
 export type SessionsView = {
-  /** Live sessions grouped by computer · account. */
+  /** Working and waiting sessions grouped by computer · account. */
   live: SessionGroup[]
   liveCount: number
+  /** Sessions working now (the section's count). */
+  workingCount: number
+  /** Open but idle sessions (a Desktop session left open), folded into one line, newest first. */
+  idle: AgentSession[]
   /** Ended and lost sessions within the recent window, newest first, lost before ended on ties. */
   recent: AgentSession[]
 }
 
-function ordered(a: AgentSession, b: AgentSession): number {
+const PHASE_RANK: Record<AgentSessionPhase, number> = { working: 0, waiting: 1, idle: 2, lost: 3, ended: 4 }
+
+function ordered(a: AgentSession, b: AgentSession, now: number): number {
+  const phase = PHASE_RANK[sessionPhase(a, now)] - PHASE_RANK[sessionPhase(b, now)]
+  if (phase !== 0) return phase
   const rank = PRESENCE_RANK[a.presence] - PRESENCE_RANK[b.presence]
   if (rank !== 0) return rank
   return new Date(b.lastEventAt).valueOf() - new Date(a.lastEventAt).valueOf()
@@ -107,21 +133,25 @@ function ordered(a: AgentSession, b: AgentSession): number {
 export function groupSessions(sessions: readonly AgentSession[] | undefined, now: number): SessionsView {
   const all = sessions ?? []
   const groups = new Map<string, SessionGroup>()
-  for (const session of all.filter((item) => isLivePresence(item.presence)).sort(ordered)) {
+  const current = all.filter((item) => ["working", "waiting"].includes(sessionPhase(item, now)))
+  for (const session of current.sort((a, b) => ordered(a, b, now))) {
     const label = sessionGroupLabel(session)
     const group = groups.get(label) ?? { key: label, label, sessions: [] }
     group.sessions.push(session)
     groups.set(label, group)
   }
   const live = [...groups.values()].sort((a, b) => {
-    const rank = PRESENCE_RANK[a.sessions[0]!.presence] - PRESENCE_RANK[b.sessions[0]!.presence]
-    return rank !== 0 ? rank : a.label.localeCompare(b.label)
+    const rank = ordered(a.sessions[0]!, b.sessions[0]!, now)
+    return rank !== 0 && a.sessions[0]!.presence !== b.sessions[0]!.presence ? rank : a.label.localeCompare(b.label)
   })
+  const idle = all.filter((item) => sessionPhase(item, now) === "idle")
+    .sort((a, b) => new Date(b.lastEventAt).valueOf() - new Date(a.lastEventAt).valueOf())
   const recent = all
     .filter((item) => !isLivePresence(item.presence))
     .filter((item) => now - new Date(item.lastEventAt).valueOf() <= RECENT_WINDOW_MS)
     .sort((a, b) => new Date(b.lastEventAt).valueOf() - new Date(a.lastEventAt).valueOf())
-  return { live, liveCount: live.reduce((n, group) => n + group.sessions.length, 0), recent }
+  return { live, liveCount: current.length, workingCount: current.filter((item) => sessionPhase(item, now) === "working").length,
+    idle, recent }
 }
 
 /** Sessions whose card has gone quiet, by card id. */

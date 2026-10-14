@@ -209,25 +209,26 @@ struct CurrentAttentionView: View {
         let now = model.attentionDate
         let groups = AgentSessionsProjection.groups(sessions, now: now)
         if !groups.isEmpty {
-            // Counts the agents running now; idle ones (waiting for you), ended and lost still list.
+            // Counts the agents working now. Working and waiting sessions are rows; idle ones (open,
+            // nothing new: a Desktop session left open) and ended ones each fold into one line.
             let count = AgentSessionsProjection.runningCount(groups.flatMap(\.sessions))
             section("Agents", count: count, color: ReloHoloTheme.agents) {
                 ForEach(groups) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.title).font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.0)
                             .foregroundStyle(Color.reloSecondaryText).textCase(.uppercase)
-                        let live = group.sessions.filter(AgentSessionsProjection.isLive)
-                        let finished = group.sessions.filter { !AgentSessionsProjection.isLive($0) }
-                        let shown = live + (showsFinished.contains(group.id) ? finished : [])
+                        let phase = { (session: AgentSession) in AgentSessionsProjection.phase(session, now: now) }
+                        let current = group.sessions.filter { phase($0) <= .waiting }
+                        let idle = group.sessions.filter { phase($0) == .idle }
+                        let finished = group.sessions.filter { phase($0) >= .ended }
                         VStack(spacing: 0) {
-                            ForEach(Array(shown.enumerated()), id: \.element.id) { index, session in
+                            ForEach(Array(current.enumerated()), id: \.element.id) { index, session in
                                 if index > 0 { Divider().padding(.leading, 16) }
                                 agentRow(session, now: now, cards: cards)
                             }
-                            if !finished.isEmpty {
-                                if !shown.isEmpty { Divider().padding(.leading, 16) }
-                                finishedToggle(group: group.id, count: finished.count)
-                            }
+                            foldedRows(idle, fold: .idle, group: group.id, after: !current.isEmpty, now: now, cards: cards)
+                            foldedRows(finished, fold: .finished, group: group.id,
+                                       after: !current.isEmpty || !idle.isEmpty, now: now, cards: cards)
                         }
                         .reloCard()
                     }
@@ -236,19 +237,39 @@ struct CurrentAttentionView: View {
         }
     }
 
-    /// Groups whose ended and lost sessions are expanded.
-    @State private var showsFinished: Set<String> = []
+    private enum AgentFold: String { case idle, finished }
 
-    /// "3 ended in the last hour": the finished sessions fold into one row until asked for.
-    private func finishedToggle(group: String, count: Int) -> some View {
-        let open = showsFinished.contains(group)
+    /// Expanded folds, by "fold:group" ("idle:MacBook Pro · Work").
+    @State private var openFolds: Set<String> = []
+
+    /// One fold line ("2 idle", "3 ended in the last hour") and, once opened, its rows.
+    @ViewBuilder
+    private func foldedRows(_ sessions: [AgentSession], fold: AgentFold, group: String, after: Bool, now: Date,
+                            cards: [LiveNowProjection.Card]) -> some View {
+        if !sessions.isEmpty {
+            let key = "\(fold.rawValue):\(group)"
+            if after { Divider().padding(.leading, 16) }
+            foldToggle(key: key, label: fold == .idle ? "\(sessions.count) idle" : "\(sessions.count) ended in the last hour",
+                       hide: fold == .idle ? "Hide idle" : "Hide ended")
+            if openFolds.contains(key) {
+                ForEach(sessions) { session in
+                    Divider().padding(.leading, 16)
+                    agentRow(session, now: now, cards: cards)
+                }
+            }
+        }
+    }
+
+    /// The fold line: the sessions stay folded into it until asked for.
+    private func foldToggle(key: String, label: String, hide: String) -> some View {
+        let open = openFolds.contains(key)
         return Button {
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) {
-                if open { showsFinished.remove(group) } else { showsFinished.insert(group) }
+                if open { openFolds.remove(key) } else { openFolds.insert(key) }
             }
         } label: {
             HStack(spacing: 8) {
-                Text(open ? "Hide ended" : "\(count) ended in the last hour")
+                Text(open ? hide : label)
                     .font(.footnote.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
                 Spacer(minLength: 8)
                 Image(systemName: open ? "chevron.up" : "chevron.down")
@@ -263,7 +284,8 @@ struct CurrentAttentionView: View {
 
     @ViewBuilder
     private func agentRow(_ session: AgentSession, now: Date, cards: [LiveNowProjection.Card]) -> some View {
-        let live = AgentSessionsProjection.isLive(session)
+        // Idle rows (in their fold) show how long they have been idle, not a running timer.
+        let live = AgentSessionsProjection.phase(session, now: now) <= .waiting
         let card = cards.first(where: { $0.id == session.card?.id })
         let notificationID = (session.presence == .working || session.presence == .quiet) ? card?.notificationID : nil
         let row = HStack(alignment: .center, spacing: 12) {
@@ -306,6 +328,7 @@ struct CurrentAttentionView: View {
     private func agentChip(_ session: AgentSession, now: Date) -> some View {
         let text = AgentSessionsProjection.statusPhrase(session, fetchedAt: model.agentSessionsFetchedAt, now: now)
         let color: Color = switch session.presence {
+        case _ where AgentSessionsProjection.phase(session, now: now) == .waiting: ReloHoloTheme.color(.attention)
         case _ where AgentSessionsProjection.isIdle(session): Color.reloSecondaryText
         case .working: ReloHoloTheme.color(.running)
         case .quiet: ReloHoloTheme.color(.attention)

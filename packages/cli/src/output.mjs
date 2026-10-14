@@ -8,7 +8,7 @@ const present = (fields) => Object.fromEntries(
 
 /** "2/5": the step a card is on, from the steps component the server returns. */
 /** Short words for `relo keys status` notices. */
-const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "waiting for approval: relo keys approve, or approve it in Relo on your trusted iPhone → Settings → Security",
+const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "waiting for approval: relo keys approve, or approve it in Relo on your trusted iPhone → Settings → Devices",
   new_phone_approved: "approved on your phone", approved_from_browser: "approved from a linked browser", browser_linked: "linked from your phone",
   phone_replaced: "phone set up again" };
 
@@ -111,6 +111,8 @@ const sessionRow = (session) => present({
   computer: session?.computer,
   account: session?.account,
   project: session?.project,
+  phase: session?.phase,
+  state: session?.state,
   presence: session?.presence,
   lastEventAt: session?.lastEventAt,
   card: session?.card ? present({ state: session.card.state, quietForSeconds: session.card.quietForSeconds }) : undefined,
@@ -216,7 +218,8 @@ export function compactData(command, data) {
     case "skill.status":
       return { cli: data?.cli, copies: data?.copies ?? [] };
     case "sessions":
-      return { sessions: (Array.isArray(data?.sessions) ? data.sessions : []).map(sessionRow) };
+      return present({ sessions: (Array.isArray(data?.sessions) ? data.sessions : []).map(sessionRow),
+        counts: data?.counts && typeof data.counts === "object" ? data.counts : undefined });
     case "hook":
       return {};
     case "dry-run":

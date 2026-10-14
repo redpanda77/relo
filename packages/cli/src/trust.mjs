@@ -3,7 +3,7 @@
 // sealing at once. A changed key for a phone it already trusts is trusted again with a visible
 // notice. A phone that appears LATER is not trusted automatically: a server could add its own
 // "phone" to read everything, so a new phone waits ("pending") until a trusted phone approves it
-// in Relo → Settings → Security (a signed approval; a linked browser may sign too, outside strict
+// in Relo → Settings → Devices (a signed approval; a linked browser may sign too, outside strict
 // mode) or a person runs `relo keys approve`. Strict mode (`relo keys strict on`) also holds key
 // changes, and a phone set up again, until approved. A simulator is never trusted automatically.
 import { approveDeviceSigningInput, fromB64u, linkSigningInput, verifyBytes } from "./e2ee.mjs";
@@ -51,7 +51,7 @@ export function approveCommand(store, apiUrl, entry) {
 /** What waiting for approval means and the three ways out, naming the phones. */
 export function pendingNote(store, apiUrl, entry) {
   return `${phoneLabel(entry)} is waiting for approval: run \`${approveCommand(store, apiUrl, entry)}\`, approve it on`
-    + ` ${trustedPhonesLabel(store, apiUrl)} in Relo → Settings → Security, or remove it (${DASHBOARD_REMOVE})`;
+    + ` ${trustedPhonesLabel(store, apiUrl)} in Relo → Settings → Devices, or remove it (${DASHBOARD_REMOVE})`;
 }
 
 /**
@@ -270,7 +270,7 @@ function browserTrust(store, apiUrl, device, now) {
 
 /**
  * Who approved a pending phone, or null: a phone this computer trusts that signed the phone's id and
- * current identity key in Relo → Settings → Security, or (not in strict mode) a browser linked right
+ * current identity key in Relo → Settings → Devices, or (not in strict mode) a browser linked right
  * now by such a phone, signing the same bytes with approverDeviceId = its brw_ id. The server only
  * relays the signature. Returns { kind: "phone"|"browser", deviceId, name }.
  */
