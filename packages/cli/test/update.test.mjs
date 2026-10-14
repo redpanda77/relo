@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";

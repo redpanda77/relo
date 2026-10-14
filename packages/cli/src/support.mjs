@@ -1,5 +1,12 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { numberOption, requireText } from "./args.mjs";
+import { CALLER_TYPES } from "./caller.mjs";
 import { ApiError, EXIT, NoDeliveryError, UsageError } from "./errors.mjs";
+import { skillAdvice } from "./skill.mjs";
+import { isTrustNote } from "./trust.mjs";
 
 export const MAX_STDIN_INPUT_BYTES = 1024 * 1024;
 
@@ -175,4 +182,64 @@ export async function getAuthenticated(dependencies) {
   const config = await dependencies.loadConfig(dependencies.configPath());
   const client = dependencies.clientFactory(config);
   return { config, client };
+}
+
+// Once per session (DOGFOOD #1, #2): an agent session sees each trust note once per change and the
+// skill-vs-CLI version warning once; `relo keys status` and `relo doctor` always show everything.
+// The seen-set is local: <state>/relo/seen-notes.json, { sessionKey: { noteHash: seenAtMs } }.
+const SEEN_DAYS = 7;
+const ALWAYS_EVERYTHING = new Set(["help", "version", "schema", "doctor", "keys.status", "skill.status", "skill.install",
+  "skill.remove", "update", "setup", "dry-run"]);
+
+export function seenNotesPath(env = process.env) {
+  if (env.RELO_SEEN_NOTES_PATH) return env.RELO_SEEN_NOTES_PATH;
+  return join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state"), "relo", "seen-notes.json");
+}
+
+const noteHash = (note) => createHash("sha256").update(note).digest("base64url").slice(0, 22);
+
+/** The installed skill differs from this CLI: one line, or undefined (missing is not drift; doctor says that). */
+export function skillDriftNote(dependencies) {
+  try {
+    const advice = skillAdvice({ env: dependencies.env ?? {}, home: dependencies.home, cliVersion: dependencies.version });
+    return advice.state === "outdated" ? advice.hint : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The command's output with trust notes this agent session has already seen removed and, the first
+ * time, the skill version warning added. Other callers (the owner's shell, scripts) are unchanged.
+ */
+export async function withSessionNotes(output, dependencies) {
+  const caller = dependencies.caller;
+  if (caller?.type !== CALLER_TYPES.AGENT_SESSION || !caller.sessionKey || ALWAYS_EVERYTHING.has(output?.command)) return output;
+  const drift = skillDriftNote(dependencies);
+  const candidates = [...(output.notes ?? []).filter(isTrustNote), ...(drift ? [drift] : [])];
+  if (candidates.length === 0) return output;
+  const path = seenNotesPath({ ...process.env, ...dependencies.env });
+  let seen = {};
+  try { seen = JSON.parse(await readFile(path, "utf8")); } catch { seen = {}; }
+  if (!seen || typeof seen !== "object" || Array.isArray(seen)) seen = {};
+  const now = dependencies.now?.() ?? Date.now();
+  for (const [scope, entries] of Object.entries(seen)) {
+    const kept = Object.fromEntries(Object.entries(entries ?? {}).filter(([, at]) => now - at < SEEN_DAYS * 86_400_000));
+    if (Object.keys(kept).length) seen[scope] = kept; else delete seen[scope];
+  }
+  const mine = seen[caller.sessionKey] ??= {};
+  const fresh = new Set(candidates.filter((note) => mine[noteHash(note)] === undefined));
+  for (const note of fresh) mine[noteHash(note)] = now;
+  try {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${process.pid}.tmp`;
+    await writeFile(temporary, JSON.stringify(seen), { mode: 0o600 });
+    await rename(temporary, path);
+  } catch {
+    // A read-only state directory means notes repeat; never a failed command.
+  }
+  const notes = [...(output.notes ?? []).filter((note) => !isTrustNote(note) || fresh.has(note)),
+    ...(drift && fresh.has(drift) ? [drift] : [])];
+  const { notes: _old, ...rest } = output;
+  return { ...rest, ...(notes.length ? { notes } : {}) };
 }

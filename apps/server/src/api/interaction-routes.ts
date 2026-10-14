@@ -3,7 +3,9 @@ import { QuestionWaitTooLongError,questionWaitTooLongBody } from "../question-po
 import { ChoiceUnsupportedError,choiceUnsupportedBody } from "../choice-questions.js";
 import { cancelLockedInteraction,expireInteraction,respondToInteraction } from "../interactions/commands.js";
 import { createQuestionCardInTransaction } from "../interactions/question-card.js";
-import { createNotification,withdrawNotification } from "../notifications/commands.js";
+import { dismissMissedQuestion } from "../interactions/dismiss.js";
+import { createNotification,createNotificationInTransaction,withdrawNotification } from "../notifications/commands.js";
+import { createNoticeMaybeFolded } from "../works/notices.js";
 import { ChangeSubscription } from "../interaction-change-hub.js";
 import { boundedIntegerQuery } from "../request-bounds.js";
 import {  randomUUID } from "node:crypto";
@@ -19,6 +21,7 @@ import {
   markActivityPresentationApplied } from "../activity-presentation-leases.js";
 
 import { lockDecisionActivity } from "../decision-lock.js";
+import { attachQuestionToSessionWork } from "../works/questions.js";
 
 import {  registerInteractionCallback } from "../interaction-callbacks.js";
 
@@ -73,17 +76,21 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     const identity = requireWorkIdentity(input.sourceName,input.context,input.origin);
     if (!identity.ok) return context.json(workIdentityError(identity.missing),422);
     const originHash = input.origin ? canonicalOriginHash(auth.principalId,input.origin) : null;
-    const result = await createNotification(db,{ kind: "credential",principalId: auth.principalId,credentialId: auth.credentialId },{
+    // In an agent session with an open work the notice folds into that work (2.13): no buzz of its own.
+    const result = await createNoticeMaybeFolded(db,{ principalId: auth.principalId,sessionKey: context.req.header("relo-session-key") },
+      (tx) => createNotificationInTransaction(tx,{ kind: "credential",principalId: auth.principalId,credentialId: auth.credentialId! },{
       idempotencyKey,requestHash,sourceName: input.sourceName,title,content,
       imageUrl: sealed ? null : (input as { imageUrl?: string }).imageUrl ?? null,
       deepLink: sealed ? null : (input as { destinationUrl?: string }).destinationUrl ?? null,
       payload: sealed ? { context: identity.context,privacy: "private",sealed: sealed.sealed } : { context: identity.context },
       deviceIds: requestedDeviceIds,originHash,relevance: input.relevance,
-    },{ apnsMode,contentCipher: notificationContentCipher });
+    },{ apnsMode,contentCipher: notificationContentCipher }));
     if (result.kind === "invalid_device_selection") return context.json({ error: result.kind },400);
     if (result.kind === "idempotency_conflict") return context.json({ error: result.kind },409);
     return context.json({ eventId: publicId("ntf",result.eventId),createdAt: result.createdAt,
-      delivery: result.delivery,queued: result.delivery.apnsJobs,replayed: result.kind === "replayed",relevance: result.relevance },
+      delivery: result.delivery,queued: result.delivery.apnsJobs,replayed: result.kind === "replayed",relevance: result.relevance,
+      ...(result.foldedInto ? { folded: true,workId: publicId("wrk",result.foldedInto),
+        message: "Recorded on the open work; the finish outcome will notify." } : {}) },
     result.kind === "created" ? 201 : 200);
   });
 
@@ -130,6 +137,8 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
           credentialId: auth.credentialId,serviceId: null,
         },input,{ idempotencyKey,requestHash,sourceName,originHash,requestedDeviceIds,
           apnsMode,deliveryApnsMode: dependencies?.apnsMode,contentCipher: notificationContentCipher });
+        if (result.kind === "created") await attachQuestionToSessionWork(client,{ principalId: auth.principalId,
+          sessionKey: context.req.header("relo-session-key"),interactionRequestId: result.interactionRequestId });
         if (result.kind === "created" && input.callback) await registerInteractionCallback(client,callbackEncryption(),{
           principalId: auth.principalId,interactionRequestId: result.interactionRequestId,...input.callback,correlationId: input.correlationId,
         });
@@ -167,6 +176,9 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     if (input.callback && result.kind === "created") await registerInteractionCallback(db,callbackEncryption(),{
       principalId: auth.principalId,interactionRequestId: result.interaction.id,...input.callback,correlationId: input.correlationId,
     });
+    // Asked in an agent session: the question attaches to the session's open work (2.13), card or not.
+    if (result.kind === "created") await attachQuestionToSessionWork(db,{ principalId: auth.principalId,
+      sessionKey: context.req.header("relo-session-key"),interactionRequestId: result.interaction.id });
     return context.json({ interaction: { id: publicId("int",result.interaction.id),state: result.interaction.state },
       eventId: publicId("ntf",result.eventId),delivery: result.delivery,queued: result.delivery.apnsJobs,
       replayed: result.kind === "replayed",relevance: result.relevance },result.kind === "created" ? 201 : 200);
@@ -342,6 +354,16 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
       ...(!result.replayed ? { canceledDeliveries: result.canceledDeliveries } : {}),replayed: result.replayed });
   });
 
+  // The owner, on a phone, dismisses a missed question (spec 6.2): it no longer needs them.
+  app.post("/api/devices/self/questions/:interactionId/dismiss", requireScope("interactions:respond"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" },403);
+    const interactionId = internalId("int",context.req.param("interactionId") ?? "");
+    if (!interactionId) return context.json({ error: "not_found" },404);
+    const result = await dismissMissedQuestion(db,{ principalId: auth.principalId,interactionId,deviceId: auth.deviceId });
+    return result.kind === "not_found" ? context.json({ error: "not_found" },404) : context.json({ dismissed: true });
+  });
+
   app.post("/api/notifications/:notificationId/interactions", requireScope("interactions:respond"), async (context) => {
     const auth = context.get("auth");
     if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
@@ -357,7 +379,9 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
         result.error === "not_found" || result.error === "interaction_not_found" ? 404 : result.error === "invalid_action" ? 400
           : result.error === "forbidden" ? 403 : result.error === "invalid_credential" ? 401 : 409);
       return context.json({ interactionId: publicId("int",result.evidenceId),replayed: result.kind === "replayed",
-        decision: { id: publicId("int",result.interactionId),state: result.state,respondedAt: result.respondedAt } },result.kind === "accepted" ? 201 : 200);
+        ...(result.late ? { ok: true,late: true } : {}),
+        decision: { id: publicId("int",result.interactionId),state: result.state,respondedAt: result.respondedAt } },
+        result.kind === "accepted" && !result.late ? 201 : 200);
     }
     const client = await db.connect();
     try {

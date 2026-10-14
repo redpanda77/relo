@@ -110,7 +110,7 @@ export function createDashboardActivityHistoryHandler(
   return async (context) => {
     const account = await getAccount(context.req.raw.headers);
     if (!account)
-      return context.redirect(`/?next=${encodeURIComponent(context.req.path)}`);
+      return context.redirect(`/sign-in?next=${encodeURIComponent(context.req.path)}`);
 
     const activityId = internalId("act", context.req.param("activityId") ?? "");
     if (!activityId) return context.notFound();

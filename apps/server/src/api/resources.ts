@@ -122,6 +122,8 @@ export const inboxLiveActivitySchema = z.object({
   // This phone's sealed card or question envelope (E5). Without it every sealed card's command
   // failed this strict parse, so the app never saw the envelope and kept placeholders on the card.
   sealed: z.unknown().optional(),
+  // Who drives the card (work model); stored on the command, not used by the phone's parse.
+  owner: z.unknown().optional(),
 }).strict();
 
 export function inboxLiveActivity(payload: unknown): z.infer<typeof inboxLiveActivitySchema> | null {
@@ -130,6 +132,12 @@ export function inboxLiveActivity(payload: unknown): z.infer<typeof inboxLiveAct
   if (!stored || typeof stored !== "object") return null;
   const parsed = inboxLiveActivitySchema.safeParse(stored);
   return parsed.success ? parsed.data : null;
+}
+
+/** A sealed card's command carries this phone's alert envelope (E5); the card's own envelope fills it in. */
+function withCardEnvelope<T extends { sealed?: unknown }>(command: T | null,card: { alert?: unknown } | null | undefined): T | null {
+  if (!command || command.sealed !== undefined || !card?.alert) return command;
+  return { ...command,sealed: card.alert };
 }
 
 export function projectedInboxLiveActivity(
@@ -349,9 +357,9 @@ export function inboxItemResource(
     sealed: sealedForDevice(row.payload,auth.deviceId ? publicId("dev",auth.deviceId) : undefined)
       ?? sealedForDevice({ sealed: row.activity_sealed },auth.deviceId ? publicId("dev",auth.deviceId) : undefined),
     liveActivity: row.kind === "live_activity"
-      ? projectedInboxLiveActivity(
+      ? withCardEnvelope(projectedInboxLiveActivity(
         row.payload,row,auth.deviceId,auth.deviceCredentialVersion,credentialDerivationSecret,
-      )
+      ),sealedForDevice({ sealed: row.activity_sealed },auth.deviceId ? publicId("dev",auth.deviceId) : undefined))
       : null,
     activitySummary,
     context: activitySummary?.context ?? inboxContext(row.payload),
@@ -395,6 +403,21 @@ export function interactionResource(row: any) {
     respondedAt: row.responded_at ? new Date(row.responded_at).toISOString() : null,
     createdAt: new Date(row.created_at).toISOString(),
     callback: callbackResource(row),
+    late: lateAnswerResource(row),
+  };
+}
+
+/**
+ * An answer recorded after the question expired (decision 3): a fact for the agent, never
+ * permission; `state` stays `expired`.
+ */
+export function lateAnswerResource(row: any): { state: string | null; response: unknown; respondedAt: string } | null {
+  if (!row.late_responded_at) return null;
+  const { state = null,...response } = (row.late_response ?? {}) as Record<string,unknown>;
+  return {
+    state: typeof state === "string" ? state : null,
+    response: Object.keys(response).length ? response : null,
+    respondedAt: new Date(row.late_responded_at).toISOString(),
   };
 }
 
@@ -413,7 +436,7 @@ export function deviceInventoryResource(row: any) {
 }
 
 export const interactionResultSelection = `SELECT r.id,r.notification_event_id,r.kind,r.prompt,r.options,r.state,r.response,
-  r.expires_at,r.responded_at,r.created_at,
+  r.expires_at,r.responded_at,r.created_at,r.late_response,r.late_responded_at,
   winner.kind AS response_action,winner.device_id AS response_device_id,d.name AS response_device_name,
   cb.state AS callback_state,cb.attempts AS callback_attempts,cb.last_status AS callback_last_status,
   cb.last_error AS callback_last_error,cb.delivered_at AS callback_delivered_at

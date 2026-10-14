@@ -2,6 +2,15 @@ import { sealedAlertDevices,sealedForDevice } from "./sealed-content.js";
 import { createHash } from "node:crypto";
 import { presentationCommandState } from "./presentation-runtime.js";
 import type { ApnsRuntimeJob } from "./apns-runtime.js";
+import {
+  OWNER_STATE_SURFACES,
+  OWNER_STATE_TIMING,
+  ownerStateSchema,
+  needsYouReasonSchema,
+  type InterruptionLevel,
+  type NeedsYouReason,
+  type OwnerState,
+} from "@relo/notification-contracts";
 
 type AlertProjection = {
   kind: "alert";
@@ -12,6 +21,8 @@ type AlertProjection = {
   category?: string;
   threadId?: string;
   collapseId?: string;
+  /** Spec 6.2/7: questions break through Focus, everything else is an ordinary alert. */
+  interruptionLevel: InterruptionLevel;
   customData: Record<string, unknown>;
 };
 
@@ -136,6 +147,7 @@ export function ordinaryDeliveryPayloadSize(input: OrdinaryDeliveryIntent): numb
     "mutable-content": 1,
     ...(projection.category ? { category: projection.category } : {}),
     ...(projection.threadId ? { "thread-id": projection.threadId } : {}),
+    "interruption-level": projection.interruptionLevel,
   };
   return Buffer.byteLength(JSON.stringify({ ...projection.customData,aps }));
 }
@@ -162,7 +174,8 @@ export function activityContentState(
       ...startedAtState(command),
       sequence: finiteInteger(command.sequence, 0, Number.MAX_SAFE_INTEGER, 0),
       expiresAt: nullableEpochSeconds(command.expiresAt),
-      staleAt: nullableEpochSeconds(command.staleAt),
+      staleAt: ownerStaleAt(command),
+      owner: ownerContent(command),
       interaction: privacy === "private" ? null : (jsonObject(command.interaction) ?? null),
       // This phone's sealed card or question text, opened by the widget (E5).
       ...(privacy === "standard" && jsonObject(command.sealed) ? { sealed: command.sealed } : {}),
@@ -182,7 +195,8 @@ export function activityContentState(
     accentColor: privacy === "private" ? "#5ED8B7" : stringValue(command.accentColor, "#5ED8B7"),
     privacy,
     expiresAt: nullableEpochSeconds(command.expiresAt),
-    staleAt: nullableEpochSeconds(command.staleAt),
+    staleAt: ownerStaleAt(command),
+    owner: ownerContent(command),
     primaryLabel: privacy === "private" ? null : nullableString(command.primaryLabel),
     secondaryLabel: privacy === "private" ? null : nullableString(command.secondaryLabel),
     interaction: privacy === "private" ? null : (jsonObject(command.interaction) ?? null),
@@ -254,8 +268,8 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
     kind: "activity" as const,
     operation,
     contentState: activityContentState(command, privacy, timestamp),
-    priority: deliveryPriority(command, 10),
-    relevanceScore: boundedRelevanceScore(command.relevanceScore),
+    priority: deliveryPriority(command, operation),
+    relevanceScore: ownerRelevance(command, operation),
     providerTimestamp: timestamp,
   };
   if (operation === "start") {
@@ -280,10 +294,10 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
   if (operation === "end") {
     return {
       ...common,
-      dismissalDate: timestamp + finiteInteger(command.dismissAfterSeconds, 0, 14_400, 0),
+      dismissalDate: timestamp + ownerDismissAfterSeconds(command),
     };
   }
-  const staleDate = isoEpochSeconds(command.staleAt);
+  const staleDate = ownerStaleAt(command) ?? undefined;
   // An update alerts only when a question lands on the card; routine progress stays silent.
   const alert = command.alertOwner === "apns" && privacy === "standard"
     ? { title: stringValue(command.title, stringValue(command.headline, "Relo")),
@@ -319,6 +333,7 @@ function ordinaryDeliveryProjection(input: OrdinaryDeliveryIntent): AlertProject
     ...(categoryName ? { category: categoryName } : {}),
     ...(!isPrivate(input.payload) && input.conversationId ? { threadId: input.conversationId } : {}),
     ...(input.collapseId ? { collapseId: input.collapseId } : {}),
+    interruptionLevel: ordinaryInterruptionLevel(input, answerInApp),
     customData: ordinaryCustomData(input),
   };
 }
@@ -382,14 +397,76 @@ function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unkno
   };
 }
 
-function deliveryPriority(command: Record<string, unknown>, fallback: 5 | 10): 5 | 10 {
-  return command.priority === 5 || command.priority === 10 ? command.priority : fallback;
+/**
+ * Spec 7 alert levels for ordinary notifications: a question (any interaction kind, including the
+ * "answer in Relo" fallback notice) is time-sensitive; plain notify and device-access notices stay
+ * active until 2.13 moves finishes to passive. Live Activity updates never carry a level.
+ */
+export function ordinaryInterruptionLevel(input: OrdinaryDeliveryIntent, answerInApp: boolean): InterruptionLevel {
+  return input.interactionKind || answerInApp ? "time-sensitive" : "active";
 }
 
-function boundedRelevanceScore(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.min(1, Math.max(0, value))
-    : 0.5;
+/**
+ * The derived owner state a card command carries (`command.owner`, set from deriveOwnerState in the
+ * command's transaction). Everything display-related on a card push is read from it and the fixed
+ * contract table, never from producer-tuned fields or status text.
+ */
+type CommandOwner = { state: OwnerState; needsYou: NeedsYouReason | null; staleDate: string | null; changed: boolean };
+
+export function commandOwner(command: Record<string, unknown>): CommandOwner | null {
+  const owner = plainObject(command.owner);
+  if (!owner) return null;
+  const state = ownerStateSchema.safeParse(owner.state);
+  if (!state.success) return null;
+  const needsYou = needsYouReasonSchema.nullable().safeParse(owner.needsYou ?? null);
+  return {
+    state: state.data,
+    needsYou: needsYou.success ? needsYou.data : null,
+    staleDate: typeof owner.staleDate === "string" ? owner.staleDate : null,
+    // The command builder sets `changed` when this push moves the card to a new owner state.
+    changed: owner.changed === true,
+  };
+}
+
+/** Content-state `owner`: what the widget renders from; private cards still carry it (no content). */
+function ownerContent(command: Record<string, unknown>): { state: OwnerState; needsYou: NeedsYouReason | null } | null {
+  const owner = commandOwner(command);
+  return owner ? { state: owner.state, needsYou: owner.needsYou } : null;
+}
+
+/** ActivityKit staleDate = evidence + T_fresh (derive() owns it); the producer's stale-after is ignored. */
+function ownerStaleAt(command: Record<string, unknown>): number | null {
+  const owner = commandOwner(command);
+  if (owner?.staleDate) return nullableEpochSeconds(owner.staleDate);
+  const evidenceAt = isoEpochSeconds(command.evidenceAt) ?? isoEpochSeconds(command.updatedAt);
+  return evidenceAt === undefined ? null : evidenceAt + OWNER_STATE_TIMING.freshSeconds;
+}
+
+/** ActivityKit relevance-score from the table; it ranks cards for the 3-card Lock Screen rule. */
+function ownerRelevance(command: Record<string, unknown>, operation: ActivityProjection["operation"]): number {
+  if (operation === "end") return 0;
+  const owner = commandOwner(command);
+  return owner ? OWNER_STATE_SURFACES[owner.state].relevance : OWNER_STATE_SURFACES.moving.relevance;
+}
+
+/**
+ * APNs priority: 10 for start/end, for a push that changes the owner state and for the table's
+ * questions and outcomes (needs_you, failed, done); 5 for plain progress so it never spends the
+ * budget questions need.
+ */
+function deliveryPriority(command: Record<string, unknown>, operation: ActivityProjection["operation"]): 5 | 10 {
+  if (operation !== "update") return 10;
+  const owner = commandOwner(command);
+  if (!owner) return 5;
+  return owner.changed ? 10 : OWNER_STATE_SURFACES[owner.state].apnsPriority;
+}
+
+/** End dismissal from the table: a final card stays its window (done 15 min, failed 60 min), others leave at once. */
+function ownerDismissAfterSeconds(command: Record<string, unknown>): number {
+  const owner = commandOwner(command);
+  if (!owner) return 0;
+  const surface = OWNER_STATE_SURFACES[owner.state];
+  return surface.dismissal === "after" ? surface.lockScreenSeconds ?? 0 : 0;
 }
 
 function isPrivate(payload: Record<string, unknown>): boolean {

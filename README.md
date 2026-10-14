@@ -1,10 +1,18 @@
 # Relo
 
-Relo gives the owner a live view of their agents' work on iPhone. Each agent keeps one Live
-Activity card current on the Lock Screen and in the Dynamic Island and asks approval or yes/no
-questions right on it; notifications are reserved for finished outcomes. Agents, CLIs, and webhooks
-send work to one owner-operated server; PostgreSQL stores canonical state; a worker delivers through
-APNs; the Dashboard and native iPhone app show durable history, decisions, and Live Activities.
+Decentralized agents and automations, together in one place. Agents on any machine and harness,
+scripts and scheduled jobs, and apps that need a human in the loop all report status, time-sensitive
+alerts, details and questions to your iPhone. As more work runs on its own, Relo keeps it in view and
+under your control, keeps it moving, and keeps it private: content is end-to-end encrypted on the
+computer that sends it, the phone's keys rotate, and the server can wipe content after a few hours.
+Why this matters: [docs/VALUE-PROPOSITION.md](docs/VALUE-PROPOSITION.md).
+
+How it works: each source keeps one work current (a goal, a plan that grows, a status) that shows as
+a Live Activity card on the Lock Screen and in the Dynamic Island, and asks approval or yes/no
+questions right on it; notifications are reserved for finished outcomes. Sources send through the
+`relo` CLI or the HTTP API to one server you run; PostgreSQL stores canonical state; a worker
+delivers through APNs; the Dashboard and native iPhone app show history, decisions, and what needs
+you now.
 
 This repository is source-available under the
 [PolyForm Noncommercial License 1.0.0](LICENSE). Personal, educational, research, charitable, and
@@ -22,8 +30,7 @@ For a complete installation that delivers to an iPhone, you need:
   Developer Program membership;
 - an Apple Push Notification service key (`.p8`), its Key ID and Team ID;
 - a unique iOS bundle ID and App Group; and
-- one HTTPS origin reachable by both the browser and iPhone. Tailscale Serve is the recommended
-  private-network option.
+- one HTTPS origin reachable by the browser, the iPhone and every computer that runs the CLI.
 
 You can run the server and Dashboard with APNs disabled, but remote notifications and Live Activity
 updates will not reach the phone until the Apple and iOS steps are complete.
@@ -39,17 +46,22 @@ cd relo
 
 ### 2. Choose the address your iPhone will use
 
-The default server listens only on `127.0.0.1:8180`. Pick one HTTPS address for the browser, iPhone
-and CLI; every install chooses its own, and each app asks for it at sign-in.
+The default server listens only on `127.0.0.1:8180`. Pick one address for the browser, iPhone and
+CLI; every install chooses its own, and each app asks for it at sign-in. It must be:
 
-- **Private (tailnet only):** install Tailscale on the server and phone, then
-  `tailscale serve --bg http://127.0.0.1:8180` and keep the `https://…ts.net` origin it prints. Use
-  Serve, not Funnel.
-- **Public behind a reverse proxy:** for example a Cloudflare Tunnel to `http://127.0.0.1:8180` with
-  Cloudflare Access in front of the browser pages. Set `RELO_CLIENT_IP_HEADER` so sign-in limits
-  apply per client. See [Remote access](docs/SELF-HOSTING.md#remote-access).
+- HTTPS, reachable from every device that will use Relo (the iPhone app accepts plain `http` only
+  for a private or local address, which suits a local trial); and
+- served by something in front of Relo, so the API stays on loopback behind whatever terminates TLS.
 
-Public plaintext HTTP is not supported by the iPhone app.
+Ways to get one:
+
+- **A reverse proxy or tunnel** to `http://127.0.0.1:8180`: Cloudflare Tunnel, Caddy, nginx or
+  Traefik. Set `RELO_CLIENT_IP_HEADER` so sign-in limits apply per client.
+- **Your own domain** pointing at that proxy.
+- **A VPN or overlay network** such as Tailscale or WireGuard, with HTTPS on the private name.
+- **This computer only**, for a trial: `http://localhost:8180`.
+
+Details and examples: [Choose an origin](docs/SELF-HOSTING.md#choose-an-origin).
 
 ### 3. Initialize secrets and configure the origin
 
@@ -58,8 +70,8 @@ Public plaintext HTTP is not supported by the iPhone app.
 ```
 
 Open `deploy/.env` and set `RELO_APP_URL` to the exact browser/iPhone origin chosen above. Do this
-before creating the owner account. Keep `RELO_BIND_ADDRESS=127.0.0.1`; Tailscale Serve and a tunnel
-both reach the loopback listener.
+before creating the owner account. Keep `RELO_BIND_ADDRESS=127.0.0.1`; your proxy or tunnel reaches the
+loopback listener.
 
 The initializer creates protected PostgreSQL, Dashboard-authentication, and bootstrap-owner secrets.
 Do not paste `deploy/secrets/owner_token` into the Dashboard; the server consumes it internally.
@@ -82,8 +94,10 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail=200 api
 ### 5. Create the owner account
 
 Open `RELO_APP_URL` in a browser. The first signup page says **Create the owner account**. Enter your
-name, email, and a password of at least eight characters. Later visits use the same page to sign in;
-Relo permits only one owner account.
+name, email, and a password of at least eight characters. This first account is the server's admin;
+other people get separate, private accounts ([accounts](docs/SELF-HOSTING.md#accounts-and-the-server-admin)).
+After that, `RELO_APP_URL` shows the Relo landing page; sign in with **Sign in** or at
+`RELO_APP_URL/sign-in`.
 
 ### 6. Configure and build the iPhone app
 
@@ -168,6 +182,9 @@ npm install --global ./packages/cli
 relo --version
 ```
 
+If you also change the CLI source, install a packed snapshot of a clean commit instead, so edits in
+progress never reach the `relo` your agents run ([docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#the-cli-while-you-develop)).
+
 In the signed-in Dashboard, open **Account → Connect the CLI** and copy the login command. It
 contains the canonical `RELO_APP_URL` configured by this server, so the CLI does not need to guess
 where your self-hosted instance lives. The equivalent command is:
@@ -199,12 +216,14 @@ relo doctor --json
 relo notify "Relo is ready" \
   --title "First notification" \
   --project "Relo" \
-  --thread-name "Installation check" \
+  --topic "Installation check" \
   --json
 ```
 
-The command must report at least one durable command. Confirm the notification appears in the
-Dashboard and on the iPhone. For a complete staged check, including a real smoke notification, run:
+The reply carries the notification `id` and the number of phones it targets (`devices`). Confirm the
+notification appears in the Dashboard and on the iPhone. `relo test` asks once, on a short card,
+whether you can see it on the iPhone. For a complete staged check, including a real smoke
+notification, run:
 
 ```sh
 relo doctor --smoke --json
@@ -235,8 +254,24 @@ Restart the agent so it discovers the skill. Then ask:
 > Use Relo to keep a live view of this task on my iPhone, and ask me before you finish.
 
 The skill requires the independently installed and authenticated `relo` CLI. Installing the skill
-does not deploy the server or create credentials, and Relo installs no agent hooks: the agent keeps
-its own Live Activity card current by running `relo`. See [packages/cli/README.md](packages/cli/README.md).
+does not deploy the server or create credentials. The agent reports with `relo work start`,
+`update` and `finish`, and `relo state` shows what its session has open. See
+[packages/cli/README.md](packages/cli/README.md).
+
+### 11. Optionally enable hooks
+
+Hooks are off unless you ask for them, and everything above works without them. With them, Relo also
+knows when a session is working, waiting on you or stopped, reminds the agent of a work it forgot to
+update, and restores its memory after compaction. They never change a work, plan or question, and no
+prompt or tool content leaves the computer.
+
+```sh
+relo setup --project --hooks reminders   # local reminders only; sends nothing
+relo setup --project --hooks presence    # reminders plus session presence
+relo setup --project --hooks off         # remove them
+```
+
+See [docs/HOOKS-AND-HARNESSES.md](docs/HOOKS-AND-HARNESSES.md).
 
 ## Architecture in one minute
 
@@ -255,13 +290,18 @@ CLI / agent / webhook / Dashboard / iPhone
                     └── receipt / reply / sync ──┘
 ```
 
-- The API owns authentication, validation, canonical state transitions, and the outbox.
+- The API owns authentication, validation, canonical state transitions, and the outbox. One server
+  function derives what the owner sees (needs you, fresh or stale, shown or hidden) from what
+  producers declare and what hooks observe; the apps only display it.
 - PostgreSQL is the source of truth; provider acceptance is not phone receipt.
 - The worker owns delivery attempts and retries. It does not own product state.
 - The iPhone owns native presentation, local cache, ActivityKit, and authenticated receipts/replies.
-- The CLI and Agent Skill are clients of the same API; they do not duplicate server state machines.
+- The CLI is the edge on each computer: it keeps each session's working copy, turns hook events into
+  phases, seals content, and sends only changes through a durable outbox. The server is the clock,
+  the aggregator, the deliverer and the authority.
 
-Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for responsibilities and boundaries.
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for responsibilities, the state model and the
+edge/server split.
 
 ## Privacy and security
 
@@ -275,16 +315,19 @@ cannot read it, and they cannot forge your answer to a question.
   update to keys held in your iPhone's Secure Enclave. It uses HPKE (RFC 9180) with P-256 and
   AES-256-GCM, a standard scheme with no custom cryptography. The server stores and relays sealed
   envelopes and never holds a key that opens them.
-- **Nothing to set up.** Like WhatsApp and Signal, your computers and iPhones trust each other's
-  keys automatically the first time they meet. If a key changes later, the phone and
-  `relo keys status` show a "security code changed" notice. Comparing the 60-digit security code
-  is an optional extra (`relo keys verify`, or Settings → Security on the iPhone).
+- **Nothing to set up.** Like WhatsApp and Signal, a computer trusts the account's first iPhone the
+  first time it sees its key. A phone added later waits until a trusted iPhone approves it
+  (Settings → Devices) or you run `relo keys approve`, so a server cannot slip in a phone of its
+  own. If a key changes, the phone and `relo keys status` show a "security code changed" notice.
+  Comparing the 60-digit security code is an optional extra (`relo keys verify`, or Settings →
+  Devices on the iPhone).
 - **Answers are signed.** Approvals and replies are signed by the phone's device key. The CLI acts
   on an approval only when that signature verifies, so a compromised server cannot approve
   anything on your behalf.
-- **Rotating keys and short retention.** Phones replace their receiving keys every few hours and
-  delete the old private keys. The server deletes content after a short window, 10 hours by
-  default. Expired content is gone for good, including copies taken before deletion.
+- **Rotating keys and short retention.** Phones replace their receiving keys every 10 hours and
+  delete the old private keys. The server deletes content after the window you set
+  (`RELO_CONTENT_RETENTION_HOURS`, 10 recommended). Once the keys are gone, content cannot be
+  opened, including copies taken before deletion.
 - **Isolated accounts.** Each person on a server has their own account. The server admin manages
   accounts but cannot open them ([ADR 0004](docs/adr/0004-isolated-multi-user-accounts.md)).
 
@@ -316,22 +359,19 @@ pnpm test
 pnpm build
 ```
 
-Swift package tests run separately:
-
-```sh
-cd apps/ios
-swift test
-```
-
-Database suites require an isolated `TEST_DATABASE_URL`; a skipped database suite is not a pass.
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+`scripts/gates.sh` runs the local gates in one go, and `scripts/gates.sh --db` adds the server
+database suite on a throwaway PostgreSQL. The iPhone app has its own gate, `bash scripts/test-ios.sh`.
+A skipped database suite is not a pass. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and
+[docs/TESTING.md](docs/TESTING.md).
 
 ## Documentation
 
 - [ROADMAP.md](ROADMAP.md) — current outcome, priorities, and release sequence
 - [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) — deployment and private-network notes
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system boundaries and ownership
-- [docs/INTEGRATING.md](docs/INTEGRATING.md) — integrating an app: questions, callbacks, `relo listen`, exit codes
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system boundaries, the state model, the CLI/server split
+- [docs/INTEGRATING.md](docs/INTEGRATING.md) — integrating an app or script: work, questions, callbacks, `relo listen`, exit codes
+- [docs/HOOKS-AND-HARNESSES.md](docs/HOOKS-AND-HARNESSES.md) — optional hooks, their levels and privacy, adding a harness
+- [docs/README.md](docs/README.md) — the full documentation index
 - [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md) — threat model, protocol, and
   rollout of end-to-end encryption
 - [CONTRIBUTING.md](CONTRIBUTING.md) — contribution workflow

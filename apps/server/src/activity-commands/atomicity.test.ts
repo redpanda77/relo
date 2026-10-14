@@ -53,8 +53,8 @@ suite("Activity transactions",()=>{
     await db.query("DROP TRIGGER reject_activity_command_job ON delivery_jobs");await db.query("DROP FUNCTION reject_activity_command_job()");
    }
    const accepted=await send(adapter,path,input,operation==="end"?"POST":"PATCH",key);expect(accepted.status).toBe(200);
-   expect((await db.query("SELECT state FROM interaction_requests WHERE notification_event_id=$1",[event.id])).rows[0].state).toBe("canceled");
-   expect((await db.query("SELECT state FROM delivery_jobs WHERE notification_event_id=$1",[event.id])).rows[0].state).toBe("canceled");
+   // An update or end never cancels a pending question (1.10).
+   expect((await db.query("SELECT state FROM interaction_requests WHERE notification_event_id=$1",[event.id])).rows[0].state).toBe("pending");
    const replay=await send(adapter,path,input,operation==="end"?"POST":"PATCH",key);expect(replay.status).toBe(200);expect(replay.body.replayed).toBe(true);expect(replay.body.activity).toEqual(accepted.body.activity);
    expect((await db.query("SELECT count(*)::int AS n FROM live_activity_operations WHERE live_activity_id=$1",[activityId])).rows[0].n).toBe(1);
   });
@@ -80,7 +80,8 @@ suite("Activity transactions",()=>{
   }
   const started=await send(adapter,"",input,"POST",key);expect(started.status).toBe(201);
   const replay=await send(adapter,"",input,"POST",key);expect(replay.status).toBe(200);expect(replay.body.activity).toEqual(started.body.activity);
-  expect((await db.query("SELECT count(*)::int AS n FROM live_activities WHERE state='active'")).rows[0].n).toBe(1);
+  // A keyless --replace never ends another card (1.11): the prior card stays.
+  expect((await db.query("SELECT count(*)::int AS n FROM live_activities WHERE state='active'")).rows[0].n).toBe(2);
  });
  test.each(["credential","service"])("%s rechecks activity ownership after waiting for the row lock",async adapter=>{
   const start=await send(adapter,"",{title:"Owned",status:"Working"});expect(start.status).toBe(201);
@@ -112,7 +113,7 @@ suite("Activity transactions",()=>{
   await db.query("UPDATE principal_api_keys SET revoked_at=now() WHERE id=$1",[credentialId]);
   expect(await executeActivityCommand(db,{kind:"credential",principalId,credentialId,sourceName:"Revoked"},command)).toEqual({kind:"not_found"});
  });
- test("expiry is checked after acquiring a contended activity lock",async()=>{
+ test("a write past expires_at after a contended lock continues the card (time never ends work)",async()=>{
   const start=await send("credential","",{title:"Expiry",status:"Working"});expect(start.status).toBe(201);
   const id=start.body.activity.id.slice(4);
   await db.query("UPDATE live_activities SET stale_at=NULL,expires_at=clock_timestamp()+interval '300 milliseconds' WHERE id=$1",[id]);
@@ -129,8 +130,8 @@ suite("Activity transactions",()=>{
    expect(blocked).toBe(true);
    await held.query("SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM expires_at-clock_timestamp()))+0.02) FROM live_activities WHERE id=$1",[id]);
    await held.query("COMMIT");
-   const result=await pending;expect(result.status).toBe(409);expect(result.body.error).toBe("activity_terminal");
-   expect((await db.query("SELECT state,terminal_reason FROM live_activities WHERE id=$1",[id])).rows[0]).toEqual({state:"expired",terminal_reason:"absolute_expiry"});
+   const result=await pending;expect(result.status).toBe(200);
+   expect((await db.query("SELECT state,status FROM live_activities WHERE id=$1",[id])).rows[0]).toEqual({state:"active",status:"Too late"});
   }finally{await held.query("ROLLBACK");held.release();if(pending) await pending;}
  });
 

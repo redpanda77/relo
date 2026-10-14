@@ -22,7 +22,7 @@ if (!Array.isArray(manifest.files)
 }
 // The packed README must still teach the model, login, and exit codes.
 for (const required of [
-  "--api-url", "--secret-file", "relo activity start", "relo ask", "relo notify", "| `5` | The owner denied or said no",
+  "--api-url", "--secret-file", "relo work start", "relo ask", "relo notify", "| `5` | The owner denied or said no",
 ]) {
   if (!readme.includes(required)) throw new Error(`reloctl README is missing ${required}`);
 }

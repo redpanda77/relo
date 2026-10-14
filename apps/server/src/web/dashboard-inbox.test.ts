@@ -27,11 +27,14 @@ function testDatabase(
     liveActivity?: boolean;
     ordinaryNotification?: boolean;
     requesterKind?: "cli" | "webhook" | "dashboard";
-    reconcileActivities?: () => Promise<number>;
   } = {},
 ) {
   return {
     async query(sql: string, params: unknown[] = []) {
+      // The derived Now (loadNowSummary): an empty account.
+      if (sql.includes("statement_timestamp() AS now")) return rows([{ now: new Date(now), sessions: [] }]);
+      if (sql.includes("a.producer_type,a.session_key")) return rows([]);
+      if (sql.includes("FROM agent_sessions WHERE principal_id=$1 AND session_hash=ANY")) return rows([]);
       if (sql.includes("WITH owned_events AS MATERIALIZED")) {
         return rows([{ cursor_valid: true, sort_key: null }]);
       }
@@ -407,7 +410,6 @@ function app(
           }
         : null,
     renderDocument: async (bootstrap) => JSON.stringify(bootstrap),
-    reconcileActivities: options.reconcileActivities,
   });
   application.get("/dashboard", handlers.overview);
   application.get("/dashboard/inbox/notifications", handlers.history);
@@ -437,18 +439,10 @@ describe("dashboard Inbox handlers", () => {
     );
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(
-      "/?next=%2Fdashboard%2Finbox%2Fdelivery",
+      "/sign-in?next=%2Fdashboard%2Finbox%2Fdelivery",
     );
   });
 
-  test("reconciles due activities before rendering lifecycle history", async () => {
-    const reconcileActivities = vi.fn().mockResolvedValue(1);
-    const response = await app({ reconcileActivities }).request(
-      "/dashboard/inbox/notifications?kind=question&state=active",
-    );
-    expect(response.status).toBe(200);
-    expect(reconcileActivities).toHaveBeenCalledOnce();
-  });
 
   test("serializes an account-scoped overview without secret fields", async () => {
     const result = await bootstrap(await app().request("/dashboard"));

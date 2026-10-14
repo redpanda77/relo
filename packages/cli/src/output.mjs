@@ -112,9 +112,9 @@ const sessionRow = (session) => present({
   account: session?.account,
   project: session?.project,
   phase: session?.phase,
-  state: session?.state,
+  waitingFor: session?.waitingFor,
   presence: session?.presence,
-  lastEventAt: session?.lastEventAt,
+  lastSeenAt: session?.lastSeenAt,
   card: session?.card ? present({ state: session.card.state, quietForSeconds: session.card.quietForSeconds }) : undefined,
 });
 
@@ -211,7 +211,7 @@ export function compactData(command, data) {
     }
     case "setup":
       return present({ file: data?.file, action: data?.action, from: data?.from, files: data?.files, hooks: data?.hooks, mcp: data?.mcp, skill: data?.skill,
-        hint: data?.hint, dryRun: data?.dryRun === true ? true : undefined });
+        harnessCredential: data?.harnessCredential, hint: data?.hint, dryRun: data?.dryRun === true ? true : undefined });
     case "skill.install":
     case "skill.remove":
       return present({ agent: data?.agent, dir: data?.dir, version: data?.version, action: data?.action,
@@ -311,7 +311,10 @@ function friendly(error, group) {
     case "CONFIG_NOT_FOUND":
       return { message: "Not signed in to Relo.", hint: "Run: relo auth login --api-url https://YOUR-RELO-SERVER" };
     case "NETWORK_ERROR":
-      return { message: `Cannot reach the Relo server (${error.message}).`, hint: "Check the network and RELO_API_URL, then run: relo doctor" };
+      return { message: `Cannot reach the Relo server (${error.message})${error.details?.retried ? "; retried once" : ""}. This is usually transient.`,
+        hint: error.details?.idempotencyKey
+          ? `Run the same command again with --idempotency-key ${error.details.idempotencyKey} (safe: it cannot apply twice); if it keeps failing: relo doctor`
+          : "Run the same command again; if it keeps failing, check the network and RELO_API_URL: relo doctor" };
     default:
       break;
   }

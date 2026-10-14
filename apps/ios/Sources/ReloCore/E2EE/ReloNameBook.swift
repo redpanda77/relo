@@ -50,6 +50,15 @@ public enum ReloNames {
         return accepted((try? JSONDecoder().decode(Carrier.self, from: plaintext))?.names ?? [:])
     }
 
+    /// The session title a sealed names envelope carries (a single line, at most 80 characters), if any.
+    public static func carriedTitle(in plaintext: Data) -> String? {
+        struct Carrier: Decodable { let title: String? }
+        guard let title = (try? JSONDecoder().decode(Carrier.self, from: plaintext))?.title?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty, title.count <= 80, !title.contains("\n") else { return nil }
+        return title
+    }
+
     /// `value` with any handle replaced by the name this phone learned for it. Applied when a row is
     /// shown, so rows stored before their names arrived still show names (E2.5).
     public static func display(_ value: String?) -> String? {

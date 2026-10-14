@@ -7,7 +7,7 @@ import { canonicalOriginHash,lockOriginGenerationSlot,originGenerationMetadata }
 import { preserveActivePresentationPolicy } from "../presentation-policy.js";
 import { PresentationRuntimeError,assertAccountPresentationAssets } from "../presentation-runtime.js";
 import { NativeOccurrenceError,assertNativeStartChronology } from "../relevance/native-occurrence.js";
-import { createActivityCommands,expireDueActivities,serializeTaskActivity } from "./runtime.js";
+import { createActivityCommands,serializeTaskActivity } from "./runtime.js";
 import { associateServiceActivityEvents,completeActiveCardReuse,replaceBlockingActivity,replayStoredStart,replayedOperation,serviceActivityReplay,serviceForActor } from "./start-store.js";
 import type { ActivityStartRow } from "./start-types.js";
 import { startAccepted,startRejected,type ActivityStartResult,type ProducerStartCommand } from "./start-types.js";
@@ -44,7 +44,6 @@ export async function startServiceActivity(db:Database,actor:Extract<ActivityAct
       return replayedOperation(originReplay.snapshot,originReplay.delivery,{disposition:false,resumed:false});
     }
 
-    await expireDueActivities(db,apnsMode);
     const transaction = await beginActivityTransaction(db);
     const client = transaction.client;
     try {
@@ -101,10 +100,10 @@ export async function startServiceActivity(db:Database,actor:Extract<ActivityAct
       } : await client.query<ActivityStartRow>(
         `SELECT * FROM live_activities WHERE principal_id=$1 AND state='active'
            AND presentation IS NOT NULL
-           AND (($3::text IS NOT NULL AND requester_service_id=$2 AND activity_key=$3)
-             OR (cardinality($4::uuid[])>0 AND target_device_ids && $4::uuid[]))
+           -- A start only ever meets the service's own card for this key (never another producer's).
+           AND $3::text IS NOT NULL AND requester_service_id=$2 AND activity_key=$3
          ORDER BY created_at FOR UPDATE`,
-        [lockedService.principal_id,lockedService.id,input.key ?? null,targetIds],
+        [lockedService.principal_id,lockedService.id,input.key ?? null],
       );
       const latestOrigin = originSlot?.latest;
       if (latestOrigin) await assertNativeStartChronology(client,latestOrigin,input.occurredAt);
@@ -178,7 +177,7 @@ export async function startServiceActivity(db:Database,actor:Extract<ActivityAct
              presentation_policy_source=COALESCE(presentation_policy_source,$17),
              presentation_preset_id=COALESCE(presentation_preset_id,$18),
              presentation_preset_revision=COALESCE(presentation_preset_revision,$19),
-             sequence=sequence+1,updated_at=statement_timestamp()
+             sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
            WHERE id=$1 AND requester_service_id=$2 AND state='active' RETURNING *`,
           [current.id,lockedService.id,activePresentation.title,activePresentation.status,activePresentation.detail,activePresentation.progress,activePresentation.symbol,activePresentation.style,activePresentation.privacy,activePresentation.accentColor,activePresentation.presentation,activePresentation.presentationHash,input.context ?? null,input.staleAfterSeconds,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,current.presentation_policy_source,current.presentation_preset_id,current.presentation_preset_revision,input.occurredAt ?? null],
         );
@@ -218,8 +217,8 @@ export async function startServiceActivity(db:Database,actor:Extract<ActivityAct
            target_device_ids,start_idempotency_key,start_request_hash,context,expires_at,stale_at,
            start_replace_requested,start_replaced_count,presentation,presentation_sha256,origin_hash,generation,
            lifecycle_provider,lifecycle_run_id,presentation_policy,presentation_policy_source,
-           presentation_preset_id,presentation_preset_revision,stale_after_seconds,created_at,updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,statement_timestamp(),statement_timestamp()) RETURNING *`,
+           presentation_preset_id,presentation_preset_revision,stale_after_seconds,producer_type,created_at,updated_at,declared_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,'service',statement_timestamp(),statement_timestamp(),statement_timestamp()) RETURNING *`,
         [lockedService.principal_id,lockedService.id,input.key ?? null,input.title,input.status,input.detail ?? null,input.progress ?? null,input.symbol,input.style,storedPresentation.privacy,input.accentColor,targetIds,key ?? `server:${randomUUID()}`,hash,input.context ?? null,expiresAt,staleAt,input.replace,blockers.rows.length,input.presentation,storedPresentation.presentationHash,originHash,generation,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,presentationPolicy,presentationPolicy.source,presentationPolicy.presetId,presentationPolicy.presetRevision,input.staleAfterSeconds],
       );
       const delivery = await createActivityCommands(client,{ occurredAt: input.occurredAt,

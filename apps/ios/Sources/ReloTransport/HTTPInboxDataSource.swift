@@ -11,15 +11,18 @@ public struct HTTPInboxDataSource: InboxDataSource {
 
     /// Opens end-to-end sealed items on this phone as they arrive; nil leaves placeholders.
     private let sealedOpener: ReloSealedOpener?
+    /// Says why an item stayed sealed ("sealed for another device"), so it never shows a bare placeholder.
+    private let sealedDiagnoser: ReloSealedDiagnoser?
     /// Puts real names back for opaque project and topic handles (E2.5) before decoding.
     private let nameResolver: (@Sendable (Data) -> Data)?
 
     public init(baseURL: URL, token: String, session: URLSession = ReloAPISession.shared, sealedOpener: ReloSealedOpener? = nil,
-                nameResolver: (@Sendable (Data) -> Data)? = nil) {
+                nameResolver: (@Sendable (Data) -> Data)? = nil, sealedDiagnoser: ReloSealedDiagnoser? = nil) {
         self.baseURL = baseURL
         self.token = token
         self.session = session
         self.sealedOpener = sealedOpener
+        self.sealedDiagnoser = sealedDiagnoser
         self.nameResolver = nameResolver
     }
 
@@ -37,10 +40,10 @@ public struct HTTPInboxDataSource: InboxDataSource {
                 guard result.isValid else { throw InboxRemoteError.incompatibleResponse }
                 guard let sealedOpener else { return result }
                 // Opening teaches names; a second pass shows them on this same snapshot.
-                let opened = result.openingSealed(sealedOpener)
+                let opened = result.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
                 guard nameResolver != nil,
                       let named = try? ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: resolved(data)) else { return opened }
-                return named.openingSealed(sealedOpener)
+                return named.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
             } catch { throw InboxRemoteError.incompatibleResponse }
         case 401, 403: throw InboxRemoteError.unauthorized
         default: throw InboxRemoteError.unavailable
@@ -70,9 +73,9 @@ public struct HTTPInboxDataSource: InboxDataSource {
                 }
                 guard let sealedOpener else { return page }
                 // Opening envelopes teaches names; the second pass shows them on this same page.
-                let opened = page.openingSealed(sealedOpener)
+                let opened = page.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
                 guard nameResolver != nil, let named = try? decoder.decode(InboxHistoryPage.self, from: resolved(data)) else { return opened }
-                return named.openingSealed(sealedOpener)
+                return named.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
             } catch let error as InboxRemoteError {
                 throw error
             } catch {
@@ -136,9 +139,9 @@ public struct HTTPInboxDataSource: InboxDataSource {
         do { detail = try Self.decoder().decode(InboxNotificationDetail.self, from: resolved(data)) }
         catch { throw InboxRemoteError.incompatibleResponse }
         guard let sealedOpener else { return detail }
-        let opened = detail.openingSealed(sealedOpener)
+        let opened = detail.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
         guard nameResolver != nil, let named = try? Self.decoder().decode(InboxNotificationDetail.self, from: resolved(data)) else { return opened }
-        return named.openingSealed(sealedOpener)
+        return named.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
     }
 
 
@@ -162,7 +165,7 @@ public struct HTTPInboxDataSource: InboxDataSource {
             .notConnectedToInternet,
             .networkConnectionLost,
         ].contains(error.code) {
-            throw InboxRemoteError.tailnetUnavailable
+            throw InboxRemoteError.serverUnreachable
         } catch {
             throw InboxRemoteError.unavailable
         }

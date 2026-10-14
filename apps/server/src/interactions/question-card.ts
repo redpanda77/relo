@@ -153,10 +153,11 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
        principal_id,requester_credential_id,requester_service_id,activity_key,title,status,detail,progress,symbol,style,
        privacy,accent_color,target_device_ids,start_idempotency_key,expires_at,stale_at,
        presentation,presentation_sha256,presentation_policy,presentation_policy_source,
-       presentation_preset_id,presentation_preset_revision,state,ended_at,context,origin_hash
+       presentation_preset_id,presentation_preset_revision,state,ended_at,context,origin_hash,producer_type,declared_at
      ) VALUES ($1,$2,$19,NULL,$3,$13,$4,NULL,$14,$5,$18,'#5ED8B7',
        $6::uuid[],$7,$8::timestamptz,$8::timestamptz,$9::jsonb,$10,
-       $11::jsonb,'system',$12,1,$15::live_activity_state,CASE WHEN $15='expired' THEN clock_timestamp() ELSE NULL END,$16::jsonb,$17) RETURNING *`,
+       $11::jsonb,'system',$12,1,$15::live_activity_state,CASE WHEN $15='expired' THEN clock_timestamp() ELSE NULL END,$16::jsonb,$17,
+       CASE WHEN $19::uuid IS NULL THEN 'script' ELSE 'service' END,statement_timestamp()) RETURNING *`,
     [requester.principalId,requester.credentialId,input.title,input.prompt,style,eligibleDeviceIds,
       `interaction:${idempotencyKey}`,request.expires_at,
       display.presentation,display.presentationHash,

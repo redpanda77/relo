@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseArgs, progressFraction } from "../src/args.mjs";
@@ -77,19 +78,6 @@ test("interaction wait defaults to 100s in an agent session and 60s elsewhere", 
   assert.deepEqual(waits, [100, 60, 20]);
 });
 
-test("activity get with no CARD reads this work's card, the same as status", async () => {
-  const { client } = fakeCards();
-  const deps = cardDependencies(client, { env: session });
-  assert.deepEqual((await cli(["activity", "get"], deps)).line, { ok: true, found: false });
-  await cli(["activity", "start", "--title", "T", "--status", "S", ...topic], deps);
-  const got = (await cli(["activity", "get"], deps)).line;
-  const status = (await cli(["activity", "status"], deps)).line;
-  assert.equal(got.found, true);
-  assert.deepEqual(got, status);
-  const byId = (await cli(["activity", "get", got.id], deps)).line;
-  assert.equal(byId.id, got.id);
-});
-
 test("--progress takes 3/5 and 40% as well as 0..1, and rejects the ambiguous", () => {
   assert.equal(progressFraction("3/5"), 0.6);
   assert.equal(progressFraction("0/5"), 0);
@@ -104,41 +92,12 @@ test("--progress takes 3/5 and 40% as well as 0..1, and rejects the ambiguous", 
   }
 });
 
-test("progress reaches the server as a fraction on start, update and end", async () => {
-  const { client, calls } = fakeCards();
-  const deps = cardDependencies(client, { env: session });
-  await execute(["activity", "start", "--title", "T", "--status", "S", "--progress", "1/4", ...topic], deps);
-  await execute(["activity", "update", "--progress", "50%"], deps);
-  await execute(["activity", "end", "--progress", "4/4"], deps);
-  assert.deepEqual(calls.filter((call) => call.body?.progress !== undefined).map((call) => call.body.progress), [0.25, 0.5, 1]);
-  const bare = await cli(["activity", "update", "--progress", "40"], deps);
-  assert.equal(bare.exitCode, EXIT.USAGE);
-  assert.equal(bare.line.error.hint, "Use 0.4, 40% or 2/5");
-});
-
 test("shortenText cuts at a word boundary, or hard when there is none", () => {
   assert.equal(shortenText("Short enough", 60), "Short enough");
   const cut = shortenText("Compiling the shared packages and running every integration suite once more", 40);
   assert.ok(Array.from(cut).length <= 40, cut);
   assert.match(cut, /packages and…$/u);
   assert.equal(shortenText("x".repeat(100), 10), `${"x".repeat(9)}…`);
-});
-
-test("over-long display text is shortened with a note instead of failing", async () => {
-  const { client, calls } = fakeCards();
-  const deps = cardDependencies(client, { env: session });
-  const long = "Rebuilding the shared packages and then running every integration suite against staging";
-  const started = await cli(["activity", "start", "--title", long, "--status", long, "--detail", "d".repeat(300), ...topic], deps);
-  assert.equal(started.exitCode, EXIT.OK);
-  assert.equal(started.line.note, "title shortened to 80 characters; status shortened to 60 characters; detail shortened to 240 characters");
-  const body = calls.find((call) => call.op === "start").body;
-  assert.ok(Array.from(body.status).length <= 60 && body.status.endsWith("…"), body.status);
-  const updated = await cli(["activity", "update", "--status", long, "--progress-label", "l".repeat(50)], deps);
-  assert.equal(updated.line.note, "status shortened to 60 characters; progress-label shortened to 32 characters");
-  const ended = await cli(["activity", "end", "--status", long], deps);
-  assert.equal(ended.line.note, "status shortened to 60 characters");
-  const fits = await cli(["activity", "update", "--status", "Fine"], deps);
-  assert.equal(fits.line.note, undefined);
 });
 
 test("notify shortens its title and summary, but never a question, topic or label", async () => {
@@ -190,7 +149,7 @@ test("a typo in the command is reported even when the CLI is not signed in", asy
 });
 
 test("a missing topic is a short message and a hint with only the missing flags", async () => {
-  const deps = cardDependencies(fakeCards().client, { env: session });
+  const deps = cardDependencies(fakeCards().client);
   const out = await cli(["activity", "start", "--title", "x", "--status", "y"], deps);
   assert.equal(out.exitCode, EXIT.USAGE);
   assert.equal(out.line.error.message, 'Missing --topic: name the work the way the owner would (e.g. "Release 0.7.57").');
@@ -213,24 +172,9 @@ function notifyClient() {
   return { client, sent, calls };
 }
 
-test("notify inside an agent session inherits the session card's identity", async () => {
-  const { client, sent, calls } = notifyClient();
-  const deps = cardDependencies(client, { env: session });
-  await execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release 0.7.57", "--computer", "Studio", "--account", "work"], deps);
-  const reads = calls.filter((call) => call.op === "get").length;
-  const out = await cli(["notify", "Shipped"], deps);
-  assert.equal(out.exitCode, EXIT.OK);
-  assert.equal(calls.filter((call) => call.op === "get").length - reads, 1, "notify reads the card once");
-  assert.deepEqual({ ...sent[0].context, providerThreadId: undefed(sent[0].context.providerThreadId) },
-    { providerName: "Claude Code", project: "relo", threadName: "Release 0.7.57", computer: "Studio", account: "work", providerThreadId: "set" });
-  assert.equal(sent[0].sourceName, "Claude Code");
-  await cli(["notify", "Again", "--topic", "Other work"], deps);
-  assert.equal(sent[1].context.threadName, "Other work");
-});
-
 const undefed = (value) => (value ? "set" : undefined);
 
-test("notify still needs a topic outside a session or without a running card", async () => {
+test("notify needs a topic outside a session; inside one it names the open work, or the session itself", async () => {
   const outside = notifyClient();
   const first = await cli(["notify", "Shipped"], cardDependencies(outside.client));
   assert.equal(first.exitCode, EXIT.USAGE);
@@ -238,8 +182,11 @@ test("notify still needs a topic outside a session or without a running card", a
   assert.equal(outside.calls.length, 0);
   const idle = notifyClient();
   const second = await cli(["notify", "Shipped"], cardDependencies(idle.client, { env: session }));
-  assert.equal(second.exitCode, EXIT.USAGE);
-  assert.equal(idle.sent.length, 0);
+  assert.equal(second.exitCode, EXIT.OK);
+  assert.equal(idle.sent[0].context.threadName, "Claude Code session", "a standalone message names the session");
+  const named = await cli(["notify", "Shipped", "--topic", "Release 0.7.57"], cardDependencies(idle.client, { env: session }));
+  assert.equal(named.exitCode, EXIT.OK);
+  assert.equal(idle.sent[1].context.threadName, "Release 0.7.57");
 });
 
 test("notify with no body reports the body before the identity", async () => {
@@ -249,7 +196,7 @@ test("notify with no body reports the body before the identity", async () => {
 });
 
 const fullDevices = (n) => Array.from({ length: n }, (_, i) => ({
-  id: `act_${i}`, state: "active", title: `Card ${i}`, status: "Working", detail: "x".repeat(200), progress: i === 0 ? null : 0.5,
+  id: `act_${i}`, state: "active", title: `Card ${i}`, status: "Applying migrations", detail: "x".repeat(200), progress: i === 0 ? null : 0.5,
   updatedAt: "2026-01-01T00:00:00Z", sequence: i, context: { providerName: "Claude Code" }, presentation: { components: [] },
 }));
 
@@ -257,7 +204,7 @@ test("activity list is compact and defaults to the newest 10", async () => {
   const client = { listActivities: async () => ({ activities: fullDevices(25) }) };
   const out = await cli(["activity", "list"], cardDependencies(client));
   assert.equal(out.line.cards.length, 10);
-  assert.deepEqual(out.line.cards[0], { id: "act_0", state: "active", title: "Card 0", status: "Working", updatedAt: "2026-01-01T00:00:00Z" });
+  assert.deepEqual(out.line.cards[0], { id: "act_0", state: "active", title: "Card 0", status: "Applying migrations", updatedAt: "2026-01-01T00:00:00Z" });
   assert.equal(out.line.cards[1].progress, 0.5);
   assert.ok(out.stdout[0].length < 2_000, `${out.stdout[0].length}`);
   assert.equal((await cli(["activity", "list", "--limit", "3"], cardDependencies(client))).line.cards.length, 3);
@@ -369,4 +316,21 @@ test("ask --option offers 2-4 choices and reports the one picked", async () => {
   piped.readStdinJson = async () => ({ prompt: "Which?", options: ["Ship", { id: "wait", label: "Hold" }] });
   assert.equal((await cli(["ask", "--stdin", ...topic], piped)).exitCode, EXIT.OK);
   assert.deepEqual(calls.filter((call) => ["ask", "question"].includes(call.op)).at(-1).body.options, [{ id: "ship", label: "Ship" }, { id: "wait", label: "Hold" }]);
+});
+
+test("inside a session, notify names the session's open work", async (t) => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { detectCaller } = await import("../src/caller.mjs");
+  const { writeSession } = await import("../src/agent/session-file.mjs");
+  const state = mkdtempSync(join(tmpdir(), "relo-notify-"));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const env = { ...session, XDG_STATE_HOME: state };
+  const { client, sent } = notifyClient();
+  const deps = cardDependencies(client, { env });
+  assert.ok(await writeSession(detectCaller(env), { env }, { open: { id: "wrk_1", lifecycle: "open", goal: "Release 0.7.57", card: { id: "act_missing", state: "active" } }, parked: [] }));
+  const out = await cli(["notify", "Shipped"], deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out.line));
+  assert.equal(sent[0].context.threadName, "Release 0.7.57");
 });

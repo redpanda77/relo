@@ -3,10 +3,12 @@ import { parseDuration, numberOption, progressCountLabel, progressFraction, requ
 import { ApiError, EXIT, ReloError, UsageError } from "../errors.mjs";
 import { stepPosition } from "../output.mjs";
 import { checkStepNames } from "../step-names.mjs";
+import { checkCardText } from "../work/content-filter.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
 import { privacyOption } from "./notify.mjs";
 import { randomUUID } from "node:crypto";
-import { activityContext, agentSession, cardKey, creationContext, partialIdentity } from "../identity.mjs";
+import { CALLER_TYPES, cardOwner } from "../caller.mjs";
+import { activityContext, cardKey, creationContext, partialIdentity } from "../identity.mjs";
 import { assertAllowedOptions, assertAtMostOne, dryRunResult, assertNoExtra, booleanStdin, definedFields, deliveryGuard, enumOption, fitRequiredText, fitText, isIsoTimestamp, optionalText, result, stdinDeviceIds, stdinObject, validateCanonicalId, validateIdempotencyKey } from "../support.mjs";
 
 export const DEFAULT_LIST_LIMIT = 10;
@@ -155,10 +157,10 @@ export function cardTarget(rest, options, stdin, dependencies, usage) {
   const named = activityName(options, stdin);
   if (rest.length > 1 || (rest.length === 1 && named !== undefined)) throw new UsageError(usage);
   if (rest.length === 1) return requireText(rest[0], "Card ID or name", 128);
-  const key = cardKey({ name: named, env: dependencies.env,
+  const key = cardKey({ name: named, env: dependencies.env, caller: dependencies.caller,
     context: partialIdentity(options, stdin, dependencies.identityDefaults()) });
   if (key === undefined) {
-    throw new UsageError("Which card? Outside an agent session a card is named by its topic.", {
+    throw new UsageError("Which card? Outside a session a card is named by its topic.", {
       hint: 'Add --topic "<the work>" (with --source/--project if not detected), or pass the card ID',
     });
   }
@@ -193,15 +195,6 @@ export function continuingResult(card, notes) {
   return result("activity.start", { activity: card, disposition: "continuing", card: definedFields({ id: card?.id, state: card?.state, step }),
     next: CONTINUE_HINT },
   { message: "Continuing this work's running card; nothing was changed. Move it on with update, finish it with end.", notes });
-}
-
-const PROGRESS_FOLLOWS_STEPS = "progress follows this card's steps; use --next-step or --step-current";
-
-/** A card with a steps component draws its progress from the steps, so a sent --progress changes nothing. */
-function noteProgressOnSteps(sentProgress, payload, notes) {
-  if (typeof sentProgress !== "number") return;
-  const components = payload?.activity?.presentation?.components;
-  if (Array.isArray(components) && components.some((component) => component?.type === "steps")) notes.push(PROGRESS_FOLLOWS_STEPS);
 }
 
 /**
@@ -311,7 +304,7 @@ export async function runActivityCommand(command) {
     const dryRun = Boolean(dependencies.dryRun);
     // Starting again reuses this work's running card: one card per agent session or topic.
     const named = activityName(options,stdin);
-    const sharedKey = cardKey({ name: named, context, env: dependencies.env });
+    const sharedKey = cardKey({ name: named, context, env: dependencies.env, caller: dependencies.caller });
     // --new: a card of this run's own, never joining one another process already has running.
     const manualKey = options.new ? `${sharedKey.slice(0,80)}-${randomUUID().slice(0,8)}` : sharedKey;
     const requestedStyle = options.style ?? stdin.style;
@@ -322,11 +315,6 @@ export async function runActivityCommand(command) {
     );
     if (progressLabel !== undefined && progress === undefined) {
       throw new UsageError("--progress-label requires --progress when starting an activity");
-    }
-    if (progress !== undefined && (stepLabelsOption(options,stdin) !== undefined)) {
-      throw new UsageError("--progress cannot be combined with --steps: the card's progress follows its steps", {
-        hint: "Use --step-current or --next-step to move it, or drop --steps to use --progress",
-      });
     }
     const body = definedFields({
       key: manualKey,
@@ -369,6 +357,7 @@ export async function runActivityCommand(command) {
       ),
       context,
     });
+    checkCardText(body, { labels: stepLabelsOption(options, stdin) });
     const key = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
     if (dryRun) {
       if (body.deviceIds) notes.push("device IDs are not checked against the server in a dry run");
@@ -389,9 +378,10 @@ export async function runActivityCommand(command) {
     // Started by someone else between the check and the start: the server left it unchanged, and so does the cache.
     if (started?.disposition === "existing") return continuingResult(started.activity,notes);
     if (sealed.text && started?.activity?.id) await saveCardText(sealedCardDirectory(dependencies.env),started.activity.id,sealed.text);
-    noteProgressOnSteps(progress,started,notes);
-    if (started?.disposition === "reused" && !options.new && named === undefined && !agentSession(dependencies.env)) {
-      notes.push("joined the card already running for this topic; if another process started it, pass --new (or set RELO_SESSION / --name) for a card of your own");
+    if (started?.disposition === "reused" && !options.new && named === undefined && !cardOwner(dependencies.caller)) {
+      notes.push(dependencies.caller?.type === CALLER_TYPES.SCRIPT
+        ? "joined the card already running for this topic; if another process started it, pass --new (or set RELO_SESSION / --name) for a card of your own"
+        : "joined the card already running for this topic; if another process started it, pass --new (or --name) for a card of your own");
     }
     return cardResult(`activity.${action}`,started,notes);
   }
@@ -571,6 +561,7 @@ export async function runActivityCommand(command) {
     if (!(dryRun && needsCard) && !Object.entries(body).some(([key, value]) => key !== "ifSequence" && value !== undefined)) {
       throw new UsageError("Activity update requires at least one changed field");
     }
+    checkCardText(body, { labels: stepLabelsOption(options, stdin) });
     const key = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
     if (dryRun) {
       return dryRunResult("activity update", { target, ...body }, notes);
@@ -584,7 +575,6 @@ export async function runActivityCommand(command) {
       if (sealed.text) await saveCardText(directory,captured.target,sealed.text);
       return reply;
     });
-    noteProgressOnSteps(body.progress,updated,notes);
     return cardResult("activity.update",updated,notes);
   }
 

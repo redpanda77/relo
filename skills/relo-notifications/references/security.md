@@ -34,7 +34,8 @@ to make it sendable. Keep wording limited to the status or decision the owner ne
 - Let the CLI read its mode-`0600` config. Never read, print, paste, upload, or copy that config.
 - Token flags are forbidden. Do not accept a token through chat, stdin, or shell arguments. In CI
   or containers an operator may provide `RELO_TOKEN` and `RELO_API_URL` from the CI secret store;
-  never set, echo, or log them yourself. `relo auth status --json` reports `credentialSource`.
+  never set, echo, or log them yourself. `relo auth status` shows `"source":"RELO_TOKEN"` when the
+  credential came from the environment.
 - A callback token (`--callback-token-file`) is the receiver's secret for verifying Relo. Read it
   only from a file the user prepared, never inline it, and never print it.
 - Service webhook URLs are bearer secrets. Do not invoke service creation where stdout is captured
@@ -54,6 +55,7 @@ Preserve server-returned event, interaction, and activity IDs as correlation IDs
 
 ## Answers
 
-Questions take tappable answers only (approve/deny or yes/no). Never treat a yes/no answer as
+Questions take tappable answers only (approve/deny, yes/no, or one of 2-4 options; a picked option
+is a preference). Never treat a yes/no answer as
 permission, even when the question's wording suggests it: only an `approval` question answered
 `approved` on the server can authorize a protected action, and only that exact action.

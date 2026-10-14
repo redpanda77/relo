@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ReloApiClient } from "../src/api-client.mjs";
@@ -293,4 +294,24 @@ test("an API error carries the server's sentence, not only its code", async () =
     assert.equal(error.message, "Update Relo on Old iPhone to answer questions with options.");
     return true;
   });
+});
+
+test("an idempotent write retries once after a network error; a keyless write does not", async () => {
+  let calls = 0;
+  const sleeps = [];
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+  const client = new ReloApiClient({ apiUrl: "https://relo.test", token: "t", fetchImpl, sleep: async (ms) => { sleeps.push(ms); } });
+  assert.deepEqual(await client.request("POST", "/api/x", { body: {}, idempotencyKey: "k1" }), { ok: true });
+  assert.equal(calls, 2);
+  assert.equal(sleeps.length, 1);
+  calls = 0;
+  const down = new ReloApiClient({ apiUrl: "https://relo.test", token: "t", fetchImpl: async () => { calls += 1; throw new TypeError("fetch failed"); }, sleep: async () => {} });
+  await assert.rejects(down.request("POST", "/api/x", { body: {} }), (error) => error.code === "NETWORK_ERROR" && calls === 1);
+  calls = 0;
+  await assert.rejects(down.request("POST", "/api/x", { body: {}, idempotencyKey: "k2" }),
+    (error) => error.code === "NETWORK_ERROR" && calls === 2 && error.details.idempotencyKey === "k2" && error.details.retried === true);
 });

@@ -10,11 +10,13 @@ function retryAfterSeconds(response) {
 }
 
 export const MAX_AUTO_RETRY_SECONDS = 10;
+/** The pause before the one automatic retry of an idempotent request after a network error. */
+export const NETWORK_RETRY_MS = 750;
 
 /** A server older than the sessions API answers 404 on its routes: say so instead of "No such item". */
 function sessionsUnsupported(error) {
   if (!(error instanceof ApiError) || error.status !== 404) throw error;
-  throw new ApiError("This Relo server doesn't report agent sessions yet.", {
+  throw new ApiError("This Relo server doesn't report sessions yet.", {
     status: 404, code: "SESSIONS_UNSUPPORTED", details: { hint: "Update the server to 0.10.0 or later." },
   });
 }
@@ -32,7 +34,7 @@ export class ReloApiClient {
   async request(
     method,
     path,
-    { body, idempotencyKey, query, authenticated = true, timeoutMs = 30_000, retried = false } = {},
+    { body, idempotencyKey, query, authenticated = true, timeoutMs = 30_000, retried = false, sessionKey } = {},
   ) {
     const url = new URL(`${this.apiUrl}${path}`);
     for (const [key, value] of Object.entries(query ?? {})) {
@@ -45,6 +47,8 @@ export class ReloApiClient {
     if (authenticated) headers.authorization = `Bearer ${this.token}`;
     if (body !== undefined) headers["content-type"] = "application/json";
     if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
+    // Asked in an agent session: the server attaches the question to the session's open work.
+    if (sessionKey) headers["relo-session-key"] = sessionKey;
 
     let response;
     try {
@@ -55,7 +59,15 @@ export class ReloApiClient {
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      throw new NetworkError(error instanceof Error ? error.message : "Unable to reach Relo API");
+      // A read, or a write carrying an idempotency key, is safe to send again: one retry after a short
+      // pause absorbs a transient edge blip (DOGFOOD #7). A timeout is not retried (it already waited).
+      const idempotent = method === "GET" || Boolean(idempotencyKey);
+      if (idempotent && !retried && error?.name !== "TimeoutError") {
+        await this.sleep(NETWORK_RETRY_MS);
+        return this.request(method, path, { body, idempotencyKey, query, authenticated, timeoutMs, retried: true, sessionKey });
+      }
+      throw new NetworkError(error instanceof Error ? error.message : "Unable to reach Relo API",
+        { transient: true, retried: idempotent && retried, ...(idempotencyKey ? { idempotencyKey } : {}) });
     }
 
     const payload = await response.json().catch(() => undefined);
@@ -66,7 +78,7 @@ export class ReloApiClient {
       // A write carries an idempotency key, so one retry after a short 429 wait cannot duplicate it.
       if (response.status === 429 && !retried && idempotencyKey && retryAfter !== undefined && retryAfter <= MAX_AUTO_RETRY_SECONDS) {
         await this.sleep(retryAfter * 1_000);
-        return this.request(method, path, { body, idempotencyKey, query, authenticated, timeoutMs, retried: true });
+        return this.request(method, path, { body, idempotencyKey, query, authenticated, timeoutMs, retried: true, sessionKey });
       }
       throw new ApiError(
         typeof apiError?.message === "string"
@@ -120,8 +132,9 @@ export class ReloApiClient {
     return this.request("DELETE", "/api/clients/self");
   }
 
-  sendNotification(body, idempotencyKey) {
-    return this.request("POST", "/api/notifications", { body, idempotencyKey });
+  sendNotification(body, idempotencyKey, sessionKey) {
+    // In an agent session the server folds the notice into the session's open work (no buzz of its own).
+    return this.request("POST", "/api/notifications", { body, idempotencyKey, ...(sessionKey ? { sessionKey } : {}) });
   }
 
   withdrawNotification(id, idempotencyKey) {
@@ -131,8 +144,8 @@ export class ReloApiClient {
     });
   }
 
-  createInteraction(body, idempotencyKey) {
-    return this.request("POST", "/api/interactions", { body, idempotencyKey });
+  createInteraction(body, idempotencyKey, sessionKey) {
+    return this.request("POST", "/api/interactions", { body, idempotencyKey, ...(sessionKey ? { sessionKey } : {}) });
   }
 
   getInteraction(id) {
@@ -262,9 +275,13 @@ export class ReloApiClient {
     return this.request("DELETE", `/api/services/${encodeURIComponent(id)}`);
   }
 
-  /** Hook traffic: no retries, a 2 s ceiling, so an agent is never held up. */
-  sendAgentSessionEvent(body, { timeoutMs = 2_000 } = {}) {
-    return this.request("POST", "/api/agent-sessions/events", { body, timeoutMs }).catch(sessionsUnsupported);
+  /** Mints this computer's harness credential (observed snapshots only) with the CLI credential. */
+  createHarnessCredential(body) {
+    return this.request("POST", "/api/harness-credentials", { body });
+  }
+
+  revokeHarnessCredential(id) {
+    return this.request("DELETE", `/api/harness-credentials/${encodeURIComponent(id)}`);
   }
 
   /** `phases` (e.g. ["working","waiting"]) lists only those; a server before phases ignores the filter. */

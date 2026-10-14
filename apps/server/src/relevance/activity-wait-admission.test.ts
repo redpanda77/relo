@@ -107,21 +107,20 @@ suite("Activity wait canonical admission",()=>{
     expect(held.status).toBe("Needs you");expect(held.resume_presentation.content.status).toBe("Still building");
     expect((await db.query("SELECT count(*)::int AS n FROM interaction_requests WHERE state='pending'")).rows[0].n).toBe(2);
   });
-  test("an unanswered question ends the card, which leaves the phone at once",async()=>{
+  test("an unanswered question expires without ending the card (questions never end work)",async()=>{
     const parent=await start();
     const asked=await post(`/api/live-activities/${parent.id}/wait`,{type:"yes_no",prompt:"Continue?",expiresInSeconds:30});
     expect(asked.status).toBe(201);
     await db.query("UPDATE interaction_requests SET expires_at=clock_timestamp()-interval '1 second'");
     const { expireDueInteractiveActivities }=await import("../interactive-activity-lifecycle.js");
-    expect(await expireDueInteractiveActivities(db,"disabled")).toBeGreaterThan(0);
-    const ended=await card(parent.id);
-    expect(ended.state).toBe("expired");expect(ended.status).toBe("No answer");expect(ended.resume_presentation).toBeNull();
-    expect(ended.presentation.behavior.type).not.toBe("yes_no");
+    await expireDueInteractiveActivities(db,"disabled");
+    const after=await card(parent.id);
+    expect(after.state).toBe("active");
+    expect(after.presentation.behavior.type).not.toBe("yes_no");
     expect((await db.query("SELECT count(*)::int AS n FROM interaction_requests WHERE state='pending'")).rows[0].n).toBe(0);
     const end=(await db.query(`SELECT payload FROM notification_events
       WHERE payload#>>'{liveActivity,activityId}'=$1 AND payload#>>'{liveActivity,operation}'='end'`,[parent.id])).rows;
-    expect(end).toHaveLength(1);expect(end[0].payload.liveActivity.dismissAfterSeconds).toBeLessThanOrEqual(5);
-    expect(end[0].payload.liveActivity.interaction).toBeNull();
+    expect(end).toHaveLength(0);
   });
   test("a question waits at most as long as the server allows",async()=>{
     await db.query("UPDATE server_settings SET max_question_seconds=3600");

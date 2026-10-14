@@ -53,16 +53,13 @@ public enum InboxAttentionProjection {
                let latestItem = latest[id], latestItem.id != item.id { return false }
             if let summary = item.activitySummary {
                 guard summary.state == "active", summary.endedAt == nil else { return false }
-                if let expiry = summary.expiresAt, expiry <= now { return false }
             } else if let command = item.liveActivity {
                 guard command.operation != .end else { return false }
-                if let expiry = command.expiresAt, expiry <= now { return false }
             }
             return true
         }
         let pending = current.filter {
-            $0.interaction?.state == .pending && ($0.interaction?.expiresAt ?? .distantPast) > now
-                && !acceptedNotificationIDs.contains($0.id)
+            $0.interaction?.state == .pending && !acceptedNotificationIDs.contains($0.id)
         }
         let requests = pending.filter { !queuedNotificationIDs.contains($0.id) }
         let queued = pending.filter { queuedNotificationIDs.contains($0.id) }
@@ -70,15 +67,8 @@ public enum InboxAttentionProjection {
         let activities = current.filter {
             ($0.activitySummary != nil || $0.liveActivity != nil) && !requestIDs.contains($0.id)
         }
-        // Keep Now useful immediately after an alert, even when it needs no response.
-        // Read status does not make a freshly received notification less recent.
-        let displayedIDs = Set((requests + queued + activities).map(\.id))
-        let recent = canonical.filter {
-            $0.kind == .notification && $0.withdrawnAt == nil
-                && !displayedIDs.contains($0.id)
-                && $0.createdAt <= now && $0.createdAt.addingTimeInterval(900) > now
-        }
-        let recentNotifications = Array(recent.prefix(5))
+        // "Since you looked" comes from the server's NowSummary; the phone keeps no recent window.
+        let recentNotifications: [InboxItem] = []
         let deadlines = current.flatMap { item -> [Date] in
             [item.interaction?.expiresAt,
              item.activitySummary?.expiresAt ?? item.liveActivity?.expiresAt,
@@ -87,7 +77,7 @@ public enum InboxAttentionProjection {
         }
         return Snapshot(requests: requests, activities: activities, queuedRequests: queued,
                         recentNotifications: recentNotifications,
-                        nextTransitionAt: (deadlines + recentNotifications.map { $0.createdAt.addingTimeInterval(900) }).min())
+                        nextTransitionAt: deadlines.min())
     }
 
     /// Overdue means a running activity missed its update. A finished or expired activity is
@@ -99,11 +89,7 @@ public enum InboxAttentionProjection {
 
     public enum ActivityEnding: Equatable, Sendable { case ended, expired }
 
-    /// How a Live Activity finished, or `nil` while it may still be running.
-    /// iOS ends every Live Activity within 12 hours (8 live, 4 more on the Lock Screen), so an older
-    /// one is over even when its history entry carries no end evidence.
-    static let maximumActivityLifetime: TimeInterval = 12 * 3600
-
+    /// How a Live Activity finished, or `nil` while it may still be running (server evidence only).
     public static func activityEnding(_ item: InboxItem, now: Date) -> ActivityEnding? {
         guard item.kind == .liveActivity else { return nil }
         if let summary = item.activitySummary {
@@ -113,8 +99,7 @@ public enum InboxAttentionProjection {
         } else if let expires = item.liveActivity?.expiresAt, expires <= now {
             return .expired
         }
-        let started = item.activitySummary?.createdAt ?? item.createdAt
-        return now.timeIntervalSince(started) > maximumActivityLifetime ? .ended : nil
+        return nil
     }
 
     /// How a card's work turned out. Only the end event carries the final outcome; an older update

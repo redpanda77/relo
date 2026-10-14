@@ -174,6 +174,52 @@ public enum ReloSealedCards {
         }
     }
 
+    /// The title of a row this phone cannot open (never "Encrypted card": it says nothing to the owner).
+    public static let unreadableTitle = "Can't be read on this iPhone"
+
+    /// The titles the server writes in place of sealed text.
+    public static let titlePlaceholders: Set<String> = ["Encrypted card", "Encrypted notification", "Encrypted question"]
+
+    /// A title fit to show: a server placeholder becomes the opened question's first line, else
+    /// `unreadableTitle`. Any other title is returned unchanged.
+    public static func readableTitle(_ title: String, prompt: String? = nil) -> String {
+        guard titlePlaceholders.contains(title) else { return title }
+        let placeholderLines: Set<String> = [promptPlaceholder, statusPlaceholder, "Private notification",
+                                             "Open Relo on your iPhone to read this."]
+        if let prompt, !placeholderLines.contains(prompt), !titlePlaceholders.contains(prompt),
+           let line = prompt.split(whereSeparator: \.isNewline).first?.trimmingCharacters(in: .whitespaces), !line.isEmpty {
+            return String(line.prefix(120))
+        }
+        return unreadableTitle
+    }
+
+    /// One short calm reason for a row this phone cannot open, from a `ReloSealedOpenRecord.Outcome`
+    /// raw value ("not_sealed" when no envelope came for this phone at all).
+    public static func unreadableReason(outcome: String?) -> String {
+        switch outcome {
+        case "not_for_this_phone": "Sealed for another device"
+        case "not_sealed": "Not sealed for this iPhone"
+        case "computer_pending": "From a computer waiting for your approval"
+        case "computer_declined": "From a computer you declined"
+        case "computer_unknown": "From a computer you haven't approved"
+        case "no_keys", "keys_unreadable", "trust_unreadable": "This iPhone's keys aren't ready yet"
+        default: "Its text couldn't be opened"
+        }
+    }
+
+    /// The same reason as one sentence, for the body of a detail screen.
+    public static func unreadableSentence(outcome: String?) -> String {
+        switch outcome {
+        case "not_for_this_phone": "This was sealed for another device, so this iPhone can't read it."
+        case "not_sealed": "This wasn't sealed for this iPhone, so it can't be read here."
+        case "computer_pending": "It comes from a computer waiting for your approval. Approve it in Settings → Security to read it."
+        case "computer_declined": "It comes from a computer you declined, so this iPhone won't open it."
+        case "computer_unknown": "It comes from a computer you haven't approved, so this iPhone won't open it."
+        case "no_keys", "keys_unreadable", "trust_unreadable": "This iPhone's encryption keys aren't ready yet. Open Relo again in a moment."
+        default: "Its text couldn't be opened on this iPhone."
+        }
+    }
+
     public static func isPlaceholderTitle(_ value: String) -> Bool {
         [titlePlaceholder, questionTitlePlaceholder].contains(value)
     }

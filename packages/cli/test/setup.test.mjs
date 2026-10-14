@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -278,29 +279,6 @@ test("relo schema COMMAND prints only those commands plus the exit codes", async
   assert.equal(typo.exitCode, EXIT.USAGE);
   assert.equal(typo.line.error.hint, "Did you mean activity update?");
   assert.equal((await cli(["schema", "setup"], deps)).line.data.commands[0].name, "setup");
-});
-
-test("progress on a card that draws it from steps is flagged, never silently dropped", async () => {
-  const note = "progress follows this card's steps; use --next-step or --step-current";
-  const withSteps = (id) => ({ id, state: "active", sequence: 1, progress: 0.5,
-    presentation: { components: [{ type: "steps", items: [{ label: "A", state: "current" }, { label: "B", state: "pending" }] }] } });
-  const delivery = { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 };
-  const client = {
-    startActivity: async () => ({ activity: withSteps("act_1"), delivery }),
-    getActivity: async () => ({ activity: withSteps("act_1") }),
-    updateActivity: async () => ({ activity: withSteps("act_1"), delivery }),
-  };
-  const deps = { ...cardDependencies(client), env: { CLAUDE_CODE_SESSION_ID: "s-progress" } };
-  const topic = ["--topic", "Release"];
-  const update = await cli(["activity", "update", "--progress", "40%"], deps);
-  assert.equal(update.line.note, note);
-  const quiet = await cli(["activity", "update", "--status", "Working"], deps);
-  assert.equal(quiet.line.note, undefined);
-  const start = await cli(["activity", "start", "--title", "T", "--status", "S", "--progress", "0.2", "--new", ...topic], deps);
-  assert.equal(start.line.note, note);
-  const refused = await cli(["activity", "start", "--title", "T", "--status", "S", "--steps", "A,B", "--progress", "0.2", ...topic], deps);
-  assert.equal(refused.exitCode, EXIT.USAGE);
-  assert.match(refused.line.error.hint, /--step-current or --next-step/u);
 });
 
 test("services list is compact; auth login and logout have compact shapes too", async () => {

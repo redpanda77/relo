@@ -5,7 +5,16 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
     public enum Fact: Equatable, Sendable {
         case symbol(String, String)
         case percentage(Double, LiveActivityPresentation.IdentityRole)
+        /// One "n of m": the current step's own count when it reports one, else the step position.
         case stages(Int, Int)
+    }
+
+    /// "6 of 9" or "6/9" in a progress label: the current step's own count.
+    public static func stepCount(_ label: String?) -> (Int, Int)? {
+        guard let label else { return nil }
+        let pattern = #/(\d+)\s*(?:of|/)\s*(\d+)/#
+        guard let match = label.firstMatch(of: pattern), let n = Int(match.1), let m = Int(match.2), m > 0 else { return nil }
+        return (n, m)
     }
 
     public struct Phase: Equatable, Sendable {
@@ -44,7 +53,8 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
                 }
                 return outcome(interaction.state)
             }
-            if interaction.expiresAt <= now { return outcome("expired") }
+            // Submit guard only (category D): the server keeps a missed question under Needs you.
+            if interaction.expiresAt <= now { return missed }
             switch interaction.responsePhase {
             case .sending: return .init(label: "Sending response…", symbol: nil, permitsResponse: false)
             case .queued:
@@ -67,6 +77,10 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
             }
         }
 
+        /// A question past its deadline: answered only in the app (the server may accept it late).
+        public static let missed = Self(
+            label: "Missed · open Relo to answer", symbol: "clock.badge.exclamationmark", permitsResponse: false)
+
         private static func outcome(_ state: String) -> Self {
             let pair: (String, String) =
                 switch state {
@@ -75,7 +89,7 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
                 case "yes": ("Answered Yes", "checkmark.circle.fill")
                 case "no": ("Answered No", "xmark.circle.fill")
                 case "replied": ("Reply sent", "checkmark.circle.fill")
-                case "expired": ("Request expired", "clock.badge.xmark")
+                case "expired": ("Missed · open Relo to answer", "clock.badge.exclamationmark")
                 case "canceled", "cancelled": ("Request canceled", "xmark.circle.fill")
                 case "superseded": ("Request replaced", "arrow.triangle.2.circlepath")
                 default: ("Response unavailable", "exclamationmark.triangle.fill")
@@ -92,6 +106,10 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
     public let isDecision: Bool
     public let isStale: Bool
     public let permitsInlineResponse: Bool
+    /// The owner-state header chip (NEEDS YOU, MISSED, YOUR TURN, WORKING, QUIET, DONE, FAILED).
+    public var chip: OwnerChip? = nil
+    /// The account's needs-you count for the island's compact and minimal regions; nil when zero.
+    public var needsYouCount: Int? = nil
 
     /// Ask ActivityKit to invalidate by the earliest relevant deadline. The renderer still
     /// distinguishes expired decisions from overdue progress; a stale flag is not failure.
@@ -109,13 +127,18 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
         presentation: LiveActivityPresentation,
         surface: LiveActivityPresentation.Surface,
         interaction: LiveActivityContentInteraction? = nil,
-        isStale: Bool = false, now: Date
+        isStale: Bool = false, owner: LiveActivityOwner? = nil, now: Date
     ) -> Self {
+        let count = owner.flatMap { $0.needsYouCount > 0 ? $0.needsYouCount : nil }
         if presentation.privacy == .private {
-            return .init(
+            // A private card keeps its lock glyph and shows only the count or the fact.
+            var hidden = Self(
                 fact: .symbol("lock.fill", "Private activity"), status: "Open Relo to view",
                 components: [], phase: nil, measuredProgress: nil, isDecision: false,
                 isStale: false, permitsInlineResponse: false)
+            hidden.chip = owner?.chip
+            hidden.needsYouCount = count
+            return hidden
         }
         let assigned = presentation.components(for: surface)
         let step = assigned.first { if case .steps = $0 { true } else { false } }
@@ -152,13 +175,19 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
             fact = .symbol(terminal.1, status)
         } else if presentation.state.kind == "needs_action" || decision {
             fact = .symbol("questionmark.circle.fill", status)
+        } else if owner?.isMissedQuestion == true {
+            status = ResponseStatus.missed.label
+            fact = .symbol(ResponseStatus.missed.symbol ?? "clock.badge.exclamationmark", status)
         } else if isStale {
-            status = "Update overdue"
-            fact = .symbol("exclamationmark.clock.fill", status)
+            status = "Quiet"
+            fact = .symbol("moon.zzz.fill", status)
+        } else if let phase {
+            // With steps, progress belongs to the current step: one number, never a card-wide percent.
+            let label: String? = if case .progressBar(_, _, _, let label) = progress { label } else { nil }
+            let count = Self.stepCount(label) ?? (phase.current ?? phase.completed, phase.total)
+            fact = .stages(count.0, count.1)
         } else if case .progressBar(_, let role, let value, _) = progress {
             fact = .percentage(value, role)
-        } else if let phase {
-            fact = .stages(phase.completed, phase.total)
         } else {
             fact = .symbol(presentation.state.icon.systemImageName, status)
         }
@@ -172,14 +201,17 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
         } else {
             visible = Array(assigned.prefix(1))
         }
-        return .init(
+        var projection = Self(
             fact: fact, status: status, components: visible, phase: phase,
             measuredProgress: measured, isDecision: decision,
             isStale: isStale && terminal == nil,
-            permitsInlineResponse: decision && terminal == nil
+            permitsInlineResponse: decision && terminal == nil && owner?.isMissedQuestion != true
                 && interaction.map { ResponseStatus.make(interaction: $0, now: now).permitsResponse }
                     == true
         )
+        projection.chip = owner?.chip
+        projection.needsYouCount = count
+        return projection
     }
 
     /// The option this phone picked; for a choice answered elsewhere, the server's status line,

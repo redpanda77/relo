@@ -45,7 +45,7 @@ suite("Canonical ActivityKit decisions",()=>{
     expect(first.body.delivery.durableCommands).toBe(0);
     const stored=await activity(first.body.liveActivityId);expect(stored.state).toBe("expired");
     expect(stored.presentation.behavior.type).toBe("informational");expect(stored.expires_at.toISOString()).toBe(first.body.relevance.deadlines.actionExpiresAt);
-    expect((await answer(first.body)).status).toBe(409);
+    expect((await answer(first.body)).status).toBe(200); // late answer: a stored fact, not permission
     const replay=await ask(relevance);expect(replay.status).toBe(200);expect(replay.body.relevance).toEqual(first.body.relevance);
     expect(replay.body.liveActivityId).toBe(first.body.liveActivityId);
     await db.query("DELETE FROM notification_events WHERE id=$1",[first.body.eventId.slice(4)]);

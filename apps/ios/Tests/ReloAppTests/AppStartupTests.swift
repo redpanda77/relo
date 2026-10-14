@@ -683,7 +683,6 @@ final class InboxIntegrationTests: XCTestCase {
             }.sink { state in
                 let presentation = CurrentInboxPresentation(state: state, now: state.snapshot.evaluatedAt ?? Date())
                 XCTAssertEqual(presentation.needsMe.count, 101)
-                XCTAssertEqual(presentation.recentChanges.count, 250)
                 end = DispatchTime.now().uptimeNanoseconds; painted.fulfill()
             }
             let start = DispatchTime.now().uptimeNanoseconds

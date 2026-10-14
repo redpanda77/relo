@@ -1,6 +1,6 @@
 {
   "name": "@relo/notification-contracts",
-  "version": "0.16.9",
+  "version": "0.18.15",
   "private": true,
   "type": "module",
   "main": "./dist/src/index.js",

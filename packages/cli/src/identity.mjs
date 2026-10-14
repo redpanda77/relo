@@ -7,6 +7,9 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { requireText } from "./args.mjs";
 import { UsageError } from "./errors.mjs";
 import { definedFields, enumOption, optionalText, shellQuote } from "./support.mjs";
+import { cardOwner, detectAgent, detectCaller, waitsShort } from "./caller.mjs";
+
+export { detectAgent } from "./caller.mjs";
 
 export function activityContext(options, stdin) {
   const inherited = stdinContext(stdin.context);
@@ -79,29 +82,9 @@ export function repositoryName(cwd, exists = existsSync) {
 
 const text = (value) => (typeof value === "string" && value.trim() ? value.trim() : undefined);
 
-/**
- * The calling agent harness, recognized from its environment. Only markers confirmed from the
- * harness's own source or documentation are listed; any other harness sets RELO_SOURCE.
- *  - Claude Code: CLAUDECODE=1 and CLAUDE_CODE_ENTRYPOINT (Claude Code docs, environment variables).
- *  - Codex: CODEX_* variables such as CODEX_THREAD_ID, CODEX_CI (Codex CLI); CODEX_HOME is only config.
- *  - OpenCode: OPENCODE=1 (set in OpenCode's shell tool environment).
- *  - Gemini CLI: GEMINI_CLI=1 (google-gemini/gemini-cli, packages/core/src/services/shellExecutionService.ts,
- *    GEMINI_CLI_IDENTIFICATION_ENV_VAR_VALUE, set for every shell command the agent runs).
- *  - Cursor agent (CLI and IDE terminals): CURSOR_AGENT (Cursor staff confirm the CLI exports CURSOR_AGENT=1
- *    to agent shell commands, forum.cursor.com "Cursor CLI is not setting CURSOR_AGENT=1 ..."; undocumented).
- */
-export function detectAgent(env = process.env) {
-  if (env.CLAUDECODE === "1" || text(env.CLAUDE_CODE_ENTRYPOINT)) return "Claude Code";
-  if (Object.keys(env).some((key) => /^CODEX_(?!HOME$)/u.test(key))) return "Codex";
-  if (env.OPENCODE === "1") return "OpenCode";
-  if (env.GEMINI_CLI === "1") return "Gemini CLI";
-  if (text(env.CURSOR_AGENT)) return "Cursor";
-  return undefined;
-}
-
 /** True when an agent harness (or a RELO_SESSION) is running this command: its shell tool kills long commands. */
 export function inAgentContext(env = process.env) {
-  return Boolean(agentSession(env) || detectAgent(env));
+  return waitsShort(detectCaller(env));
 }
 
 function cleanLabel(value, maximum) {
@@ -251,20 +234,12 @@ export function stdinContext(value) {
 }
 
 /**
- * The agent session running this command, when one can be identified.
- * RELO_SESSION is the generic form: any harness or script exports a stable id and gets one card per session.
- * Harness variables: CLAUDE_CODE_SESSION_ID (Claude Code), CODEX_THREAD_ID (Codex). No other harness
- * variable is listed because none could be confirmed from official documentation or source
- * (Gemini CLI's shell environment carries no session id); those harnesses use RELO_SESSION.
+ * Compatibility view of the typed caller (src/caller.mjs): the owner of the caller's own card as
+ * { agent, id }, or null for an unidentified caller or a keyless script. New code uses dependencies.caller.
  */
 export function agentSession(env = process.env) {
-  const generic = env.RELO_SESSION?.trim();
-  if (generic) return { agent: "relo", id: generic };
-  const claude = env.CLAUDE_CODE_SESSION_ID?.trim();
-  if (claude) return { agent: "claude-code", id: claude };
-  const codex = env.CODEX_THREAD_ID?.trim();
-  if (codex) return { agent: "codex", id: codex };
-  return null;
+  const owner = cardOwner(detectCaller(env));
+  return owner ? { agent: owner.label, id: owner.id } : null;
 }
 
 export function shortHash(value) {
@@ -272,17 +247,17 @@ export function shortHash(value) {
 }
 
 /**
- * One card per piece of work. Inside an agent session every command lands on that session's
- * card; elsewhere the card is identified by source › project › topic. --name overrides both.
+ * One card per piece of work. Inside an identified session every command lands on that session's
+ * card (the key format predates sessionKey() and is kept so running cards survive an upgrade); elsewhere the card is identified by source › project › topic. --name overrides both.
  */
-export function cardKey({ name, context, env }) {
+export function cardKey({ name, context, env, caller }) {
+  const owner = cardOwner(caller ?? detectCaller(env ?? process.env));
   // With an encryption identity the key is keyed, so the server cannot test guesses of names (E2.5).
-  const identity = name !== undefined || !agentSession(env) ? loadIdentitySync(env ?? process.env) : null;
+  const identity = name !== undefined || !owner ? loadIdentitySync(env ?? process.env) : null;
   const keyed = (value) => (identity
     ? createHmac("sha256", subkey(identity, "card-keys")).update(value).digest("hex").slice(0, 24) : shortHash(value));
   if (name !== undefined) return identity ? `name-${keyed(name)}` : name;
-  const session = agentSession(env);
-  if (session) return `session-${session.agent}-${shortHash(session.id)}`;
+  if (owner) return `session-${owner.label}-${shortHash(owner.id)}`;
   if (!context?.providerName || !context?.project || !context?.threadName) return undefined;
   return `work-${keyed([context.providerName, context.project, context.threadName].join("\u0000"))}`;
 }

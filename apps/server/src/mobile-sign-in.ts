@@ -157,7 +157,7 @@ export function registerMobileSignInRoutes(app: Hono, db: Database, accountAuth:
     const account = await getOwnerAccount(db, accountAuth, context.req.raw.headers);
     if (!account) {
       const next = `/mobile/sign-in${new URL(context.req.url).search}`;
-      return context.redirect(`/?next=${encodeURIComponent(next)}`);
+      return context.redirect(`/sign-in?next=${encodeURIComponent(next)}`);
     }
     return securePage(context, approvalPage(request.data, account.user, origin));
   });

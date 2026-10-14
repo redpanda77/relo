@@ -65,3 +65,6 @@ export function signalAt(mix: NowMix, position: number): Signal | null {
   }
   return shares.at(-1)?.signal ?? null
 }
+
+/** The Sessions section's violet (iOS ReloHoloTheme.sessions); not a work meaning, so not a Signal. */
+export const SESSIONS_CSS = "#8B7CFF"

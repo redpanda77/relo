@@ -246,6 +246,31 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
         }
     }
 
+    /// Dismisses a missed question from Needs you (`POST api/devices/self/questions/{id}/dismiss`, device
+    /// bearer). The server derives the change; 404 means the question is no longer dismissable.
+    public func dismissMissedQuestion(credential: DeviceCredential, questionId: String) async throws {
+        guard questionId.hasPrefix("int_"), questionId.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" })
+        else { throw MobileAPIError.invalidRequest }
+        var request = request(path: "api/devices/self/questions/\(questionId)/dismiss", method: "POST")
+        request.authorize(bearer: credential.accessToken)
+        let (_, response) = try await data(for: request)
+
+        switch response.statusCode {
+        case 200, 204:
+            return
+        case 400, 404:
+            throw MobileAPIError.invalidRequest
+        case 401:
+            throw MobileAPIError.reauthenticationRequired
+        case 403:
+            throw MobileAPIError.forbidden
+        case 429:
+            throw MobileAPIError.rateLimited(retryAfterSeconds: Self.retryAfter(response))
+        default:
+            throw MobileAPIError.unavailable
+        }
+    }
+
     public func submitInteraction(
         credential: DeviceCredential,
         notificationId: String,
@@ -426,7 +451,7 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
             .notConnectedToInternet,
             .networkConnectionLost,
         ].contains(error.code) {
-            throw MobileAPIError.tailnetUnavailable
+            throw MobileAPIError.serverUnreachable
         } catch {
             throw MobileAPIError.unavailable
         }

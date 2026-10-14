@@ -115,7 +115,7 @@ describe("dashboard Connections handlers", () => {
   test("redirects anonymous requests back to Connections", async () => {
     const response = await app(false).request("/dashboard/connections");
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("/?next=%2Fdashboard%2Fconnections");
+    expect(response.headers.get("location")).toBe("/sign-in?next=%2Fdashboard%2Fconnections");
   });
 
   test("serves phones, clients, and webhooks in one page without secrets or credential material", async () => {

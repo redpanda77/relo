@@ -345,17 +345,17 @@ extension AppModel {
         agentSessionsFetchedAt = now
         agentSessions = clear ? [] : [
             AgentSession(id: "ags_" + uuid(21), harness: "codex", computer: "MacBook Pro", account: "Work", project: "relo",
-                         startedAt: now.addingTimeInterval(-38 * 60), lastEventAt: now.addingTimeInterval(-60),
+                         startedAt: now.addingTimeInterval(-38 * 60), lastSeenAt: now.addingTimeInterval(-60),
                          card: .init(id: "act_" + uuid(1), state: "active", quietForSeconds: 60), presence: .working),
             AgentSession(id: "ags_" + uuid(22), harness: "claude-code", computer: "MacBook Pro", account: "Work", project: "design-archive",
-                         startedAt: now.addingTimeInterval(-95 * 60), lastEventAt: now.addingTimeInterval(-14 * 60),
+                         startedAt: now.addingTimeInterval(-95 * 60), lastSeenAt: now.addingTimeInterval(-14 * 60),
                          card: .init(id: "act_" + uuid(2), state: "active", quietForSeconds: 840), presence: .quiet),
             AgentSession(id: "ags_" + uuid(23), harness: "gemini", computer: "Mac mini", account: nil, project: "website",
-                         startedAt: now.addingTimeInterval(-12 * 60), lastEventAt: now.addingTimeInterval(-2 * 60),
+                         startedAt: now.addingTimeInterval(-12 * 60), lastSeenAt: now.addingTimeInterval(-2 * 60),
                          presence: .noCard),
             AgentSession(id: "ags_" + uuid(24), harness: "opencode", computer: "Mac mini", account: nil, project: "docs",
-                         state: "lost", startedAt: now.addingTimeInterval(-50 * 60),
-                         lastEventAt: now.addingTimeInterval(-20 * 60), presence: .lost),
+                         startedAt: now.addingTimeInterval(-50 * 60),
+                         lastSeenAt: now.addingTimeInterval(-20 * 60), presence: .ended, phase: .ended),
         ]
         let response: [String: Any] = [
             "items": subjects, "retired": [], "total": subjects.count, "hasMore": false,

@@ -1,6 +1,8 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ReloApiClient } from "../src/api-client.mjs";
+import { detectCaller } from "../src/caller.mjs";
 import { EXIT, run } from "../src/cli.mjs";
 import { ApiError } from "../src/errors.mjs";
 
@@ -50,24 +52,23 @@ test("activity start --dry-run validates and prints what would be sent, with no 
 
 test("--dry-run applies the real checks: identity, steps vs progress, progress parsing, truncation notes", async () => {
   const box = offline();
-  const missing = await cli(["activity", "start", "--title", "x", "--status", "y", "--dry-run"], box.deps);
+  const missing = await cli(["activity", "start", "--title", "Deploy web", "--status", "Building the image", "--dry-run"], box.deps);
   assert.equal(missing.exitCode, EXIT.USAGE);
   assert.match(missing.line.error.hint, /--topic/u);
-  const both = await cli(["activity", "start", "--title", "x", "--status", "y", "--steps", "A,B", "--progress", "2/5", ...IDENTITY, "--dry-run"], box.deps);
-  assert.equal(both.exitCode, EXIT.USAGE);
-  assert.match(both.line.error.message, /cannot be combined with --steps/u);
-  const ambiguous = await cli(["activity", "start", "--title", "x", "--status", "y", "--progress", "40", ...IDENTITY, "--dry-run"], box.deps);
+  const both = await cli(["activity", "start", "--title", "Deploy web", "--status", "Building the image", "--steps", "Build image,Run tests", "--progress", "2/5", ...IDENTITY, "--dry-run"], box.deps);
+  assert.equal(both.line.would.body.progress, 0.4, "progress lands on the current step");
+  const ambiguous = await cli(["activity", "start", "--title", "Deploy web", "--status", "Building the image", "--progress", "40", ...IDENTITY, "--dry-run"], box.deps);
   assert.equal(ambiguous.exitCode, EXIT.USAGE);
-  const counted = await cli(["activity", "start", "--title", "x", "--status", "y", "--progress", "3/10", ...IDENTITY, "--dry-run"], box.deps);
+  const counted = await cli(["activity", "start", "--title", "Deploy web", "--status", "Building the image", "--progress", "3/10", ...IDENTITY, "--dry-run"], box.deps);
   assert.equal(counted.line.would.body.progress, 0.3);
   assert.equal(counted.line.would.body.progressLabel, "3 of 10");
-  const long = await cli(["activity", "start", "--title", "T".repeat(120), "--status", "y", ...IDENTITY, "--dry-run"], box.deps);
+  const long = await cli(["activity", "start", "--title", "T".repeat(120), "--status", "Building the image", ...IDENTITY, "--dry-run"], box.deps);
   assert.equal(Array.from(long.line.would.body.title).length <= 80, true);
   assert.match(long.line.note, /title shortened to 80 characters/u);
-  const device = await cli(["activity", "start", "--title", "x", "--status", "y", "--device", "dev_abcdefghijkl", ...IDENTITY, "--dry-run"], box.deps);
+  const device = await cli(["activity", "start", "--title", "Deploy web", "--status", "Building the image", "--device", "dev_abcdefghijkl", ...IDENTITY, "--dry-run"], box.deps);
   assert.deepEqual(device.line.would.body.deviceIds, ["dev_abcdefghijkl"]);
   assert.match(device.line.note, /not checked against the server/u);
-  assert.equal((await cli(["activity", "start", "--title", "x", "--status", "y", "--device", "bad", ...IDENTITY, "--dry-run"], box.deps)).exitCode, EXIT.USAGE);
+  assert.equal((await cli(["activity", "start", "--title", "Deploy web", "--status", "Building the image", "--device", "bad", ...IDENTITY, "--dry-run"], box.deps)).exitCode, EXIT.USAGE);
   assert.deepEqual(box.calls, []);
 });
 
@@ -108,6 +109,12 @@ test("ask --dry-run validates the question and never prints the callback token",
   const session = await cli(["ask", "Deploy?", "--yes-no", "--dry-run"], { ...box.deps, env: { RELO_SESSION: "s-1" } });
   assert.equal(session.exitCode, EXIT.OK);
   assert.match(session.line.note, /read from the session's card/u);
+  // Commands act on the typed caller they are given, not on harness variables of their own.
+  const typed = await cli(["ask", "Deploy?", "--yes-no", "--dry-run"], { ...box.deps, env: {}, caller: detectCaller({ CLAUDE_CODE_SESSION_ID: "c-1" }) });
+  assert.equal(typed.exitCode, EXIT.OK, "an agent session needs no --topic");
+  const nested = await cli(["ask", "Deploy?", "--yes-no", "--dry-run"], { ...box.deps,
+    env: { CLAUDE_CODE_SESSION_ID: "c-1", CODEX_THREAD_ID: "t-1" } });
+  assert.equal(nested.exitCode, EXIT.USAGE, "an unidentified caller has no session card to read the topic from");
   assert.deepEqual(box.calls, []);
 });
 

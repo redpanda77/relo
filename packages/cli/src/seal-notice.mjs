@@ -46,7 +46,8 @@ export async function trustFor({ client, config, dependencies, notes }) {
     return { ...trust, committed: committed || trust.store.committed?.[config.apiUrl] === true
       || trustedPhones(trust.store, config.apiUrl).length > 0 };
   } catch (error) {
-    if (committed) throw sealingUnavailable(error?.message);
+    // The cause stays on the error: a network failure lets `relo work` queue the write (EDGE.3).
+    if (committed) throw Object.assign(sealingUnavailable(error?.message), { cause: error });
     // Never sealed for this server: a server without key routes or a test double stays readable.
     const unsupported = error?.status === 404 || error instanceof TypeError || STORE_ERRORS.has(error?.code);
     if (!unsupported) notes?.push(`not end-to-end encrypted: ${error?.message ?? "keys unavailable"}`);
@@ -59,14 +60,14 @@ export async function trustFor({ client, config, dependencies, notes }) {
  * "names"), or null when there is nobody to seal for. Agent sessions carry no other envelope, so
  * without this the phone could only show the handles.
  */
-export async function sealSessionNames({ names, session, client, config, dependencies }) {
-  if (!names || Object.keys(names).length === 0) return null;
+export async function sealSessionNames({ names = {}, title, session, client, config, dependencies }) {
+  if (Object.keys(names).length === 0 && !title) return null;
   const trust = await trustFor({ client, config, dependencies, notes: [] });
   if (!trust) return null;
   const { eligible, readers } = sealablePhones(trust.store, config.apiUrl, trust.devices);
   if (eligible.length === 0) return null;
   return sealEnvelope({ kind: "names", context: `ses:${String(session).slice(0, 32)}`, sender: identityKeys(trust.store),
-    recipients: [...eligible, ...readers], content: { names } });
+    recipients: [...eligible, ...readers], content: { names, ...(title ? { title } : {}) } });
 }
 
 export function sealingUnavailable(reason) {

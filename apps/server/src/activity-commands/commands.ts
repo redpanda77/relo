@@ -11,8 +11,8 @@ import type { SubjectTransaction } from "../relevance/commands.js";
 import { NativeOccurrenceError } from "../relevance/native-occurrence.js";
 import { createDashboardActivityEvent,dashboardActivitySourceName } from "./dashboard-projection.js";
 import {
-boundedPresentationText,cancelPendingActivityInteractions,cleanupUndeliverableTerminalTokens,createActivityCommands,storeSealedCard,
-expireLockedRows,serializeTaskActivity
+boundedPresentationText,cleanupUndeliverableTerminalTokens,createActivityCommands,storeSealedCard,
+serializeTaskActivity
 } from "./runtime.js";
 import { startCredentialActivity } from "./start-credential.js";
 import { startOwnerActivity } from "./start-owner.js";
@@ -69,13 +69,8 @@ export async function executeActivityCommandInTransaction(tx: SubjectTransaction
     const replay=await replayActivityCommand(tx,authorized,command);
     if(replay) return await finish(replay);
     const now=(await tx.query<{at:Date}>("SELECT clock_timestamp() AS at")).rows[0]!.at;
-    const due=current.expires_at<=now||(actor.kind==="service"&&current.lifecycle_provider&&current.stale_at&&current.stale_at<=now);
-    if(actor.kind==="owner"&&command.operation==="update"&&due) return await finish({kind:"activity_not_active"});
-    if(actor.kind!=="owner"&&current.state==="active"&&due) {
-      await expireLockedRows(tx,[current],command.apnsMode);
-      const terminal=await lockCommandActivity(tx,authorized,command.activityId);
-      return await finish({kind:"activity_terminal",activity:serializeTaskActivity(terminal!)},true);
-    }
+    if(actor.kind==="owner"&&command.operation==="update"&&current.expires_at<=now) return await finish({kind:"activity_not_active"});
+    // A producer write past expires_at continues the card: time never ends work (1.7).
     if(current.state!=="active") return await finish({kind:"activity_terminal",activity:serializeTaskActivity(current)});
     if(command.input.ifSequence!==undefined&&Number(current.sequence)!==command.input.ifSequence)
       return await finish({kind:"sequence_conflict",activity:serializeTaskActivity(current)});
@@ -86,7 +81,8 @@ export async function executeActivityCommandInTransaction(tx: SubjectTransaction
       await assertAccountPresentationAssets(tx,actor.principalId,underneath.presentation);
       // Its sealed text is stored with it (A3), so the card returns with matching envelopes.
       const held=(await tx.query<ActivityRow>(`UPDATE live_activities SET resume_presentation=$3::jsonb,
-          context=COALESCE($4::jsonb,context),sealed=COALESCE($5::jsonb,sealed),updated_at=statement_timestamp()
+          context=COALESCE($4::jsonb,context),sealed=COALESCE($5::jsonb,sealed),updated_at=statement_timestamp(),
+          declared_at=statement_timestamp()
         WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
       [current.id,actor.principalId,underneath.presentation,command.input.context??null,
         command.operation==="update"?command.input.sealed??null:null])).rows[0];
@@ -103,7 +99,7 @@ export async function executeActivityCommandInTransaction(tx: SubjectTransaction
     // Historical owner rows with an implicit audience have no immutable target
     // command to emit. Preserve their bulk terminal settlement without rebinding.
     if(actor.kind==="owner"&&updated.target_device_ids===null) return await finish({kind:"untargeted_terminal"},true);
-    await cancelPendingActivityInteractions(tx,actor.principalId,current.id);
+    // An update or end never cancels a pending question: questions reference work, never own it (1.10).
     if(current.resume_presentation) {
       await tx.query("UPDATE live_activities SET resume_presentation=NULL WHERE id=$1",[current.id]);
       await withdrawQuestionFallbacks(tx,{principalId:actor.principalId,activityId:current.id});

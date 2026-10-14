@@ -54,10 +54,10 @@ databaseSuite("activity presentation lease runtime grants", () => {
       const presentation = currentTestPresentationRecord("Lease runtime","Starting");
       const activity = (await client.query<{ id: string }>(
         `INSERT INTO live_activities(
-           principal_id,activity_key,title,status,start_idempotency_key,target_device_ids,
+           producer_type,principal_id,activity_key,title,status,start_idempotency_key,target_device_ids,
            presentation,presentation_sha256,presentation_policy,presentation_policy_source,
            presentation_preset_id,presentation_preset_revision
-         ) VALUES ($1,$2,'Lease runtime','Starting',$3,ARRAY[$4]::uuid[],$5::jsonb,$6,$7::jsonb,$8,$9,$10)
+         ) VALUES ('script',$1,$2,'Lease runtime','Starting',$3,ARRAY[$4]::uuid[],$5::jsonb,$6,$7::jsonb,$8,$9,$10)
          RETURNING id`,
         [principal, `lease-${suffix}`, `start-${suffix}`, device,presentation.presentation,
           presentation.presentationHash,presentation.presentationPolicy,presentation.presentationPolicySource,

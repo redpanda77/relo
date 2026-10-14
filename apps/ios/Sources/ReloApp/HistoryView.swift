@@ -55,7 +55,7 @@ struct HistoryView: View {
             if visible.isEmpty {
                 ReloEmptyState(title: filtered ? "No matches" : since == nil ? "No history yet" : "Nothing recent",
                     detail: filtered ? "Try another search, or clear the filters."
-                    : since == nil ? "Notifications and finished work from your agents collect here."
+                    : since == nil ? "Notifications and finished work from your sessions and scripts collect here."
                     : "Older notifications are hidden on this iPhone. Choose how long to keep them in Settings.",
                     symbol: filtered ? "magnifyingglass" : "clock")
                     .listRowBackground(Color.clear)
@@ -228,7 +228,9 @@ struct HistoryView: View {
     private func row(_ row: HistoryRow) -> some View {
         Button { Task { await model.openNotification(notificationID: row.id) } } label: {
             HistoryRowView(row: row, showsSource: sourceID == nil, showsProject: projectID == nil,
-                           responseStatus: model.responseFeedback(for: row.id)?.status)
+                           responseStatus: model.responseFeedback(for: row.id)?.status,
+                           serverOutcome: model.nowSummary?.allItems.first { $0.notificationId == row.id }
+                               .flatMap(HistoryServerOutcome.init(item:)))
         }.buttonStyle(.plain)
     }
 }

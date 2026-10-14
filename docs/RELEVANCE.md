@@ -3,14 +3,14 @@
 The executable definitions are `packages/contracts/src/relevance.ts` and
 `apps/ios/Sources/ReloCore/RelevancePolicy.swift`. Both consume the same
 policy, evaluation, and ordering examples. The contracts test checks that the
-Swift fixture is byte-for-byte identical. Ordinary API notices now persist and
+Swift fixture is byte-for-byte identical. Ordinary API notices persist and
 enforce the contract at admission, claim, and final APNs authorization. Ordinary
 API decisions also use canonical identity, action deadlines and exact response
 adjudication. Ordinary webhook and Dashboard text questions, API ActivityKit
 questions, and activity waits share canonical admission. Native activity adapters
 share typed lifecycle commands and an immutable occurrence journal; iOS consumes the bounded current-state
-projection. Server0.7.41 adds operational progress/incident admission and retention
-protection; CLI0.7.22 captures default notice/question chronology durably.
+projection. Operational progress and incidents have their own admission and retention
+protection, and the CLI records each notice's and question's occurrence durably before sending.
 
 ## Ordinary API notice admission
 
@@ -85,13 +85,12 @@ Stale progress remains current. Resolved, expired, withdrawn and superseded reco
 become eligible under ordinary history policy; retained subject/version fences
 continue to reject obsolete replay.
 
-CLI0.7.22 accepts these explicit policies through `--stdin`. It also saves default
+The CLI accepts these explicit policies through `--stdin`. It also saves default
 notice/question occurrence, intent digest and independent identity before sending,
 including ActivityKit questions. Retry after process restart keeps the original
 alert/action window; capture failure sends nothing. Explicit producer occurrence
-and policy remain immutable. The native CLI0.7.21 journal additionally captures
-the exact activity target and sequence before mutation. Older requests without
-captured metadata may conflict on replay after upgrade rather than renew attention.
+and policy remain immutable. The CLI's native activity journal additionally captures
+the exact activity target and sequence before mutation.
 
 ## Ordinary decision admission and responses
 
@@ -122,7 +121,7 @@ time, for its final deadline guard and response timestamp. Settlement and the
 response receipt commit together. Terminal status lives in event relevance;
 the head's original admission receipt remains immutable for retry comparison.
 
-API ActivityKit questions and CLI0.7.19 accept explicit canonical relevance.
+API ActivityKit questions and the CLI accept explicit canonical relevance.
 Request, event and native activity share the original action deadline; expired
 arrivals persist terminal state and queue zero jobs. Replacement ends the old
 native prompt through an independent one-hour cleanup command. Legacy per-device

@@ -203,6 +203,8 @@ export interface AlertSend extends CommonSendOptions {
   threadId?: string;
   collapseId?: string;
   mutableContent?: boolean;
+  /** aps `interruption-level` (spec 7): questions time-sensitive, failures and notices active, finishes passive. */
+  interruptionLevel?: "passive" | "active" | "time-sensitive";
   customData?: Record<string, unknown>;
 }
 
@@ -816,6 +818,12 @@ export class ApnsProviderCleanroom {
       if (input.threadId !== undefined) aps["thread-id"] = requireNonempty(input.threadId, "threadId");
       const collapseId = input.collapseId === undefined ? undefined : requireOriginCollapseId(input.collapseId);
       if (input.mutableContent === true) aps["mutable-content"] = 1;
+      if (input.interruptionLevel !== undefined) {
+        if (!["passive","active","time-sensitive"].includes(input.interruptionLevel)) {
+          throw validationError("interruptionLevel must be passive, active or time-sensitive");
+        }
+        aps["interruption-level"] = input.interruptionLevel;
+      }
       if (input.customData && Object.hasOwn(input.customData, "aps")) {
         throw validationError("customData must not contain aps");
       }

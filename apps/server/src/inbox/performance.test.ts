@@ -169,7 +169,8 @@ suite("Integrated freshness and bounded reads", () => {
     const jobs = await claimDeliveryJobs(db, 100, new Date(0));
     expect(jobs.map(job => `ntf_${job.event_id}`).sort()).toEqual([valid.eventId, replacement.eventId, latest.body.eventId].sort());
     expect(jobs.some(job => events.includes(`ntf_${job.event_id}`))).toBe(false);
-    expect((await answer(expired)).status).toBe(409); expect((await answer(old)).status).toBe(409);
+    expect((await answer(expired)).status).toBe(200); // late answer: stored fact, not permission
+    expect((await answer(old)).status).toBe(409);
     expect((await answer(valid)).status).toBe(201);
     expect((await read("/api/inbox/pending")).total).toBe(1);
     // An independent late transaction cannot partially leak an event/outbox or be lost by repair.

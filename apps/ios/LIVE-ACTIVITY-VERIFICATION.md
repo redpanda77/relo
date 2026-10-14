@@ -22,7 +22,7 @@ Use `ReloLiveActivityPreviews.swift` to inspect content, expanded, compact, and 
 
 `LiveActivityFittingLayout` replaces the card's flexible maximum-height frame. It proposes the same finite surface budget to `ViewThatFits` during measurement and placement, then reports the selected child's measured height instead of reserving the entire budget. It does not apply root `fixedSize` or remove overflow limits. The rich progress variant no longer repeats its measured fact in the footer; condensed variants retain the fact.
 
-Five SwiftUI `ImageRenderer` regression tests (eight parameterized cases) cover the 96/132 pt budgets, retention of fitting primary content, smaller and unbounded host proposals, and 80/120-character decision context at 240/300/380 pt widths. The old allocation behavior failed; the new allocator passed. These execute against macOS SwiftUI, **not** the iOS WidgetKit/ActivityKit host. They establish allocator regression coverage, not the full native matrix.
+Six SwiftUI `ImageRenderer` regression tests (fourteen parameterized cases) cover the 96/132 pt budgets, retention of fitting primary content, smaller and unbounded host proposals, a question that keeps its answer buttons within the 110 pt Lock Screen and 84 pt Island budgets at 240/300/380 pt widths, and a three- or four-option choice that stays on one row. The old allocation behavior failed; the new allocator passed. These execute against macOS SwiftUI, **not** the iOS WidgetKit/ActivityKit host. They establish allocator regression coverage, not the full native matrix.
 
 Run the isolated layout suite:
 
@@ -47,11 +47,11 @@ After the user has installed the dedicated reference host, launch it with Xcode 
 - Add `--reference-alert` to request an alert update after five seconds; return to the Home Screen before the update. The host briefly requests background execution. Record whether iOS actually presents an alert; requesting an alert is not evidence it appeared.
 - Repeat on a Dynamic Island device and a device without Dynamic Island. Capture alert-triggered expansion separately from long-press expansion.
 - Use `expiry-transition` to check a pending decision fifteen seconds after creation. Record whether ActivityKit invalidation visibly removes the actions at the deadline; an intent/server refusal alone does not pass the UI gate.
-- Use `stale-progress` to check “Update overdue” independently of the interaction deadline and lifecycle.
+- Use `stale-progress` to check the stale state (“Quiet”) independently of the interaction deadline and lifecycle.
 
 Existing cases: `information`, `progress-bar`, `steps`, `image-cache-miss`, `approval`, `yes-no`, `appearance-light`, `appearance-dark`, `appearance-system`, `long-text`, `mixed-identity`, `response-sending`, `response-queued`, `response-accepted`, `response-rejected`, `response-expired`.
 
-Additional wire-tested cases: `max-text`, `many-components`, `all-pending`, `all-complete`, `zero-progress`, `full-progress`, `decision-with-progress`, `response-denied`, `response-canceled`, `stale-progress`, `expiry-transition`.
+Additional wire-tested cases: `max-text`, `many-components`, `all-pending`, `all-complete`, `zero-progress`, `full-progress`, `decision-with-progress`, `response-denied`, `response-canceled`, `stale-progress`, `expiry-transition`, `question-short`, `question-long`.
 
 Synthetic references never submit production approvals. Real App Intent verification requires a separate authenticated test request on the user's installed production build.
 
@@ -59,7 +59,7 @@ Synthetic references never submit production approvals. Real App Intent verifica
 
 For every capture, record source commit/hash, unsigned/signed build provenance, model, iOS version, locale, text size, appearance, scale, fixture, lifecycle/response state, and trigger. Mark each item as passed, failed, or not observed. Never infer a passed presentation from a different trigger or device. Keep private payloads and credentials out of artifacts.
 
-Required surfaces: Lock Screen, non-Island alert banner, alert-triggered expanded Island, long-press expanded Island, compact, minimal with competing activity, and StandBy. Required breadth: small/large Island hosts; maximum text and components; 0/100% and all-pending stages; approved/denied/queued/rejected/expired states; light/dark, large text, VoiceOver, Reduced Motion, reduced luminance/AOD, and privacy.
+Required surfaces: Lock Screen, non-Island alert banner, alert-triggered expanded Island, long-press expanded Island, compact, minimal with competing activity, StandBy, and the Apple Watch Smart Stack. Required breadth: small/large Island hosts; maximum text and components; 0/100% and all-pending stages; approved/denied/queued/rejected/expired states; light/dark, large text, VoiceOver, Reduced Motion, reduced luminance/AOD, and privacy.
 
 ## Pass conditions
 

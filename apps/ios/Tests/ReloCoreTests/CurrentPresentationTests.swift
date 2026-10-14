@@ -16,19 +16,20 @@ struct CurrentPresentationTests {
         let screen = CurrentInboxPresentation(state: state, now: now)
         #expect(screen.needsMe.map(\.subjectId) == [decision.subjectId])
         #expect(screen.actionableCount == 400)
-        #expect(screen.recentChanges.count == 250)
         let identity = try #require(CurrentDecisionIdentity(subject: decision, scope: state.scope.storage))
         #expect(CurrentInboxPresentation.availability(for: identity, state: state, now: now) == .available)
     }
 
-    @Test func originalDeadlineRemovesAttentionAndClearsUnprovableGlobalCountOffline() throws {
+    /// Past its deadline a question stays listed until the server retires it (missed questions
+    /// take late answers); the phone only stops offering submission and drops the unprovable count.
+    @Test func originalDeadlineKeepsQuestionButStopsSubmissionOffline() throws {
         let decision = subject(1)
         var state = try state([decision], total: 500, actionable: 400)
         state.connection = .offline
         let identity = try #require(CurrentDecisionIdentity(subject: decision, scope: state.scope.storage))
         let later = now.addingTimeInterval(301)
         let screen = CurrentInboxPresentation(state: state, now: later)
-        #expect(screen.needsMe.isEmpty)
+        #expect(screen.needsMe.count == 1)
         #expect(screen.actionableCount == nil)
         #expect(CurrentInboxPresentation.availability(for: identity, state: state, now: later) == .expired)
     }
@@ -52,7 +53,6 @@ struct CurrentPresentationTests {
         let state = try state([decision, progress])
         let screen = CurrentInboxPresentation(state: state, now: now)
         #expect(screen.needsMe.count == 1)
-        #expect(screen.running.count == 1)
         #expect(CurrentInboxPresentation.freshnessLabel(for: progress, now: now) == "Out of date")
         let identity = try #require(CurrentDecisionIdentity(subject: decision, scope: state.scope.storage))
         #expect(CurrentInboxPresentation.availability(for: identity, state: state, now: now) == .available)

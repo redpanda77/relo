@@ -30,9 +30,4 @@ struct TodayLegendTests {
 
 @Suite("Quiet label")
 struct QuietLabelTests {
-    @Test func formatsMinutesAndHours() {
-        #expect(LiveNowProjection.Card.quietLabel(25 * 60) == "25M")
-        #expect(LiveNowProjection.Card.quietLabel(2 * 3600 + 5 * 60) == "2H 5M")
-        #expect(LiveNowProjection.Card.quietLabel(3 * 3600) == "3H")
-    }
 }

@@ -68,6 +68,23 @@ The iPhone app is the reference. The web dashboard and the pages the server rend
 - The deck's ambient motion belongs to `NowHud`.
 - Everything stops under `prefers-reduced-motion`.
 
+## Landing and sign-in
+
+- **`/` for a signed-out visitor to a claimed server** is the landing page (`features/landing`). An unclaimed server, or any `?next=` return path, goes straight to the form; the form lives at `/sign-in` and every sign-in redirect points there.
+- The landing leads with the value proposition ([docs/VALUE-PROPOSITION.md](../../docs/VALUE-PROPOSITION.md)): the hero subtitle names agents, scripts and apps wherever they run, and the section right under it (`#one-place`) shows sources (laptop, another computer, home server or cloud, your app) converging on Relo and the four things the owner gets (live status, time-sensitive alerts, details, input). Plans, sessions and hooks come later, as supporting features.
+- The landing hero is one three.js scene (`landing-scene.ts`, with a bloom pass): the plasma core in the meaning colours, instrument rings, and agent signals streaming in as comets that ripple the core. It loads in its own chunk after first paint, compiles its shaders asynchronously, pauses off screen, renders one still frame under reduced motion, and falls back to a painted orb without WebGL. Colours go through `THREE.Color` (linear), and the background is `scene.background`, never a raw clear colour, so nothing is encoded twice.
+- GSAP (`landing-motion.ts`) only reveals and loops: section titles rise by line, blocks lift in once, and the three demos (the live Lock Screen card, the `relo ask` terminal with its approve card, the sealed-to-plain privacy cards) play while visible. Scrolling stays native; nothing is pinned or scrubbed into a story.
+- Comets end just outside the orb's displaced surface and aim at its visible face; each impact ripple is placed in the spinning orb's own frame so it starts where the comet hit.
+- GSAP never owns a property something else owns: entrances move the CTA row (magnetic hover moves the buttons), and the chip float uses yPercent (the entrance uses y). Landing-only rules are unlayered, so they beat Tailwind utilities: never pair a landing class that sets `display` with `hidden`/`md:hidden`.
+- A "Pause motion" control in the nav stops GSAP, the scene and CSS loops. An error boundary keeps a plain page if the chunk or motion fails, and hidden reveals are forced visible in print.
+- The sign-in page shows no server row (the address bar already says it) and fits one phone screen: a 200px deck, 150px on short screens.
+- Landing sections have no kicker above the title: the title is enough.
+- Rising text: every line mask (hero `.landing-line`, SplitText `.split-line-mask`) is padded 0.2em below and offset by a negative margin, so descenders fit; lines start at yPercent 130. After the entrance the hero masks stop clipping and section titles revert their split, so text at rest is plain.
+- Load path: the server reads Vite's manifest (`dist/.vite/manifest.json`) and lists the landing chunk, its CSS and imports (and the scene at low priority) in the landing document, so they download with the entry instead of one round trip after another. The hero copy animates in at once and never waits for WebGL.
+- Below 1024px the core takes the top band and the copy follows beneath it. Phones (below 720px, the "Phones" block in `landing.css`) get their own layouts rather than stacked desktop ones: the `#one-place` sources and outcomes become 2×2 tiles around the hub; Stay in control shows a smaller phone and tighter question rows; privacy becomes a timeline down the screen instead of four boxes; the feature cards become a swipeable row that snaps and peeks the next card. The floating hero chips appear only on wide screens (1280px and up).
+- The sign-in page on desktop is the deck alone at a 600px stage (`NowHud stage`), drawn natively rather than scaled, beside the card; phones keep the compact deck with the headline.
+- Both pages link to the public GitHub repository (`features/auth/github.tsx`); the sign-in page returns to the landing through the logo.
+
 ## E2EE display rules (behaviour, not style)
 
 - Handles (`p-…`, `t-…`, `c-…`, `a-…`, `w-…`) always render through `displayName()`.

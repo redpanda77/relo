@@ -12,8 +12,20 @@ export type AuthIdentity = {
   tokenPrefix?: string;
   expiresAt?: Date | null;
   scopes: Set<string>;
-  credentialKind: "principal" | "device";
+  credentialKind: "principal" | "device" | "harness";
+  /** The harness credential's id (kind "harness" only). */
+  harnessCredentialId?: string;
 };
+
+/** The only scope a harness credential holds. */
+export const PRESENCE_WRITE_SCOPE = "presence:write";
+
+/**
+ * The only routes a harness credential may call (method and exact path). Enforced here, once, for
+ * every /api route: a hook credential that leaks can post presence and nothing else, and a new
+ * route is closed to it unless it is added to this list.
+ */
+const HARNESS_ROUTES: ReadonlySet<string> = new Set(["POST /api/agent-sessions/observed"]);
 
 declare module "hono" {
   interface ContextVariableMap {
@@ -91,7 +103,27 @@ export function authenticate(db: Database) {
          AND d.revoked_at IS NULL AND p.disabled_at IS NULL`,
       [digests[0]],
     );
-    if (!device.rowCount) return context.json(await refusal(db,digests),401);
+    if (!device.rowCount) {
+      const harness = await db.query<{ id: string; principal_id: string }>(
+        `UPDATE harness_credentials h SET last_used_at=now()
+         FROM owner_principals p
+         WHERE h.token_hash=$1 AND h.revoked_at IS NULL AND p.id=h.principal_id AND p.disabled_at IS NULL
+         RETURNING h.id,h.principal_id`,
+        [digests[1]],
+      );
+      if (!harness.rowCount) return context.json(await refusal(db,digests),401);
+      if (!HARNESS_ROUTES.has(`${context.req.method} ${new URL(context.req.url).pathname}`)) {
+        return context.json({ error: "harness_credential_not_allowed" },403);
+      }
+      context.set("auth", {
+        principalId: harness.rows[0]!.principal_id,
+        harnessCredentialId: harness.rows[0]!.id,
+        scopes: new Set([PRESENCE_WRITE_SCOPE]),
+        credentialKind: "harness",
+      });
+      await next();
+      return;
+    }
     context.set("auth", {
       principalId: device.rows[0]!.principal_id,
       deviceCredentialId: device.rows[0]!.credential_id,
@@ -118,8 +150,12 @@ async function refusal(db: Database, digests: string[]): Promise<{ error: string
      SELECT p.disabled_at IS NOT NULL,(c.revoked_at IS NOT NULL OR d.revoked_at IS NOT NULL),
        (c.expires_at IS NOT NULL AND c.expires_at<=now())
      FROM device_credentials c JOIN devices d ON d.id=c.device_id JOIN owner_principals p ON p.id=d.principal_id
-     WHERE c.token_hash=$2 LIMIT 1`,
-    [digests,digests[0]],
+     WHERE c.token_hash=$2
+     UNION ALL
+     SELECT p.disabled_at IS NOT NULL,h.revoked_at IS NOT NULL,false
+     FROM harness_credentials h JOIN owner_principals p ON p.id=h.principal_id WHERE h.token_hash=$3
+     LIMIT 1`,
+    [digests,digests[0],digests[1]],
   );
   const row = found.rows[0];
   if (!row) return { error: "unauthorized" };

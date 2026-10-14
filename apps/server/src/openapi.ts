@@ -1,3 +1,7 @@
+import {
+  agentSessionObservedRequestSchema,harnessCredentialCreateRequestSchema,
+  workFinishRequestSchema,workPauseRequestSchema,workResumeRequestSchema,workStartRequestSchema,workUpdateRequestSchema,
+} from "@relo/notification-contracts";
 import { z } from "zod";
 import {
   activityEndSchema,
@@ -8,9 +12,11 @@ import {
   activityWaitSchema,
 } from "./activity-commands/schemas.js";
 import { createInteractionSchema,notificationRequestSchema } from "./schemas.js";
+import { producerFinishSchema,producerStartSchema,producerUpdateSchema } from "./works/script-routes.js";
 
 /**
- * The HTTP API an integrating app calls with a CLI login's token, described as OpenAPI 3.1. Request
+ * The HTTP API an integrating app calls with a CLI login's token (plus the session, harness and owner
+ * routes the CLI itself uses), described as OpenAPI 3.1. Request
  * bodies come from the same zod schemas the routes parse, so the description cannot drift from what
  * the server accepts; `openapi.test.ts` fails when docs/api/openapi.json is out of date.
  * Refinements that JSON Schema cannot express (a question is one line of at most 120 characters on a
@@ -21,12 +27,26 @@ type Operation = {
   description?: string;
   body?: z.ZodType;
   query?: Record<string,{ description: string; schema: object }>;
+  headers?: Record<string,{ description: string; required?: boolean }>;
   errors?: string[];
 };
 
-const idParameter = (name: string,prefix: string) => ({
-  name,in: "path",required: true,schema: { type: "string",pattern: `^${prefix}_` },
-});
+const PATH_PARAMETERS: Record<string,{ description?: string; pattern?: string }> = {
+  interactionId: { pattern: "^int_" },
+  activityId: { pattern: "^act_" },
+  workId: { pattern: "^wrk_",description: "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so." },
+  producerKey: { description: "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",pattern: "^[A-Za-z0-9_-]{43}$" },
+  harnessCredentialId: { pattern: "^hck_" },
+};
+const pathParameter = (name: string) => {
+  const { pattern,description } = PATH_PARAMETERS[name] ?? {};
+  return { name,in: "path",required: true,...(description ? { description } : {}),schema: { type: "string",...(pattern ? { pattern } : {}) } };
+};
+const sessionHeaders = {
+  "Relo-Session-Key": { description: "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",required: true },
+  "Relo-Harness": { description: "The harness id, for example claude-code." },
+};
+const harnessNote = "Accepts only a harness credential (scope presence:write); every other route refuses it and this route refuses any other credential.";
 const idempotencyHeader = {
   name: "Idempotency-Key",in: "header",required: false,schema: { type: "string",maxLength: 200 },
   description: "Repeat a request with the same key to get the first result instead of a second effect.",
@@ -96,6 +116,79 @@ const operations: Record<string,Record<string,Operation>> = {
   "/api/devices": {
     get: { summary: "List the account's phones" },
   },
+  "/api/session/works": {
+    post: { summary: "Start (or continue) the session's work",body: workStartRequestSchema,headers: sessionHeaders,
+      description: "An agent session's own surface: one open work per session. Starting again continues the open work; `new` parks it. "
+        + "Text is `{ readable }` or `{ sealed: true }` with the sealed envelope. Scopes: activities:write." },
+    get: { summary: "Read the session's open and parked work",headers: sessionHeaders },
+  },
+  "/api/session/works/{workId}": {
+    get: { summary: "Read one of the session's works",headers: sessionHeaders },
+    patch: { summary: "Update the work",body: workUpdateRequestSchema,headers: sessionHeaders,
+      description: "Plan changes keep stable step ids; a stale `baseVersion` is refused." },
+  },
+  "/api/session/works/{workId}/pause": {
+    post: { summary: "Pause the work",body: workPauseRequestSchema,headers: sessionHeaders },
+  },
+  "/api/session/works/{workId}/resume": {
+    post: { summary: "Resume a paused or parked work",body: workResumeRequestSchema,headers: sessionHeaders },
+  },
+  "/api/session/works/{workId}/finish": {
+    post: { summary: "Finish the work with an outcome",body: workFinishRequestSchema,headers: sessionHeaders,
+      description: "Every finish declares an outcome; open steps become skipped." },
+  },
+  "/api/producers/{producerKey}/works": {
+    post: { summary: "Start (or continue) a script's work",body: producerStartSchema,
+      description: "For scripts and apps with no agent harness. Requires Idempotency-Key. One open work per producer key; `new` parks it. "
+        + "Scope: activities:write. A request that names a session is refused (`wrong_surface`).",
+      errors: ["idempotency_key_required","idempotency_conflict","invalid_producer_key"] },
+    get: { summary: "List the producer's works",query: { state: { description: "open (default), paused or all.",schema: { type: "string",enum: ["open","paused","all"] } } } },
+  },
+  "/api/producers/{producerKey}/works/{workId}": {
+    get: { summary: "Read a work" },
+    patch: { summary: "Update a work",body: producerUpdateSchema },
+  },
+  "/api/producers/{producerKey}/works/{workId}/pause": { post: { summary: "Pause a work" } },
+  "/api/producers/{producerKey}/works/{workId}/resume": { post: { summary: "Resume a work" } },
+  "/api/producers/{producerKey}/works/{workId}/finish": {
+    post: { summary: "Finish a work with an outcome",body: producerFinishSchema },
+  },
+  "/api/producers/{producerKey}/works/{workId}/heartbeat": {
+    post: { summary: "Renew the work's lease",
+      description: "Body `{ \"leaseSeconds\": 60..3600 }`. Declares nothing else; after the lease lapses the normal freshness rules apply." },
+  },
+  "/api/works": {
+    get: { summary: "List works (owner)",query: {
+      state: { description: "`live` lists only works that are open now.",schema: { type: "string",enum: ["live"] } },
+      limit: { description: "1-200, default 50.",schema: { type: "integer",minimum: 1,maximum: 200,default: 50 } },
+    },description: "The owner's cross-session read; a caller that names a session is refused (`owner_only`). Scope: activities:read." },
+  },
+  "/api/works/{workId}": {
+    get: { summary: "Read a work (owner)" },
+  },
+  "/api/now": {
+    get: { summary: "The owner's derived state",query: {
+      since: { description: "The owner's last look, clamped to the last 8 hours.",schema: { type: "string",format: "date-time" } },
+    },description: "Every item carries its derived owner state, visibility and urgency, and `refreshAt`. Clients display it and keep no policy of their own. Scope: inbox:read." },
+  },
+  "/api/agent-sessions": {
+    get: { summary: "List sessions (owner)",query: {
+      phase: { description: "Comma-separated: working, waiting, idle, ended. Counts cover every phase.",schema: { type: "string" } },
+    },description: "Scope: activities:read." },
+  },
+  "/api/agent-sessions/observed": {
+    post: { summary: "Report a session's phase",body: agentSessionObservedRequestSchema,
+      description: `One snapshot of the CLI's local session state machine, sent on a phase change and as a heartbeat (at most every 5 minutes) while working. A snapshot applies only when its \`seq\` is higher than the stored one. No prompt, tool name or transcript ever travels. ${harnessNote}`,
+      errors: ["harness_credential_required"] },
+  },
+  "/api/harness-credentials": {
+    post: { summary: "Mint a harness credential",body: harnessCredentialCreateRequestSchema,
+      description: "The token is shown once. Scope: services:write.",errors: ["credential_limit_reached"] },
+    get: { summary: "List harness credentials",description: "Scope: services:read." },
+  },
+  "/api/harness-credentials/{harnessCredentialId}": {
+    delete: { summary: "Revoke a harness credential",description: "Scope: services:write." },
+  },
 };
 
 const refusals = ["unauthorized","account_disabled","credential_revoked","login_expired"];
@@ -111,11 +204,12 @@ export function buildOpenApi(version: string): object {
     paths[path] = {};
     for (const [method,operation] of Object.entries(methods)) {
       const parameters: object[] = [];
-      for (const match of path.matchAll(/\{(\w+)\}/g)) {
-        parameters.push(idParameter(match[1]!,match[1] === "interactionId" ? "int" : "act"));
+      for (const match of path.matchAll(/\{(\w+)\}/g)) parameters.push(pathParameter(match[1]!));
+      for (const [name,header] of Object.entries(operation.headers ?? {})) {
+        parameters.push({ name,in: "header",required: header.required ?? false,description: header.description,schema: { type: "string" } });
       }
       for (const [name,query] of Object.entries(operation.query ?? {})) parameters.push({ name,in: "query",required: false,...query });
-      if (method !== "get") parameters.push(idempotencyHeader);
+      if (method !== "get" && method !== "delete") parameters.push(idempotencyHeader);
       paths[path][method] = {
         summary: operation.summary,
         ...(operation.description ? { description: operation.description } : {}),
@@ -134,7 +228,8 @@ export function buildOpenApi(version: string): object {
     info: {
       title: "Relo integration API",
       version,
-      description: "Questions, cards and notifications for an app signed in with `relo auth login`. "
+      description: "Questions, work, cards and notifications for an app signed in with `relo auth login`, plus the session, "
+        + "harness-credential and owner routes the CLI and apps use. "
         + "See docs/INTEGRATING.md.",
     },
     security: [{ bearer: [] }],

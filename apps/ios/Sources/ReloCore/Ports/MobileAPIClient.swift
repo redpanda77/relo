@@ -11,7 +11,7 @@ public enum MobileAPIError: Error, Equatable, Sendable {
     case forbidden
     case idempotencyConflict
     case rateLimited(retryAfterSeconds: Int?)
-    case tailnetUnavailable
+    case serverUnreachable
     case unavailable
     case invalidResponse
     case decisionRejected(NotificationDecisionRejection)
@@ -71,7 +71,7 @@ public enum DeliveryTransportStatusErrorGuidance {
             "Your Relo server session expired. Sign in again to check the delivery path."
         case MobileAPIError.forbidden:
             "This Relo server account cannot read delivery-path status."
-        case MobileAPIError.tailnetUnavailable:
+        case MobileAPIError.serverUnreachable:
             "Your Relo server is unreachable."
         case MobileAPIError.invalidResponse:
             "Relo server returned an incompatible delivery-path status."
@@ -110,6 +110,7 @@ public protocol MobileAPIClient: Sendable {
         credential: DeviceCredential,
         activityId: String
     ) async throws
+    func dismissMissedQuestion(credential: DeviceCredential, questionId: String) async throws
     func submitInteraction(
         credential: DeviceCredential,
         notificationId: String,
@@ -143,6 +144,10 @@ public extension MobileAPIClient {
         credential: DeviceCredential,
         activityId: String
     ) async throws {
+        throw MobileAPIError.unavailable
+    }
+
+    func dismissMissedQuestion(credential: DeviceCredential, questionId: String) async throws {
         throw MobileAPIError.unavailable
     }
 }

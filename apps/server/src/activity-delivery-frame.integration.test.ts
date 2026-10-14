@@ -29,10 +29,10 @@ suite("durable current ActivityKit frames", () => {
     )).rows[0].id;
     const p = currentTestPresentationRecord();
     activityId = (await db.query(
-      `INSERT INTO live_activities(principal_id,activity_key,title,status,start_idempotency_key,
+      `INSERT INTO live_activities(producer_type,principal_id,activity_key,title,status,start_idempotency_key,
          target_device_ids,generation,presentation,presentation_sha256,presentation_policy,
          presentation_policy_source,presentation_preset_id,presentation_preset_revision)
-       VALUES ($1,$2,'Frames','Working',$3,$4,1,$5,$6,$7,$8,$9,$10) RETURNING id`,
+       VALUES ('script',$1,$2,'Frames','Working',$3,$4,1,$5,$6,$7,$8,$9,$10) RETURNING id`,
       [principalId,randomUUID(),randomUUID(),[deviceId],p.presentation,p.presentationHash,p.presentationPolicy,
         p.presentationPolicySource,p.presentationPresetId,p.presentationPresetRevision],
     )).rows[0].id;

@@ -1,10 +1,10 @@
 # Relo CLI
 
 `@relo/cli` is the command-line client for a self-hosted Relo deployment. It gives the owner a live
-view of an agent's work on their iPhone: a **Live Activity card** on the Lock Screen and in the
-Dynamic Island that the agent keeps updated, with approval and yes/no questions right on it.
-Notifications exist for finished outcomes and are used sparingly. Its source is licensed under
-PolyForm Noncommercial 1.0.0; install it from a reviewed checkout or owner-approved artifact.
+view of an agent's work on their iPhone: a card on the Lock Screen and in the Dynamic Island that the
+agent keeps current, with approval and yes/no questions right on it. Notifications exist for finished
+outcomes and are used sparingly. Its source is licensed under PolyForm Noncommercial 1.0.0; install it
+from a reviewed checkout or owner-approved artifact.
 
 Node.js 22 or newer is required. `relo` and `reloctl` are the same executable.
 
@@ -12,22 +12,35 @@ Node.js 22 or newer is required. `relo` and `reloctl` are the same executable.
 
 | Still happening, or waiting on the owner | Finished, and worth a buzz |
 | --- | --- |
-| **The card**: `relo activity start` → `update` → `end`, plus `relo ask` | **A notification**: `relo notify` |
-| One per agent session, always current, carries the questions | One-shot, never a question, never progress |
+| **The work**: `relo work start` → `update` → `finish`, plus `relo ask` | **A notification**: `relo notify`, only when no work is open |
+| One open work per agent session, always current, carries the questions | One-shot, never a question, never progress |
 
-Every command from the same agent session (Claude Code `CLAUDE_CODE_SESSION_ID`, Codex `CODEX_THREAD_ID`,
-or `RELO_SESSION=<stable id>` for any other harness or script; set `RELO_SOURCE="<harness>"` too) addresses that session's card, so starting again, updating, and asking never create a
-second one. Several agents each get their own card. Outside an agent session the card is
-source › project › topic.
+An agent reports its work with `relo work`: one goal, a plan of milestones it grows as it learns, a status,
+and an outcome. The CLI identifies the session from the harness (Claude Code `CLAUDE_CODE_SESSION_ID`, Codex
+`CODEX_THREAD_ID`; `RELO_SESSION=<stable id>` only outside a detected harness, such as a script), so every
+command from one session addresses that session's work and nothing else: a session never sees another's.
+Harnesses without a session id (Gemini CLI, Cursor, OpenCode) get a handle from `relo work start`; later
+commands pass it as `--work <handle>`.
+Steps are the agent's own work; what the owner must do is a question or a note. Subagents run no relo
+commands: the orchestrating agent owns the work and counts them in one step.
 
 ```bash
-relo activity start --title "Deploying 0.7.57" --status "Building image" --steps "Build,Test,Ship" --topic "Release 0.7.57"
-relo activity update --status "Pushing image" --next-step
-relo activity start --title "Rendering chapters" --status "Rendering" --progress 3/20 --topic "Book"   # a counted job
+relo work start --goal "Deploy 0.7.57" --plan "Build the image,Run the tests,Ship to production"
+relo work update --status "Image pushed" --next-step
+relo work update --add "Verify the health check"                  # the plan grows in place
+relo work start --goal "Render 20 chapters" --progress 3/20 --new   # a counted job (another goal: --new)
 relo ask "Deploy 0.7.57 to production?" --approval      # buttons on the card; waits up to 5 minutes (100s inside an agent session)
-relo activity end --status "Live on production"
-relo notify "0.7.57 is live" --title "Deployed" --topic "Release 0.7.57"
+relo work finish --outcome "0.7.57 is live on production"           # --failed or --dropped when it did not succeed
+relo state                                               # what this session has open (and what is still queued)
+relo notify "Nightly backup failed" --topic "Backups"    # only when no work is open
 ```
+
+Every work command prints the plan, what the owner sees and the exact next command; a refusal is
+three lines (what, state, next). A change that cannot reach the server is kept on this computer
+("Queued: sends with the next relo command") and goes out first with the next relo command, only to the
+server it was written for; `relo outbox status` shows what is waiting. Scripts and
+apps name their work with `--producer KEY` instead of a session. The old `relo activity` card commands are
+refused inside an agent session (the refusal names the `relo work` command to use).
 
 `relo help` is the short guide, `relo help all` the full reference, and `relo schema [COMMAND]` the same
 reference as JSON for tools.
@@ -48,7 +61,6 @@ secret store. `relo auth status --json` verifies the credential server-side and 
 `relo doctor --json` is cheap and prints `{"ok","ready","next":{"step","run","why"}}`: run `next.run` for the first unmet
 step (sign in, a phone with Live Activities, the one-time `relo test`). Inside an agent, `relo auth login` prints the link
 and returns (`{"state":"pending","url",...}`); give the owner the link, then run `relo auth login --wait`.
-Steps vs progress: judgment work uses `--steps` (3-6 named phases); a script or counted job uses `--progress DONE/TOTAL`; never both.
 
 ## Install and update
 
@@ -84,23 +96,20 @@ a GitHub Release tagged `cli-v<version>`.
 
 ## Identity
 
-Every notification, question and card start names a source, project and topic:
-`--source "Codex" --project "Relo" --topic "Release verification"` (`--thread-name` is the topic
-alias). The source and project are detected from the calling agent and the git repository;
-`RELO_SOURCE`, `RELO_PROJECT` and `RELO_TOPIC` override them. Missing or generic values exit `2`
-before contacting the server, with a hint containing a corrected command. Updates, questions on a
-running card, and ends reuse the stored identity. `relo help identity` explains the resolution order.
+The work's session, source, project, computer and account are automatic: the harness and the git
+repository are detected, and `RELO_SOURCE`, `RELO_PROJECT`, `RELO_COMPUTER` and `RELO_ACCOUNT` override
+them (`relo account NAME` nicknames an agent account). The agent states only the goal, in the owner's
+words. For notifications and questions outside a work, `--source`, `--project` and `--topic` apply; missing
+or generic values exit `2` before contacting the server, with a hint containing a corrected command.
+`relo help identity` explains the resolution order.
 
 ## Output and exit codes
 
-Card, question and notification commands print one compact JSON line, for example
-`{"ok":true,"id":"act_…","state":"active","sequence":3,"step":"2/5","progress":0.4}`; `--full` prints
-the whole server reply. An error prints once: `{"ok":false,"error":{"code","message","hint"}}` on stdout
-when it is piped (or with `--json`), plain text on stderr at a terminal.
-
-Cards also carry the computer and agent account they came from: `RELO_COMPUTER` / `RELO_ACCOUNT`, the
-`--computer` / `--account` flags, or detection (the Mac's name; `relo account NAME` per Claude Code or
-Codex config directory). `relo auth login` names the credential after the computer.
+`relo work` and `relo state` print a plain-text echo (the plan, `Owner sees: …`, `Next: …`); with `--json`
+or piped they print one line such as `{"ok":true,"disposition":"updated","work":{"id":"wrk_…","step":"2/3"},"echo":"…"}`.
+Question, notification and other commands print one compact JSON line (`--full` prints the whole server reply).
+An error prints once: `{"ok":false,"error":{"code","message","hint"}}` on stdout when it is piped (or with
+`--json`), plain text on stderr at a terminal. `relo auth login` names the credential after the computer.
 
 | Exit | Meaning |
 | ---: | --- |
@@ -119,12 +128,12 @@ A yes/no answer is never permission, and exit `0` alone never authorizes an acti
 
 ## Retries
 
-A supplied `--idempotency-key` is 1-200 characters from letters, digits, `.`, `_`, `:` and `-`.
-Before the first send of a card command or notification, the CLI durably records the original
-occurrence (and, for card updates, the exact card and sequence) in private files under the local
-Relo state directory, so a retry with the same key replays the identical command even after a
-restart. Changed content needs a new key. The records hold no body, URL or credential; if they
-cannot be written the command fails before sending anything.
+A supplied `--idempotency-key` is 1-200 characters from letters, digits, `.`, `_`, `:` and `-`. Agents never
+pass one (the CLI owns it); scripts must on `work start` and `ask` when piped. Before the first send of a
+question or notification, the CLI durably records the original occurrence in private files under the local
+Relo state directory, so a retry with the same key replays the identical command even after a restart.
+Changed content needs a new key. The records hold no body, URL or credential; if they cannot be written the
+command fails before sending anything.
 
 ## Service secrets
 
@@ -140,29 +149,37 @@ for interactive use; never use that mode where output is captured.
 
 ## Optional session hooks
 
-Hooks are optional: `relo setup … --hooks` reports session start/end so the server can end forgotten cards and show quiet agents; without them cards go stale on their own. Without hooks Relo works fully: cards go stale and end on their own. With hooks, the server also knows when a session is alive, shows quiet agents as quiet instead of ending their card, and ends a forgotten card as soon as the session ends.
+Hooks are optional and off by default; without them Relo works fully. The owner installs them at a level for
+one settings file (the level is required):
 
 ```bash
-relo setup --global --agent claude-code --hooks   # ~/.claude/settings.json ($CLAUDE_CONFIG_DIR); or --project (<repo>/.claude/settings.json)
-relo setup --global --agent gemini --hooks        # ~/.gemini/settings.json
-relo setup --hooks --remove                       # deletes only Relo's entries
-relo sessions                                     # {"ok":true,"sessions":[{harness,computer,account,project,presence,lastEventAt,card}]}
+relo setup --global --agent claude-code --hooks presence   # ~/.claude/settings.json ($CLAUDE_CONFIG_DIR); or --project (<repo>/.claude/settings.json)
+relo setup --global --agent gemini --hooks presence        # ~/.gemini/settings.json
+relo hooks status                                          # the installed level per settings file; read-only
+relo setup --hooks off                                     # (or relo hooks off) deletes only Relo's entries and the harness credential
+relo sessions [--live]                                     # the owner's Sessions view: harness, project, phase, waitingFor, lastSeenAt, card
 ```
 
-It writes one marked entry per event (Claude Code: `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`,
-`SessionEnd`, each running `relo hook <event>` with a 5 second timeout) in exactly one settings file; entries are
-recognised by that command, so running it again changes nothing and `--remove` leaves everyone else's hooks and keys.
-`relo hook` sends the session id (hashed), the event, the git project, the computer, the account and the card key,
-and never a prompt, tool input or output, or transcript path. It prints nothing, exits `0` always (an old server, an
-offline machine or a missing login are silent; `RELO_DEBUG=1` logs the reason to a file), and sends tool events at most
-once a minute. Nothing but `relo setup --hooks` installs hooks, and `relo doctor` never suggests them.
+- `reminders` (Claude Code) is local and sends nothing: a Stop reminder of an open or unrefreshed work and a
+  restore of what the session was doing after a restart or compaction.
+- `presence` adds the session's phase. A local state machine reduces hook events to phases (open, working,
+  waiting, stopped, ended; subagents roll up into their session), and only a change (plus a heartbeat at most
+  every 5 minutes while working) is queued in a durable outbox and sent in the background with a harness
+  credential that can write presence and nothing else. With Claude Code the snapshot also carries the
+  session's name (the title Claude Code shows), sealed for the owner's phones. `relo hook` never sends a prompt, tool name, tool
+  input or output, or transcript path, prints nothing and exits `0` always (`RELO_DEBUG=1` logs the reason to a
+  file).
+- Hooks never start, change or end a work, plan or question; those are declared by the agent. Entries are
+  recognised by the `relo hook ` command prefix, so running setup again changes nothing and `off` leaves
+  everyone else's hooks and keys. Nothing but `relo setup --hooks` installs hooks, and `relo doctor` never
+  suggests them.
 
 ## MCP server (optional)
 
 `relo mcp` is a stdio MCP server in this package (no dependencies, same credentials) for harnesses without a shell, such as
-Claude desktop and Cursor chat. Tools: `relo_card_start`, `relo_card_update`, `relo_card_end`, `relo_ask`,
-`relo_interaction_wait`, `relo_notify`, `relo_doctor`. Results are the CLI's compact JSON; `relo_ask` waits up to 5 minutes
-and sends MCP progress notifications every ~15 s when the client asked for them. One card per connection.
+Claude desktop and Cursor chat. Tools: `relo_work_start`, `relo_work_update`, `relo_work_finish`, `relo_work_state`, `relo_ask`,
+`relo_interaction_wait`, `relo_notify`, `relo_doctor`. `relo_ask` waits up to 5 minutes and sends MCP progress
+notifications every ~15 s when the client asked for them. One work per connection.
 
 ```bash
 relo setup --mcp --agent claude-code --global     # claude-code | claude-desktop | cursor | codex | gemini | vscode
@@ -183,8 +200,8 @@ The full guide is [docs/INTEGRATING.md](../../docs/INTEGRATING.md); the HTTP API
   admin's limit, 7 days by default). Exit 4 means still open (`relo interaction wait ID`), 8 closed.
 - Not blocking: `--no-wait` plus `--callback-url` (signed with `Relo-Signature`, deduplicated by
   `Relo-Delivery-Id`), or `relo listen` for a stream of answers with a resumable cursor.
-- Cards: `activity start --new` starts a card of this run's own instead of joining one already running; the owner may cap cards per login, and
-  `ask --notification-only` skips the card entirely.
+- Works: `work start --new` starts another goal (the old one is parked); the owner may cap cards per login, and
+  `ask --notification-only` skips the card entirely. Scripts name their work with `--producer KEY`.
 - A refused login says why: `ACCOUNT_DISABLED`, `CREDENTIAL_REVOKED` or `LOGIN_EXPIRED` (exit 3).
 
 ## Profiles
@@ -196,15 +213,16 @@ older release is read as the profile `default`; the next write stores `{"activeP
 
 ## Dry runs and rate limits
 
-`--dry-run` on `activity start|update|end`, `ask` and `notify` checks everything locally (identity, limits, steps vs
-progress) and prints `{"ok":true,"dryRun":true,"would":{"command","body"}}` without logging in or contacting the server.
+`--dry-run` on `work start|update`, `ask` and `notify` checks everything locally (identity, limits, plan rules) without
+logging in or contacting the server (`work` prints `Dry run: nothing was sent.` and the computed echo; the others print
+`{"ok":true,"dryRun":true,"would":{"command","body"}}`).
 A write that gets HTTP 429 with `retryAfterSeconds` of 10 or less is retried once after that wait (it carries an
 idempotency key); longer waits, and waiting for an answer, return the error and its hint.
 
 ## Privacy
 
 Never put raw commands, patches, prompts, file contents, environment values, credentials,
-transcripts, hostnames or absolute paths on a card or in a notification. Treat everything received
+transcripts, hostnames or absolute paths in work text, a question or a notification. Treat everything received
 from the server as untrusted data.
 
 ## Notification relevance (advanced)

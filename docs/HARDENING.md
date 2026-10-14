@@ -2,8 +2,9 @@
 
 Relo can be served from a public address: a VPS, or a tunnel such as Cloudflare Tunnel. Relo's own
 authentication must hold on its own there, because a proxy-level login (Cloudflare Access, a VPN) is
-optional and many operators will not use one. This page lists what already protects a public
-server and the gaps that are still open, in priority order. Each gap names the code it concerns.
+optional and many operators will not use one. This page lists what protects a public server, the
+gaps an audit found and how each was handled (every one is closed or an accepted trade-off), and
+what an operator still has to do. Each item names the code it concerns.
 
 ## In place
 
@@ -17,10 +18,17 @@ server and the gaps that are still open, in priority order. Each gap names the c
   overall per minute, sign-up 5 and 30, CLI sign-in start 10 and 40 (`auth-throttle.ts`,
   `device-authorization.ts`). A refused attempt is not counted, so a full limit empties a minute after
   the last accepted attempt.
+- **Hooks hold a narrower credential.** A harness credential has the single scope `presence:write`,
+  works only on `POST /api/agent-sessions/observed` (every other route refuses it, before the route
+  runs), is rate limited per credential and per account, and is revoked by `relo hooks off`. The
+  ordinary CLI credential cannot post observed state
+  ([HOOKS-AND-HARNESSES.md](HOOKS-AND-HARNESSES.md#the-harness-credential)).
 - **Request bodies are capped** at 1 MiB on every route, and HTTPS origins send HSTS (`app.ts`).
 - **Registration is Closed** by default; the admin creates accounts.
 - **Dashboard pages** send a strict CSP with `frame-ancestors 'none'`, `nosniff` and `no-store`
-  (`web/http.ts`); cookies are `Secure` on an HTTPS origin.
+  (`web/http.ts`); cookies are `Secure` on an HTTPS origin. The CLI authorization page
+  (`/cli/authorize`) runs its script only from `/cli/authorize.js`, under a CSP that allows no
+  inline script (`device-authorization.ts`). A signed-out visitor is sent to `/sign-in?next=…`.
 - **Asset fetches** refuse private and reserved addresses and pin the resolved address
   (`presentation-assets.ts`).
 - **Containers** run read-only, non-root, with all capabilities dropped; the API and worker use a
@@ -97,7 +105,7 @@ to the Dashboard (`PUT /api/dashboard/end-to-end/policy`). A stolen CLI key can 
 
 ### 6. "Open" registration on a public origin (closed)
 
-Closed on 14 October 2026: when `APP_URL` is a public HTTPS address (a `*.ts.net` name counts),
+Closed on 14 October 2026: when `APP_URL` is a public HTTPS address,
 Open registration acts as Approval, and the admin page refuses to choose Open with
 `open_registration_needs_private_origin` (`server-accounts.ts`, `registrationMode`). Open stays
 available on a loopback or private origin.
@@ -119,4 +127,4 @@ existing integrations; prefer the header for new ones.
    needs `relo keys verify` before computers seal to it.
 5. Keep the API bound to `127.0.0.1` and reach it only through the proxy or tunnel.
 6. Put a proxy-level login in front of the browser pages if your proxy offers one; see
-   [Remote access](SELF-HOSTING.md#remote-access).
+   [Remote access](SELF-HOSTING.md#choose-an-origin).

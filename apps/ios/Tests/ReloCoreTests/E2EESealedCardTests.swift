@@ -11,6 +11,15 @@ import XCTest
 @testable import ReloNotificationSupport
 
 final class E2EESealedCardTests: XCTestCase {
+    func testAServerPlaceholderTitleIsNeverShown() {
+        XCTAssertEqual(ReloSealedCards.readableTitle("Ship it"), "Ship it")
+        XCTAssertEqual(ReloSealedCards.readableTitle("Encrypted card", prompt: "Ship the fix?\nServer 0.16.8"), "Ship the fix?")
+        XCTAssertEqual(ReloSealedCards.readableTitle("Encrypted card"), ReloSealedCards.unreadableTitle)
+        XCTAssertEqual(ReloSealedCards.readableTitle("Encrypted question", prompt: ReloSealedCards.promptPlaceholder),
+                       ReloSealedCards.unreadableTitle)
+        XCTAssertEqual(ReloSealedCards.readableTitle("Encrypted card", prompt: "Updating…"), ReloSealedCards.unreadableTitle)
+    }
+
     private final class RingStore: ReloKeyRingStore, @unchecked Sendable {
         private let lock = NSLock()
         private var state: ReloKeyRingState?

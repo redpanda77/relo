@@ -73,7 +73,8 @@ describe("scoped notification receipt wire", () => {
     const projection = deliveryProjection(job());
     if (projection.kind !== "alert") throw new Error("Expected ordinary alert");
     const deliveredBytes = Buffer.byteLength(JSON.stringify({ ...projection.customData,
-      aps: { alert: projection.alert, sound: projection.sound, badge: 0, "mutable-content": 1 } }));
+      aps: { alert: projection.alert, sound: projection.sound, badge: 0, "mutable-content": 1,
+        "interruption-level": projection.interruptionLevel } }));
     expect(actual).toBe(deliveredBytes);
   });
   test("scope changes projection identity, and repeated claims preserve it", () => {

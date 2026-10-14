@@ -3,17 +3,15 @@ import * as React from "react"
 
 import {
   logDetail,
-  openLabel,
-  quietFor,
-  quietLabel,
   signalOf,
   timeOfDay,
-  updatedAgo,
+  openLabel,
   type ActivityCard,
   type TodayActivity,
 } from "@/features/inbox/activity-model"
-import { agentQuietText, quietMs, type AgentSession } from "@/features/inbox/sessions-model"
-import { OriginMeta, RuntimeClock, StepBar } from "@/features/inbox/activity-card"
+import { nowRowView, type NowItem } from "@/features/inbox/now-model"
+import { relativeTime } from "@/lib/format"
+import { useTicker } from "@/lib/ticker"
 import { SIGNALS, SIGNAL_CSS, type Signal } from "@/lib/signal"
 import { cn } from "@/lib/utils"
 import { EncryptedText } from "@/components/atoms/encrypted-text"
@@ -47,34 +45,26 @@ export function NowSection({
   )
 }
 
-/** "source · project › topic". */
-function originLine(card: ActivityCard) {
-  const line = [card.source, card.project?.name].filter(Boolean).join(" · ")
-  return card.topic ? `${line} › ${card.topic}` : line
-}
-
-/** Every active card, including quiet ones, with its steps or progress and when it last spoke. */
-export function LiveNowList({
+/** One Now list: rows styled by the server's owner state, never by a client clock. */
+export function NowItemList({
+  label,
   items,
-  now,
-  syncedAt = now,
-  quietSessions,
+  onOpen,
 }: {
-  items: Array<{ card: ActivityCard; open: () => void }>
-  now: number
-  /** When the sessions were fetched; with quietSessions, a card whose agent is running but silent says so. */
-  syncedAt?: number
-  quietSessions?: ReadonlyMap<string, AgentSession>
+  label: string
+  items: readonly NowItem[]
+  onOpen: (item: NowItem) => void
 }) {
+  useTicker(items.length > 0)
   return (
-    <ul aria-label="Live now" className="space-y-2.5">
-      {items.map(({ card, open }) => {
-        const agent = quietSessions?.get(card.id)
-        const agentMs = agent ? quietMs(agent, now, syncedAt) : null
-        const quiet = agentMs ?? quietFor(card, now)
-        const tone = quiet == null ? "cyan" : "yellow"
+    <ul aria-label={label} className="space-y-2.5">
+      {items.map((item) => {
+        const view = nowRowView(item, relativeTime)
+        const tone = view.chip?.tone ?? (item.owner.state === "moving" || item.owner.state === "working_quietly" ? "cyan" : "neutral")
+        const origin = [item.sourceName, item.project].filter(Boolean).join(" · ")
+        const open = () => onOpen(item)
         return (
-          <li key={card.id}>
+          <li key={item.id}>
             <div
               role="button"
               tabIndex={0}
@@ -86,53 +76,29 @@ export function LiveNowList({
                   open()
                 }
               }}
-              aria-label={openLabel(card)}
-              className={cn("holo-card block w-full cursor-pointer space-y-2.5 p-4 text-left", `tone-${tone}`)}
-              data-quiet={quiet != null || undefined}
+              aria-label={`Open ${item.title}`}
+              className={cn("holo-card block w-full cursor-pointer space-y-2.5 p-4 text-left", `tone-${tone}`, view.dim && "opacity-70")}
+              data-owner-state={item.owner.state}
+              data-live={view.shimmer || undefined}
             >
               <div className="flex min-w-0 items-baseline justify-between gap-3">
-                <h3 className="min-w-0 text-[15px] leading-snug font-medium text-foreground [overflow-wrap:anywhere]">
-                  {card.encrypted ? <EncryptedText className="text-muted-foreground" /> : card.title}
-                </h3>
-                {/* A quiet card whose agent is still running says so in one line below, not twice. */}
-                {quiet != null && !agent ? (
-                  <span className="micro shrink-0 font-semibold" style={{ color: SIGNAL_CSS.attention }}>
-                    {`QUIET ${quietLabel(quiet)}`}
-                  </span>
-                ) : null}
+                <h3 className="min-w-0 text-[15px] leading-snug font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</h3>
+                {view.chip ? <span className={cn("outcome-badge shrink-0", `tone-${view.chip.tone}`)}>{view.chip.label}</span> : null}
               </div>
-              {card.summary ? (
-                <p className="line-clamp-2 text-[13px] leading-5 text-muted-foreground">{card.summary}</p>
-              ) : null}
-              {card.steps ? (
-                <StepBar card={card} />
-              ) : card.progress != null && Number.isFinite(card.progress) ? (
+              {item.steps ? (
                 <div
                   className="h-1 overflow-hidden rounded-full bg-white/10"
                   role="progressbar"
-                  aria-label="Progress"
+                  aria-label={item.steps.current ?? "Steps"}
                   aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(card.progress * 100)}
+                  aria-valuemax={item.steps.total}
+                  aria-valuenow={item.steps.done}
                 >
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${Math.round(card.progress * 100)}%`, background: "var(--tone)" }}
-                  />
+                  <div className="h-full rounded-full" style={{ width: `${Math.round((item.steps.done / item.steps.total) * 100)}%`, background: "var(--tone)" }} />
                 </div>
               ) : null}
-              <p className="truncate text-xs text-muted-foreground">{originLine(card)}</p>
-              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                <OriginMeta card={card} />
-                <RuntimeClock card={card} />
-                {agentMs != null ? (
-                  <p className="micro normal-case tracking-wide" data-part="agent-quiet" style={{ color: SIGNAL_CSS.attention }}>
-                    {agentQuietText(agentMs)}
-                  </p>
-                ) : (
-                  <p className="micro normal-case tracking-wide">{updatedAgo(card.at, now)}</p>
-                )}
-              </div>
+              {view.line ? <p className="line-clamp-2 text-[13px] leading-5 text-muted-foreground">{view.line}</p> : null}
+              {origin ? <p className="truncate text-xs text-muted-foreground">{origin}</p> : null}
             </div>
           </li>
         )

@@ -90,6 +90,15 @@ export function callbackSignature(token: string,body: string,timestamp: number):
   return `t=${timestamp},v1=${digest}`;
 }
 
+/**
+ * Standard Webhooks signature: `v1,<base64 HMAC-SHA256 of "<id>.<timestamp>.<body>">`. A `whsec_`
+ * secret is keyed with its base64-decoded bytes; any other token with its UTF-8 bytes.
+ */
+export function standardWebhookSignature(secret: string,id: string,timestamp: number,body: string): string {
+  const key = secret.startsWith("whsec_") ? Buffer.from(secret.slice(6),"base64") : Buffer.from(secret,"utf8");
+  return `v1,${createHmac("sha256",key).update(`${id}.${timestamp}.${body}`,"utf8").digest("base64")}`;
+}
+
 export type CallbackSend = (input: {
   url: string; target: Extract<CallbackTarget,{ ok: true }>; headers: Record<string,string>; body: string; timeoutMs: number;
 }) => Promise<number>;

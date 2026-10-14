@@ -237,7 +237,7 @@ export function ServerAdminCard({
             <Label htmlFor="private-callbacks">Answer callbacks to your private network</Label>
             <p className="mt-1 text-sm text-muted-foreground">
               Apps can have answers posted to an address on this network (for example a CI server on
-              Tailscale). The server's own localhost is never reachable.
+              your LAN or VPN). The server's own localhost is never reachable.
             </p>
           </div>
           <NativeSelect

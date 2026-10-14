@@ -16,7 +16,6 @@
   --color-neon-magenta: var(--neon-magenta);
   --color-neon-coral: var(--neon-coral);
   --color-neon-mint: var(--neon-mint);
-  --color-neon-amber: var(--neon-amber);
   --color-ink: var(--ink);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -67,7 +66,6 @@
   --neon-magenta: #d65cf0;
   --neon-coral: #ff6b57;
   --neon-mint: #34d399;
-  --neon-amber: #fbbf24;
   /* One color per meaning: done green, running cyan, needs you orange, attention yellow, failed red, messages violet. */
   --neon-orange: #ff8a3d;
   --neon-yellow: #facc15;
@@ -455,7 +453,6 @@ body::before {
 .tone-magenta { --tone: var(--neon-magenta); }
 .tone-coral { --tone: var(--neon-coral); }
 .tone-mint { --tone: var(--neon-mint); }
-.tone-amber { --tone: var(--neon-amber); }
 .tone-orange { --tone: var(--neon-orange); }
 .tone-yellow { --tone: var(--neon-yellow); }
 .tone-red { --tone: var(--neon-red); }
@@ -795,3 +792,11 @@ select.pill option { background: var(--surface); color: var(--foreground); }
 /* Horizontally scrolling pill rows keep the swipe but hide the bar, as on the iPhone. */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Sign-in deck on wide screens: feather the deck's edges into the canvas instead of a visible box. */
+@media (min-width: 1024px) {
+  .auth-deck {
+    -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 62%, transparent 100%);
+    mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 62%, transparent 100%);
+  }
+}

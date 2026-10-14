@@ -195,6 +195,59 @@ describe("current delivery serialization", () => {
     }))).toThrow(DeliverySerializationValidationError);
   });
 
+  const card = (owner: Record<string, unknown> | undefined, extra: Record<string, unknown> = {}) => job({
+    transport: "live_activity_update",
+    activityCommand: {
+      activityId: "act_22222222-2222-4222-8222-222222222222",operation: "update",
+      generation: 1,sequence: 3,providerTimestamp: 1_786_579_200,privacy: "standard",
+      headline: "Build",status: "Compiling",staleAt: "2026-08-13T04:00:00.000Z",relevanceScore: 0.99,priority: 10,
+      ...(owner ? { owner } : {}),...extra,
+    },
+  } as never);
+
+  test("update payload staleDate = evidence + T_fresh, not the producer's stale-after", () => {
+    const projection = deliveryProjection(card({ state: "moving",needsYou: null,staleDate: "2026-08-13T00:20:00.000Z" }));
+    expect(projection).toMatchObject({ kind: "activity",staleDate: Date.parse("2026-08-13T00:20:00.000Z") / 1_000 });
+    expect(projection).toMatchObject({ contentState: { staleAt: Date.parse("2026-08-13T00:20:00.000Z") / 1_000 } });
+  });
+
+  test("progress update is priority 5, a question update priority 10", () => {
+    expect(deliveryProjection(card({ state: "moving",needsYou: null,staleDate: "2026-08-13T00:20:00.000Z" })))
+      .toMatchObject({ priority: 5,relevanceScore: 0.7 });
+    expect(deliveryProjection(card({ state: "needs_you",needsYou: "question",staleDate: "2026-08-13T00:20:00.000Z" })))
+      .toMatchObject({ priority: 10,relevanceScore: 1 });
+    expect(deliveryProjection(card({ state: "stale",needsYou: null,staleDate: "2026-08-13T00:20:00.000Z",changed: true })))
+      .toMatchObject({ priority: 10,relevanceScore: 0.3 });
+  });
+
+  test("content-state carries owner state, private cards included", () => {
+    expect(deliveryProjection(card({ state: "working_quietly",needsYou: null,staleDate: "2026-08-13T00:20:00.000Z" })))
+      .toMatchObject({ contentState: { owner: { state: "working_quietly",needsYou: null } } });
+    expect(deliveryProjection(card({ state: "needs_you",needsYou: "permission",staleDate: "2026-08-13T00:20:00.000Z" },
+      { privacy: "private" }))).toMatchObject({ contentState: { owner: { state: "needs_you",needsYou: "permission" } } });
+  });
+
+  test("end dismissal comes from the table: done 15 min, failed 60 min, dropped at once", () => {
+    const end = (state: string) => deliveryProjection(job({
+      transport: "live_activity_update",
+      activityCommand: { activityId: "act_1",operation: "end",generation: 1,sequence: 4,providerTimestamp: 1_786_579_200,
+        privacy: "standard",dismissAfterSeconds: 14_400,owner: { state,needsYou: null,staleDate: null } },
+    } as never));
+    expect(end("done")).toMatchObject({ dismissalDate: 1_786_579_200 + 900,priority: 10,relevanceScore: 0 });
+    expect(end("failed")).toMatchObject({ dismissalDate: 1_786_579_200 + 3_600 });
+    expect(end("dropped")).toMatchObject({ dismissalDate: 1_786_579_200 });
+  });
+
+  test("a question notice is time-sensitive, a notify is active", () => {
+    expect(deliveryProjection(job())).toMatchObject({ interruptionLevel: "active" });
+    expect(deliveryProjection(job({ interactionKind: "approval",interactionId: "int_22222222-2222-4222-8222-222222222222" })))
+      .toMatchObject({ interruptionLevel: "time-sensitive" });
+    expect(deliveryProjection(job({ payload: { privacy: "standard",answerInApp: true } })))
+      .toMatchObject({ interruptionLevel: "time-sensitive" });
+    expect(deliveryProjection(job({ payload: { privacy: "standard",deviceApproval: { deviceId: "dev_1" } } })))
+      .toMatchObject({ interruptionLevel: "active" });
+  });
+
   test("accepts exactly 4096 UTF-8 bytes and rejects the next byte", () => {
     const input = {
       title: "Budget",body: "",sourceName: "Relo",conversationId: "budget",

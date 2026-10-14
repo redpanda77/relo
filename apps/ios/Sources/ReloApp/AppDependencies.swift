@@ -36,7 +36,8 @@ struct AppDependencies {
     var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)? = nil
     var makeInboxDataSource: (URL, String) -> any InboxDataSource = {
         let sealed = ReloSealedContent.live()
-        return HTTPInboxDataSource(baseURL: $0, token: $1, sealedOpener: sealed.opener, nameResolver: sealed.nameResolver)
+        return HTTPInboxDataSource(baseURL: $0, token: $1, sealedOpener: sealed.opener, nameResolver: sealed.nameResolver,
+                                   sealedDiagnoser: sealed.diagnoser)
     }
 
     var makeCurrentDataSource: (URL, String) -> any CurrentStateSource = {

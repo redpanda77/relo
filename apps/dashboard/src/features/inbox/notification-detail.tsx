@@ -172,7 +172,7 @@ function missionState(
 ): MissionState {
   if (state === "complete") return "done"
   if (state === "current") return failed ? "stopped" : "current"
-  // A stopped task leaves its first unfinished step marked in amber.
+  // A stopped task leaves its first unfinished step marked in red (failed).
   if (failed && !all.some((step) => step.state === "current")) {
     const first = all.findIndex((step) => step.state !== "complete")
     if (first === index) return "stopped"
@@ -202,7 +202,7 @@ function StepMarker({ state, index }: { state: MissionState; index: number }) {
     )
   if (state === "stopped")
     return (
-      <span className={cn(base, "border border-[var(--neon-amber)] bg-[color-mix(in_srgb,var(--neon-amber)_16%,transparent)] font-mono text-[var(--neon-amber)]")}>
+      <span className={cn(base, "border border-[var(--neon-red)] bg-[color-mix(in_srgb,var(--neon-red)_16%,transparent)] font-mono text-[var(--neon-red)]")}>
         {index}
       </span>
     )

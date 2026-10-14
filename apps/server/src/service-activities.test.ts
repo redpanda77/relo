@@ -343,13 +343,13 @@ suite("secret-bound service Live Activities", () => {
     ])).rows[0].state).toBe("replaced");
 
     const crossService = await request(serviceB,"/live-activities",{
-      method: "POST", headers: { "idempotency-key": "release-start-3" },
+      method: "POST", headers: { "idempotency-key": "release-start-cross" },
       body: JSON.stringify({ ...startBody, title: "Other service" }),
     });
-    expect(crossService.status).toBe(409);
-    expect(await crossService.json()).toEqual({
-      ok: false, error: "active_activity_conflict", code: "ACTIVE_ACTIVITY_CONFLICT",
-    });
+    // Each service keys its own cards: the same key from another service is its own card, never a conflict
+    // and never a change to service A's card (start never ends or changes other cards).
+    expect(crossService.status).toBe(201);
+    expect((await crossService.json() as any).activity.id).not.toBe(replacementResult.activity.id);
 
     const namespaced = await request(serviceB,"/live-activities",{
       method: "POST", headers: { "idempotency-key": "release-start-3" },
@@ -359,15 +359,10 @@ suite("secret-bound service Live Activities", () => {
     const namespacedResult = await namespaced.json() as any;
     expect(namespacedResult).toMatchObject({ ok: true, replaced: 1 });
     expect(namespacedResult.activity.id).not.toBe(replacementResult.activity.id);
-    const replacedOwner = await db.query<any>(
-      `SELECT a.state,o.requester_service_id,o.requester_credential_id
-       FROM live_activities a JOIN live_activity_operations o ON o.live_activity_id=a.id
-       WHERE a.id=$1 AND o.operation='end' ORDER BY o.created_at DESC LIMIT 1`,
-      [replacementResult.activity.id.slice("act_".length)],
-    );
-    expect(replacedOwner.rows[0]).toEqual({
-      state: "replaced", requester_service_id: serviceA.row.id, requester_credential_id: null,
-    });
+    // Service B's replace only replaces its own card; service A's card is never touched by another service.
+    expect((await db.query<any>("SELECT state FROM live_activities WHERE id=$1",[
+      replacementResult.activity.id.slice("act_".length),
+    ])).rows[0].state).toBe("active");
     expect((await request(serviceA,"/live-activities/release")).status).toBe(200);
     expect((await request(serviceB,"/live-activities/release")).status).toBe(200);
   });

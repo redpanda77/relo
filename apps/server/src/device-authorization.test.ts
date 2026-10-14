@@ -13,7 +13,6 @@ describe("frozen authentication wire values", () => {
       "notifications:send",
       "services:read",
       "services:write",
-      "sessions:write",
     ]);
   });
 

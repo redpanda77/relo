@@ -66,6 +66,17 @@ final class AppModel {
     private(set) var currentState: CurrentRuntimeState? { didSet { currentStateSubject.send(currentState) } }
     private var decisionDrafts: [String: CurrentDecisionDraft] = [:]
     private(set) var historySnapshot = InboxHistorySnapshot.offlineCache(items: [])
+    /// The server's Now summary (`GET /api/now`); set by the Now summary controller (stream D1).
+    var nowSummary: NowSummary?
+    /// Bumped when Now should refetch its summary at once (after dismissing a missed question).
+    private(set) var nowRefetchRequest = 0
+    /// Missed questions being dismissed: kept off Now until the server's next summary drops them.
+    @ObservationIgnored private var dismissingQuestionIDs: Set<String> = []
+    /// Missed questions the server says are no longer missed (answered late, opened elsewhere, or gone):
+    /// a stale or cached summary must not bring them back.
+    @ObservationIgnored private var settledQuestionIDs: Set<String> = []
+    /// A short line when dismissing a missed question failed; the row is back.
+    var nowDismissError: String?
     /// Agent sessions from the last inbox snapshot (empty from older servers).
     var agentSessions: [AgentSession] = []
     /// When `agentSessions` was fetched; quiet times grow from the server's figure at that moment.
@@ -279,7 +290,7 @@ final class AppModel {
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
 
     var isRegistered: Bool { credential != nil && registrationState == .registered }
-    /// The server cannot be reached right now (no network, Tailscale off, server down).
+    /// The server cannot be reached right now (offline, VPN off, server down).
     var serverUnreachable: Bool {
         guard hasLocalAccountAccess else { return false }
         // A brief outage (a redeploy) stays silent; the banner waits out `OutageBannerPolicy.grace`.
@@ -1281,6 +1292,45 @@ final class AppModel {
         }
     }
 
+    /// The Now summary from the server, minus missed questions this phone is dismissing right now
+    /// and those the server already said are settled.
+    func receiveNowSummary(_ summary: NowSummary) {
+        let hidden = dismissingQuestionIDs.union(settledQuestionIDs)
+        guard !hidden.isEmpty else { nowSummary = summary; return }
+        nowSummary = summary.removingQuestions(hidden)
+    }
+
+    /// Dismisses a missed question from Needs you: the row leaves at once, the server is told, and Now
+    /// refetches. A refusal means the row was stale, so it stays gone; any other failure brings it back
+    /// with a short error. Never opens the notification.
+    func dismissMissedQuestion(questionID: String) async {
+        guard let credential, !dismissingQuestionIDs.contains(questionID) else { return }
+        nowDismissError = nil
+        let before = nowSummary
+        dismissingQuestionIDs.insert(questionID)
+        nowSummary = nowSummary?.removingQuestions([questionID])
+        do {
+            try await apiClient.dismissMissedQuestion(credential: credential, questionId: questionID)
+            dismissingQuestionIDs.remove(questionID)
+            nowRefetchRequest += 1
+        } catch MobileAPIError.invalidRequest {
+            // The server only refuses a question that is no longer missed (answered late, or not missed
+            // any more): the row was stale, so it stays gone and Now refetches. Nothing to tell the owner.
+            dismissingQuestionIDs.remove(questionID)
+            settledQuestionIDs.insert(questionID)
+            nowRefetchRequest += 1
+        } catch {
+            dismissingQuestionIDs.remove(questionID)
+            // The row comes back: as it was, or with the refetch below when a newer summary arrived meanwhile.
+            if let before, nowSummary == before.removingQuestions([questionID]) { nowSummary = before }
+            nowDismissError = switch error {
+            case MobileAPIError.reauthenticationRequired: "Couldn't dismiss: sign in again."
+            default: "Couldn't dismiss. Check your connection and try again."
+            }
+            nowRefetchRequest += 1
+        }
+    }
+
     func withdrawNotification(_ notificationID: String) async {
         guard let accountSession, withdrawingNotificationID == nil else { return }
         interactionError = nil
@@ -1893,11 +1943,6 @@ final class AppModel {
 
     func foregrounded() async {
         isForeground = true
-        // Leftover cards are ended before anything else, and without needing the network.
-        // A card whose agent is still mid-turn (by the saved session list, settled to now) stays.
-        let running = AgentSessionsProjection.settled(agentSessions, now: .now)
-            .filter(AgentSessionsProjection.isRunning).compactMap(\.card?.id)
-        _ = await LiveActivityApplier.endAbandonedActivities(now: .now, running: Set(running))
         sessionController.setForeground(true)
         startPathMonitor()
         synchronizeCurrentSession()
@@ -2707,7 +2752,7 @@ final class AppModel {
         case MobileAPIError.rateLimited(let seconds):
             seconds.map { "Too many sign-in attempts. Try again in \($0) seconds." }
                 ?? "Too many sign-in attempts. Try again shortly."
-        case MobileAPIError.tailnetUnavailable, MobileAPIError.unavailable, is URLError:
+        case MobileAPIError.serverUnreachable, MobileAPIError.unavailable, is URLError:
             "Relo server could not be reached. Check this iPhone's connection and the server address, then retry."
         default:
             // Not the network: storing the session on this iPhone (keychain) or reading the reply failed.

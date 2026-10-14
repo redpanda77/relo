@@ -54,7 +54,7 @@ import { prepareLatestActivityFrame } from "./activity-delivery-frame.js";
 import { publicId } from "./ids.js";
 import { eventConversationId } from "./communication.js";
 import { cleanupTerminalDeviceAuthorizations } from "./device-authorization.js";
-import { expireDueActivities } from "./activities.js";
+import { createDerivedWorker } from "./works/derived-worker.js";
 import { reconcileAgentSessions } from "./agent-sessions.js";
 import { projectLiveActivityCommand } from "./live-activity-interaction.js";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
@@ -111,11 +111,11 @@ const shutdown = new AbortController();
 process.on("SIGTERM", () => { stopping = true; shutdown.abort(); });
 process.on("SIGINT", () => { stopping = true; shutdown.abort(); });
 
-/** Silent sessions become lost (presence only, never cards or work); one failure never stops the cycle. */
+/** Sessions past retention are removed (never cards or work); one failure never stops the cycle. */
 async function reconcileSessions(): Promise<void> {
   try {
     const result = await reconcileAgentSessions(db);
-    if (result.lost || result.pruned) {
+    if (result.pruned) {
       console.info(JSON.stringify({ event: "agent_session_reconciled",...result }));
     }
   } catch (error) {
@@ -187,6 +187,7 @@ if (config.APNS_MODE === "disabled") {
     releaseIdentity: config.RELO_RELEASE_IDENTITY,
   });
   await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
+  const disabledDerived = createDerivedWorker(db,"disabled");
   while (!stopping) {
     await recordWorkerHeartbeat(db,{
       mode: "disabled",configured: false,pollMs: config.WORKER_POLL_MS,
@@ -196,7 +197,7 @@ if (config.APNS_MODE === "disabled") {
     const swept = await quarantineAbandonedProcessingClaims(db);
     cycle.safelyRequeued = swept.safelyRequeued;
     cycle.reconciliationRequired = swept.reconciliationRequired;
-    cycle.expiredActivities = await expireDueActivities(db,"disabled");
+    cycle.expiredActivities = (await disabledDerived.pass()).retired;
     cycle.expiredInteractions = await expireDueInteractiveActivities(db,"disabled");
     await reconcileSessions();
     await pruneExpiredContent();
@@ -242,9 +243,13 @@ if (config.APNS_MODE === "disabled") {
     });
     await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
     let maintenanceFailure: unknown;
+    const derived = createDerivedWorker(db,config.APNS_MODE);
+    let derivedNextAt: Date | null = null;
     const maintenance = (async () => {
       while (!shutdown.signal.aborted) {
-        await delay(await nextInteractionExpiryDelay(db,config.WORKER_POLL_MS), undefined, { signal: shutdown.signal });
+        // Sleep until the next question expiry or the next time-only derived change, whichever is first.
+        const derivedDelay = derivedNextAt === null ? Infinity : Math.max(0,derivedNextAt.valueOf() - Date.now());
+        await delay(Math.min(await nextInteractionExpiryDelay(db,config.WORKER_POLL_MS),derivedDelay), undefined, { signal: shutdown.signal });
         await recordWorkerHeartbeat(db,{
           mode: config.APNS_MODE,configured: true,pollMs: config.WORKER_POLL_MS,
           releaseIdentity: config.RELO_RELEASE_IDENTITY,
@@ -253,7 +258,9 @@ if (config.APNS_MODE === "disabled") {
         const swept = await quarantineAbandonedProcessingClaims(db);
         cycle.safelyRequeued = swept.safelyRequeued;
         cycle.reconciliationRequired = swept.reconciliationRequired;
-        cycle.expiredActivities = await expireDueActivities(db,config.APNS_MODE);
+        const derivedPass = await derived.pass();
+        derivedNextAt = derivedPass.nextAt;
+        cycle.expiredActivities = derivedPass.retired;
         cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
         await reconcileSessions();
         await pruneExpiredContent();

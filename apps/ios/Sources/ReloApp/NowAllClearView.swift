@@ -272,7 +272,7 @@ private struct StandingBy: View {
             Text("STANDING BY").tracking(2.4)
                 .font(.system(.footnote, design: .monospaced).weight(.semibold))
                 .foregroundStyle(Color.reloSecondaryText)
-            Text("When an agent starts work or sends a message, it shows up here, live.")
+            Text("When a session or script starts work or sends a message, it shows up here, live.")
                 .font(.footnote).foregroundStyle(Color.reloSecondaryText.opacity(0.85))
                 .multilineTextAlignment(.center)
         }

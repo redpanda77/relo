@@ -53,7 +53,7 @@ public extension DeviceRegistrationPolicy {
             return .init(message: "Sign in again to register this iPhone.", accountEffect: .reauthenticationRequired)
         case .accountDisabled:
             return .init(message: "This Relo server account is disabled.", accountEffect: .disabled)
-        case .tailnetUnavailable:
+        case .serverUnreachable:
             return .init(message: "Server unreachable. Check your connection; Relo will retry device registration.",
                          retry: .scheduled(retryAfterSeconds: nil))
         case .idempotencyConflict:

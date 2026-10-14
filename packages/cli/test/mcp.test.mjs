@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -6,6 +7,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
+import { cardKey } from "../src/identity.mjs";
 import { SUPPORTED_PROTOCOLS, TOOLS, serveMcp, sourceFromClient, validateArguments } from "../src/mcp.mjs";
 import { cardDependencies, fakeCards } from "./fake-cards.mjs";
 
@@ -24,6 +26,35 @@ function connect({ client, env = {}, interval = 20 } = {}) {
   base.ready ??= async () => ({ ready: true });
   base.authStatus ??= async () => ({ authenticated: true, credential: { id: "cred_1", clientName: "t", prefix: "rl_", scopes: ["activities:write", "devices:read"] } });
   base.doctor ??= async () => ({ version: 1, ok: true });
+  // /api/session/works as contracts/works.ts shapes it, one store per session key.
+  fake.works ??= [];
+  fake.sessionKeys ??= new Set();
+  base.sessionRequest ??= async (method, path, { body, sessionKey }) => {
+    fake.sessionKeys.add(sessionKey);
+    const mine = fake.works.filter((w) => w.sessionKey === sessionKey);
+    const view = (w) => ({ ...w, sessionKey: undefined });
+    const state = () => ({ open: mine.find((w) => w.lifecycle === "open") ?? null, parked: mine.filter((w) => w.lifecycle === "paused") });
+    if (method === "GET") return state();
+    if (path === "/api/session/works") {
+      const steps = (body.plan?.steps ?? []).map((step, i) => ({ id: `s${i + 1}`, label: step.label, state: i === 0 ? "current" : "open", addedIn: 1 }));
+      const work = { id: `wrk_${String(fake.works.length + 1).padStart(8, "0")}`, sessionKey, lifecycle: "open", version: 1, goal: body.goal.readable,
+        status: body.status?.readable ?? null, plan: { version: 1, next: steps.length + 1, complete: false, steps }, progress: body.progress ?? null };
+      fake.works.push(work);
+      return { work: view(work), disposition: "started", parked: [], replayed: false, ignored: [] };
+    }
+    const work = mine.find((w) => path.includes(w.id));
+    if (!work) throw Object.assign(new Error("Work not found in this session."), { status: 404 });
+    if (path.endsWith("/finish")) Object.assign(work, { lifecycle: "finished", result: body.result, outcome: body.outcome.readable });
+    else if (body?.plan?.op === "next") {
+      const current = work.plan.steps.find((step) => step.state === "current");
+      if (current) current.state = "done";
+      const following = work.plan.steps.find((step) => step.state === "open");
+      if (following) following.state = "current";
+    }
+    if (body?.status) work.status = body.status.readable;
+    work.version += 1;
+    return { work: view(work), disposition: work.lifecycle === "finished" ? "finished" : "updated", parked: [], replayed: false, ignored: [] };
+  };
   base.cancelInteraction ??= async (id) => { (fake.canceled ??= []).push(id); return {}; };
   const { identityDefaults: _drop, ...dependencies } = cardDependencies(base);
   const input = new PassThrough();
@@ -90,81 +121,61 @@ test("initialize echoes a supported protocol version and otherwise offers the la
   await mcp.close();
 });
 
-test("tools/list names the seven tools, carries the rules and marks the annotations", async () => {
+test("tools/list names the eight tools, carries the rules and marks the annotations", async () => {
   const mcp = connect();
   await mcp.initialize();
   const { tools } = (await mcp.request("tools/list")).result;
-  assert.deepEqual(tools.map((tool) => tool.name), ["relo_card_start", "relo_card_update", "relo_card_end", "relo_ask", "relo_interaction_wait", "relo_notify", "relo_doctor"]);
+  assert.deepEqual(tools.map((tool) => tool.name), ["relo_work_start", "relo_work_update", "relo_work_finish", "relo_work_state", "relo_ask", "relo_interaction_wait", "relo_notify", "relo_doctor"]);
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   assert.equal(byName.relo_doctor.annotations.readOnlyHint, true);
-  for (const name of ["relo_card_end", "relo_notify"]) assert.equal(byName[name].annotations.destructiveHint, false);
-  assert.match(byName.relo_card_start.description, /Never both/u);
+  for (const name of ["relo_work_finish", "relo_notify"]) assert.equal(byName[name].annotations.destructiveHint, false);
+  assert.equal(byName.relo_work_state.annotations.readOnlyHint, true);
   assert.match(byName.relo_ask.description, /Only an `approval` question that returns state `approved` is permission/u);
   assert.match(byName.relo_notify.description, /rarely/u);
-  assert.match(byName.relo_card_start.description, /secrets/u);
+  assert.match(byName.relo_work_start.description, /secrets/u);
   assert.deepEqual(byName.relo_ask.inputSchema.properties.kind.enum, ["approval", "yes_no"]);
   assert.deepEqual(TOOLS.map((tool) => tool.name), tools.map((tool) => tool.name));
   await mcp.close();
 });
 
-test("every tool round-trips against a fake Relo, on one card per connection", async () => {
+test("every tool round-trips against a fake Relo, as one session per connection", async () => {
   const mcp = connect();
-  const start = mcp.fake.client.startActivity;
-  // The shared fake keeps no presentation; give a started card its steps so next_step has something to move.
-  mcp.fake.client.startActivity = async (body, key) => {
-    const reply = await start(body, key);
-    const labels = body.steps?.labels;
-    if (labels) [...mcp.fake.cards.values()].at(-1).presentation = { components: [{ type: "steps", items: labels.map((label, index) => ({ label, state: index === 0 ? "current" : "upcoming" })) }] };
-    return { ...reply, activity: { ...reply.activity, presentation: [...mcp.fake.cards.values()].at(-1).presentation } };
-  };
   await mcp.initialize("claude-code");
-  const started = await mcp.call("relo_card_start", { title: "Deploying", status: "Building", steps: ["Build", "Test", "Ship"], ...topic });
-  assert.equal(started.isError, false);
+  const started = await mcp.call("relo_work_start", { goal: "Deploy 0.7.57", status: "Building the image", plan: ["Build image", "Run tests", "Go live"] });
+  assert.equal(started.isError, false, JSON.stringify(started.json));
   assert.equal(started.json.ok, true);
-  const updated = await mcp.call("relo_card_update", { status: "Testing", next_step: true });
+  assert.equal(started.json.disposition, "started");
+  assert.match(started.json.echo, /Deploy 0\.57|Deploy 0\.7\.57/u);
+  const updated = await mcp.call("relo_work_update", { status: "Running the suite", next_step: true });
   assert.equal(updated.isError, false, JSON.stringify(updated.json));
+  assert.equal(updated.json.work.step, "2/3");
+  const state = await mcp.call("relo_work_state", {});
+  assert.equal(state.isError, false, JSON.stringify(state.json));
+  assert.equal(state.json.work.id, started.json.work.id);
   const asked = await mcp.call("relo_ask", { question: "Deploy 0.7.57 to production?", kind: "approval" });
-  assert.equal(asked.isError, false);
-  assert.equal(asked.json.state, "approved");
-  const waited = await mcp.call("relo_interaction_wait", { id: asked.json.interaction?.id ?? asked.json.id });
-  assert.equal(waited.isError, false);
-  const notified = await mcp.call("relo_notify", { body: "0.7.57 is live", title: "Deployed", ...topic });
-  assert.equal(notified.isError, false);
-  const ended = await mcp.call("relo_card_end", { status: "Live", failed: true });
-  assert.equal(ended.isError, false);
+  assert.equal(asked.isError, false, JSON.stringify(asked.json));
+  const notified = await mcp.call("relo_notify", { body: "0.7.57 is live", title: "Deployed" });
+  assert.equal(notified.isError, false, JSON.stringify(notified.json));
+  const finished = await mcp.call("relo_work_finish", { outcome: "0.7.57 live on production" });
+  assert.equal(finished.isError, false, JSON.stringify(finished.json));
+  assert.equal(finished.json.disposition, "finished");
   const doctor = await mcp.call("relo_doctor", {});
   assert.equal(typeof doctor.json.ok, "boolean");
-  const { cards, calls } = mcp.fake;
-  assert.equal(cards.size, 1, "one card for the connection");
-  const [card] = cards.values();
-  assert.match(card.key, /^session-relo-[0-9a-f]{24}$/u);
-  assert.equal(card.context.providerName, "Claude Code");
-  assert.equal(card.state, "ended");
-  assert.equal(calls.find((c) => c.op === "end").body.symbol, "warning");
-  assert.deepEqual(calls.find((c) => c.op === "start").body.steps.labels, ["Build", "Test", "Ship"]);
+  assert.equal(mcp.fake.sessionKeys.size, 1, "one session for the connection");
   assert.equal(mcp.fake.sent.title, "Deployed");
   await mcp.close();
 });
 
-test("two connections get two cards; an existing RELO_SESSION and RELO_SOURCE win", async () => {
+test("two connections are two sessions", async () => {
   const a = connect();
-  const b = connect();
+  const b = connect({ client: a.fake.client });
+  b.fake.works = a.fake.works;
   await a.initialize("claude-ai");
   await b.initialize("claude-ai");
-  const startArgs = { title: "Work", status: "Going", ...topic };
-  await a.call("relo_card_start", startArgs);
-  await b.call("relo_card_start", startArgs);
-  const keyA = [...a.fake.cards.values()][0].key;
-  const keyB = [...b.fake.cards.values()][0].key;
-  assert.notEqual(keyA, keyB);
-  assert.equal([...a.fake.cards.values()][0].context.providerName, "Claude");
-  const pinned = connect({ env: { RELO_SESSION: "mine", RELO_SOURCE: "My Harness" } });
-  await pinned.initialize("cursor-vscode");
-  await pinned.call("relo_card_start", startArgs);
-  const card = [...pinned.fake.cards.values()][0];
-  assert.match(card.key, /^session-relo-/u);
-  assert.equal(card.context.providerName, "My Harness");
-  await Promise.all([a.close(), b.close(), pinned.close()]);
+  await a.call("relo_work_start", { goal: "Deploy 0.7.57" });
+  await b.call("relo_work_start", { goal: "Deploy 0.7.57" });
+  assert.equal(a.fake.sessionKeys.size, 2);
+  await Promise.all([a.close(), b.close()]);
 });
 
 test("client names map to source names", () => {
@@ -180,19 +191,17 @@ test("client names map to source names", () => {
 test("errors come back as isError with the compact error line; bad arguments never reach the CLI", async () => {
   const mcp = connect();
   await mcp.initialize();
-  const both = await mcp.call("relo_card_start", { title: "T", status: "S", steps: ["A", "B"], progress: "1/2", ...topic });
-  assert.equal(both.isError, true);
-  assert.equal(both.json.ok, false);
-  assert.match(both.json.error.message, /steps/u);
-  const missing = await mcp.call("relo_card_start", { title: "T", status: "S" });
+  const empty = await mcp.call("relo_work_update", { status: "Running the suite" });
+  assert.equal(empty.isError, true, "no open work");
+  const missing = await mcp.call("relo_work_finish", {});
   assert.equal(missing.isError, true);
-  assert.match(missing.json.error.message, /--topic/u);
+  assert.match(missing.json?.error?.message ?? JSON.stringify(missing), /outcome/u);
   const bad = await mcp.call("relo_ask", { question: "Q", kind: "maybe" });
   assert.equal(bad.isError, true);
   assert.match(bad.json.error.message, /kind must be one of/u);
-  assert.equal((await mcp.call("relo_card_end", { surprise: 1 })).isError, true);
+  assert.equal((await mcp.call("relo_work_finish", { surprise: 1 })).isError, true);
   assert.equal((await mcp.request("tools/call", { name: "nope", arguments: {} })).error.code, -32602);
-  assert.equal(mcp.fake.calls.length, 0, "nothing was sent");
+  assert.equal(mcp.fake.calls.length, 0, "no card call was made");
   await mcp.close();
 });
 

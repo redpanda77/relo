@@ -168,14 +168,14 @@ suite("account web authentication", () => {
   test("first sign-up claims the owner and protects the dashboard", async () => {
     const anonymous = await app().request("/dashboard");
     expect(anonymous.status).toBe(302);
-    expect(anonymous.headers.get("location")).toContain("/?next=");
+    expect(anonymous.headers.get("location")).toContain("/sign-in?next=");
     const authorizeRedirect = await app().request("/cli/authorize?code=ABCD-EFGH");
     expect(authorizeRedirect.status).toBe(302);
     const login = await app().request(authorizeRedirect.headers.get("location")!);
     expect(optionalDashboardBootstrap(await login.text())).toMatchObject({
       kind: "auth",route: { nextPath: "/cli/authorize?code=ABCD-EFGH" },
     });
-    const externalNext = await app().request("/?next=https%3A%2F%2Fevil.example%2F");
+    const externalNext = await app().request("/sign-in?next=https%3A%2F%2Fevil.example%2F");
     expect(optionalDashboardBootstrap(await externalNext.text())).toMatchObject({
       kind: "auth",route: { nextPath: "/dashboard" },
     });
@@ -536,9 +536,19 @@ suite("account web authentication", () => {
     expect(page.status).toBe(200);
     const pageHtml = await page.text();
     expect(pageHtml).toContain("Signing in does not authorize this request");
-    expect(pageHtml).toContain("Waiting for the CLI to connect");
-    expect(pageHtml).toContain("Connected successfully");
-    expect(pageHtml).toContain("scheduleRefresh");
+    expect(pageHtml).toContain('<script src="/cli/authorize.js"></script>');
+    expect(pageHtml).not.toMatch(/<script>/);
+    expect(page.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    expect(page.headers.get("x-content-type-options")).toBe("nosniff");
+    const script = await application.request("/cli/authorize.js");
+    expect(script.status).toBe(200);
+    expect(script.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(script.headers.get("x-content-type-options")).toBe("nosniff");
+    const scriptText = await script.text();
+    expect(scriptText).toContain("Waiting for the CLI to connect");
+    expect(scriptText).toContain("Connected successfully");
+    expect(scriptText).toContain("scheduleRefresh");
     expect((await db.query("SELECT status FROM device_authorizations WHERE user_code=$1", [grant.userCode])).rows[0].status).toBe("pending");
 
     const inspection = await application.request(`/api/device-authorizations/requests/${grant.userCode.replace("-", " ")}`, {
@@ -673,10 +683,10 @@ suite("account web authentication", () => {
     const dashboardPolicy = systemPresentationPolicySnapshot("system.test.dashboard");
     await db.query(
       `INSERT INTO live_activities(
-         principal_id,activity_key,title,status,detail,progress,symbol,style,privacy,accent_color,
+         producer_type,principal_id,activity_key,title,status,detail,progress,symbol,style,privacy,accent_color,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision,start_idempotency_key
-       ) VALUES ($1,'dashboard-activity',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,
+       ) VALUES ('script',$1,'dashboard-activity',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,
          'dashboard-activity-start')`,
       [owner.rows[0]!.id,dashboardStored.title,dashboardStored.status,dashboardStored.detail,
         dashboardStored.progress,dashboardStored.symbol,dashboardStored.style,dashboardStored.privacy,
@@ -721,13 +731,13 @@ suite("account web authentication", () => {
     const externalPresentation = currentTestPresentationRecord();
     const externallyOwnedActivities = await db.query<{ id: string; title: string }>(
       `INSERT INTO live_activities(
-         principal_id,requester_service_id,requester_credential_id,activity_key,title,status,
+         producer_type,principal_id,requester_service_id,requester_credential_id,activity_key,title,status,
          target_device_ids,start_idempotency_key,presentation,presentation_sha256,
          presentation_policy,presentation_policy_source,presentation_preset_id,presentation_preset_revision
        ) VALUES
-         ($1,$2,NULL,'service-owned-dashboard-guard','Service-owned activity','Running',ARRAY[$4::uuid],
+         ('service',$1,$2,NULL,'service-owned-dashboard-guard','Service-owned activity','Running',ARRAY[$4::uuid],
           'service-owned-dashboard-start',$5::jsonb,$6,$7::jsonb,$8,$9,$10),
-         ($1,NULL,$3,'credential-owned-dashboard-guard','Credential-owned activity','Running',ARRAY[$4::uuid],
+         ('script',$1,NULL,$3,'credential-owned-dashboard-guard','Credential-owned activity','Running',ARRAY[$4::uuid],
           'credential-owned-dashboard-start',$5::jsonb,$6,$7::jsonb,$8,$9,$10)
        RETURNING id,title`,
       [owner.rows[0]!.id,service.service.id.slice("svc_".length),credential.rows[0]!.id,

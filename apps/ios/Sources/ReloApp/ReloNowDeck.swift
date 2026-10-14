@@ -81,7 +81,7 @@ struct ReloDeckFooter: View {
                         .foregroundStyle(Color.reloSecondaryText)
                     Spacer(minLength: 8)
                     if let agentTime {
-                        Text("\(agentTime) agent time")
+                        Text("\(agentTime) session time")
                             .font(.system(.caption2, design: .monospaced)).foregroundStyle(Color.reloSecondaryText)
                             .lineLimit(1).minimumScaleFactor(0.8)
                     }

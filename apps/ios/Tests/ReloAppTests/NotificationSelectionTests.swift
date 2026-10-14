@@ -132,8 +132,64 @@ final class NotificationSelectionTests: XCTestCase {
 }
 
 @MainActor
+final class MissedQuestionDismissTests: XCTestCase {
+    private let question = "int_00000000-0000-4000-8000-000000000009"
+
+    func testDismissCallsTheDismissRouteAndNeverOpensTheNotification() async throws {
+        let fixture = SelectionFixture()
+        let model = await fixture.startedModel()
+        model.nowSummary = try fixture.missedQuestionSummary()
+        let refetches = model.nowRefetchRequest
+        let row = try XCTUnwrap(NowScreenInput(summary: try XCTUnwrap(model.nowSummary)).needsYou.first)
+        XCTAssertEqual(row.questionID, question)
+        XCTAssertEqual(NowScreenModel.needsRow(row).questionID, question, "the Dismiss button gets the question, not the notification")
+
+        await model.dismissMissedQuestion(questionID: question)
+
+        let dismissed = await fixture.api.dismissedQuestions
+        XCTAssertEqual(dismissed, [question])
+        XCTAssertEqual(model.nowSummary?.needsYou.count, 0, "the row leaves at once")
+        XCTAssertNil(model.selectedNotificationID, "Dismiss never opens the card")
+        XCTAssertNil(model.nowDismissError)
+        XCTAssertEqual(model.nowRefetchRequest, refetches + 1, "Now refetches")
+    }
+
+    func testAFailedDismissRestoresTheRowWithAShortError() async throws {
+        let fixture = SelectionFixture()
+        let model = await fixture.startedModel()
+        let summary = try fixture.missedQuestionSummary()
+        model.nowSummary = summary
+        await fixture.api.failDismissals()
+
+        await model.dismissMissedQuestion(questionID: question)
+
+        XCTAssertEqual(model.nowSummary, summary, "the row comes back")
+        XCTAssertNotNil(model.nowDismissError)
+        XCTAssertNil(model.selectedNotificationID)
+    }
+
+    func testARefusedDismissMeansTheRowWasStaleSoItStaysGoneWithoutAnError() async throws {
+        let fixture = SelectionFixture()
+        let model = await fixture.startedModel()
+        let summary = try fixture.missedQuestionSummary()
+        model.nowSummary = summary
+        await fixture.api.refuseDismissals()
+        let refetches = model.nowRefetchRequest
+
+        await model.dismissMissedQuestion(questionID: question)
+
+        XCTAssertEqual(model.nowSummary?.needsYou.count, 0, "the server says it isn't missed: the row stays gone")
+        XCTAssertNil(model.nowDismissError, "nothing to tell the owner")
+        XCTAssertEqual(model.nowRefetchRequest, refetches + 1, "Now refetches")
+        model.receiveNowSummary(summary)
+        XCTAssertEqual(model.nowSummary?.needsYou.count, 0, "a stale or cached summary does not bring it back")
+    }
+}
+
+@MainActor
 private struct SelectionFixture {
     let remote = SelectionRemote()
+    let api = SelectionAPI()
     let identity = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     var items: [InboxItem] { ["A", "B"].map {
         InboxItem(id: $0, kind: .notification, sourceName: "Test", title: $0, createdAt: .distantPast)
@@ -151,7 +207,7 @@ private struct SelectionFixture {
             accountSessionStore: stores, installationIDStore: stores, stableDeviceIDStore: stores,
             pushTokenStore: stores, liveActivityPushToStartTokenStore: stores,
             registrationAttemptStore: stores, cache: SelectionCache(items: items),
-            apiClient: SelectionAPI(), liveActivityCoordinator: LiveActivityCommandCoordinator(store: actions),
+            apiClient: api, liveActivityCoordinator: LiveActivityCommandCoordinator(store: actions),
             pendingResponseStore: actions, notificationReceiptStore: stores,
             accountNotificationCleaner: stores, serverURL: URL(string: "https://relo.invalid")!,
             system: AppSystemServices(notificationPermission: { .denied },
@@ -163,6 +219,24 @@ private struct SelectionFixture {
         await model.start()
         return model
     }
+    /// A Now summary whose Needs you holds one missed question.
+    func missedQuestionSummary() throws -> NowSummary {
+        let json = """
+        {"serverTime":"2026-10-14T10:00:00Z",
+         "sinceYouLooked":{"since":"2026-10-14T09:00:00Z","finished":0,"failed":0,"waitingOnYou":0,"stoppedWithoutFinishing":0,"needsYou":1},
+         "needsYou":[{"id":"act_00000000-0000-4000-8000-000000000001","title":"Ship the release","status":"Deploy to production?",
+           "sourceName":"Claude Code","project":"relo","steps":null,"producer":"agent_session","sessionId":null,
+           "notificationId":"ntf_00000000-0000-4000-8000-000000000009","startedAt":"2026-10-14T09:58:00Z","declaredAt":"2026-10-14T09:58:00Z",
+           "question":{"id":"int_00000000-0000-4000-8000-000000000009","standing":"missed","askedAt":"2026-10-14T09:58:00Z","openedAt":null},
+           "owner":{"state":"needs_you","needsYou":"missed_question","evidenceAt":"2026-10-14T09:58:00Z","evidenceSource":"declared",
+             "staleDate":"2026-10-14T10:18:00Z","lockScreen":"top","relevance":1,"apnsPriority":10}}],
+         "recent":[],"waitingOnYou":[],"quiet":[],"paused":[],"running":[],
+         "folds":{"waitingOnYou":0,"quiet":0,"paused":0},"lockScreen":{"cards":[],"needsYouCount":1,"focus":null},
+         "sessions":{"sessions":[],"folds":{"idle":0}},"refreshAt":null}
+        """
+        return try ReloWireJSON.decoder().decode(NowSummary.self, from: Data(json.utf8))
+    }
+
     func detail(_ id: String, evidence: String = "evidence") throws -> InboxNotificationDetail {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -259,6 +333,16 @@ private actor SelectionCache: AccountScopedInboxCaching {
     func clearSelectedAccount() {}
 }
 private actor SelectionAPI: MobileAPIClient {
+    private(set) var dismissedQuestions: [String] = []
+    var dismissalFails = false
+    var dismissalRefused = false
+    func failDismissals() { dismissalFails = true }
+    func refuseDismissals() { dismissalRefused = true }
+    func dismissMissedQuestion(credential: DeviceCredential, questionId: String) async throws {
+        dismissedQuestions.append(questionId)
+        if dismissalFails { throw MobileAPIError.unavailable }
+        if dismissalRefused { throw MobileAPIError.invalidRequest }
+    }
     func validateAccountSession(token: String) async throws -> AccountSession { throw MobileAPIError.unavailable }
     func registerDevice(sessionToken: String, request: DeviceRegistrationRequest, idempotencyKey: String) async throws -> DeviceRegistrationResponse { throw MobileAPIError.unavailable }
     func deviceSelf(credential: DeviceCredential) async throws -> DeviceSelfResponse { throw MobileAPIError.unavailable }

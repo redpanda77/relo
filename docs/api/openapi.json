@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Relo integration API",
-    "version": "0.16.9",
-    "description": "Questions, cards and notifications for an app signed in with `relo auth login`. See docs/INTEGRATING.md."
+    "version": "0.18.15",
+    "description": "Questions, work, cards and notifications for an app signed in with `relo auth login`, plus the session, harness-credential and owner routes the CLI and apps use. See docs/INTEGRATING.md."
   },
   "security": [
     {
@@ -5891,6 +5891,2783 @@
     "/api/devices": {
       "get": {
         "summary": "List the account's phones",
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session/works": {
+      "post": {
+        "summary": "Start (or continue) the session's work",
+        "description": "An agent session's own surface: one open work per session. Starting again continues the open work; `new` parks it. Text is `{ readable }` or `{ sealed: true }` with the sealed envelope. Scopes: activities:write.",
+        "parameters": [
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "readable": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          }
+                        },
+                        "required": [
+                          "readable"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sealed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "sealed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "readable": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          }
+                        },
+                        "required": [
+                          "readable"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sealed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "sealed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "plan": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "set"
+                          },
+                          "steps": {
+                            "minItems": 1,
+                            "maxItems": 30,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "pattern": "^s[1-9][0-9]{0,2}$"
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "steps"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "add"
+                          },
+                          "steps": {
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "pattern": "^s[1-9][0-9]{0,2}$"
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "steps"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "next"
+                          }
+                        },
+                        "required": [
+                          "op"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "step"
+                          },
+                          "id": {
+                            "type": "string",
+                            "pattern": "^s[1-9][0-9]{0,2}$"
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "revise"
+                          },
+                          "labels": {
+                            "minItems": 1,
+                            "maxItems": 30,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "labels"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "progress": {
+                    "type": "object",
+                    "properties": {
+                      "done": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "total": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000
+                      }
+                    },
+                    "required": [
+                      "done",
+                      "total"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "new": {
+                    "type": "boolean"
+                  },
+                  "context": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "sealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "producerSealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "goal"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Read the session's open and parked work",
+        "parameters": [
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session/works/{workId}": {
+      "get": {
+        "summary": "Read one of the session's works",
+        "parameters": [
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update the work",
+        "description": "Plan changes keep stable step ids; a stale `baseVersion` is refused.",
+        "parameters": [
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "baseVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "readable": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          }
+                        },
+                        "required": [
+                          "readable"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sealed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "sealed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "readable": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          }
+                        },
+                        "required": [
+                          "readable"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sealed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "sealed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "plan": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "set"
+                          },
+                          "steps": {
+                            "minItems": 1,
+                            "maxItems": 30,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "pattern": "^s[1-9][0-9]{0,2}$"
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "steps"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "add"
+                          },
+                          "steps": {
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "pattern": "^s[1-9][0-9]{0,2}$"
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "steps"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "next"
+                          }
+                        },
+                        "required": [
+                          "op"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "step"
+                          },
+                          "id": {
+                            "type": "string",
+                            "pattern": "^s[1-9][0-9]{0,2}$"
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "op": {
+                            "type": "string",
+                            "const": "revise"
+                          },
+                          "labels": {
+                            "minItems": 1,
+                            "maxItems": 30,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 80
+                            }
+                          }
+                        },
+                        "required": [
+                          "op",
+                          "labels"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "progress": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "done": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "total": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000000
+                          }
+                        },
+                        "required": [
+                          "done",
+                          "total"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "waiting": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "reason": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "readable": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 60
+                                  }
+                                },
+                                "required": [
+                                  "readable"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "sealed": {
+                                    "type": "boolean",
+                                    "const": true
+                                  }
+                                },
+                                "required": [
+                                  "sealed"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "context": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "sealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "producerSealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session/works/{workId}/pause": {
+      "post": {
+        "summary": "Pause the work",
+        "parameters": [
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "readable": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          }
+                        },
+                        "required": [
+                          "readable"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sealed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "sealed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "sealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "producerSealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session/works/{workId}/resume": {
+      "post": {
+        "summary": "Resume a paused or parked work",
+        "parameters": [
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session/works/{workId}/finish": {
+      "post": {
+        "summary": "Finish the work with an outcome",
+        "description": "Every finish declares an outcome; open steps become skipped.",
+        "parameters": [
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Relo-Session-Key",
+            "in": "header",
+            "required": true,
+            "description": "The agent session's key, set by the CLI from the harness (16-128 of A-Z a-z 0-9 _ -).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Relo-Harness",
+            "in": "header",
+            "required": false,
+            "description": "The harness id, for example claude-code.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "finished",
+                      "failed",
+                      "dropped"
+                    ]
+                  },
+                  "outcome": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "readable": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        },
+                        "required": [
+                          "readable"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "sealed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "sealed"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "sealed": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "result",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/producers/{producerKey}/works": {
+      "post": {
+        "summary": "Start (or continue) a script's work",
+        "description": "For scripts and apps with no agent harness. Requires Idempotency-Key. One open work per producer key; `new` parks it. Scope: activities:write. A request that names a session is refused (`wrong_surface`).",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "status": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "plan": {
+                    "type": "object",
+                    "properties": {
+                      "op": {
+                        "type": "string",
+                        "const": "set"
+                      },
+                      "steps": {
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            }
+                          },
+                          "required": [
+                            "label"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "op",
+                      "steps"
+                    ]
+                  },
+                  "progress": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "done": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "total": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "done",
+                          "total"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "leaseSeconds": {},
+                  "producerKey": {
+                    "type": "string"
+                  },
+                  "new": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "goal"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: idempotency_key_required, idempotency_conflict, invalid_producer_key"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List the producer's works",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "open (default), paused or all.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "paused",
+                "all"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/producers/{producerKey}/works/{workId}": {
+      "get": {
+        "summary": "Read a work",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a work",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "status": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "plan": {},
+                  "progress": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "done": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "total": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "done",
+                          "total"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "waiting": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 500
+                          }
+                        },
+                        "required": [
+                          "reason"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/producers/{producerKey}/works/{workId}/pause": {
+      "post": {
+        "summary": "Pause a work",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/producers/{producerKey}/works/{workId}/resume": {
+      "post": {
+        "summary": "Resume a work",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/producers/{producerKey}/works/{workId}/finish": {
+      "post": {
+        "summary": "Finish a work with an outcome",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "result": {
+                    "default": "finished",
+                    "type": "string",
+                    "enum": [
+                      "finished",
+                      "failed",
+                      "dropped"
+                    ]
+                  }
+                },
+                "required": [
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/producers/{producerKey}/works/{workId}/heartbeat": {
+      "post": {
+        "summary": "Renew the work's lease",
+        "description": "Body `{ \"leaseSeconds\": 60..3600 }`. Declares nothing else; after the lease lapses the normal freshness rules apply.",
+        "parameters": [
+          {
+            "name": "producerKey",
+            "in": "path",
+            "required": true,
+            "description": "Base64url SHA-256 of `producer:` plus the producer key (43 characters); the CLI computes it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          },
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/works": {
+      "get": {
+        "summary": "List works (owner)",
+        "description": "The owner's cross-session read; a caller that names a session is refused (`owner_only`). Scope: activities:read.",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "`live` lists only works that are open now.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "live"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1-200, default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/works/{workId}": {
+      "get": {
+        "summary": "Read a work (owner)",
+        "parameters": [
+          {
+            "name": "workId",
+            "in": "path",
+            "required": true,
+            "description": "A work id; `current` names the session's open work and `newest` its newest paused work where a route says so.",
+            "schema": {
+              "type": "string",
+              "pattern": "^wrk_"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/now": {
+      "get": {
+        "summary": "The owner's derived state",
+        "description": "Every item carries its derived owner state, visibility and urgency, and `refreshAt`. Clients display it and keep no policy of their own. Scope: inbox:read.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "The owner's last look, clamped to the last 8 hours.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-sessions": {
+      "get": {
+        "summary": "List sessions (owner)",
+        "description": "Scope: activities:read.",
+        "parameters": [
+          {
+            "name": "phase",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated: working, waiting, idle, ended. Counts cover every phase.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-sessions/observed": {
+      "post": {
+        "summary": "Report a session's phase",
+        "description": "One snapshot of the CLI's local session state machine, sent on a phase change and as a heartbeat (at most every 5 minutes) while working. A snapshot applies only when its `seq` is higher than the stored one. No prompt, tool name or transcript ever travels. Accepts only a harness credential (scope presence:write); every other route refuses it and this route refuses any other credential.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "session": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
+                  },
+                  "harness": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[a-z0-9][a-z0-9._-]*$"
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "working",
+                      "waiting",
+                      "stopped",
+                      "ended"
+                    ]
+                  },
+                  "phaseSince": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "lastSeenAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "openToolSince": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "seq": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "project": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "computer": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "account": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "sealedNames": {}
+                },
+                "required": [
+                  "session",
+                  "harness",
+                  "phase",
+                  "phaseSince",
+                  "lastSeenAt",
+                  "openToolSince",
+                  "seq"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: harness_credential_required"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/harness-credentials": {
+      "post": {
+        "summary": "Mint a harness credential",
+        "description": "The token is shown once. Scope: services:write.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Repeat a request with the same key to get the first result instead of a second effect."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: credential_limit_reached"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List harness credentials",
+        "description": "Scope: services:read.",
+        "responses": {
+          "200": {
+            "description": "Success (201 when something was created)."
+          },
+          "400": {
+            "description": "The request was refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The credential was refused; `error` says why",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "description": "Including: unauthorized, account_disabled, credential_revoked, login_expired"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/harness-credentials/{harnessCredentialId}": {
+      "delete": {
+        "summary": "Revoke a harness credential",
+        "description": "Scope: services:write.",
+        "parameters": [
+          {
+            "name": "harnessCredentialId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^hck_"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success (201 when something was created)."

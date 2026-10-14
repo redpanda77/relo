@@ -2,6 +2,7 @@ import { EXIT, normalizeError } from "./errors.mjs";
 import { listAllDevices } from "./commands/admin.mjs";
 import { inspectHooks } from "./hooks-settings.mjs";
 import { inspectMcp } from "./mcp-config.mjs";
+import { pending } from "./outbox/index.mjs";
 import { inspectAgentSetup } from "./setup.mjs";
 import { inspectSkill, skillAdvice } from "./skill.mjs";
 import { updateAdvice } from "./update.mjs";
@@ -67,6 +68,12 @@ export async function runDoctor(options,dependencies,helpers) {
   if (outcome.data.checks.server.ok) {
     const update = await updateAdvice(dependencies).catch(() => undefined);
     if (update) warnings.update = update;
+  }
+  // Anything still queued locally (offline writes, observed snapshots) or dropped by the server: shown
+  // only when there is something, never a failure (the flusher retries on its own).
+  const queued = dependencies.outboxDirectory ? await pending({ directory: dependencies.outboxDirectory }).catch(() => undefined) : undefined;
+  if (queued && (queued.total > 0 || queued.dead.length > 0)) {
+    warnings.outbox = { ok: true,pending: queued.total,...(queued.oldestAt ? { oldestAt: queued.oldestAt } : {}),dead: queued.dead.length,run: "relo outbox status" };
   }
   let state = { ready: false };
   if (context.loginWhy) {

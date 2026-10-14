@@ -11,6 +11,10 @@ import { ensureIdentity, keyStorePath, saveKeyStore, trustKey } from "./keystore
 import { isSimulator, phoneHandle, phoneLabel } from "./device-names.mjs";
 
 const NOTICE_DAYS = 7;
+
+/** Every trust note this process produced, so a session can be shown each one once (DOGFOOD #2). */
+const ISSUED = new Set();
+export const isTrustNote = (note) => ISSUED.has(note);
 /** A browser link signed longer ago than this no longer counts; the phone re-signs links it keeps. */
 export const LINK_DAYS = 14;
 
@@ -95,6 +99,7 @@ export function trustNotices(store, apiUrl, now = Date.now(), devices = []) {
     notes.push(`security code changed for ${label}: nothing is encrypted for it until you run`
       + ` \`${approveCommand(store, apiUrl, pinned)}\` (${why}; or remove it: ${DASHBOARD_REMOVE})`);
   }
+  for (const note of notes) ISSUED.add(note);
   return notes;
 }
 

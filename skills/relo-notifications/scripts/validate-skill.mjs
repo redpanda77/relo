@@ -11,17 +11,21 @@ export const REQUIRED_REFERENCES = ["cards.md", "cli.md", "security.md", "servic
 const MAX_SKILL_LINES = 100;
 // Guidance that must stay in SKILL.md itself, not only in a reference.
 const REQUIRED_GUIDANCE = [
-  ["the card is the default tool", /\*\*The card\*\*/u],
-  ["notifications are not for questions or progress", /Never a question, never progress/u],
-  ["one card per agent", /One card per agent/u],
-  ["identity rule", /requires nonempty source,\s+project, and topic/u],
+  ["the work is the default tool", /\*\*The work\*\*/u],
+  ["notifications are not for questions or progress", /Never a question, never\s+progress/u],
+  ["one open work per session", /One open work per session/u],
+  ["the goal is yours", /Only the\s+\*\*goal\*\* is yours/u],
+  ["parallel work is one step", /Parallel work is one step with a count/u],
+  ["late answers are not permission", /A late answer[^.]*is never permission/u],
+  ["relo state", /relo state/u],
   ["the ask recipe", /relo ask ".+" --approval/u],
   ["approval-only permission", /A yes\/no answer is never permission/u],
   ["exit 0 is not authorization", /Exit `0` alone never authorizes anything/u],
   ["measured progress", /Progress is measured or absent/u],
 ];
 // Commands and flags that no longer exist must never be taught.
-const REMOVED = [/relo permissions/u, /--origin-file/u, /activity heartbeat/u, /--live-activity/u, /notify ask/u, /--text\b/u];
+const REMOVED = [/relo permissions/u, /--origin-file/u, /activity heartbeat/u, /--live-activity/u, /notify ask/u, /--text\b/u,
+  /relo activity/u, /--steps\b/u, /--title\b/u, /--topic\b/u, /--step-current/u];
 
 export function validateSkill(root = defaultRoot) {
   const errors = [];

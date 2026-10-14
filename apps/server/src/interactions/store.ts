@@ -31,7 +31,7 @@ export async function expireLockedRequest(tx: SubjectTransaction,row: Pick<Inter
   return true;
 }
 
-export type ResponseRequestRow = InteractionRow & { event_state: string; credential_version: number };
+export type ResponseRequestRow = InteractionRow & { event_state: string; credential_version: number; owner_dismissed_at: Date | null };
 export type ResponseEvidenceRow = { id: string; interaction_request_id: string | null; notification_event_id: string;
   device_id: string; kind: string; value_matches: boolean };
 
@@ -47,7 +47,7 @@ export async function selectResponseRequest(tx: SubjectTransaction,actor: Extrac
   command: import("./types.js").RespondCommand,locked: boolean) {
   const capability=actor.kind==="live_activity";
   return (await tx.query<ResponseRequestRow>(`SELECT r.id,r.principal_id,r.notification_event_id,r.kind,r.options,r.state,r.expires_at,r.responded_at,
-    e.state AS event_state,d.credential_version FROM interaction_requests r
+    r.owner_dismissed_at,e.state AS event_state,d.credential_version FROM interaction_requests r
     JOIN notification_events e ON e.id=r.notification_event_id AND e.principal_id=r.principal_id
     JOIN devices d ON d.id=$2 AND d.principal_id=r.principal_id AND d.revoked_at IS NULL
     WHERE e.id=$1 AND ($3::uuid IS NULL OR r.principal_id=$3)

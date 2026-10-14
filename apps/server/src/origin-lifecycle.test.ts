@@ -1,6 +1,5 @@
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import { createApp } from "./app.js";
-import { expireDueActivities } from "./activities.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { hashToken } from "./auth.js";
 import { createDatabase,type Database } from "./db.js";
@@ -336,74 +335,50 @@ suite("origin-slot lifecycle", () => {
     )).rows[0]!.count).toBe(1);
   });
 
-  test("converges manual-first, hook, and selector-free CLI operations on one activity", async () => {
+  // New rule: a selector-free start creates its own card; only a provider run reuses its own card.
+  test("manual-first, hook, and selector-free CLI starts each own a card; current is ambiguous across them", async () => {
     const manual = await request("/api/live-activities",{
-      acquireMode: "ensure",title: "Shared task",status: "Manual start",progress: 0.1,
-      deviceIds: [deviceId],
+      acquireMode: "ensure",title: "Shared task",status: "Manual start",progress: 0.1,deviceIds: [deviceId],
     },"converged-manual-start");
     expect(manual.status).toBe(201);
     const manualBody = await manual.json() as any;
-    expect(manualBody.activity).toMatchObject({ ownerKind: "credential_session",progress: 0.1 });
+    expect(manualBody.activity).toMatchObject({ ownerKind: "credential_session",sequence: 0 });
 
     const lifecycle = { provider: "codex",runId: "codex-converged-run-0123456789" };
     const hook = await request("/api/live-activities",{
-      ...startBody({ ...origin,thread: "converged-thread" },0.25),
-      acquireMode: "ensure",lifecycle,
+      ...startBody({ ...origin,thread: "converged-thread" },0.25),acquireMode: "ensure",lifecycle,
     },"converged-hook-ensure");
-    expect(hook.status).toBe(200);
-    expect(await hook.json()).toMatchObject({
-      reused: true,resumed: true,
-      activity: { id: manualBody.activity.id,ownerKind: "provider_run",sequence: 1,progress: 0.25 },
-    });
+    expect(hook.status).toBe(201);
+    const hookBody = await hook.json() as any;
+    expect(hookBody).toMatchObject({ reused: false,activity: { ownerKind: "provider_run",sequence: 0 } });
+    expect(hookBody.activity.id).not.toBe(manualBody.activity.id);
 
     const selectorFree = await request("/api/live-activities",{
-      acquireMode: "ensure",title: "Shared task",
-      status: "Updated manually",progress: 0.4,deviceIds: [deviceId],
+      acquireMode: "ensure",title: "Shared task",status: "Updated manually",progress: 0.4,deviceIds: [deviceId],
     },"converged-selector-free-ensure");
-    expect(selectorFree.status).toBe(200);
-    expect(await selectorFree.json()).toMatchObject({
-      reused: true,
-      activity: {
-        id: manualBody.activity.id,key: null,ownerKind: "provider_run",
-        sequence: 2,progress: 0.4,
-      },
-    });
+    expect(selectorFree.status).toBe(201);
+    const selectorFreeBody = await selectorFree.json() as any;
+    expect(selectorFreeBody).toMatchObject({ reused: false,activity: { ownerKind: "credential_session",sequence: 0 } });
+    expect([manualBody.activity.id,hookBody.activity.id]).not.toContain(selectorFreeBody.activity.id);
 
     const resolved = await request("/api/live-activities/resolve",{ current: true },"converged-current");
-    expect(resolved.status).toBe(200);
-    expect(await resolved.json()).toMatchObject({
-      found: true,activity: { id: manualBody.activity.id,state: "active" },
-    });
+    expect(resolved.status).toBe(409);
+    expect(await resolved.json()).toMatchObject({ error: "activity_selection_ambiguous" });
+    const ambiguousUpdate = await request("/api/live-activities/current",{ status: "Manual progress",progress: 0.8 },
+      "converged-manual-update","PATCH");
+    expect(ambiguousUpdate.status).toBe(409);
 
-    const manualUpdate = await request("/api/live-activities/current",{
-      status: "Manual progress",progress: 0.8,
-    },"converged-manual-update","PATCH");
-    expect(manualUpdate.status).toBe(200);
-    expect(await manualUpdate.json()).toMatchObject({
-      activity: { id: manualBody.activity.id,sequence: 3,progress: 0.8 },
-    });
-
-    const staleHook = await request("/api/live-activities",{
-      ...startBody({ ...origin,thread: "converged-thread" },0.5),
-      acquireMode: "ensure",lifecycle,
+    const hookAgain = await request("/api/live-activities",{
+      ...startBody({ ...origin,thread: "converged-thread" },0.5),acquireMode: "ensure",lifecycle,
     },"converged-hook-stale-progress");
-    expect(staleHook.status).toBe(200);
-    expect(await staleHook.json()).toMatchObject({
-      reused: true,activity: { id: manualBody.activity.id,sequence: 4,progress: 0.8 },
-    });
+    expect(hookAgain.status).toBe(200);
+    expect(await hookAgain.json()).toMatchObject({ reused: true,activity: { id: hookBody.activity.id,sequence: 1 } });
 
-    const ended = await request("/api/live-activities/current/end",{
-      status: "Complete",detail: "Ready for publication",progress: 1,dismissAfterSeconds: 30,
-    },"converged-manual-end");
-    expect(ended.status).toBe(200);
-    expect(await ended.json()).toMatchObject({
-      activity: { id: manualBody.activity.id,state: "ended",sequence: 5,
-        detail: "Ready for publication",progress: 1 },
-    });
+    expect((await request("/api/live-activities/current/end",{ status: "Complete",dismissAfterSeconds: 30 },
+      "converged-manual-end")).status).toBe(409);
     expect((await db.query<{ count: number }>(
-      "SELECT count(*)::int AS count FROM live_activities WHERE principal_id=$1",
-      [principalId],
-    )).rows[0]!.count).toBe(1);
+      "SELECT count(*)::int AS count FROM live_activities WHERE principal_id=$1",[principalId],
+    )).rows[0]!.count).toBe(3);
   });
 
   test("keeps an explicit manual name separate from an active provider run", async () => {
@@ -476,7 +451,7 @@ suite("origin-slot lifecycle", () => {
     )).status).toBe(200);
   });
 
-  test("renews provider leases without a visible update and expires only abandoned provider activities",async () => {
+  test("renews provider leases without a visible update; a lapsed lease never ends the card",async () => {
     const lifecycle = { provider: "codex",runId: "codex-lease-run-0123456789" };
     const started = await request("/api/live-activities",{
       acquireMode: "ensure",title: "Codex · Relo",status: "Planning",
@@ -502,26 +477,12 @@ suite("origin-slot lifecycle", () => {
       "SELECT count(*)::int AS count FROM notification_events WHERE principal_id=$1",[principalId],
     )).rows[0]!.count).toBe(eventsBefore);
 
+    // A lapsed provider lease is evidence for derive(), never an end: the declared card stays active.
     await db.query("UPDATE live_activities SET stale_at=now()-interval '1 second' WHERE id=$1",[
       initial.id.slice("act_".length),
     ]);
-    expect(await expireDueActivities(db,"disabled")).toBe(1);
-    const expired = (await db.query<any>("SELECT * FROM live_activities WHERE id=$1",[
-      initial.id.slice("act_".length),
-    ])).rows[0];
-    expect(expired).toMatchObject({ state: "expired",progress: null,status: "Expired" });
-
-    const manual = await request("/api/live-activities",{
-      acquireMode: "ensure",title: "Manual task",status: "Working",deviceIds: [deviceId],
-    },"manual-stale-start");
-    expect(manual.status).toBe(201);
-    const manualActivity = (await manual.json() as any).activity;
-    await db.query("UPDATE live_activities SET stale_at=now()-interval '1 second' WHERE id=$1",[
-      manualActivity.id.slice("act_".length),
-    ]);
-    expect(await expireDueActivities(db,"disabled")).toBe(0);
     expect((await db.query<{ state: string }>("SELECT state FROM live_activities WHERE id=$1",[
-      manualActivity.id.slice("act_".length),
+      initial.id.slice("act_".length),
     ])).rows[0]!.state).toBe("active");
   });
 
@@ -773,11 +734,11 @@ suite("origin-slot lifecycle", () => {
     );
     const activity = await db.query<{ id: string }>(
       `INSERT INTO live_activities(
-         principal_id,requester_credential_id,title,status,style,privacy,state,sequence,
+         producer_type,principal_id,requester_credential_id,title,status,style,privacy,state,sequence,
          target_device_ids,start_idempotency_key,expires_at,ended_at,origin_hash,generation,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision
-       ) VALUES ($1,$2,'Only generation','Ended','standard','standard','ended',1,
+       ) VALUES ('script',$1,$2,'Only generation','Ended','standard','standard','ended',1,
          ARRAY[$3::uuid],'retention-activity-1',now()+interval '1 hour',now(),$4,1,
          $5::jsonb,$6,$7::jsonb,$8,$9,$10) RETURNING id`,
       [principalId,credentialId,deviceId.slice(4),originHash,endedPresentation.presentation,
@@ -795,11 +756,11 @@ suite("origin-slot lifecycle", () => {
     );
     await db.query(
       `INSERT INTO live_activities(
-         principal_id,requester_credential_id,title,status,style,privacy,state,
+         producer_type,principal_id,requester_credential_id,title,status,style,privacy,state,
          target_device_ids,start_idempotency_key,expires_at,origin_hash,generation,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision
-       ) VALUES ($1,$2,'Resurrection','Starting','standard','standard','active',
+       ) VALUES ('script',$1,$2,'Resurrection','Starting','standard','standard','active',
          ARRAY[$3::uuid],'retention-activity-2',now()+interval '1 hour',$4,2,
          $5::jsonb,$6,$7::jsonb,$8,$9,$10)`,
       [principalId,credentialId,deviceId.slice(4),originHash,activePresentation.presentation,
@@ -809,11 +770,11 @@ suite("origin-slot lifecycle", () => {
     );
     await expect(db.query(
       `INSERT INTO live_activities(
-         principal_id,requester_credential_id,title,status,style,privacy,state,
+         producer_type,principal_id,requester_credential_id,title,status,style,privacy,state,
          target_device_ids,start_idempotency_key,expires_at,origin_hash,generation,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision
-       ) VALUES ($1,$2,'Duplicate active','Starting','standard','standard','active',
+       ) VALUES ('script',$1,$2,'Duplicate active','Starting','standard','standard','active',
          ARRAY[$3::uuid],'retention-activity-3',now()+interval '1 hour',$4,3,
          $5::jsonb,$6,$7::jsonb,$8,$9,$10)`,
       [principalId,credentialId,deviceId.slice(4),originHash,activePresentation.presentation,

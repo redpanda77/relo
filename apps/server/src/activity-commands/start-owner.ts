@@ -79,7 +79,7 @@ export async function startOwnerActivity(db:Database,actor:Extract<ActivityActor
            accent_color=$9,privacy=$10,presentation=$11,presentation_sha256=$12,
            expires_at=LEAST(statement_timestamp()+($13*interval '1 second'),created_at+($14*interval '1 second')),
            stale_at=LEAST(statement_timestamp()+($15*interval '1 second'),created_at+($14*interval '1 second')),
-           sequence=sequence+1,updated_at=statement_timestamp()
+           sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
          WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
         [activeSlot.rows[0]!.id,account.principalId,configuration.title,configuration.status,
           configuration.detail,configuration.progress,configuration.symbol,configuration.style,
@@ -91,9 +91,10 @@ export async function startOwnerActivity(db:Database,actor:Extract<ActivityActor
            principal_id,activity_key,title,status,detail,progress,symbol,style,accent_color,privacy,
            target_device_ids,start_idempotency_key,presentation,presentation_sha256,expires_at,stale_at,origin_hash,generation,
            presentation_policy,presentation_policy_source,presentation_preset_id,presentation_preset_revision,created_at,updated_at,
-           context
+           producer_type,declared_at,context
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,ARRAY[$11::uuid],$12,$13,$14,
            statement_timestamp()+($15*interval '1 second'),statement_timestamp()+($16*interval '1 second'),$17,$18,$19::jsonb,'system',$20,1,statement_timestamp(),statement_timestamp(),
+           'script',statement_timestamp(),
            $21::jsonb) RETURNING *`,
         [account.principalId,`dashboard-test-${testId}`,configuration.title,configuration.status,
           configuration.detail,configuration.progress,configuration.symbol,configuration.style,configuration.accentColor,

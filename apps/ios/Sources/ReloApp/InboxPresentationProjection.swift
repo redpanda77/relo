@@ -8,7 +8,8 @@ enum InboxPresentationProjection {
             let semanticContext = summary.context ?? item.context
             return LiveActivityDisplayPresentation(
                 header: base.header ?? item.sourceName,
-                title: semanticContext?.taskTitle ?? summary.title,
+                title: ReloSealedCards.readableTitle(semanticContext?.taskTitle ?? summary.title,
+                                                     prompt: item.interaction?.prompt ?? summary.detail),
                 subtitle: summary.detail ?? base.subtitle,
                 // An ended card keeps the status it ended with ("Shipped", "Tests failed").
                 status: InboxAttentionProjection.finalStatus(item, now: .now)
@@ -69,7 +70,8 @@ enum InboxPresentationProjection {
 
         return LiveActivityDisplayPresentation(
             header: item.sourceName,
-            title: item.activitySummary?.context?.taskTitle ?? item.activitySummary?.title ?? item.title,
+            title: ReloSealedCards.readableTitle(item.activitySummary?.context?.taskTitle ?? item.activitySummary?.title ?? item.title,
+                                                 prompt: item.interaction?.prompt),
             subtitle: item.activitySummary?.detail ?? item.detail ?? item.interaction?.prompt,
             status: item.interaction != nil ? status : (item.activitySummary?.status ?? status),
             visual: item.activitySummary?.progress.map { .progressBar(value: $0, label: "Progress") } ?? .none,

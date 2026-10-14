@@ -234,13 +234,13 @@ final class MobileAPIClientTests: XCTestCase {
         XCTAssertTrue(status.apns.directDeliveryConfigured)
     }
 
-    func testDeliveryStatusErrorGuidanceDistinguishesAuthenticationTailnetAndContractFailures() {
+    func testDeliveryStatusErrorGuidanceDistinguishesAuthenticationUnreachableServerAndContractFailures() {
         XCTAssertEqual(
             DeliveryTransportStatusErrorGuidance.message(for: MobileAPIError.reauthenticationRequired),
             "Your Relo server session expired. Sign in again to check the delivery path."
         )
         XCTAssertEqual(
-            DeliveryTransportStatusErrorGuidance.message(for: MobileAPIError.tailnetUnavailable),
+            DeliveryTransportStatusErrorGuidance.message(for: MobileAPIError.serverUnreachable),
             "Your Relo server is unreachable."
         )
         XCTAssertEqual(
@@ -383,7 +383,7 @@ final class MobileAPIClientTests: XCTestCase {
         XCTAssertEqual(detail.evidence.interactions.first?.kind, "opened")
     }
 
-    func testInboxPageDistinguishesTailnetFailureFromIncompatibleServerData() async throws {
+    func testInboxPageDistinguishesUnreachableServerFromIncompatibleServerData() async throws {
         let client = HTTPInboxDataSource(
             baseURL: baseURL,
             token: "device-secret",
@@ -393,9 +393,9 @@ final class MobileAPIClientTests: XCTestCase {
         StubURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
         do {
             _ = try await client.fetchHistoryPage(before: nil)
-            XCTFail("A tailnet transport failure must not be reported as a server or cache failure")
+            XCTFail("An unreachable-server transport failure must not be reported as a server or cache failure")
         } catch let error as InboxRemoteError {
-            XCTAssertEqual(error, .tailnetUnavailable)
+            XCTAssertEqual(error, .serverUnreachable)
             XCTAssertEqual(InboxRefreshErrorGuidance.message(for: error), "Server unreachable")
         }
 
@@ -534,6 +534,39 @@ final class MobileAPIClientTests: XCTestCase {
         )
         XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
         XCTAssertNil(Self.bodyData(try XCTUnwrap(captured.value)))
+    }
+
+    func testMissedQuestionDismissalUsesDeviceBearerAndExactQuestionEndpoint() async throws {
+        let captured = LockedTestValue<URLRequest?>(nil)
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return Self.response(request, status: 200, body: #"{"dismissed":true}"#)
+        }
+        let credential = DeviceCredential(
+            deviceId: "dev_0123456789ab",
+            installationId: UUID(uuidString: "6FCBFEF0-19CA-42C4-B931-EEBE1F520DF8")!,
+            accessToken: "device-secret",
+            issuedAt: .now,
+            accountId: "acc_0123456789ab",
+            credentialVersion: 1
+        )
+        let client = HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
+        try await client.dismissMissedQuestion(credential: credential, questionId: "int_00000000-0000-4000-8000-000000000009")
+
+        XCTAssertEqual(captured.value?.httpMethod, "POST")
+        XCTAssertEqual(captured.value?.url?.path, "/api/devices/self/questions/int_00000000-0000-4000-8000-000000000009/dismiss")
+        XCTAssertEqual(captured.value?.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertNil(Self.bodyData(try XCTUnwrap(captured.value)))
+
+        StubURLProtocol.handler = { Self.response($0, status: 404, body: #"{"error":"not_found"}"#) }
+        do {
+            try await client.dismissMissedQuestion(credential: credential, questionId: "int_00000000-0000-4000-8000-000000000009")
+            XCTFail("A question that is no longer dismissable must fail")
+        } catch { XCTAssertEqual(error as? MobileAPIError, .invalidRequest) }
+        do {
+            try await client.dismissMissedQuestion(credential: credential, questionId: "../ntf_x")
+            XCTFail("Only a question id reaches the path")
+        } catch { XCTAssertEqual(error as? MobileAPIError, .invalidRequest) }
     }
 
     func testInteractionSubmissionUsesDeviceBearerAndIdempotencyBody() async throws {

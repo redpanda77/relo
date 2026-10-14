@@ -1,12 +1,56 @@
 import ReloCore
 import SwiftUI
 
+/// The outcome the server derived for a History row (F.1a): never worked out from the clock.
+struct HistoryServerOutcome: Equatable, Sendable {
+    let label: String
+    let color: Color
+    let symbol: String
+
+    /// From the item's owner state and, for a question, its standing.
+    static func make(state: OwnerState?, standing: QuestionStanding?, answer: String? = nil) -> HistoryServerOutcome? {
+        switch standing {
+        case .missed?: return .init(label: "Missed", color: .reloSignalCoral, symbol: "clock.badge.xmark")
+        case .answeredLate?:
+            let late = answer.map { "\($0) (answered late)" } ?? "Answered late"
+            return .init(label: late, color: answer.map { ["Declined", "No"].contains($0) } == true ? .reloWarning : .reloDone,
+                         symbol: "checkmark.bubble.fill")
+        default: break
+        }
+        switch state {
+        case .done?: return .init(label: "Done", color: .reloDone, symbol: "checkmark")
+        case .failed?: return .init(label: "Failed", color: .reloErrorText, symbol: "xmark.octagon.fill")
+        case .dropped?: return .init(label: "Dropped", color: .reloWarning, symbol: "stop.fill")
+        case .leftUnfinished?: return .init(label: "Left unfinished", color: .reloWarning, symbol: "exclamationmark.triangle.fill")
+        case .moving?, .workingQuietly?: return .init(label: "Running", color: .reloSignalIndigo, symbol: "waveform")
+        case .waitingOnYou?, .needsYou?: return .init(label: "Your turn", color: .reloSignalCoral, symbol: "hand.raised.fill")
+        case .stale?: return .init(label: "Quiet", color: .reloInfo, symbol: "moon.zzz")
+        case .stoppedResponding?: return .init(label: "Stopped responding", color: .reloInfo, symbol: "pause.circle")
+        case .noSignal?: return .init(label: "No signal", color: .reloInfo, symbol: "antenna.radiowaves.left.and.right.slash")
+        case .paused?: return .init(label: "Paused", color: .reloInfo, symbol: "pause.fill")
+        case .unknown?, nil: return nil
+        }
+    }
+
+    init(label: String, color: Color, symbol: String) {
+        self.label = label; self.color = color; self.symbol = symbol
+    }
+
+    /// The outcome of a work the Now summary still lists (recent outcomes, missed questions).
+    init?(item: NowItem) {
+        guard let outcome = Self.make(state: item.owner.state, standing: item.question?.standing) else { return nil }
+        self = outcome
+    }
+}
+
 /// A History row reads top to bottom as: where it came from, what it was, how it turned out, what it took.
 struct HistoryRowView: View {
     let row: HistoryRow
     var showsSource = true
     var showsProject = true
     var responseStatus: String?
+    /// The server's outcome when known; it replaces the badge worked out from the row.
+    var serverOutcome: HistoryServerOutcome? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -50,7 +94,7 @@ struct HistoryRowView: View {
                 .lineLimit(stacked ? nil : 2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let label = responseStatus ?? row.outcome.label {
+            if let label = responseStatus ?? serverOutcome?.label ?? row.outcome.label {
                 badge(label)
             } else {
                 typeLabel.font(.caption.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
@@ -64,7 +108,7 @@ struct HistoryRowView: View {
     private enum TypePlacement { case badge, summary, meta }
     /// A message has no outcome, so its type takes the badge; otherwise it joins the first line with room.
     private var typePlacement: TypePlacement {
-        if responseStatus == nil && row.outcome.label == nil { return .badge }
+        if responseStatus == nil && serverOutcome == nil && row.outcome.label == nil { return .badge }
         if metaFacts.isEmpty && row.summary != nil { return .summary }
         return .meta
     }
@@ -216,7 +260,8 @@ struct HistoryRowView: View {
     }
 
     private var symbol: String {
-        switch row.outcome {
+        if let serverOutcome { return serverOutcome.symbol }
+        return switch row.outcome {
         case .running: "waveform"
         case .done: "checkmark"
         case .stopped: "exclamationmark.triangle.fill"
@@ -231,7 +276,8 @@ struct HistoryRowView: View {
     }
 
     private var color: Color {
-        switch row.outcome {
+        if let serverOutcome { return serverOutcome.color }
+        return switch row.outcome {
         case .running: .reloSignalIndigo
         case .done: .reloDone
         case .stopped: .reloWarning

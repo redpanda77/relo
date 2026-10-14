@@ -66,12 +66,12 @@ struct LiveActivitySurfaceProjectionTests {
         #expect(p.components.isEmpty)
     }
 
-    @Test("Measured progress wins over stage fraction, independent of array order")
-    func measuredPriority() {
+    @Test("With steps, the island shows one number: the step position, never a card-wide percent")
+    func stepsOwnTheNumber() {
         let p = LiveActivitySurfaceProjection.make(
             presentation: presentation(components: [steps, progress]),
             surface: .compactTrailing, now: now)
-        #expect(p.fact == .percentage(0.42, .project))
+        #expect(p.fact == .stages(2, 3))
         #expect(p.phase?.label == "Test")
         #expect(p.phase?.current == 2)
         #expect(p.phase?.completed == 1)
@@ -110,13 +110,24 @@ struct LiveActivitySurfaceProjectionTests {
         #expect(p.fact == .stages(0, 8))
     }
 
+    @Test("A step's own count wins: 6 of 9 inside step 2 of 8")
+    func stepCountFromProgressLabel() {
+        let counted = LiveActivityPresentation.Component.progressBar(
+            id: "p", colorRole: .project, value: 0.67, label: "6 of 9")
+        let p = LiveActivitySurfaceProjection.make(
+            presentation: presentation(components: [steps, counted]),
+            surface: .compactTrailing, now: now)
+        #expect(p.fact == .stages(6, 9))
+        #expect(LiveActivitySurfaceProjection.stepCount("6/9")! == (6, 9))
+    }
+
     @Test("Overdue progress is not completion or failure")
     func stale() {
         let p = LiveActivitySurfaceProjection.make(
             presentation: presentation(components: [progress]),
             surface: .minimal, isStale: true, now: now)
-        #expect(p.fact == .symbol("exclamationmark.clock.fill", "Update overdue"))
-        #expect(p.status == "Update overdue")
+        #expect(p.fact == .symbol("moon.zzz.fill", "Quiet"))
+        #expect(p.status == "Quiet")
     }
 
     @Test("100 percent does not invent terminal lifecycle")
@@ -159,8 +170,8 @@ struct LiveActivitySurfaceProjectionTests {
         let p = LiveActivitySurfaceProjection.make(
             presentation: presentation(decision: true),
             surface: .minimal, interaction: interaction(deadline: 1_800_000_000), now: now)
-        #expect(p.status == "Request expired")
-        #expect(p.fact == .symbol("clock.badge.xmark", "Request expired"))
+        #expect(p.status == "Missed · open Relo to answer")
+        #expect(p.fact == .symbol("clock.badge.exclamationmark", "Missed · open Relo to answer"))
     }
 
     @Test("An earlier request deadline is included in ActivityKit invalidation")
@@ -210,8 +221,8 @@ struct LiveActivitySurfaceProjectionTests {
         let visual = LiveActivityResponseWidgetPresentation.make(
             interaction: input, primary: "Reply", secondary: "Reply", now: now)
         #expect(visual.mode == .terminal)
-        #expect(visual.label == "Request expired")
-        #expect(visual.symbol == "clock.badge.xmark")
+        #expect(visual.label == "Missed · open Relo to answer")
+        #expect(visual.symbol == "clock.badge.exclamationmark")
     }
 
     private let choices = [

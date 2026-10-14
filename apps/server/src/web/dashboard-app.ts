@@ -34,7 +34,42 @@ const assetContentTypes: Record<string,string> = {
 type DashboardBuild = {
   indexHtml: string;
   assets: ReadonlyMap<string,URL>;
+  /** `<link>` tags that fetch the landing chunk with the document (empty without a manifest). */
+  landingPreload: string;
 };
+
+type ManifestChunk = { file: string; css?: string[]; imports?: string[]; isEntry?: boolean };
+
+const LANDING_CHUNK = "src/features/landing/landing-page.tsx";
+const LANDING_SCENE_CHUNK = "src/features/landing/landing-scene.ts";
+
+/**
+ * The landing page is a lazy chunk. Without help the browser finds it only after the entry has
+ * run, then its CSS and icons, then the scene: a chain of round trips that a slow phone link turns
+ * into seconds. Listing them in the document fetches them in parallel with the entry.
+ */
+export function landingPreloadTags(manifest: Record<string,ManifestChunk>): string {
+  const scripts = new Set<string>();
+  const styles = new Set<string>();
+  const visit = (key: string) => {
+    const chunk = manifest[key];
+    if (!chunk || chunk.isEntry || scripts.has(chunk.file)) return;
+    scripts.add(chunk.file);
+    chunk.css?.forEach((file) => styles.add(file));
+    chunk.imports?.forEach(visit);
+  };
+  visit(LANDING_CHUNK);
+  if (!scripts.size) return "";
+  const safe = (file: string) => /^assets\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file);
+  const tags = [
+    ...[...styles].filter(safe).map((file) => `<link rel="stylesheet" crossorigin href="/${file}">`),
+    ...[...scripts].filter(safe).map((file) => `<link rel="modulepreload" crossorigin href="/${file}">`),
+  ];
+  // The WebGL scene is decoration: start it early, behind everything the text needs.
+  const scene = manifest[LANDING_SCENE_CHUNK]?.file;
+  if (scene && safe(scene)) tags.push(`<link rel="modulepreload" crossorigin href="/${scene}" fetchpriority="low">`);
+  return tags.join("");
+}
 
 type ActivityOwnerKind =
   | "provider_run"
@@ -49,8 +84,10 @@ async function dashboardBuild(): Promise<DashboardBuild> {
   dashboardBuildPromise ??= Promise.all([
     readFile(new URL("index.html",dashboardDistUrl),"utf8"),
     readdir(dashboardAssetsUrl,{ withFileTypes: true }),
-  ]).then(([indexHtml,entries]) => ({
+    readFile(new URL(".vite/manifest.json",dashboardDistUrl),"utf8").then(JSON.parse).catch(() => ({})),
+  ]).then(([indexHtml,entries,manifest]) => ({
     indexHtml,
+    landingPreload: landingPreloadTags(manifest as Record<string,ManifestChunk>),
     assets: new Map(entries
       .filter((entry) => entry.isFile() && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(entry.name))
       .map((entry) => [entry.name,new URL(entry.name,dashboardAssetsUrl)])),
@@ -211,26 +248,35 @@ export function serializeDashboardBootstrap(value: DashboardBootstrap): string {
   })[character]!);
 }
 
+const LANDING_DESCRIPTION = "Live status from every agent, script and app you run, wherever it runs. One place, on your iPhone.";
+const LANDING_META = `<meta name="description" content="${LANDING_DESCRIPTION}"><meta property="og:title" content="Relo · Every agent, one place"><meta property="og:description" content="${LANDING_DESCRIPTION}"><meta property="og:type" content="website">`;
+
 export function renderDashboardAppDocumentFromIndex(
   indexHtml: string,
   bootstrap: DashboardBootstrap,
+  landingPreload = "",
 ): string {
   if (!indexHtml.includes('<div id="root"></div>')) {
     throw new Error("Dashboard build is missing the React root");
   }
-  const documentTitle = bootstrap.kind === "auth" ? bootstrap.title : bootstrap.shell.title;
-  const title = `${documentTitle} · Relo`.replace(/[<>&]/g,(character) => ({
+  const documentTitle = bootstrap.kind === "auth"
+    ? bootstrap.view === "landing" ? "Every agent, one place" : bootstrap.title
+    : bootstrap.shell.title;
+  const title = (bootstrap.kind === "auth" && bootstrap.view === "landing"
+    ? `Relo · ${documentTitle}` : `${documentTitle} · Relo`).replace(/[<>&]/g,(character) => ({
     "<": "&lt;",
     ">": "&gt;",
     "&": "&amp;",
   })[character]!);
   const loadingLabel = bootstrap.kind === "test-lab" ? "Loading Test Lab…"
-    : bootstrap.kind === "auth" ? "Loading authentication…" : "Loading dashboard…";
+    : bootstrap.kind === "auth" ? bootstrap.view === "landing" ? "Loading Relo…" : "Loading authentication…"
+    : "Loading dashboard…";
+  const landing = bootstrap.kind === "auth" && bootstrap.view === "landing";
   const root = `<div id="root" data-dashboard-entry="${bootstrap.kind}"><main aria-busy="true"><p role="status">${loadingLabel}</p></main></div><script id="relo-dashboard-bootstrap" type="application/json">${serializeDashboardBootstrap(bootstrap)}</script>`;
   return indexHtml
     .replace(/<link rel="icon"[^>]*>\s*/i,"")
     .replace(/<title>[^<]*<\/title>/i,`<title>${title}</title>`)
-    .replace("<head>",'<head><meta name="referrer" content="no-referrer">')
+    .replace("<head>",`<head><meta name="referrer" content="no-referrer">${landing ? LANDING_META + landingPreload : ""}`)
     .replace("<body>",'<body><!-- IMPECCABLE-DIRECTION seed=relo-plum-coral | THESIS: An authored notification operations console that feels energetic and technically credible. | OWN-WORLD: Warm near-black plum surfaces, restrained coral actions, and notification-owned accents. | STORY: Orient, inspect, act, then verify across provider, phone, and response evidence. | FIRST VIEWPORT: Navigation, page purpose, system status, and primary work are immediately legible. | FORM: Real shadcn components, crisp borders, compact data, and mono technical identifiers. | FINISH: Every state is keyboard-safe and responsive; tonal gradients remain scoped to notification previews. -->')
     .replace('<div id="root"></div>',root);
 }
@@ -238,5 +284,6 @@ export function renderDashboardAppDocumentFromIndex(
 export async function renderDashboardAppDocument(
   bootstrap: DashboardBootstrap,
 ): Promise<string> {
-  return renderDashboardAppDocumentFromIndex((await dashboardBuild()).indexHtml,bootstrap);
+  const build = await dashboardBuild();
+  return renderDashboardAppDocumentFromIndex(build.indexHtml,bootstrap,build.landingPreload);
 }

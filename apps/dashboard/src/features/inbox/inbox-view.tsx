@@ -1,15 +1,15 @@
-import { ArrowRight, Check, Send, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { Check, Send, X } from "lucide-react"
+import { useMemo, useState } from "react"
 
 import { fetchDashboardRoute } from "@/app/dashboard-route-loader"
 import { NowHud } from "@/components/organisms/now-hud"
 import { Empty, Page, Section } from "@/components/page"
-import { EncryptedText } from "@/components/atoms/encrypted-text"
 import { displayName } from "@/lib/encrypted"
 import { SIGNAL_CSS } from "@/lib/signal"
-import { LiveNowList, NowAllClear, NowSection } from "@/features/inbox/now-all-clear"
-import { AgentsSection } from "@/features/inbox/agents-section"
-import { quietSessionsByCard } from "@/features/inbox/sessions-model"
+import { NowAllClear, NowItemList, NowSection } from "@/features/inbox/now-all-clear"
+import { SessionsSection, type SessionWorkLink } from "@/features/inbox/sessions-section"
+import { FOLD_LABEL, nowBlocks, nowCounts, overviewNow, type NowItem } from "@/features/inbox/now-model"
+import { useNowRefresh } from "@/features/inbox/use-now-refresh"
 import { ActivityCardRow } from "@/features/inbox/activity-card"
 import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
 import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
@@ -24,7 +24,6 @@ import {
   nowSentence,
   todayActivity,
 } from "@/features/inbox/activity-model"
-import { relativeTime } from "@/lib/format"
 import { navigateDashboard } from "@/state/use-dashboard-route"
 import { Button } from "@/components/ui/button"
 import {
@@ -106,43 +105,31 @@ export function InboxView({
     }
   }
 
+  // History display only (Today strip, Activity list): the page-load instant formats dates.
   const [now] = useState(() => Date.now())
-  const [syncedAt] = useState(() => Date.now())
-  const [clockNow, setClockNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = window.setInterval(() => setClockNow(Date.now()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
   const allCards = shown.map((notification) => ({ notification, card: cardFor(notification, now) }))
-  const runningCards = (overview?.runningActivities ?? notifications)
-    .map((notification) => ({ notification, card: cardFor(notification, now) }))
-    .filter(({ card }) => card.outcome.kind === "running")
-  // On Now, running tasks already have their own section above.
-  const runningIds = new Set(overview ? runningCards.map(({ card }) => card.id) : [])
-  const cards = allCards.filter(({ card }) => !runningIds.has(card.id))
-  const needsList = overview ? overview.pendingResponses.length + overview.approvalRequests.length : 0
-  const needsYou = overview
-    ? Math.max(
-        overview.pendingResponses.length + overview.approvalRequests.length,
-        overview.summary.pendingResponses + overview.summary.pendingApprovals
-      )
-    : 0
-  const metrics = nowMetrics({
-    cards: [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
-    running: runningCards.length,
-    needsYou,
-  })
-
-  const mix = nowMix({
-    cards: [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
-    running: runningCards.length,
-    needsYou,
-    now: new Date(clockNow),
-  })
-
-  const agentSeconds = agentSecondsToday(
-    [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
-    new Date(clockNow)
+  // Now is the server's: sections, folds and counts come from its summary, refetched every 60 s.
+  const initialNow = useMemo(() => overviewNow(overview), [overview])
+  const { summary, offline } = useNowRefresh(overview?.shell.account.id, initialNow)
+  const blocks = summary ? nowBlocks(summary, { offline }) : []
+  const openItem = (item: NowItem) => void open(item.notificationId ?? item.id, [item.sourceName, item.project].filter(Boolean).join(" · "))
+  const nowIds = new Set(
+    summary ? [...summary.needsYou, ...summary.running, ...summary.waitingOnYou, ...summary.quiet, ...summary.paused].map((item) => item.id) : []
+  )
+  const cards = allCards.filter(({ card }) => !nowIds.has(card.id))
+  const approvals = overview?.approvalRequests ?? []
+  const needsYou = (summary?.needsYou.length ?? 0) + approvals.length
+  const running = summary?.running.length ?? 0
+  // Done is the server's "finished since you looked", not a count of the notification page's cards
+  // (finished work is not a notification row, so counting cards showed DONE 0 beside "2 finished").
+  const cardMetrics = nowMetrics({ cards: allCards.map(({ card }) => card), running, needsYou })
+  const metrics = summary ? { ...cardMetrics, done: nowCounts(summary).done } : cardMetrics
+  const mix = nowMix({ cards: allCards.map(({ card }) => card), running, needsYou, now: new Date(now) })
+  const agentSeconds = agentSecondsToday(allCards.map(({ card }) => card), new Date(now))
+  const works = new Map<string, SessionWorkLink>(
+    summary
+      ? [...summary.needsYou, ...summary.waitingOnYou, ...summary.running].map((item) => [item.id, { title: item.title, open: () => openItem(item) }])
+      : []
   )
   const agentTime = agentSeconds > 0 ? agentTimeLabel(agentSeconds) : null
 
@@ -255,71 +242,12 @@ export function InboxView({
     projectSelect
   )
 
-  return (
-    <Page
-      title={history ? "History" : "Now"}
-      eyebrow={history ? "Every notification and Live Activity, newest first." : undefined}
-      actions={history ? <a href="/dashboard/inbox/delivery" className="pill"><Send className="size-3.5" aria-hidden="true" />Delivery log</a> : undefined}
-    >
-      {overview ? (
-        <NowHud
-          today={metrics.today}
-          done={metrics.done}
-          running={metrics.running}
-          needsYou={metrics.needsYou}
-          arcs={runningCards.map(({ card }) => ({
-            progress: card.steps ? card.steps.done / card.steps.total : card.progress,
-          }))}
-          sentence={nowSentence(metrics)}
-          mix={mix}
-          agentTime={agentTime}
-          syncedAt={syncedAt}
-          now={clockNow}
-        />
-      ) : null}
-
-      {overview ? <PendingDevicesNotice /> : null}
-
-      {overview ? <LinkBrowserBanner accountId={overview.shell.account.id} /> : null}
-
-      {overview && needsList > 0 ? (
+  const needsYouSection = overview && needsYou > 0 ? (
         <NowSection title="Needs you" count={needsYou} color={SIGNAL_CSS.needsYou}>
-          <ul aria-label="Needs you" className="space-y-2.5">
-            {overview.pendingResponses.map((response) => (
-              <li key={response.notificationId}>
-                <div className="holo-card tone-orange p-4" data-live="true">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="micro tone-orange truncate" style={{ color: SIGNAL_CSS.needsYou }}>{response.source}</span>
-                    {response.expiresAt ? (
-                      <time className="micro shrink-0" dateTime={response.expiresAt} title={formatDashboardDate(response.expiresAt)}>
-                        Respond {relativeTime(response.expiresAt)}
-                      </time>
-                    ) : null}
-                  </div>
-                  {response.encrypted ? (
-                    <h3 className="mt-2 text-[15px] font-medium text-muted-foreground">
-                      <EncryptedText />
-                    </h3>
-                  ) : (
-                    <>
-                      <h3 className="mt-2 text-[15px] font-medium text-foreground">{response.title}</h3>
-                      <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{response.prompt}</p>
-                    </>
-                  )}
-                  <div className="mt-3 flex justify-end">
-                    <Button
-                      size="sm"
-                      className="min-h-11 sm:min-h-8"
-                      aria-label={response.encrypted ? "Open encrypted item" : `Open ${response.title}`}
-                      onClick={() => void open(response.notificationId, response.source)}
-                    >
-                      Open <ArrowRight aria-hidden="true" />
-                    </Button>
-                  </div>
-                </div>
-              </li>
-            ))}
-            {overview.approvalRequests.map((request) => {
+          {summary?.needsYou.length ? <NowItemList label="Needs you" items={summary.needsYou} onOpen={openItem} /> : null}
+          {approvals.length ? (
+          <ul aria-label="Connection requests" className="space-y-2.5">
+            {approvals.map((request) => {
               const pending = actions.pendingCodes.has(request.userCode)
               const error = actions.errorFor(request.userCode)
               return (
@@ -346,45 +274,85 @@ export function InboxView({
               )
             })}
           </ul>
+          ) : null}
         </NowSection>
-      ) : null}
+      ) : null
 
+  return (
+    <Page
+      title={history ? "History" : "Now"}
+      eyebrow={history ? "Every notification and Live Activity, newest first." : undefined}
+      actions={history ? <a href="/dashboard/inbox/delivery" className="pill"><Send className="size-3.5" aria-hidden="true" />Delivery log</a> : undefined}
+    >
       {overview ? (
-        <AgentsSection
-          sessions={overview.sessions}
-          syncedAt={syncedAt}
-          cards={
-            new Map(
-              [...allCards, ...runningCards].map(({ notification, card }) => [
-                card.id,
-                { title: card.title, encrypted: card.encrypted, open: () => void open(card.id, notificationContext(notification)) },
-              ])
-            )
-          }
+        <NowHud
+          today={metrics.today}
+          done={metrics.done}
+          running={metrics.running}
+          needsYou={metrics.needsYou}
+          arcs={(summary?.running ?? []).map((item) => ({
+            progress: item.steps ? item.steps.done / item.steps.total : null,
+          }))}
+          sentence={nowSentence(metrics)}
+          mix={mix}
+          agentTime={agentTime}
+          syncing={offline}
         />
       ) : null}
 
-      {overview && runningCards.length > 0 ? (
-        <NowSection title="Live now" count={runningCards.length} color={SIGNAL_CSS.running}>
-          <LiveNowList
-            now={clockNow}
-            syncedAt={syncedAt}
-            quietSessions={quietSessionsByCard(overview.sessions)}
-            items={runningCards.map(({ notification, card }) => ({
-              card,
-              open: () => void open(card.id, notificationContext(notification)),
-            }))}
-          />
-        </NowSection>
-      ) : null}
+      {overview ? <PendingDevicesNotice /> : null}
+
+      {overview ? <LinkBrowserBanner accountId={overview.shell.account.id} /> : null}
+
+      {/* Connection requests need the owner even when no work does. */}
+      {!blocks.some((block) => block.kind === "needsYou") ? needsYouSection : null}
+
+      {blocks.map((block) => {
+        switch (block.kind) {
+          case "sinceYouLooked":
+            return (
+              <section key="since" aria-label="Since you looked" className="space-y-3" data-now-block="since-you-looked">
+                <p className={block.muted ? "text-sm text-muted-foreground" : "text-sm font-medium text-foreground"}>{block.text}</p>
+                {block.recent.length ? <NowItemList label="Since you looked" items={block.recent} onOpen={openItem} /> : null}
+                {block.more.length ? (
+                  <details data-fold="recent">
+                    <summary className="micro cursor-pointer select-none">{`Show ${block.more.length} more`}</summary>
+                    <div className="mt-2.5"><NowItemList label="More since you looked" items={block.more} onOpen={openItem} /></div>
+                  </details>
+                ) : null}
+              </section>
+            )
+          case "needsYou":
+            return <div key="needs-you">{needsYouSection}</div>
+          case "fold":
+            return (
+              <details key={block.fold} data-fold={block.fold} className="space-y-2.5">
+                <summary
+                  className="micro cursor-pointer select-none font-semibold"
+                  style={{ color: block.fold === "waitingOnYou" ? SIGNAL_CSS.attention : undefined }}
+                >
+                  {`${FOLD_LABEL[block.fold]} (${block.count})`}
+                </summary>
+                <div className="mt-2.5"><NowItemList label={FOLD_LABEL[block.fold]} items={block.items} onOpen={openItem} /></div>
+              </details>
+            )
+          case "running":
+            return (
+              <NowSection key="running" title={block.title} count={block.items.length} color={SIGNAL_CSS.running}>
+                <NowItemList label={block.title} items={block.items} onOpen={openItem} />
+              </NowSection>
+            )
+          case "sessions":
+            return <SessionsSection key="sessions" sessions={block.sessions} works={works} />
+          case "allClear":
+            return null
+        }
+      })}
 
       {overview ? (
         <NowAllClear
-          allClear={needsYou === 0 && runningCards.length === 0}
-          activity={todayActivity(
-            [...new Map([...allCards, ...runningCards].map(({ card }) => [card.id, card])).values()],
-            new Date(clockNow)
-          )}
+          allClear={blocks.some((block) => block.kind === "allClear") && approvals.length === 0}
+          activity={todayActivity(allCards.map(({ card }) => card), new Date(now))}
           onOpen={(id) => {
             const found = notifications.find((item) => item.id === id)
             void open(id, found ? notificationContext(found) : "")

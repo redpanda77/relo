@@ -1,11 +1,13 @@
 import { captureActivityCommand } from "./activity-command-store.mjs";
 import { prepareNotificationCommand } from "./notification-command-store.mjs";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "./args.mjs";
+import { stateRoot } from "./work/state-file.mjs";
 import { ReloApiClient } from "./api-client.mjs";
 import { configPath, configRevision, environmentConfig, loadAccountsSync, loadComputerNameSync, loadConfig, removeConfig, switchProfile, writeConfig } from "./config.mjs";
 import { EXIT, ReloError, UsageError, normalizeError } from "./errors.mjs";
@@ -13,6 +15,8 @@ import { runDoctor } from "./doctor.mjs";
 import { commandSchema } from "./schema.mjs";
 import { runAccountCommand } from "./commands/account.mjs";
 import { runActivityCommand } from "./commands/activity.mjs";
+import { runWorkCommand } from "./commands/work.mjs";
+import { WorkRefusal, refusalText } from "./work/refusal.mjs";
 import { runAdminCommand } from "./commands/admin.mjs";
 import { isReadyResponse, openBrowser, runAuthCommand, safeCredential } from "./commands/auth.mjs";
 import { runHookCommand } from "./commands/hook.mjs";
@@ -22,16 +26,20 @@ import { runListenCommand } from "./commands/listen.mjs";
 import { runTestCommand } from "./commands/test.mjs";
 import { clearPendingLogin, pendingLoginPath, readPendingLogin, writePendingLogin } from "./pending-login.mjs";
 import { runSetupCommand } from "./commands/setup.mjs";
+import { runHooksCommand } from "./commands/hooks.mjs";
+import { runOutboxCommand } from "./commands/outbox.mjs";
 import { runSkillCommand } from "./commands/skill.mjs";
 import { runKeysCommand } from "./commands/keys.mjs";
 import { runUpdateCommand } from "./commands/update.mjs";
 import { GUIDE, HELP, IDENTITY_HELP } from "./help.mjs";
+import { CALLER_TYPES, detectCaller } from "./caller.mjs";
+import { guardOwnerOnly } from "./agent/guards.mjs";
 import { detectComputerName, detectIdentityDefaults, detectOrigin } from "./identity.mjs";
 import { errorLine, errorText, successLine } from "./output.mjs";
 import { selectSchemaCommands, unknownCommandHint } from "./suggest.mjs";
-import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result } from "./support.mjs";
+import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result, withSessionNotes } from "./support.mjs";
 
-const VERSION = "0.15.6";
+const VERSION = "0.16.3";
 
 async function executeCommand(parsed, dependencies) {
   const { positionals, options } = parsed;
@@ -77,7 +85,7 @@ async function executeCommand(parsed, dependencies) {
     action = "send";
   }
 
-  const unknownHint = unknownCommandHint(group, action);
+  const unknownHint = group === "work" ? undefined : unknownCommandHint(group, action);
   if (unknownHint !== undefined) throw new UsageError(`Unknown command: ${positionals.join(" ")}`, { hint: unknownHint });
 
   if (group === "doctor") {
@@ -91,10 +99,16 @@ async function executeCommand(parsed, dependencies) {
   }
   if (group === "auth" && action === "login" && options.profile !== undefined) dependencies.profile = options.profile;
   const command = { parsed, positionals, options, group, action, rest, dependencies };
+  // Plan 2.8 (STATE-SPEC 4.1): commands that show every session are the owner's, refused inside a harness.
+  if (dependencies.caller?.type !== CALLER_TYPES.SCRIPT) guardOwnerOnly({ group, action, caller: dependencies.caller });
   const hookResult = await runHookCommand(command);
   if (hookResult !== undefined) return hookResult;
   const setupResult = await runSetupCommand(command);
   if (setupResult !== undefined) return setupResult;
+  const hooksResult = await runHooksCommand(command);
+  if (hooksResult !== undefined) return hooksResult;
+  const outboxResult = await runOutboxCommand(command);
+  if (outboxResult !== undefined) return outboxResult;
   const skillResult = await runSkillCommand(command);
   if (skillResult !== undefined) return skillResult;
   const updateResult = await runUpdateCommand(command);
@@ -103,6 +117,8 @@ async function executeCommand(parsed, dependencies) {
   if (accountResult !== undefined) return accountResult;
   const authResult = await runAuthCommand(command);
   if (authResult !== undefined) return authResult;
+  const workResult = await runWorkCommand(command);
+  if (workResult !== undefined) return workResult;
   // --dry-run validates locally and never needs a login or a request: its client refuses every call.
   const dryRun = Boolean(options["dry-run"]) && (group === "ask" || group === "notify" && action === "send"
     || group === "activity" && ["start", "update", "end"].includes(action));
@@ -156,11 +172,22 @@ function createDependencies(overrides = {}) {
   const originDefaults = overrides.originDefaults
     ?? (overrides.identityDefaults ? () => ({}) : () => detectOrigin(env, probes));
   let origin;
+  // Relo's state folder: hook bookkeeping, observed session state and the outbox live under it. A test
+  // that moves the hook folder moves the rest with it.
+  // stateRoot: RELO_STATE_DIR, XDG_STATE_HOME, then the process's RELO_STATE_DIR (a test's own env object
+  // never falls back to the real folder); the per-session work files live there too.
+  // One home for every default path: the injected one when given (a test or embedder that passes `home`
+  // never reaches the process's real ~/.local/state; the skill recipes test once queued there), else HOME.
+  const home = overrides.home ?? homedir();
+  const stateDirectory = overrides.stateDirectory
+    ?? (overrides.hookStateDirectory ? dirname(overrides.hookStateDirectory) : stateRoot(env, home));
   const dependencies = {
     env,
+    // Who is calling (agent_session | script | unidentified), resolved once; commands branch on caller.type.
+    caller: overrides.caller ?? detectCaller(env),
     // The profile this command runs as: `auth login --profile` (set in execute), else RELO_PROFILE, else the active one.
     profile: env.RELO_PROFILE?.trim() || undefined,
-    home: overrides.home ?? homedir(),
+    home,
     cwd: overrides.cwd ?? process.cwd(),
     version: overrides.version ?? VERSION,
     identityDefaults,
@@ -192,8 +219,21 @@ function createDependencies(overrides = {}) {
         prompt.close();
       }
     }),
-    hookStateDirectory: overrides.hookStateDirectory
-      ?? join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state"), "relo", "hooks"),
+    hookStateDirectory: overrides.hookStateDirectory ?? join(stateDirectory, "hooks"),
+    // The observed session state files (EDGE.1) and the durable outbox (EDGE.3).
+    observedStateDirectory: overrides.observedStateDirectory ?? join(stateDirectory, "observed"),
+    outboxDirectory: overrides.outboxDirectory ?? join(stateDirectory, "outbox"),
+    // Hooks start the outbox flusher detached and return at once (EDGE.6). Only a real process does:
+    // a test (which injects its own env) never spawns one.
+    spawnFlusher: overrides.spawnFlusher ?? (overrides.env === undefined && process.env.RELO_NO_BACKGROUND_FLUSH !== "1"
+      ? () => {
+        const child = spawn(overrides.nodePath ?? process.execPath,
+          [overrides.entrypoint ?? fileURLToPath(new URL("../bin/relo.mjs", import.meta.url)), "outbox", "flush"],
+          { detached: true, stdio: "ignore", env: process.env, windowsHide: true });
+        child.on("error", () => {});
+        child.unref();
+      }
+      : () => {}),
     configRevision: overrides.configRevision ?? configRevision,
     pendingLogin: overrides.pendingLogin ?? {
       read: () => readPendingLogin(pendingLoginPath(configPathOf())),
@@ -244,8 +284,9 @@ function createDependencies(overrides = {}) {
 
 export async function execute(argv, overrides = {}) {
   const dependencies = createDependencies(overrides);
+  dependencies.argv = argv;
   const parsed = parseArgs(argv);
-  return executeCommand(parsed, dependencies);
+  return withSessionNotes(await executeCommand(parsed, dependencies), dependencies);
 }
 
 // Flags only count before a `--` separator; after it everything is the caller's text.
@@ -296,6 +337,7 @@ export async function run(argv, io = {}, overrides = {}) {
       stderrIsTTY: overrides.stderrIsTTY ?? Boolean(process.stderr.isTTY),
     });
     if (output.command === "help" && !wantsJson) stdout(output.data.help);
+    else if (output.echo !== undefined) stdout(wantsJson ? JSON.stringify(output.data) : output.echo);
     else if (output.command === "version" && !wantsJson) stdout(output.data.version);
     else if (output.text && !structured && !full) {
       // A person at a terminal gets a readable view (relo keys status); --json keeps the JSON line.
@@ -312,6 +354,10 @@ export async function run(argv, io = {}, overrides = {}) {
     }
     return output.exitCode;
   } catch (cause) {
+    if (cause instanceof WorkRefusal) {
+      stdout(wantsJson ? JSON.stringify({ ok: false, error: { code: cause.code, message: `Refused: ${cause.what}.`, state: cause.state, next: cause.next } }) : refusalText(cause));
+      return cause.exitCode;
+    }
     const error = normalizeError(cause);
     const line = errorLine(error, { full, group: argv.find((word) => !word.startsWith("--")) });
     if (structured) stdout(JSON.stringify(line));
@@ -321,6 +367,7 @@ export async function run(argv, io = {}, overrides = {}) {
 }
 
 export { agentSession, cardKey, detectIdentityDefaults } from "./identity.mjs";
+export { CALLER_TYPES, detectCaller, sessionKey } from "./caller.mjs";
 export { GUIDE, HELP, IDENTITY_HELP } from "./help.mjs";
 export { VERSION };
 export { EXIT } from "./errors.mjs";

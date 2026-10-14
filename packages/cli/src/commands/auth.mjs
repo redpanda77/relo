@@ -3,7 +3,7 @@ import { platform } from "node:os";
 import { parseDuration, requireText } from "../args.mjs";
 import { normalizeApiUrl } from "../config.mjs";
 import { ApiError, AuthError, EXIT, NetworkError, ReloError, UsageError, normalizeError } from "../errors.mjs";
-import { inAgentContext } from "../identity.mjs";
+import { waitsShort } from "../caller.mjs";
 import { assertAllowedOptions, assertNoExtra, getAuthenticated, result } from "../support.mjs";
 
 export const DEFAULT_LOGIN_SCOPES = [
@@ -15,7 +15,6 @@ export const DEFAULT_LOGIN_SCOPES = [
   "devices:read",
   "services:read",
   "services:write",
-  "sessions:write",
 ];
 
 export const ALLOWED_LOGIN_SCOPES = new Set([
@@ -181,7 +180,7 @@ function loginSettings(options, dependencies) {
 
 /** How long one `--wait` may block: 100s in an agent context (its shell tool kills longer commands), else 10m. */
 function waitSeconds(options, dependencies) {
-  return parseDuration(options.timeout ?? (inAgentContext(dependencies.env) ? "100s" : "10m"), { maximumSeconds: 600 });
+  return parseDuration(options.timeout ?? (waitsShort(dependencies.caller) ? "100s" : "10m"), { maximumSeconds: 600 });
 }
 
 /**
@@ -300,7 +299,7 @@ export async function login(options, dependencies) {
   const { clientName, scopes, expiresInSeconds } = loginSettings(options, dependencies);
   const timeoutSeconds = parseDuration(options.timeout ?? "10m", { maximumSeconds: 600 });
   // An agent's shell shows output only when the command ends, so a blocking login hides the link.
-  const agentDefault = !options["no-wait"] && inAgentContext(dependencies.env) && options.timeout === undefined;
+  const agentDefault = !options["no-wait"] && waitsShort(dependencies.caller) && options.timeout === undefined;
   const detach = Boolean(options["no-wait"]) || agentDefault;
   const profile = dependencies.profile;
   let trustedOrigin = options["api-url"] ?? dependencies.env.RELO_API_URL;

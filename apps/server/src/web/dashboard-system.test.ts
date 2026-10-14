@@ -45,7 +45,7 @@ describe("dashboard system handlers", () => {
       const response = await app.request(path);
       expect(response.status).toBe(302);
       expect(response.headers.get("location")).toBe(
-        `/?next=${encodeURIComponent(path)}`,
+        `/sign-in?next=${encodeURIComponent(path)}`,
       );
     }
     expect(query).not.toHaveBeenCalled();

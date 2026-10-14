@@ -1,0 +1,1770 @@
+{
+  "version": 1,
+  "timing": {
+    "freshSeconds": 1200,
+    "retireSeconds": 3600,
+    "doneSeconds": 900,
+    "historySeconds": 28800
+  },
+  "quietSeconds": 600,
+  "lockScreenMaxCards": 3,
+  "evaluationOrder": [
+    "needs_you",
+    "failed",
+    "done",
+    "dropped",
+    "left_unfinished",
+    "paused",
+    "waiting_on_you",
+    "moving",
+    "working_quietly",
+    "stopped_responding",
+    "no_signal",
+    "stale"
+  ],
+  "surfaces": {
+    "needs_you": {
+      "lockScreen": "top",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": null,
+      "now": "needs_you",
+      "historyOnly": false,
+      "interruptionLevel": "time-sensitive",
+      "relevance": 1,
+      "apnsPriority": 10,
+      "alertConfiguration": true
+    },
+    "failed": {
+      "lockScreen": "final",
+      "lockScreenSeconds": 3600,
+      "lockScreenFrom": "finished",
+      "dismissal": "after",
+      "now": "since_you_looked",
+      "historyOnly": false,
+      "interruptionLevel": "active",
+      "relevance": 0.9,
+      "apnsPriority": 10,
+      "alertConfiguration": false
+    },
+    "done": {
+      "lockScreen": "final",
+      "lockScreenSeconds": 900,
+      "lockScreenFrom": "finished",
+      "dismissal": "after",
+      "now": "since_you_looked",
+      "historyOnly": false,
+      "interruptionLevel": "passive",
+      "relevance": 0.3,
+      "apnsPriority": 10,
+      "alertConfiguration": false
+    },
+    "dropped": {
+      "lockScreen": "none",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": "immediate",
+      "now": null,
+      "historyOnly": true,
+      "relevance": 0,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "left_unfinished": {
+      "lockScreen": "none",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": "immediate",
+      "now": "since_you_looked",
+      "historyOnly": false,
+      "relevance": 0,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "paused": {
+      "lockScreen": "none",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": "immediate",
+      "now": "paused",
+      "historyOnly": false,
+      "relevance": 0,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "waiting_on_you": {
+      "lockScreen": "your_turn",
+      "lockScreenSeconds": 1200,
+      "lockScreenFrom": "turn_stopped",
+      "dismissal": "immediate",
+      "now": "waiting_on_you",
+      "historyOnly": false,
+      "relevance": 0.8,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "moving": {
+      "lockScreen": "shown",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": null,
+      "now": "running",
+      "historyOnly": false,
+      "relevance": 0.7,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "working_quietly": {
+      "lockScreen": "shown",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": null,
+      "now": "running",
+      "historyOnly": false,
+      "relevance": 0.5,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "stopped_responding": {
+      "lockScreen": "none",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": "immediate",
+      "now": "quiet",
+      "historyOnly": false,
+      "relevance": 0,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "no_signal": {
+      "lockScreen": "none",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": "immediate",
+      "now": "quiet",
+      "historyOnly": false,
+      "relevance": 0,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    },
+    "stale": {
+      "lockScreen": "dimmed",
+      "lockScreenSeconds": null,
+      "lockScreenFrom": null,
+      "dismissal": null,
+      "now": "quiet",
+      "historyOnly": false,
+      "relevance": 0.3,
+      "interruptionLevel": null,
+      "apnsPriority": 5,
+      "alertConfiguration": false
+    }
+  },
+  "derive": [
+    {
+      "name": "hooks off: a fresh declared write is moving",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:55:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:55:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:15:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:15:00.000Z"
+      }
+    },
+    {
+      "name": "hooks off: no write for T_fresh is stale, dimmed and never Running",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:35:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "stale",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:35:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:55:00.000Z",
+        "lockScreen": "dimmed",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0.3,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:35:00.000Z"
+      }
+    },
+    {
+      "name": "hooks off: no write for T_retire is no signal, retired",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T08:30:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "no_signal",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T08:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T08:50:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T16:30:00.000Z"
+      }
+    },
+    {
+      "name": "open work with no evidence for T_history is left unfinished, counted once in Since you looked",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T01:00:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "left_unfinished",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T01:00:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T01:20:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "since_you_looked",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T17:00:00.000Z"
+      }
+    },
+    {
+      "name": "left unfinished and seen moves to History",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T01:00:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": "2026-10-14T09:30:00.000Z"
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "left_unfinished",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T01:00:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T01:20:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": null,
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "done: final card for T_done, passive",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "finished",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:55:00.000Z",
+          "finishedAt": "2026-10-14T09:55:00.000Z",
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "done",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:55:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:15:00.000Z",
+        "lockScreen": "final",
+        "lockScreenUntil": "2026-10-14T10:10:00.000Z",
+        "now": "since_you_looked",
+        "interruptionLevel": "passive",
+        "relevance": 0.3,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T10:10:00.000Z"
+      }
+    },
+    {
+      "name": "done after T_done leaves the Lock Screen, stays in Now until opened",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "finished",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": "2026-10-14T09:30:00.000Z",
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "done",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "since_you_looked",
+        "interruptionLevel": "passive",
+        "relevance": 0.3,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T17:30:00.000Z"
+      }
+    },
+    {
+      "name": "done and opened: History only",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "finished",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": "2026-10-14T09:30:00.000Z",
+          "waitingSince": null,
+          "seenAt": "2026-10-14T09:59:00.000Z"
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "done",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": null,
+        "interruptionLevel": "passive",
+        "relevance": 0.3,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "failed: final card up to T_retire, active alert",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "failed",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": "2026-10-14T09:30:00.000Z",
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "failed",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "final",
+        "lockScreenUntil": "2026-10-14T10:30:00.000Z",
+        "now": "since_you_looked",
+        "interruptionLevel": "active",
+        "relevance": 0.9,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T10:30:00.000Z"
+      }
+    },
+    {
+      "name": "failed past T_history: History only",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "failed",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T01:00:00.000Z",
+          "finishedAt": "2026-10-14T01:00:00.000Z",
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "failed",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T01:00:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T01:20:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": null,
+        "interruptionLevel": "active",
+        "relevance": 0.9,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "dropped: ended at once, History only",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "dropped",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:59:00.000Z",
+          "finishedAt": "2026-10-14T09:59:00.000Z",
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "dropped",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:59:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:19:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": null,
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "paused: retired at once, Paused fold, left unfinished at T_history",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "paused",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:55:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "paused",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:55:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:15:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "paused",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T17:55:00.000Z"
+      }
+    },
+    {
+      "name": "pending question: Needs you, top card, time-sensitive",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:58:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": {
+          "standing": "pending",
+          "askedAt": "2026-10-14T09:58:00.000Z",
+          "openedAt": null
+        },
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "needs_you",
+        "needsYou": "question",
+        "evidenceAt": "2026-10-14T09:58:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:18:00.000Z",
+        "lockScreen": "top",
+        "lockScreenUntil": null,
+        "now": "needs_you",
+        "interruptionLevel": "time-sensitive",
+        "relevance": 1,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "missed question stays under Needs you until opened (never ends the card)",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T07:00:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": {
+          "standing": "missed",
+          "askedAt": "2026-10-14T07:00:00.000Z",
+          "openedAt": null
+        },
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "needs_you",
+        "needsYou": "missed_question",
+        "evidenceAt": "2026-10-14T07:00:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T07:20:00.000Z",
+        "lockScreen": "top",
+        "lockScreenUntil": null,
+        "now": "needs_you",
+        "interruptionLevel": "time-sensitive",
+        "relevance": 1,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "missed question once opened: the work's own state again",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T07:00:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": {
+          "standing": "missed",
+          "askedAt": "2026-10-14T07:00:00.000Z",
+          "openedAt": "2026-10-14T09:59:00.000Z"
+        },
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "no_signal",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T07:00:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T07:20:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T15:00:00.000Z"
+      }
+    },
+    {
+      "name": "pending question on a finished work still needs you",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "finished",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:57:00.000Z",
+          "finishedAt": "2026-10-14T09:57:00.000Z",
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": {
+          "standing": "pending",
+          "askedAt": "2026-10-14T09:56:00.000Z",
+          "openedAt": null
+        },
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "needs_you",
+        "needsYou": "question",
+        "evidenceAt": "2026-10-14T09:57:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:17:00.000Z",
+        "lockScreen": "top",
+        "lockScreenUntil": null,
+        "now": "needs_you",
+        "interruptionLevel": "time-sensitive",
+        "relevance": 1,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "a late answer is stored; the work goes on by its own evidence",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:59:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": {
+          "standing": "answered_late",
+          "askedAt": "2026-10-14T06:40:00.000Z",
+          "openedAt": "2026-10-14T09:58:00.000Z"
+        },
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:59:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:19:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:19:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: a permission prompt needs you",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:50:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "waiting",
+            "phaseSince": "2026-10-14T09:58:00.000Z",
+            "lastSeenAt": "2026-10-14T09:58:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "needs_you",
+        "needsYou": "permission",
+        "evidenceAt": "2026-10-14T09:58:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:18:00.000Z",
+        "lockScreen": "top",
+        "lockScreenUntil": null,
+        "now": "needs_you",
+        "interruptionLevel": "time-sensitive",
+        "relevance": 1,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T17:58:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: turn stopped, no write since: waiting on you, your turn for T_fresh",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:54:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "stopped",
+            "phaseSince": "2026-10-14T09:55:00.000Z",
+            "lastSeenAt": "2026-10-14T09:55:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "waiting_on_you",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:55:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:15:00.000Z",
+        "lockScreen": "your_turn",
+        "lockScreenUntil": "2026-10-14T10:15:00.000Z",
+        "now": "waiting_on_you",
+        "interruptionLevel": null,
+        "relevance": 0.8,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:15:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: waiting on you past T_fresh is retired from the Lock Screen, folded in Now",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:19:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "stopped",
+            "phaseSince": "2026-10-14T09:20:00.000Z",
+            "lastSeenAt": "2026-10-14T09:20:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "waiting_on_you",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:20:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T09:40:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "waiting_on_you",
+        "interruptionLevel": null,
+        "relevance": 0.8,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T17:20:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: newest evidence observed within T_fresh/2 is working quietly",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "working",
+            "phaseSince": "2026-10-14T09:57:00.000Z",
+            "lastSeenAt": "2026-10-14T09:57:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "working_quietly",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:57:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:17:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.5,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:07:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: a running turn silent for T_fresh/2 stopped responding (never failed)",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "working",
+            "phaseSince": "2026-10-14T09:45:00.000Z",
+            "lastSeenAt": "2026-10-14T09:45:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "stopped_responding",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:45:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:05:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T17:45:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: session ended, no write for T_done: stopped responding",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:44:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "ended",
+            "phaseSince": "2026-10-14T09:46:00.000Z",
+            "lastSeenAt": "2026-10-14T09:46:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "stopped_responding",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:46:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:06:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T17:46:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: session ended right after a write: moving until T_done",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:55:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "ended",
+            "phaseSince": "2026-10-14T09:56:00.000Z",
+            "lastSeenAt": "2026-10-14T09:56:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:56:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:16:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:10:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: a fresh declared write wins over observed events (moving)",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:58:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "working",
+            "phaseSince": "2026-10-14T09:59:00.000Z",
+            "lastSeenAt": "2026-10-14T09:59:00.000Z",
+            "openToolSince": null
+          }
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:59:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:19:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:18:00.000Z"
+      }
+    },
+    {
+      "name": "hooks: an open tool counts as working up to T_retire",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:20:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": {
+            "phase": "working",
+            "phaseSince": "2026-10-14T09:30:00.000Z",
+            "lastSeenAt": "2026-10-14T09:30:00.000Z",
+            "openToolSince": "2026-10-14T09:30:00.000Z"
+          }
+        }
+      },
+      "expected": {
+        "state": "working_quietly",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.5,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:30:00.000Z"
+      }
+    },
+    {
+      "name": "declared --waiting keeps the card undimmed up to T_retire",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": null,
+          "waitingSince": "2026-10-14T09:30:00.000Z",
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "agent_session",
+          "session": null
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:30:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:30:00.000Z"
+      }
+    },
+    {
+      "name": "script: a live lease keeps the work moving and extends staleDate",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:30:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "script",
+          "leaseUntil": "2026-10-14T10:10:00.000Z"
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:10:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:10:00.000Z"
+      }
+    },
+    {
+      "name": "script without a lease: writes only",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:35:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "script",
+          "leaseUntil": null
+        }
+      },
+      "expected": {
+        "state": "stale",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:35:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:55:00.000Z",
+        "lockScreen": "dimmed",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0.3,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:35:00.000Z"
+      }
+    },
+    {
+      "name": "service: a fresh write is moving",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T09:55:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "service",
+          "leaseUntil": null
+        }
+      },
+      "expected": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:55:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:15:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:15:00.000Z"
+      }
+    },
+    {
+      "name": "service never shows observed states",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "work": {
+          "lifecycle": "open",
+          "startedAt": "2026-10-14T00:00:00.000Z",
+          "lastDeclaredAt": "2026-10-14T08:59:00.000Z",
+          "finishedAt": null,
+          "waitingSince": null,
+          "seenAt": null
+        },
+        "question": null,
+        "evidence": {
+          "producer": "service",
+          "leaseUntil": null
+        }
+      },
+      "expected": {
+        "state": "no_signal",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T08:59:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:19:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T16:59:00.000Z"
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "name": "hooks off: last seen from relo commands",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": null,
+        "lastDeclaredAt": "2026-10-14T09:55:00.000Z"
+      },
+      "expected": {
+        "phase": null,
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:55:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:55:00.000Z"
+      }
+    },
+    {
+      "name": "hooks off: hidden after T_retire",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": null,
+        "lastDeclaredAt": "2026-10-14T08:59:00.000Z"
+      },
+      "expected": {
+        "phase": null,
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T08:59:00.000Z",
+        "fold": null,
+        "hidden": true,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "working: a running turn",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "working",
+          "phaseSince": "2026-10-14T09:58:00.000Z",
+          "lastSeenAt": "2026-10-14T09:58:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "working",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:58:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:08:00.000Z"
+      }
+    },
+    {
+      "name": "working: a long turn kept current by heartbeats",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "working",
+          "phaseSince": "2026-10-14T09:20:00.000Z",
+          "lastSeenAt": "2026-10-14T09:57:00.000Z"
+        },
+        "lastDeclaredAt": "2026-10-14T09:21:00.000Z"
+      },
+      "expected": {
+        "phase": "working",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:57:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:07:00.000Z"
+      }
+    },
+    {
+      "name": "waiting: the owner's turn counts from the stop, even when the session is seen again after it",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "stopped",
+          "phaseSince": "2026-10-14T09:42:00.000Z",
+          "lastSeenAt": "2026-10-14T09:50:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "waiting",
+        "waitingFor": "turn",
+        "lastSeenAt": "2026-10-14T09:50:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:02:00.000Z"
+      }
+    },
+    {
+      "name": "a running turn silent for T_fresh/2 folds as idle",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "working",
+          "phaseSince": "2026-10-14T09:48:00.000Z",
+          "lastSeenAt": "2026-10-14T09:48:00.000Z"
+        },
+        "lastDeclaredAt": "2026-10-14T09:40:00.000Z"
+      },
+      "expected": {
+        "phase": "idle",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:48:00.000Z",
+        "fold": "idle",
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T17:48:00.000Z"
+      }
+    },
+    {
+      "name": "waiting: turn just stopped",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "stopped",
+          "phaseSince": "2026-10-14T09:55:00.000Z",
+          "lastSeenAt": "2026-10-14T09:55:00.000Z"
+        },
+        "lastDeclaredAt": "2026-10-14T09:54:00.000Z"
+      },
+      "expected": {
+        "phase": "waiting",
+        "waitingFor": "turn",
+        "lastSeenAt": "2026-10-14T09:55:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:15:00.000Z"
+      }
+    },
+    {
+      "name": "a stopped turn past T_fresh is idle and folded",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "stopped",
+          "phaseSince": "2026-10-14T09:35:00.000Z",
+          "lastSeenAt": "2026-10-14T09:35:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "idle",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:35:00.000Z",
+        "fold": "idle",
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T17:35:00.000Z"
+      }
+    },
+    {
+      "name": "waiting: a permission prompt up to T_history",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "waiting",
+          "phaseSince": "2026-10-14T09:10:00.000Z",
+          "lastSeenAt": "2026-10-14T09:10:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "waiting",
+        "waitingFor": "input",
+        "lastSeenAt": "2026-10-14T09:10:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T17:10:00.000Z"
+      }
+    },
+    {
+      "name": "ended: shown for T_done",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "ended",
+          "phaseSince": "2026-10-14T09:50:00.000Z",
+          "lastSeenAt": "2026-10-14T09:50:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "ended",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:50:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:05:00.000Z"
+      }
+    },
+    {
+      "name": "ended: hidden after T_done",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "ended",
+          "phaseSince": "2026-10-14T09:44:00.000Z",
+          "lastSeenAt": "2026-10-14T09:44:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "ended",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:44:00.000Z",
+        "fold": null,
+        "hidden": true,
+        "nextChangeAt": null
+      }
+    },
+    {
+      "name": "opened, not prompted: idle, listed",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "open",
+          "phaseSince": "2026-10-14T09:57:00.000Z",
+          "lastSeenAt": "2026-10-14T09:57:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "idle",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:57:00.000Z",
+        "fold": null,
+        "hidden": false,
+        "nextChangeAt": "2026-10-14T10:07:00.000Z"
+      }
+    },
+    {
+      "name": "idle past T_history: hidden",
+      "input": {
+        "now": "2026-10-14T10:00:00.000Z",
+        "observed": {
+          "phase": "stopped",
+          "phaseSince": "2026-10-14T01:00:00.000Z",
+          "lastSeenAt": "2026-10-14T01:00:00.000Z"
+        },
+        "lastDeclaredAt": null
+      },
+      "expected": {
+        "phase": "idle",
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T01:00:00.000Z",
+        "fold": "idle",
+        "hidden": true,
+        "nextChangeAt": null
+      }
+    }
+  ],
+  "nowSummary": {
+    "serverTime": "2026-10-14T10:00:00.000Z",
+    "sinceYouLooked": {
+      "since": "2026-10-14T06:40:00.000Z",
+      "finished": 1,
+      "failed": 1,
+      "waitingOnYou": 1,
+      "stoppedWithoutFinishing": 0,
+      "needsYou": 1
+    },
+    "needsYou": [
+      {
+        "id": "act_00000000-0000-4000-8000-000000000001",
+        "title": "Ship the release",
+        "status": "Deploy to production?",
+        "sourceName": "Claude Code",
+        "project": "relo",
+        "steps": null,
+        "producer": "agent_session",
+        "sessionId": null,
+        "notificationId": null,
+        "startedAt": "2026-10-14T09:58:00.000Z",
+        "declaredAt": "2026-10-14T09:58:00.000Z",
+        "question": null,
+        "owner": {
+          "state": "needs_you",
+          "needsYou": "question",
+          "evidenceAt": "2026-10-14T09:58:00.000Z",
+          "evidenceSource": "declared",
+          "staleDate": "2026-10-14T10:18:00.000Z",
+          "lockScreen": "top",
+          "lockScreenUntil": null,
+          "now": "needs_you",
+          "interruptionLevel": "time-sensitive",
+          "relevance": 1,
+          "apnsPriority": 10,
+          "nextChangeAt": null
+        }
+      }
+    ],
+    "recent": [
+      {
+        "id": "act_00000000-0000-4000-8000-000000000002",
+        "title": "Fix login crash",
+        "status": "Tests fail on CI",
+        "sourceName": "Claude Code",
+        "project": "relo",
+        "steps": null,
+        "producer": "agent_session",
+        "sessionId": null,
+        "notificationId": null,
+        "startedAt": "2026-10-14T09:30:00.000Z",
+        "declaredAt": "2026-10-14T09:30:00.000Z",
+        "question": null,
+        "owner": {
+          "state": "failed",
+          "needsYou": null,
+          "evidenceAt": "2026-10-14T09:30:00.000Z",
+          "evidenceSource": "declared",
+          "staleDate": "2026-10-14T09:50:00.000Z",
+          "lockScreen": "final",
+          "lockScreenUntil": "2026-10-14T10:30:00.000Z",
+          "now": "since_you_looked",
+          "interruptionLevel": "active",
+          "relevance": 0.9,
+          "apnsPriority": 10,
+          "nextChangeAt": "2026-10-14T10:30:00.000Z"
+        }
+      },
+      {
+        "id": "act_00000000-0000-4000-8000-000000000003",
+        "title": "Bump versions",
+        "status": "Versions bumped",
+        "sourceName": "Claude Code",
+        "project": "relo",
+        "steps": null,
+        "producer": "agent_session",
+        "sessionId": null,
+        "notificationId": null,
+        "startedAt": "2026-10-14T09:30:00.000Z",
+        "declaredAt": "2026-10-14T09:30:00.000Z",
+        "question": null,
+        "owner": {
+          "state": "done",
+          "needsYou": null,
+          "evidenceAt": "2026-10-14T09:30:00.000Z",
+          "evidenceSource": "declared",
+          "staleDate": "2026-10-14T09:50:00.000Z",
+          "lockScreen": "none",
+          "lockScreenUntil": null,
+          "now": "since_you_looked",
+          "interruptionLevel": "passive",
+          "relevance": 0.3,
+          "apnsPriority": 10,
+          "nextChangeAt": "2026-10-14T17:30:00.000Z"
+        }
+      }
+    ],
+    "waitingOnYou": [
+      {
+        "id": "act_00000000-0000-4000-8000-000000000004",
+        "title": "Review the plan",
+        "status": "Running local gates",
+        "sourceName": "Claude Code",
+        "project": "relo",
+        "steps": null,
+        "producer": "agent_session",
+        "sessionId": "ags_00000000-0000-4000-8000-000000000001",
+        "notificationId": null,
+        "startedAt": "2026-10-14T09:55:00.000Z",
+        "declaredAt": "2026-10-14T09:55:00.000Z",
+        "question": null,
+        "owner": {
+          "state": "waiting_on_you",
+          "needsYou": null,
+          "evidenceAt": "2026-10-14T09:55:00.000Z",
+          "evidenceSource": "observed",
+          "staleDate": "2026-10-14T10:15:00.000Z",
+          "lockScreen": "your_turn",
+          "lockScreenUntil": "2026-10-14T10:15:00.000Z",
+          "now": "waiting_on_you",
+          "interruptionLevel": null,
+          "relevance": 0.8,
+          "apnsPriority": 5,
+          "nextChangeAt": "2026-10-14T10:15:00.000Z"
+        }
+      }
+    ],
+    "running": [
+      {
+        "id": "act_00000000-0000-4000-8000-000000000005",
+        "title": "Ship the release",
+        "status": "Running local gates",
+        "sourceName": "Claude Code",
+        "project": "relo",
+        "steps": {
+          "done": 1,
+          "total": 3,
+          "current": "Run local gates"
+        },
+        "producer": "agent_session",
+        "sessionId": null,
+        "notificationId": null,
+        "startedAt": "2026-10-14T09:55:00.000Z",
+        "declaredAt": "2026-10-14T09:55:00.000Z",
+        "question": null,
+        "owner": {
+          "state": "moving",
+          "needsYou": null,
+          "evidenceAt": "2026-10-14T09:55:00.000Z",
+          "evidenceSource": "declared",
+          "staleDate": "2026-10-14T10:15:00.000Z",
+          "lockScreen": "shown",
+          "lockScreenUntil": null,
+          "now": "running",
+          "interruptionLevel": null,
+          "relevance": 0.7,
+          "apnsPriority": 5,
+          "nextChangeAt": "2026-10-14T10:15:00.000Z"
+        }
+      }
+    ],
+    "quiet": [
+      {
+        "id": "act_00000000-0000-4000-8000-000000000006",
+        "title": "Migrate the index",
+        "status": "Indexing",
+        "sourceName": "Claude Code",
+        "project": "relo",
+        "steps": null,
+        "producer": "agent_session",
+        "sessionId": null,
+        "notificationId": null,
+        "startedAt": "2026-10-14T09:35:00.000Z",
+        "declaredAt": "2026-10-14T09:35:00.000Z",
+        "question": null,
+        "owner": {
+          "state": "stale",
+          "needsYou": null,
+          "evidenceAt": "2026-10-14T09:35:00.000Z",
+          "evidenceSource": "declared",
+          "staleDate": "2026-10-14T09:55:00.000Z",
+          "lockScreen": "dimmed",
+          "lockScreenUntil": null,
+          "now": "quiet",
+          "interruptionLevel": null,
+          "relevance": 0.3,
+          "apnsPriority": 5,
+          "nextChangeAt": "2026-10-14T10:35:00.000Z"
+        }
+      }
+    ],
+    "paused": [],
+    "folds": {
+      "waitingOnYou": 1,
+      "quiet": 1,
+      "paused": 0
+    },
+    "lockScreen": {
+      "cards": [
+        "act_00000000-0000-4000-8000-000000000001",
+        "act_00000000-0000-4000-8000-000000000002",
+        "act_00000000-0000-4000-8000-000000000004"
+      ],
+      "needsYouCount": 1,
+      "focus": "act_00000000-0000-4000-8000-000000000001"
+    },
+    "sessions": {
+      "sessions": [
+        {
+          "id": "ags_00000000-0000-4000-8000-000000000001",
+          "source": "claude-code",
+          "project": "relo",
+          "computer": "Studio Mac",
+          "phase": "waiting",
+          "observed": true,
+          "waitingFor": "turn",
+          "lastSeenAt": "2026-10-14T09:55:00.000Z",
+          "fold": null,
+          "workId": "act_00000000-0000-4000-8000-000000000004",
+          "nextChangeAt": null
+        },
+        {
+          "id": "ags_00000000-0000-4000-8000-000000000002",
+          "source": "claude-code",
+          "project": "relo",
+          "computer": "Work Mac",
+          "phase": "idle",
+          "observed": true,
+          "waitingFor": null,
+          "lastSeenAt": "2026-10-14T09:35:00.000Z",
+          "fold": "idle",
+          "workId": null,
+          "nextChangeAt": null
+        },
+        {
+          "id": "act_00000000-0000-4000-8000-000000000005",
+          "source": "claude-code",
+          "project": "relo",
+          "computer": null,
+          "phase": null,
+          "observed": false,
+          "waitingFor": null,
+          "lastSeenAt": "2026-10-14T09:55:00.000Z",
+          "fold": null,
+          "workId": "act_00000000-0000-4000-8000-000000000005",
+          "nextChangeAt": null
+        }
+      ],
+      "folds": {
+        "idle": 1
+      }
+    },
+    "refreshAt": null
+  }
+}

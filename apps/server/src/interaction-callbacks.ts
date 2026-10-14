@@ -1,14 +1,17 @@
 import { lookup } from "node:dns/promises";
-import { allowsPrivateCallbacks,callbackSignature,resolveCallbackTarget,sendPinnedCallback,type CallbackSend } from "./callback-destinations.js";
+import { allowsPrivateCallbacks,callbackSignature,resolveCallbackTarget,sendPinnedCallback,standardWebhookSignature,type CallbackSend } from "./callback-destinations.js";
 import { publicId } from "./ids.js";
 import type { TransportTokenEncryption } from "./token-encryption.js";
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: any[] }> };
 
 export const CALLBACK_TOKEN_PURPOSE = "interaction_callback.token" as const;
-/** Five attempts: now, then after 30 seconds, 2 minutes, 10 minutes, and 1 hour. */
-export const CALLBACK_RETRY_DELAYS_SECONDS = [30, 120, 600, 3_600] as const;
+/** Ten attempts over about three days: now, then 30 s, 2 min, 10 min, 1 h, 3 h, 6 h, 12 h, 24 h, 24 h. */
+export const CALLBACK_RETRY_DELAYS_SECONDS = [30, 120, 600, 3_600, 10_800, 21_600, 43_200, 86_400, 86_400] as const;
 export const CALLBACK_MAX_ATTEMPTS = CALLBACK_RETRY_DELAYS_SECONDS.length + 1;
+/** A callback stops retrying 72 hours after its first attempt (or after a redelivery). */
+export const CALLBACK_GIVE_UP_SECONDS = 72 * 3_600;
+export const CALLBACK_REDELIVERIES_PER_DAY = 10;
 const CALLBACK_TIMEOUT_MS = 10_000;
 const CALLBACK_BATCH = 10;
 const ANSWERED = ["approved","denied","yes","no","replied"];
@@ -39,6 +42,7 @@ export async function registerInteractionCallback(
 export function callbackPayload(row: {
   interaction_request_id: string; notification_event_id: string; correlation_id: string | null;
   kind: string; request_state: string; response: unknown; responded_at: Date | string | null;
+  response_device_id?: string | null;
 }) {
   const answer = row.response && typeof row.response === "object" ? row.response as Record<string,unknown> : {};
   const chosen = row.kind === "choice" && typeof answer.optionId === "string";
@@ -56,6 +60,24 @@ export function callbackPayload(row: {
     text: typeof response === "string" ? response : null,
     ...(chosen ? { optionId: answer.optionId,label: answer.label ?? null } : {}),
     respondedAt: row.responded_at ? new Date(row.responded_at).toISOString() : null,
+    ...answerSignature(row.response_device_id ?? null,answer),
+  };
+}
+
+/**
+ * The phone's own signature over the answer (ADR 0005), passed through untouched so a verifying
+ * receiver trusts the phone, not this server. `signature` is null for phones without published keys.
+ */
+export function answerSignature(deviceId: string | null,answer: Record<string,unknown>) {
+  const str = (value: unknown) => typeof value === "string" ? value : null;
+  const sig = str(answer.e2eeSignature);
+  return {
+    device: deviceId ? { id: publicId("dev",deviceId),keyId: str(answer.e2eeKeyId) } : null,
+    signature: sig ? {
+      v: "relo.e2e.v1",kind: "answer",
+      keyId: str(answer.e2eeKeyId),signedAt: str(answer.e2eeSignedAt),sig,
+      question: str(answer.e2eeQuestion),questionSig: str(answer.e2eeQuestionSignature),
+    } : null,
   };
 }
 
@@ -71,10 +93,11 @@ export type CallbackDispatchDependencies = {
 export async function dispatchDueInteractionCallbacks(db: Queryable, dependencies: CallbackDispatchDependencies): Promise<number> {
   await db.query(
     `UPDATE interaction_callbacks c SET state=CASE WHEN r.state::text=ANY($1::text[]) THEN 'pending' ELSE 'not_answered' END,
-       next_attempt_at=CASE WHEN r.state::text=ANY($1::text[]) THEN now() ELSE NULL END,updated_at=now()
+       next_attempt_at=CASE WHEN r.state::text=ANY($1::text[]) THEN now() ELSE NULL END,
+       give_up_at=CASE WHEN r.state::text=ANY($1::text[]) THEN now()+($3*interval '1 second') ELSE NULL END,updated_at=now()
      FROM interaction_requests r
      WHERE r.id=c.interaction_request_id AND c.state='waiting' AND r.state::text=ANY($1::text[] || $2::text[])`,
-    [ANSWERED,UNANSWERED],
+    [ANSWERED,UNANSWERED,CALLBACK_GIVE_UP_SECONDS],
   );
   const claimed = await db.query(
     `UPDATE interaction_callbacks c SET state='delivering',lease_expires_at=now()+interval '30 seconds',updated_at=now()
@@ -84,6 +107,8 @@ export async function dispatchDueInteractionCallbacks(db: Queryable, dependencie
        WHERE (state='pending' AND next_attempt_at<=now()) OR (state='delivering' AND lease_expires_at<now())
        ORDER BY next_attempt_at NULLS FIRST LIMIT $1 FOR UPDATE SKIP LOCKED)
      RETURNING c.id,c.principal_id,c.url,c.token_ciphertext,c.correlation_id,c.attempts,c.interaction_request_id,
+       c.give_up_at <= now() AS past_give_up,
+       (SELECT i.device_id FROM interactions i WHERE i.interaction_request_id=r.id ORDER BY i.created_at,i.id LIMIT 1) AS response_device_id,
        r.notification_event_id,r.kind::text AS kind,r.state::text AS request_state,r.response,r.responded_at`,
     [CALLBACK_BATCH],
   );
@@ -105,15 +130,22 @@ export async function dispatchDueInteractionCallbacks(db: Queryable, dependencie
         const token = dependencies.encryption.decrypt(row.token_ciphertext,CALLBACK_TOKEN_PURPOSE);
         if (!token) throw new Error("callback_token_missing");
         const body = JSON.stringify(callbackPayload(row));
+        const timestamp = Math.floor((dependencies.now?.() ?? Date.now()) / 1_000);
+        const deliveryId = publicId("cbk",row.id);
         status = await send({ url: row.url,target,body,timeoutMs: CALLBACK_TIMEOUT_MS,headers: {
           authorization: `Bearer ${token}`,
           "content-type": "application/json",
           "user-agent": dependencies.userAgent ?? "Relo-Callbacks/1",
           // The same id on every retry of one answer: a receiver handles each id once.
-          "relo-delivery-id": publicId("cbk",row.id),
-          "relo-signature": callbackSignature(token,body,Math.floor((dependencies.now?.() ?? Date.now()) / 1_000)),
+          "relo-delivery-id": deliveryId,
+          "relo-signature": callbackSignature(token,body,timestamp),
+          // Standard Webhooks (standardwebhooks.com): the same id on retries and redeliveries.
+          "webhook-id": deliveryId,
+          "webhook-timestamp": String(timestamp),
+          "webhook-signature": standardWebhookSignature(token,deliveryId,timestamp,body),
         } });
-        if (status < 200 || status >= 300) error = `http_${status}`;
+        if (status === 410) error = "gone";
+        else if (status < 200 || status >= 300) error = `http_${status}`;
       }
     } catch (cause) {
       error = cause instanceof Error && cause.name === "TimeoutError" ? "timeout" : "network_error";
@@ -125,7 +157,7 @@ export async function dispatchDueInteractionCallbacks(db: Queryable, dependencie
            lease_expires_at=NULL,next_attempt_at=NULL,delivered_at=now(),updated_at=now() WHERE id=$1`,
         [row.id,attempts,status],
       );
-    } else if (attempts >= CALLBACK_MAX_ATTEMPTS) {
+    } else if (attempts >= CALLBACK_MAX_ATTEMPTS || error === "gone" || row.past_give_up === true) {
       await db.query(
         `UPDATE interaction_callbacks SET state='failed',attempts=$2,last_status=$3,last_error=$4,
            lease_expires_at=NULL,next_attempt_at=NULL,updated_at=now() WHERE id=$1`,
@@ -141,6 +173,34 @@ export async function dispatchDueInteractionCallbacks(db: Queryable, dependencie
     }
   }
   return claimed.rows.length;
+}
+
+export type RedeliverResult = "redelivered" | "not_found" | "not_redeliverable" | "redeliver_rate_limited";
+
+/**
+ * Sends a delivered or failed callback again with the same webhook-id: attempts reset, a fresh
+ * 72-hour window, at most ten redeliveries per callback per day. Only the asking account may do it.
+ */
+export async function redeliverInteractionCallback(db: Queryable,principalId: string,interactionRequestId: string): Promise<RedeliverResult> {
+  const current = await db.query(
+    `SELECT state,redelivered_today,redeliver_window_start > now()-interval '1 day' AS window_open
+     FROM interaction_callbacks WHERE principal_id=$1 AND interaction_request_id=$2`,
+    [principalId,interactionRequestId],
+  );
+  const row = current.rows[0];
+  if (!row) return "not_found";
+  if (row.state !== "failed" && row.state !== "delivered") return "not_redeliverable";
+  if (row.window_open === true && Number(row.redelivered_today) >= CALLBACK_REDELIVERIES_PER_DAY) return "redeliver_rate_limited";
+  const updated = await db.query(
+    `UPDATE interaction_callbacks SET state='pending',attempts=0,next_attempt_at=now(),lease_expires_at=NULL,
+       last_error=NULL,give_up_at=now()+($3*interval '1 second'),redelivered_count=redelivered_count+1,
+       redelivered_today=CASE WHEN redeliver_window_start > now()-interval '1 day' THEN redelivered_today+1 ELSE 1 END,
+       redeliver_window_start=CASE WHEN redeliver_window_start > now()-interval '1 day' THEN redeliver_window_start ELSE now() END,
+       updated_at=now()
+     WHERE principal_id=$1 AND interaction_request_id=$2 AND state IN ('failed','delivered')`,
+    [principalId,interactionRequestId,CALLBACK_GIVE_UP_SECONDS],
+  );
+  return updated.rowCount ? "redelivered" : "not_redeliverable";
 }
 
 /** What a caller may see about its callback: never the URL's token or the URL itself. */

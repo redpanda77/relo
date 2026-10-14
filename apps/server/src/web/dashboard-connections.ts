@@ -3,6 +3,7 @@ import type { Handler } from "hono";
 import type { LiveActivityPresentationPolicy } from "@relo/notification-contracts";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
+import { listHarnessCredentials } from "../harness-credentials.js";
 import {
   effectivePresentationPolicy,
   parsePresentationPolicy,
@@ -308,12 +309,13 @@ export function createDashboardConnectionsHandlers(
       description: "Phones, CLI clients, and webhooks connected to this server.",
       summary, total: 0,
     });
-    const [phones, clients, services] = await Promise.all([
+    const [phones, clients, harnessCredentials, services] = await Promise.all([
       loadPhones(db, account.principalId, overviewLimit),
       loadClients(db, account.principalId, accountPolicy, overviewLimit),
+      listHarnessCredentials(db, account.principalId),
       loadServices(db, account.principalId, accountPolicy, overviewLimit),
     ]);
-    const bootstrap: ConnectionsOverviewBootstrap = { ...base, kind: "connections", phones, clients, services };
+    const bootstrap: ConnectionsOverviewBootstrap = { ...base, kind: "connections", phones, clients, harnessCredentials, services };
     return secureHtml(context, await renderDocument(bootstrap));
   };
 

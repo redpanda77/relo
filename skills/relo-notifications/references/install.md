@@ -136,11 +136,13 @@ The block, exactly (no versions or dates, so tracked files do not churn):
 ```markdown
 <!-- relo:start -->
 ## Relo (live status on the owner's iPhone)
-For work longer than a couple of minutes, keep one Relo card current; ask on it before risky actions.
-- `relo activity start --title "…" --status "…" --steps "A,B,C" --topic "<the work>"` → `update --status … --next-step` → `end --status "…"`
-- Judgment work: `--steps` (3-6 named phases). A counted job (10 images, 400 rows): `--progress 3/10`. Never both.
-- `relo ask "Deploy to production?" --approval`: only exit 0 with state `approved` is permission; anything else means no.
-- `relo notify "…"` only for a finished outcome worth a buzz. Never put secrets, paths or raw output in card text.
+For work longer than a couple of minutes, keep one Relo work current; ask on it before risky actions.
+- `relo work start --goal "<the goal, in the owner's words>" --plan "A,B,C"` → `relo work update --status "…" --next-step` → `relo work finish --outcome "<what happened>"`
+- One start per goal (a repeat start continues it; another goal: `start --new`). Unsure? Plan how you will find out (`--plan "Reproduce the bug,Find the cause,Choose the fix"`), then grow it with `--add "…"`; `--plan "…"` lists what is left (done steps stay). Plans are for visibility, not a contract.
+- Steps are milestones in order. Parallel work (subagents, several jobs) is one step with a count: `--progress 2/6`. A counted job without a plan: `--progress 3/10`. Steps are only your own work: what the owner must do is an `ask` or a note, never a step.
+- Real words only: no placeholders, "Step 2", "todo", paths or secrets. Waiting on CI or a review: `--waiting "CI"`. Finish once, honestly: `--outcome`, plus `--failed` or `--dropped` when it did not succeed.
+- `relo ask "Deploy to production?" --approval`: only exit 0 with state `approved` is permission; anything else, a late answer included, means no. The finish outcome is the notification; `relo notify` only when no work is open.
+- Lost track (compaction, a break)? `relo state`. Every command prints the plan, what the owner sees and the next command. Subagents run no relo commands.
 - Details: the relo-notifications skill, or `relo help`.
 <!-- relo:end -->
 ```
@@ -151,10 +153,9 @@ To edit the wording yourself, add a line `<!-- relo:keep -->` inside the block: 
 ## MCP server (harnesses without a shell): `relo setup --mcp` (the owner's choice)
 
 `relo mcp` is a stdio MCP server inside the CLI (same credentials, no extra install) for Claude desktop, Cursor chat
-and other clients that cannot run a shell command. Tools: `relo_card_start`, `relo_card_update`, `relo_card_end`,
+and other clients that cannot run a shell command. Tools: `relo_work_start`, `relo_work_update`, `relo_work_finish`, `relo_work_state`,
 `relo_ask` (waits up to 5 minutes, sending MCP progress notifications), `relo_interaction_wait`, `relo_notify`,
-`relo_doctor`. Results are the same compact JSON as the CLI; the tool descriptions carry the steps-vs-progress and
-approval rules. One card per MCP connection (a generated `RELO_SESSION`, unless you set one).
+`relo_doctor`. The tool descriptions carry the plan and approval rules. One work per MCP connection (its own session; a harness session id or, outside a harness, your `RELO_SESSION` wins).
 
 ```bash
 relo setup --mcp --agent claude-code --global      # ~/.claude.json, or --project for <repo>/.mcp.json
@@ -190,5 +191,15 @@ npm uninstall --global @relo/cli
 relo skill remove --agent codex   # once per harness that has a copy (relo skill status lists them)
 ```
 
-Hooks are optional: `relo setup … --hooks` reports session start/end so the server can end forgotten cards and show quiet agents; without them cards go stale on their own. Optional. Without hooks Relo works fully: cards go stale and end on their own. With hooks, the server also knows when a session is alive, shows quiet agents as quiet instead of ending their card, and ends a forgotten card as soon as the session ends. Only the owner runs it, for one settings file (`relo setup --global --agent claude-code --hooks`, `--project --hooks`, or `--agent gemini`); `relo setup --hooks --remove` deletes only Relo's entries. Never install hooks on your own. Older releases added Codex hooks and a Codex notifier: remove any
-`relo-codex-hook` entries from `~/.codex/hooks.json` and run `npm uninstall --global @relo/codex-notify`.
+Hooks are optional and off by default. Without them Relo works fully. The owner installs them for one settings
+file at a level: `relo setup --global --agent claude-code --hooks presence` (or `--project`, or `--agent gemini`;
+the level is required). `reminders` (Claude Code) is local only: a Stop reminder of an open or unrefreshed work and a restore
+of what the session was doing after a restart or compaction; nothing is sent. `presence` adds the session's
+phase (working, waiting, idle, ended) and, with Claude Code, the session's name for the owner's Sessions view: a local state machine turns hook events into
+phases and the CLI sends only changes, over a harness credential that can write presence and nothing else
+(no prompts, tool names or tool input/output). Hooks never start, change or end a work, plan or question.
+`relo hooks status` shows the level per settings file; `relo hooks off` (or `relo setup --hooks off`) removes
+Relo's entries and revokes that credential. Never install hooks on your own.
+`relo state` and the owner's `relo outbox status` show what is queued; `relo outbox flush` sends it at once.
+Older releases added Codex hooks and a Codex notifier: remove any `relo-codex-hook` entries from
+`~/.codex/hooks.json` and run `npm uninstall --global @relo/codex-notify`.

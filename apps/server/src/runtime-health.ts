@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import type { Database } from "./db.js";
 
-const CURRENT_SCHEMA = "0097_agent_session_wait_event.sql";
+const CURRENT_SCHEMA = "0104_question_owner_dismissal.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";

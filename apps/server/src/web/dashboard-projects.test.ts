@@ -45,7 +45,7 @@ describe("dashboard Projects handlers",() => {
   test("redirects anonymous readers to sign in",async () => {
     const response = await fixture(false).app.request("/dashboard/projects");
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("/?next=%2Fdashboard%2Fprojects");
+    expect(response.headers.get("location")).toBe("/sign-in?next=%2Fdashboard%2Fprojects");
   });
 
   test("renders account-scoped Project Atlas list and detail bootstrap",async () => {

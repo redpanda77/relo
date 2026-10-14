@@ -1,3 +1,4 @@
+import { sealedEnvelopeSchema,type SealedEnvelope } from "@relo/notification-contracts";
 import { z } from "zod";
 
 /**
@@ -11,26 +12,8 @@ const b64u = (length?: number) => z.string().max(140_000).regex(/^[A-Za-z0-9_-]+
 },"invalid_encoding");
 const binding = z.string().regex(/^[\x21-\x7e]{1,200}$/);
 
-export const sealedEnvelopeSchema = z.object({
-  v: z.literal("relo.e2e.v1"),
-  kind: z.enum(["notice","question","card","card-update","reply","grouping-key","names"]),
-  context: binding,
-  sender: z.string().regex(/^k_[A-Za-z0-9_-]{22}$/),
-  recipients: z.array(z.object({
-    device: binding,
-    prekey: binding,
-    enc: b64u(65),
-    key: b64u(48),
-  }).strict()).min(1).max(16),
-  nonce: b64u(12),
-  ct: b64u().refine((value) => {
-    const length = Buffer.from(value,"base64url").length;
-    return length >= 256 + 16 && (length - 16) % 256 === 0;
-  },"invalid_ciphertext"),
-  sig: b64u(64),
-}).strict();
-
-export type SealedEnvelope = z.infer<typeof sealedEnvelopeSchema>;
+/** The envelope shape is the contracts' (one schema for the server, the phone feeds and the Dashboard). */
+export { sealedEnvelopeSchema,type SealedEnvelope };
 
 /** Alert text sealed separately for each phone (fits in a push); the body once for all of them. */
 export const sealedNoticeSchema = z.object({

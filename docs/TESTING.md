@@ -1,5 +1,10 @@
 # Test gates
 
+Everything is verified locally. `scripts/gates.sh` runs the contracts, server typecheck, CLI, skill,
+Dashboard, owner-surface and public-boundary gates; `scripts/gates.sh --db` adds the server database
+suite on a throwaway PostgreSQL it creates and removes ([DEVELOPMENT.md](DEVELOPMENT.md#local-gates)).
+A skipped database suite is not a pass. The native gate is separate:
+
 Run the shared Swift suite with `swift test --package-path apps/ios`. Run the shipping
 iOS app, widget, notification service, hosted tests, and independent reference host with:
 
@@ -23,6 +28,32 @@ Hosted test processes suppress automatic scene/delegate startup. Tests instantia
 real AppModel with AppDependencies and controlled system closures. Normal Debug launches
 and all Release launches retain the production startup behavior. The existing Core Keychain
 tests also run inside this host; the gate does not skip their assertions.
+
+## CLI tests are hermetic
+
+`packages/cli` tests run with an empty temporary `HOME`, a temporary state folder and outbox, a
+throwaway npm prefix and no inherited agent-session variables; `test/hermetic-env.mjs` applies this
+whether the suite or a single file runs. The outbox flusher never starts in a test, update checks are
+off, and the key store and harness credential paths point at files that do not exist. A test that
+installs the CLI lands in the temporary prefix, never your global one. Queued writes name the server
+they were queued for and are never sent to another, so a fixture cannot reach a real server.
+
+## State-model invariants
+
+These tests pin the three-source separation ([ARCHITECTURE.md](ARCHITECTURE.md#state-model)); a
+change that lets one source write another's fields fails them.
+
+- `apps/server/src/work-model-invariants.test.ts`: a second start never rewrites a running card, and
+  a phone's key change never ends one ([ADR 0007](adr/0007-presence-messages-work-separation.md)).
+- `apps/server/src/edge-invariants.test.ts`: the server never interprets raw harness activity;
+  observed state is read only by its storage module and `derive()`; a harness credential is refused
+  on every route but the observed one, and an ordinary credential cannot post observed state
+  ([ADR 0008](adr/0008-relo-design-framework.md)).
+- `packages/cli/test/harness-invariants.test.mjs`: adapters never reach the network, the core never
+  branches on the adapter, no prompt, tool name, tool I/O or transcript path reaches the outbox or a
+  hook file, and a hook returns at once with the network down.
+- `scripts/check-owner-surfaces-display-only.mjs`: the Dashboard and the iOS app display derived
+  state and keep no policy of their own.
 
 ## Latency evidence format
 

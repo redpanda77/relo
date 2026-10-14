@@ -48,6 +48,7 @@ const notOwnerScopedById: Record<string, string> = {
   "GET /health/ready": "health",
   "GET /health/browser-candidate-attestation": "health",
   "GET /cli/authorize": "page that holds a user code typed by the person",
+  "GET /cli/authorize.js": "static script for the CLI authorization page",
   "GET /mobile/sign-in": "sign-in page",
   "POST /mobile/sign-in": "sign-in approval for the signed-in account",
   "POST /api/mobile/sign-in/token": "single-use code exchange",
@@ -85,6 +86,23 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/dashboard/server/accounts/:userId/delete": "server admin manages accounts by design; server-accounts.test.ts",
   "POST /api/dashboard/server/accounts/:userId/:action": "server admin manages accounts by design; server-accounts.test.ts",
   "DELETE /api/clients/self": "revokes the caller's own credential",
+  "GET /api/session/works/:workId": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts (foreign session and account)",
+  "PATCH /api/session/works/:workId": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
+  "POST /api/session/works/:workId/pause": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
+  "POST /api/session/works/:workId/resume": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
+  "POST /api/session/works/:workId/finish": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
+  "POST /api/session/works": "creates in the caller's own session; works/session-works.test.ts",
+  "GET /api/session/works": "the caller's own session; works/session-works.test.ts",
+  "POST /api/producers/:producerKey/works": "creates under the calling key's own producer key; works/producer-works.test.ts",
+  "GET /api/producers/:producerKey/works": "the calling key's own producer works; scoped in SQL to account + producer",
+  "GET /api/producers/:producerKey/works/:workId": "scoped in SQL to account + producer key",
+  "PATCH /api/producers/:producerKey/works/:workId": "scoped in SQL to account + producer key",
+  "POST /api/producers/:producerKey/works/:workId/pause": "scoped in SQL to account + producer key",
+  "POST /api/producers/:producerKey/works/:workId/resume": "scoped in SQL to account + producer key",
+  "POST /api/producers/:producerKey/works/:workId/finish": "scoped in SQL to account + producer key",
+  "POST /api/producers/:producerKey/works/:workId/heartbeat": "scoped in SQL to account + producer key",
+  "POST /hooks/:secret/works": "webhook secret identifies the service",
+  "GET /hooks/:secret/works": "webhook secret identifies the service; lists its own works",
 };
 
 /** Creates that name other resources in the body: B's ids must answer like missing ones. */
@@ -107,7 +125,9 @@ const ownAccountRoutes: Record<string,unknown> = {
   "POST /api/services": { title: "A service" },
   "POST /api/presentation-assets": { url: "https://127.0.0.1/a.png" },
   "POST /api/live-activities/resolve": { current: true },
-  "POST /api/agent-sessions/events": { session: "a".repeat(64),harness: "codex",event: "start",computer: "tenant-a-mac" },
+  "POST /api/agent-sessions/observed": { session: "a".repeat(64),harness: "codex",phase: "open",phaseSince: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString(),openToolSince: null,seq: 1,computer: "tenant-a-mac" },
+  "POST /api/harness-credentials": { name: "A computer hooks" },
 };
 
 suite("tenant isolation (ADR 0004)", () => {
@@ -257,8 +277,13 @@ suite("tenant isolation (ADR 0004)", () => {
     const deliveries = await ok(await as(b,"key","GET","/api/deliveries"));
     expect(deliveries.deliveries.length,"B has a delivery").toBeGreaterThan(0);
     ids.deliveryId = deliveries.deliveries[0].id ?? deliveries.deliveries[0].deliveryId;
-    await ok(await as(b,"key","POST","/api/agent-sessions/events",
-      { session: "b".repeat(64),harness: "codex",event: "start",computer: `${MARK} mac`,project: `${MARK} project` }));
+    const hooks = await ok(await as(b,"key","POST","/api/harness-credentials",{ name: `${MARK} hooks` }));
+    ids.harnessCredentialId = hooks.id;
+    const observedAt = new Date().toISOString();
+    await ok(await app.request("/api/agent-sessions/observed",{ method: "POST",
+      headers: { authorization: `Bearer ${hooks.token}`,"content-type": "application/json" },
+      body: JSON.stringify({ session: "b".repeat(64),harness: "codex",phase: "open",phaseSince: observedAt,lastSeenAt: observedAt,
+        openToolSince: null,seq: 1,computer: `${MARK} mac`,project: `${MARK} project` }) }));
     ids.credentialId = (await ok(await as(b,"key","GET","/api/clients/self"))).credential.id;
     // B's own CLI starts signing in: its code must never reach another account.
     const login = await ok(await app.request("/api/device-authorizations/start",{

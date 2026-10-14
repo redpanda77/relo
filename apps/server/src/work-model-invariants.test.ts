@@ -58,7 +58,7 @@ suite("work model invariants on cards (ADR 0007, P0-A)",() => {
     expect((await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n).toBe(events);
   });
 
-  test("a start that does change a running card (selector-free ensure) stores its sealed text with the presentation",async () => {
+  test("a selector-free start never adopts a running card; it stores its own sealed text",async () => {
     const phone = await fixturePhone(db,principalId);
     const first = await request("POST","/api/live-activities",{ acquireMode: "ensure",title: "Encrypted card",
       status: "Updating…",context,sealed: fixtureSealedCard([phone.publicId]) });
@@ -66,11 +66,14 @@ suite("work model invariants on cards (ADR 0007, P0-A)",() => {
     const next = fixtureSealedCard([phone.publicId]);
     const reused = await request("POST","/api/live-activities",{ acquireMode: "ensure",title: "Encrypted card",
       status: "Updating…",progress: 0.5,context,sealed: next });
-    expect(reused.body).toMatchObject({ disposition: "reused",activity: { id: first.body.activity.id,sequence: 1 } });
-    expect((await card(first.body.activity.id)).sealed).toEqual(next);
-    const pushed = (await db.query(`SELECT payload#>'{liveActivity,sealed}' AS sealed FROM notification_events
-      WHERE payload#>>'{liveActivity,activityId}'=$1 AND payload#>>'{liveActivity,operation}'='update'`,[first.body.activity.id])).rows;
-    expect(pushed).toEqual([{ sealed: next.alerts[0] }]);
+    // A selector-free start never adopts or changes a running card: it is its own card, and the first is untouched.
+    expect(reused.body).toMatchObject({ disposition: "created",activity: { sequence: 0 } });
+    expect(reused.body.activity.id).not.toBe(first.body.activity.id);
+    expect((await card(reused.body.activity.id)).sealed).toEqual(next);
+    expect((await card(first.body.activity.id)).state).toBe("active");
+    const pushed = (await db.query(`SELECT count(*)::int AS n FROM notification_events
+      WHERE payload#>>'{liveActivity,activityId}'=$1 AND payload#>>'{liveActivity,operation}'='update'`,[first.body.activity.id])).rows[0].n;
+    expect(pushed).toBe(0);
   });
 
   test("an update held under a question stores its sealed text with it",async () => {

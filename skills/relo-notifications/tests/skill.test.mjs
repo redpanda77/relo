@@ -9,6 +9,10 @@ import { validateSkill } from "../scripts/validate-skill.mjs";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cliSource = resolve(packageRoot, "..", "..", "packages", "cli", "src", "cli.mjs");
 const read = (file) => readFileSync(join(packageRoot, file), "utf8");
+// In the repo this file runs the CLI's own code: make the process as hermetic as the CLI suite (empty temp
+// HOME, temp state folder, no background flusher), so a recipe never touches the developer's real state.
+const hermeticEnv = resolve(packageRoot, "..", "..", "packages", "cli", "test", "hermetic-env.mjs");
+if (existsSync(hermeticEnv)) await import(pathToFileURL(hermeticEnv).href);
 
 function copy(t) {
   const temporary = mkdtempSync(join(tmpdir(), "relo-skill-test-"));
@@ -33,15 +37,17 @@ test("the validator catches the regressions it exists for", (t) => {
   assert.match(errors, /removed .*--text/);
 });
 
-test("the card is the default and notifications are the exception", () => {
+test("the work is the default and notifications are the exception", () => {
   const skill = read("SKILL.md");
-  assert.ok(skill.indexOf("relo activity start") < skill.indexOf("relo notify"),
-    "the first recipe an agent sees is the card");
-  assert.match(skill, /One card per agent/);
+  assert.ok(skill.indexOf("relo work start") < skill.indexOf("relo notify"),
+    "the first recipe an agent sees is the work");
+  assert.match(skill, /One open work per session/);
   const cards = read("references/cards.md");
-  assert.match(cards, /completed outer phases \/ total outer phases/);
-  assert.match(cards, /A card with steps draws its progress from them/);
-  assert.match(cards, /End exactly once/);
+  for (const echo of ["(open, started)", "(open, continuing)", "(open, updated)", "(paused, paused)", "(open, resumed)", "(finished, done)"]) {
+    assert.ok(cards.includes(echo), `cards.md shows the ${echo} echo`);
+  }
+  assert.match(cards, /Parallel work \(subagents, several jobs\) is one step with a count/);
+  assert.match(cards, /Finish exactly once/);
   assert.match(cards, /Tappable answers only/);
 });
 
@@ -79,7 +85,7 @@ test("every relo command in the skill is a valid command", { skip: !existsSync(c
         prepareNotificationCommand: async ({ body }) => body,
         captureActivityCommand: async ({ body }) => ({ target: null, ifSequence: body.ifSequence }),
         readStdinJson: async () => ({}), sleep: async () => {}, readTextFile: async () => "callback-token-0123456789",
-        env: { CLAUDE_CODE_SESSION_ID: "skill-recipe-session" },
+        env: { CLAUDE_CODE_SESSION_ID: "skill-recipe-session", XDG_STATE_HOME: join(sandbox, "state") },
         // A recipe line can never touch the real machine: config, pending sign-in, home and cwd are throwaway.
         home: sandbox, cwd: sandbox, configPath: () => join(sandbox, "config.json"),
         loadStoredConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), revision: "r" }),
@@ -95,9 +101,9 @@ test("every relo command in the skill is a valid command", { skip: !existsSync(c
 test("SKILL.md stays small and carries the steps-vs-progress rule and the first-run flow", () => {
   const skill = read("SKILL.md");
   assert.ok(Buffer.byteLength(skill) <= 4_900, `SKILL.md is ${Buffer.byteLength(skill)} bytes`);
-  assert.match(skill, /`--steps`[^]*`--progress 3\/10`[^]*Never both/);
-  assert.match(skill, /--steps "Build,Test,Ship"/);
+  assert.match(skill, /Parallel work is one step with a count/);
   assert.match(skill, /--progress 3\/20/);
+  assert.match(skill, /relo work start --goal/);
   assert.match(skill, /## First run/);
   assert.match(skill, /relo auth login --wait/);
   assert.match(skill, /relo test/);
@@ -115,6 +121,8 @@ test("SKILL.md stays small and carries the steps-vs-progress rule and the first-
   const block = install.match(/<!-- relo:start -->[^]*?<!-- relo:end -->/)[0];
   assert.ok(block.split("\n").length <= 12);
   assert.match(read("references/cards.md"), /generate 10 images, polish 20 chapters/);
+  assert.match(block, /relo work start --goal/);
+  assert.doesNotMatch(block, /relo activity|--steps\b|--topic\b/);
 });
 
 test("the skill version, its CLI dependency and the CLI agree", () => {

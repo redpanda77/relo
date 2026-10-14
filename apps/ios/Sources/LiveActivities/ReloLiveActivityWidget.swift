@@ -45,7 +45,11 @@ struct ReloLiveActivityWidget: Widget {
                     )
                 }
             } compactLeading: {
-                if presentation.components(for: .compactLeading).isEmpty {
+                if let count = context.state.owner?.needsYouCountLabel {
+                    Image(systemName: "exclamationmark.bubble.fill")
+                        .foregroundStyle(OwnerChipStyle.needsYouOrange)
+                        .accessibilityLabel("Relo, \(count) need you")
+                } else if presentation.components(for: .compactLeading).isEmpty {
                     Image(
                         systemName: presentation.privacy == .private
                             ? "lock.fill"
@@ -63,12 +67,14 @@ struct ReloLiveActivityWidget: Widget {
             } compactTrailing: {
                 PresentationCompactSurface(
                     presentation: presentation, surface: .compactTrailing, palette: palette,
-                    interaction: context.state.displayInteraction, isStale: context.isStale
+                    interaction: context.state.displayInteraction, isStale: context.isStale,
+                    owner: context.state.owner
                 )
             } minimal: {
                 PresentationCompactSurface(
                     presentation: presentation, surface: .minimal, palette: palette,
-                    interaction: context.state.displayInteraction, isStale: context.isStale
+                    interaction: context.state.displayInteraction, isStale: context.isStale,
+                    owner: context.state.owner
                 )
             }
             .keylineTint(
@@ -102,7 +108,8 @@ struct PresentationCardView: View {
     private var projection: LiveActivitySurfaceProjection {
         .make(
             presentation: presentation, surface: componentSurface,
-            interaction: context.state.displayInteraction, isStale: context.isStale, now: .now)
+            interaction: context.state.displayInteraction, isStale: context.isStale,
+            owner: context.state.owner, now: .now)
     }
 
     var body: some View {
@@ -131,8 +138,14 @@ struct PresentationCardView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             PresentationSourceMark(presentation: presentation, palette: palette)
+            if let chip = projection.chip {
+                OwnerChipView(chip: chip, owner: context.state.owner)
+            }
             Spacer(minLength: 0)
-            if let deadline = questionDeadline {
+            if let owner = context.state.owner, let timeSlot = OwnerTimeSlot(owner: owner) {
+                timeSlot.font(.caption.monospacedDigit()).foregroundStyle(palette.secondaryText)
+                    .lineLimit(1)
+            } else if let deadline = questionDeadline {
                 PresentationCountdown(deadline: deadline, palette: palette)
             } else {
                 if let startedAt = elapsedStart {
@@ -155,6 +168,7 @@ struct PresentationCardView: View {
     /// When the work began, only while it is still running; ended or stale cards show no timer.
     private var elapsedStart: Date? {
         guard presentation.state.kind == "active", !context.isStale else { return nil }
+        if let state = context.state.owner?.ownerState, state != .moving, state != .needsYou { return nil }
         return context.state.startedAt
     }
 
@@ -282,7 +296,7 @@ struct PresentationCardView: View {
             }
             .accessibilityElement(children: .combine)
         case .stages(let completed, let total):
-            Text("\(completed) of \(total) stages complete")
+            Text("\(completed) of \(total)")
         case .symbol(let symbol, let label):
             Label(label, systemImage: symbol)
         }
@@ -306,11 +320,15 @@ struct PresentationComponentStack: View {
                 case .steps(_, _, let items) = step,
                 components.contains(where: { if case .progressBar = $0 { true } else { false } })
             {
-                let phase = LiveActivitySurfaceProjection.Phase(items: items)
-                Text(phase.label).font(.caption).foregroundStyle(palette.secondaryText)
-                    .lineLimit(1)
-                    .accessibilityLabel(
-                        phase.current.map { "Phase \($0) of \(phase.total), \(phase.label)" } ?? phase.label)
+                // Progress belongs to the current step: "Step 2 · 1 to go · <step> · n of m" (2.15).
+                let count = components.lazy.compactMap { component -> (Int, Int)? in
+                    if case .progressBar(_, _, _, let label) = component { LiveActivitySurfaceProjection.stepCount(label) } else { nil }
+                }.first
+                let line = LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(items, count: count)) ?? ""
+                Text(line)
+                    .font(.caption.weight(.semibold)).foregroundStyle(palette.primaryText)
+                    .lineLimit(1).allowsTightening(true)
+                    .accessibilityLabel(line)
             }
             ForEach(components) { component in
                 if case .steps = component,
@@ -320,7 +338,8 @@ struct PresentationComponentStack: View {
                 } else {
                     PresentationComponentView(
                         presentation: presentation, component: component, palette: palette,
-                        accountID: accountID
+                        accountID: accountID,
+                        showsValue: !components.contains(where: { if case .steps = $0 { true } else { false } })
                     )
                 }
             }
@@ -333,6 +352,8 @@ struct PresentationComponentView: View {
     let component: LiveActivityPresentation.Component
     let palette: PresentationPalette
     let accountID: String?
+    /// False when steps carry the count: the bar's label and percent would be a second number.
+    var showsValue = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var componentColor: Color {
@@ -359,18 +380,20 @@ struct PresentationComponentView: View {
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
         case .progressBar(_, _, let value, let label):
             VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if let label {
-                        Text(label)
-                            .font(.caption2)
-                            .foregroundStyle(palette.secondaryText)
-                            .lineLimit(1)
-                            .allowsTightening(true)
+                if showsValue {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if let label {
+                            Text(label)
+                                .font(.caption2)
+                                .foregroundStyle(palette.secondaryText)
+                                .lineLimit(1)
+                                .allowsTightening(true)
+                        }
+                        Spacer(minLength: 0)
+                        Text(value, format: .percent.precision(.fractionLength(0)))
+                            .font(.caption2.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(componentColor)
                     }
-                    Spacer(minLength: 0)
-                    Text(value, format: .percent.precision(.fractionLength(0)))
-                        .font(.caption2.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(componentColor)
                 }
                 PresentationNeonBar(value: value, palette: palette)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: value)
@@ -379,26 +402,14 @@ struct PresentationComponentView: View {
             .accessibilityLabel(label ?? "Progress")
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
         case .steps(_, _, let items):
-            VStack(alignment: .leading, spacing: 4) {
-                stepRow(items)
-                let phase = LiveActivitySurfaceProjection.Phase(items: items)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(phase.label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(palette.primaryText)
-                        .lineLimit(1)
-                        .allowsTightening(true)
-                    Spacer(minLength: 0)
-                    if let current = phase.current {
-                        Text("\(current) of \(phase.total)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(palette.secondaryText)
-                    }
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Steps")
-            .accessibilityValue(items.map { "\($0.label), \($0.state.rawValue)" }.joined(separator: "; "))
+            // No plan-wide ratio bar: plans grow (2.15).
+            let line = LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(items)) ?? ""
+            Text(line)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(palette.primaryText)
+                .lineLimit(1)
+                .allowsTightening(true)
+                .accessibilityLabel(line)
         case .image(_, _, let asset):
             ZStack {
                 palette.primaryText.opacity(0.08)
@@ -572,11 +583,17 @@ struct PresentationCompactSurface: View {
     let palette: PresentationPalette
     var interaction: ReloActivityAttributes.Interaction? = nil
     var isStale = false
+    /// The server's owner state: its needs-you count wins compact trailing and minimal (spec 6.2).
+    var owner: LiveActivityOwner? = nil
 
     private var projection: LiveActivitySurfaceProjection {
         .make(
             presentation: presentation, surface: surface,
-            interaction: interaction, isStale: isStale, now: .now)
+            interaction: interaction, isStale: isStale, owner: owner, now: .now)
+    }
+    private var needsYouCount: Int? {
+        guard surface == .compactTrailing || surface == .minimal else { return nil }
+        return projection.needsYouCount
     }
     private var factColor: Color {
         if presentation.privacy == .private { return palette.primaryText }
@@ -588,7 +605,21 @@ struct PresentationCompactSurface: View {
 
     var body: some View {
         Group {
-            if surface == .minimal {
+            if let count = needsYouCount {
+                if surface == .minimal {
+                    ZStack {
+                        Circle().fill(OwnerChipStyle.needsYouOrange)
+                        Text(count > 9 ? "9+" : "\(count)")
+                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .foregroundStyle(.black)
+                            .minimumScaleFactor(0.6)
+                    }
+                    .frame(width: 20, height: 20)
+                } else {
+                    Text(count > 9 ? "9+" : "\(count)")
+                        .foregroundStyle(OwnerChipStyle.needsYouOrange)
+                }
+            } else if surface == .minimal {
                 minimalFact
             } else {
                 ViewThatFits(in: .horizontal) {
@@ -641,12 +672,20 @@ struct PresentationCompactSurface: View {
         return presentation.state.icon.systemImageName
     }
     private var accessibilityText: String {
-        if presentation.privacy == .private { return "Relo private activity. Open Relo to view" }
+        let needsYou = needsYouCount.map { "\($0) need you" }
+        if presentation.privacy == .private {
+            return needsYou.map { "Relo private activity, \($0)" } ?? "Relo private activity. Open Relo to view"
+        }
         let fact: String
+        if let needsYou {
+            return surface == .minimal
+                ? "\(presentation.identity.project?.label ?? presentation.header ?? "Relo"), \(presentation.title), \(needsYou)"
+                : needsYou
+        }
         switch projection.fact {
         case .symbol(_, let label): fact = label
         case .percentage(let value, _): fact = "\(Int((value * 100).rounded())) percent"
-        case .stages(let completed, let total): fact = "\(completed) of \(total) stages complete"
+        case .stages(let completed, let total): fact = "\(completed) of \(total)"
         }
         return surface == .minimal
             ? "\(presentation.identity.project?.label ?? presentation.header ?? "Relo"), \(presentation.title), \(fact)"
@@ -942,7 +981,8 @@ private func accessibilitySummary(
     let presentation = context.state.presentation
     let projection = LiveActivitySurfaceProjection.make(
         presentation: presentation, surface: .lockScreen,
-        interaction: context.state.displayInteraction, isStale: context.isStale, now: .now)
+        interaction: context.state.displayInteraction, isStale: context.isStale,
+        owner: context.state.owner, now: .now)
     let source = [presentation.identity.project?.label, presentation.identity.thread?.label]
         .compactMap { $0 }
     return LiveActivityAccessibilitySummary(
@@ -952,4 +992,74 @@ private func accessibilitySummary(
         isPrivate: presentation.privacy == .private,
         isInteractive: projection.permitsInlineResponse
     )
+}
+
+/// Owner-state chip colors (text always carries the meaning; color only reinforces it).
+enum OwnerChipStyle {
+    static let needsYouOrange = Color(red: 1.0, green: 0.58, blue: 0.0)
+    static let attentionYellow = Color(red: 1.0, green: 0.84, blue: 0.04)
+    static let runningCyan = Color(red: 0.2, green: 0.85, blue: 0.95)
+    static let doneMint = Color(red: 0.39, green: 0.9, blue: 0.75)
+    static let failedRed = Color(red: 1.0, green: 0.27, blue: 0.23)
+
+    static func color(_ chip: OwnerChip) -> Color {
+        switch chip {
+        case .needsYou, .missed: needsYouOrange
+        case .yourTurn: attentionYellow
+        case .working: runningCyan.opacity(0.7)
+        case .quiet: Color.white.opacity(0.6)
+        case .done: doneMint
+        case .failed: failedRed
+        }
+    }
+}
+
+/// The header chip: "NEEDS YOU", "MISSED", "YOUR TURN", "WORKING", "QUIET", "DONE", "FAILED".
+struct OwnerChipView: View {
+    let chip: OwnerChip
+    let owner: LiveActivityOwner?
+
+    var body: some View {
+        Text(chip.label)
+            .font(.caption2.weight(.bold))
+            .tracking(0.4)
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(OwnerChipStyle.color(chip))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(OwnerChipStyle.color(chip).opacity(0.16)))
+            .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        guard chip == .quiet || chip == .working, let declaredAt = owner?.declaredAt else { return chip.accessibilityLabel }
+        let relative = RelativeDateTimeFormatter().localizedString(for: declaredAt, relativeTo: .now)
+        return "\(chip.accessibilityLabel), updated \(relative)"
+    }
+}
+
+/// The header's time slot by owner state: "updated <relative>" for quiet work, "finished <time>"
+/// for outcomes, nothing for your turn. Renders server instants; never decides a state.
+struct OwnerTimeSlot: View {
+    private enum Kind { case updated(Date), finished(Date), none }
+    private let kind: Kind
+
+    init?(owner: LiveActivityOwner) {
+        switch owner.ownerState {
+        case .workingQuietly, .stale, .stoppedResponding, .noSignal: kind = .updated(owner.declaredAt)
+        case .done, .failed: kind = .finished(owner.finishedAt ?? owner.declaredAt)
+        case .waitingOnYou: kind = .none
+        case .needsYou where owner.needsYouReason == .permission: kind = .none
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        switch kind {
+        case .updated(let date): Text("updated \(date, style: .relative) ago")
+        case .finished(let date): Text("finished \(date, style: .time)")
+        case .none: EmptyView()
+        }
+    }
 }

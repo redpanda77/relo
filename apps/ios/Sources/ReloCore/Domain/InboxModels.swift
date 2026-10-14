@@ -681,7 +681,7 @@ public struct InboxSelectedItemSnapshot: Equatable, Sendable {
 public enum InboxRemoteError: Error, Equatable, Sendable {
     case cursorExpired
     case unauthorized
-    case tailnetUnavailable
+    case serverUnreachable
     case incompatibleResponse
     case unavailable
 }

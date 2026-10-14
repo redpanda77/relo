@@ -54,7 +54,7 @@ suite("Owner activity command isolation and atomicity",()=>{
    expect((await db.query("SELECT count(*)::int AS n FROM live_activity_operations WHERE live_activity_id=$1",[id])).rows[0].n).toBe(0);
   });
   const result=await request(`/api/dashboard/live-activities/${activity.id}/${operation}`,input);expect(result.status).toBe(200);expect(result.body.eventIds).toHaveLength(1);
-  expect((await db.query("SELECT state FROM interaction_requests WHERE notification_event_id=$1",[event])).rows[0].state).toBe("canceled");
+  expect((await db.query("SELECT state FROM interaction_requests WHERE notification_event_id=$1",[event])).rows[0].state).toBe("pending");
  });
  test("owner start and reuse roll back their event, lease and receipt when outbox insertion fails",async()=>{
   const seedActivity=await seed(),input={deviceId:`dev_${devices[1]}`,presentation:seedActivity.presentation};

@@ -9,6 +9,10 @@ export * from "./relevance.js";
 export * from "./current-inbox.js";
 export * from "./agent-sessions.js";
 export * from "./context.js";
+export * from "./owner-state.js";
+export * from "./works.js";
+export * from "./card-line.js";
+export * from "./sealed.js";
 
 export function isPublicHttpsUrl(value: string): boolean {
   try {
@@ -77,7 +81,6 @@ export const API_TOKEN_SCOPES = [
   "interactions:read",
   "activities:write",
   "activities:read",
-  "sessions:write",
   "devices:read",
   "services:read",
   "services:write",
@@ -430,6 +433,12 @@ export const interactionResultSchema = z.object({
   respondedAt: isoTimestampSchema.nullable(),
   createdAt: isoTimestampSchema,
   callback: z.unknown().optional(),
+  /** An answer recorded after expiry: a fact, never permission (D3); `state` stays `expired`. */
+  late: z.object({
+    state: z.string().nullable(),
+    response: z.unknown().nullable(),
+    respondedAt: isoTimestampSchema,
+  }).strict().nullable().optional(),
 }).strict();
 export const interactionResultResponseSchema = z.object({ interaction: interactionResultSchema }).strict();
 export const interactionResponseSchema = z

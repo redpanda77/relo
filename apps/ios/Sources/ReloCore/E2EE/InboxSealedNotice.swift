@@ -27,16 +27,21 @@ public struct ReloSealedNoticeContent: Codable, Equatable, Sendable {
 /// rotated-away key, or a replay of another item's envelope).
 public typealias ReloSealedOpener = @Sendable (ReloEnvelope, _ itemID: String) -> Data?
 
+/// Why this phone cannot open an envelope: a `ReloSealedOpenRecord.Outcome` raw value ("not_for_this_phone",
+/// "computer_unknown", …), or nil when unknown. Key ids and outcomes only, never text.
+public typealias ReloSealedDiagnoser = @Sendable (ReloEnvelope) -> String?
+
 public extension InboxItem {
     /// The item with its sealed text opened on this phone, or unchanged when nothing opens.
-    func openingSealed(_ open: ReloSealedOpener) -> InboxItem {
+    /// `diagnose` explains an envelope that does not open, so the item says why instead of a placeholder.
+    func openingSealed(_ open: ReloSealedOpener, diagnose: ReloSealedDiagnoser? = nil) -> InboxItem {
         guard let sealed else { return self }
         if sealed.content.kind == "card" { return openingSealedCard(sealed, open: open) }
         let decoder = JSONDecoder()
         let notice = open(sealed.content, id).flatMap { try? decoder.decode(ReloSealedNoticeContent.self, from: $0) }
             ?? sealed.alert.flatMap { open($0, id) }.flatMap { try? decoder.decode(ReloSealedNoticeContent.self, from: $0) }
         // Not openable here: show placeholders, never text the server put next to the envelope.
-        guard let notice else { return lockedPlaceholder() }
+        guard let notice else { return lockedPlaceholder(outcome: diagnose?(sealed.content)) }
         let body = notice.body
         let summary = notice.summary ?? body.map { String($0.prefix(240)) } ?? notice.title
         return InboxItem(
@@ -58,18 +63,21 @@ public extension InboxItem {
     }
 
     var isEndToEndEncrypted: Bool { sealed != nil }
+
+    /// Why this phone can't read a sealed item it could not open (its locked body), else nil.
+    var unreadableLine: String? { sealed != nil && privacy == .private ? detail : nil }
 }
 
 public extension InboxHistoryPage {
-    func openingSealed(_ open: ReloSealedOpener) -> InboxHistoryPage {
-        InboxHistoryPage(items: items.map { $0.openingSealed(open) }, cursor: cursor, hasMore: hasMore, total: total,
-                         serverTime: serverTime, readWatermark: readWatermark, unread: unread)
+    func openingSealed(_ open: ReloSealedOpener, diagnose: ReloSealedDiagnoser? = nil) -> InboxHistoryPage {
+        InboxHistoryPage(items: items.map { $0.openingSealed(open, diagnose: diagnose) }, cursor: cursor, hasMore: hasMore,
+                         total: total, serverTime: serverTime, readWatermark: readWatermark, unread: unread)
     }
 }
 
 public extension InboxNotificationDetail {
-    func openingSealed(_ open: ReloSealedOpener) -> InboxNotificationDetail {
-        InboxNotificationDetail(item: item.openingSealed(open), evidence: evidence)
+    func openingSealed(_ open: ReloSealedOpener, diagnose: ReloSealedDiagnoser? = nil) -> InboxNotificationDetail {
+        InboxNotificationDetail(item: item.openingSealed(open, diagnose: diagnose), evidence: evidence)
     }
 }
 
@@ -232,11 +240,11 @@ extension InboxActivitySummary {
 
 public extension InboxRepairResponse {
     /// The snapshot with sealed rows opened on this phone.
-    func openingSealed(_ open: ReloSealedOpener) -> InboxRepairResponse {
+    func openingSealed(_ open: ReloSealedOpener, diagnose: ReloSealedDiagnoser? = nil) -> InboxRepairResponse {
         var opened = self
         opened.items = items.map { summary in
             var summary = summary
-            summary.item = summary.item.openingSealed(open)
+            summary.item = summary.item.openingSealed(open, diagnose: diagnose)
             return summary
         }
         // Opening a session's names teaches the name book; rows show them when displayed.
@@ -248,13 +256,15 @@ public extension InboxRepairResponse {
 }
 
 extension InboxItem {
-    func lockedPlaceholder() -> InboxItem {
+    /// What a sealed item this phone cannot open shows: the placeholder title and, as its body, why this
+    /// iPhone can't read it (never "Open Relo on your iPhone": this is the iPhone).
+    func lockedPlaceholder(outcome: String? = nil) -> InboxItem {
         guard let sealed else { return self }
         let question = sealed.content.kind == "question"
         return InboxItem(
             id: id, kind: kind, sourceName: sourceName, sourceImageUrl: nil,
             title: question ? "Encrypted question" : "Encrypted notification",
-            detail: question ? "Open Relo on your iPhone to read this question." : "Open Relo on your iPhone to read this.", content: nil,
+            detail: ReloSealedCards.unreadableSentence(outcome: outcome), content: nil,
             readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: nil, privacy: .private, liveActivity: liveActivity, activitySummary: activitySummary,

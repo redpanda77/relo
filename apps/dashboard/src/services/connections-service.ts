@@ -37,6 +37,7 @@ export interface ConnectionsService {
   deleteService(id: string): Promise<void>
   revokePhone(id: string): Promise<void>
   revokeClient(id: string): Promise<void>
+  revokeHarnessCredential(id: string): Promise<void>
   setClientCardLimit(id: string, limit: number | null): Promise<void>
   saveServiceLiveActivityPolicy(
     id: string,
@@ -126,6 +127,12 @@ export function createHttpConnectionsService(): ConnectionsService {
     async revokeClient(id) {
       await jsonRequest(
         `/api/dashboard/credentials/${encodeURIComponent(id)}/revoke`,
+        { method: "POST" }
+      )
+    },
+    async revokeHarnessCredential(id) {
+      await jsonRequest(
+        `/api/dashboard/harness-credentials/${encodeURIComponent(id)}/revoke`,
         { method: "POST" }
       )
     },

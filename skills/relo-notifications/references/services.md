@@ -1,17 +1,52 @@
-# Services and secret webhook URLs
+# Scripts, apps, services and secret webhook URLs
+
+## Scripts and apps as producers
+
+A script, CI job or app that is not an agent session shows its work with the same `relo work` verbs,
+named by a producer key instead of a session:
+
+```bash
+export RELO_SESSION=deploy-bot          # or pass --producer deploy-bot on every command
+relo work start --producer deploy-bot --goal "Deploy 2.4" --plan "Build,Migrate,Ship" --idempotency-key "$CI_PIPELINE_ID-deploy"
+relo work update --producer deploy-bot --next-step
+relo work heartbeat --producer deploy-bot --lease 15m
+relo ask "Deploy 2.4 to production?" --approval --expires-in 30m --timeout 30m --idempotency-key "$CI_PIPELINE_ID-ask"
+relo work finish --producer deploy-bot --outcome "2.4 is live"
+relo state --producer deploy-bot
+```
+
+- **Producer key**: `--producer KEY` or `RELO_SESSION=KEY`, 1-100 characters from letters, digits,
+  `.`, `_`, `:`, `-`. The owner sees it as the work's label ("deploy-bot"). A script without one is
+  refused with the exact `relo work start --producer …` command. Two jobs with the same key share one
+  open work (a second start continues it unless `--new`).
+- **Idempotency**: `--idempotency-key` is required on `work start` and `ask` when stdin is not a TTY,
+  so a retry never makes a second work or question; it is generated at a terminal.
+- **Heartbeat**: `relo work heartbeat [--lease 15m]` keeps the card moving without updates for the
+  lease (60s to 1h, default 15 min). The echo says until when: renew before then. Agents cannot
+  heartbeat; a session shows it is alive through its own updates.
+- **Long waits**: `--expires-in 30m` keeps the question open that long and `--timeout 30m` blocks
+  for it (at most the question's lifetime; default 5 minutes). Exit `0` approved, `5` denied, `8`
+  expired or canceled, `4` still open when the wait ended (`relo interaction wait ID` resumes it),
+  `1` server, `6` network. Only exit `0` with state `approved` is permission. An agent waits about
+  100s per command and resumes with `relo interaction wait ID`.
+- Output is one JSON line when piped:
+  `{"ok":true,"disposition":"started","work":{"id":"wrk_…","lifecycle":"open","version":1,"step":"1/3"},"lease":null}`.
+- `relo listen` with a producer key reads only that producer's answers.
+
+## Services and secret webhook URLs
 
 Services give external systems a stable title, optional image, optional default destination URL,
 and a secret webhook endpoint. The endpoint is a bearer credential, not a shareable link.
 
-## Read-only inventory
+### Read-only inventory
 
 `relo services list --json` requires `services:read`. The result may be used to report safe
 service metadata, but do not expose secret fields if a future server includes them.
 
-## Creation gate
+### Creation gate
 
-`relo services create --title TITLE --secret-file PATH --json` requires `services:write` and also
-accepts optional `--image`, `--url`, and `--stdin` input. It publishes the copy-once webhook URL to
+`relo services create --secret-file PATH --json` (named with its title option; `relo schema services`
+lists it) requires `services:write` and also accepts optional `--image`, `--url`, and `--stdin` input. It publishes the copy-once webhook URL to
 a new owner-only local file and removes it from stdout JSON.
 
 Do not run service creation automatically. When the user explicitly requests creation:
@@ -36,7 +71,7 @@ a non-recorded terminal. This skill forbids captured agents from using that mode
 Image URLs must use a public HTTPS host; destination URLs must use HTTPS. The default destination
 controls what opens after a notification; it is not a callback and must not contain credentials.
 
-## Webhook use
+### Webhook use
 
 Every new webhook notification and Live Activity start must name its project and topic, like every
 other producer: send `context.project` and `context.threadName` (or an `origin` descriptor). The
@@ -59,7 +94,7 @@ through authenticated/secret-bound documented endpoints. Never infer an answer f
 acceptance or APNs delivery. Rotation invalidates the prior URL; update the caller's secret manager
 atomically and revoke the old value through the dashboard.
 
-## Wiring an app to the answers
+### Wiring an app to the answers
 
 An app that asks through the CLI gets answers by blocking (`relo ask`), by id later
 (`relo interaction wait ID`), by a signed callback, or by `relo listen`; see

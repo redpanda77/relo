@@ -63,7 +63,10 @@ final class E2EESealedNoticeTests: XCTestCase {
 
         let stranger = try computer(nil, verified: false)
         let forged = placeholder(InboxSealedNotice(alert: nil, content: try notice(stranger, prekey: prekey, content: ["title": "Approve the transfer"])))
-        XCTAssertEqual(forged.openingSealed(sealed.opener), forged, "an unverified sender leaves the placeholder")
+        let locked = forged.openingSealed(sealed.opener, diagnose: sealed.diagnoser)
+        XCTAssertEqual(locked.title, "Encrypted notification", "an unverified sender leaves the placeholder")
+        XCTAssertNil(locked.content)
+        XCTAssertEqual(locked.unreadableLine, "It comes from a computer you haven't approved, so this iPhone won't open it.")
     }
 
     func testPushAlertOpensInTheExtensionAndFlagsUnverifiedSenders() throws {
@@ -171,5 +174,124 @@ final class E2EESealedNoticeTests: XCTestCase {
         XCTAssertEqual(opened.title, "Device trust release")
         XCTAssertEqual(opened.activitySummary?.title, "Device trust release")
         XCTAssertEqual(opened.activitySummary?.status, "Approved · Shipping", "the server's own words stay")
+    }
+
+    // MARK: Now rows (GET /api/now `sealed`)
+
+    private func nowItem(title: String, status: String?, current: String? = nil, notificationID: String? = nil,
+                         questionID: String? = nil, sealed: NowItem.Sealed?) throws -> NowItem {
+        var object: [String: Any] = [
+            "id": "act_00000000-0000-4000-8000-000000000001", "title": title, "status": status ?? NSNull(),
+            "sourceName": "Claude Code", "project": "relo", "producer": "agent_session", "sessionId": NSNull(),
+            "notificationId": notificationID ?? NSNull(),
+            "startedAt": "2026-10-14T09:58:00.000Z", "declaredAt": "2026-10-14T09:58:00.000Z",
+            "steps": current.map { ["done": 1, "total": 3, "current": $0] as [String: Any] } ?? NSNull(),
+            "question": questionID.map { ["id": $0, "standing": "missed", "askedAt": "2026-10-14T09:58:00.000Z",
+                                          "openedAt": NSNull()] as [String: Any] } ?? NSNull(),
+            "owner": ["state": "moving", "needsYou": NSNull(), "evidenceAt": "2026-10-14T09:58:00.000Z",
+                      "evidenceSource": "declared", "staleDate": "2026-10-14T10:18:00.000Z", "lockScreen": "shown",
+                      "relevance": 0.5, "apnsPriority": 5] as [String: Any],
+        ]
+        if let sealed {
+            object["sealed"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(sealed))
+        }
+        return try ReloWireJSON.decoder().decode(NowItem.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+
+    private func card(_ sender: ReloSoftwareIdentity, prekey: ReloStoredPrekey, _ content: [String: Any],
+                      kind: String = "card") throws -> ReloEnvelope {
+        try ReloE2EE.seal(kind: kind, context: "act:\(kind)", sender: sender,
+                          recipients: [(deviceID, prekey.id, prekey.key.publicKey)],
+                          content: try JSONSerialization.data(withJSONObject: content))
+    }
+
+    func testNowRowsOpenTheirSealedCardAndReplaceOnlyPlaceholders() throws {
+        let (sealed, trust, prekey) = try phone()
+        let mac = try computer(trust, verified: true)
+        let envelope = try card(mac, prekey: prekey, ["title": "Ship the release", "status": "Running local gates",
+                                                      "steps": ["Build", "Run local gates", "Deploy"]])
+        let item = try nowItem(title: "Encrypted card", status: "Approved · Updating…", current: "Step 2",
+                               sealed: .init(card: envelope))
+        var summary = try XCTUnwrap(Self.summary())
+        summary.running = [item]
+        let opened = summary.openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser).running[0]
+        XCTAssertEqual(opened.title, "Ship the release")
+        XCTAssertEqual(opened.status, "Approved · Running local gates", "the server's own words stay")
+        XCTAssertEqual(opened.steps?.current, "Run local gates")
+
+        // Words the server wrote itself are never replaced, even when the card opens.
+        let plain = try nowItem(title: "Deploy the site", status: "Approved", sealed: .init(card: envelope))
+        let kept = plain.openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser)
+        XCTAssertEqual(kept.title, "Deploy the site")
+        XCTAssertEqual(kept.status, "Approved")
+    }
+
+    func testNowQuestionRowsOpenTheirPrompt() throws {
+        let (sealed, trust, prekey) = try phone()
+        let mac = try computer(trust, verified: true)
+        let question = try card(mac, prekey: prekey, ["title": "Release", "summary": "Deploy to production?"], kind: "question")
+        let item = try nowItem(title: "Encrypted question", status: ReloSealedCards.promptPlaceholder,
+                               notificationID: "ntf_00000000-0000-4000-8000-000000000009",
+                               questionID: "int_00000000-0000-4000-8000-000000000009", sealed: .init(question: question))
+        let opened = item.openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser)
+        XCTAssertEqual(opened.title, "Release")
+        XCTAssertEqual(opened.status, "Deploy to production?")
+    }
+
+    func testNowRowsThisPhoneCannotOpenSayWhyInsteadOfEncryptedCard() throws {
+        let (sealed, trust, _) = try phone()
+        let mac = try computer(trust, verified: true)
+        // Sealed for another phone's key.
+        let (_, _, otherPrekey) = try phone()
+        let elsewhere = try card(mac, prekey: otherPrekey, ["title": "Secret", "status": "Hidden"])
+        let item = try nowItem(title: "Encrypted card", status: "Updating…", current: "Step 1", sealed: .init(card: elsewhere))
+        let locked = item.openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser)
+        XCTAssertEqual(locked.title, "Can't be read on this iPhone")
+        XCTAssertEqual(locked.status, "Sealed for another device")
+        XCTAssertNil(locked.steps?.current, "a \"Step n\" placeholder tells the owner nothing")
+        XCTAssertEqual(locked.steps?.total, 3)
+
+        // From a computer this phone has not approved.
+        let stranger = try computer(nil, verified: false)
+        let (mine, _, myPrekey) = try phone()
+        let unapproved = try card(stranger, prekey: myPrekey, ["title": "Approve the transfer"])
+        let strangerRow = try nowItem(title: "Encrypted card", status: nil, sealed: .init(card: unapproved))
+            .openingSealed(mine.displayOpener, diagnose: mine.diagnoser)
+        XCTAssertEqual(strangerRow.title, "Can't be read on this iPhone")
+        XCTAssertEqual(strangerRow.status, "From a computer you haven't approved")
+
+        // No envelope for this phone at all.
+        let bare = try nowItem(title: "Encrypted card", status: "Updating…", sealed: nil)
+            .openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser)
+        XCTAssertEqual(bare.title, "Can't be read on this iPhone")
+        XCTAssertEqual(bare.status, "Not sealed for this iPhone")
+    }
+
+    func testALockedQuestionDetailSaysWhyThisIPhoneCannotReadIt() throws {
+        let (sealed, trust, _) = try phone()
+        let (_, _, otherPrekey) = try phone()
+        let mac = try computer(trust, verified: true)
+        let question = try ReloE2EE.seal(kind: "question", context: "ntf:elsewhere", sender: mac,
+                                         recipients: [(deviceID, otherPrekey.id, otherPrekey.key.publicKey)],
+                                         content: try JSONSerialization.data(withJSONObject: ["title": "Release"]))
+        let item = InboxItem(id: "ntf_q2", kind: .notification, sourceName: "Relo", title: "Encrypted question", createdAt: Date(),
+                             privacy: .private,
+                             interaction: InboxInteraction(id: "int_q2", kind: .approval, prompt: ReloSealedCards.promptPlaceholder,
+                                                           state: .pending, expiresAt: Date().addingTimeInterval(60), respondedAt: nil),
+                             sealed: InboxSealedNotice(alert: nil, content: question))
+        let locked = item.openingSealed(sealed.opener, diagnose: sealed.diagnoser)
+        XCTAssertEqual(locked.unreadableLine, "This was sealed for another device, so this iPhone can't read it.")
+        XCTAssertEqual(locked.interaction?.prompt, ReloSealedCards.promptPlaceholder, "an unopened prompt is never signed")
+    }
+
+    private static func summary() -> NowSummary? {
+        let json = """
+        {"serverTime":"2026-10-14T10:00:00Z",
+         "sinceYouLooked":{"since":"2026-10-14T09:00:00Z","finished":0,"failed":0,"waitingOnYou":0,"stoppedWithoutFinishing":0,"needsYou":0},
+         "needsYou":[],"recent":[],"waitingOnYou":[],"quiet":[],"paused":[],"running":[],
+         "folds":{"waitingOnYou":0,"quiet":0,"paused":0},"lockScreen":{"cards":[],"needsYouCount":0,"focus":null},
+         "sessions":{"sessions":[],"folds":{"idle":0}},"refreshAt":null}
+        """
+        return try? ReloWireJSON.decoder().decode(NowSummary.self, from: Data(json.utf8))
     }
 }

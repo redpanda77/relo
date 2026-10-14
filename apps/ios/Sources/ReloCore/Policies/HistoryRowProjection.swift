@@ -74,7 +74,7 @@ public enum HistoryRowProjection {
     public static func row(_ item: InboxItem, question: InboxItem? = nil, now: Date) -> HistoryRow {
         let project = InboxHierarchyProjection.project(for: item)
         let topic = InboxSourceProjection.topic(for: item)?.name
-        let title = item.activitySummary?.title ?? item.title
+        let title = ReloSealedCards.readableTitle(item.activitySummary?.title ?? item.title, prompt: item.interaction?.prompt)
         let card = item.kind == .liveActivity ? item.activity : nil
         let outcome = outcome(item, now: now)
         let startedAt = card?.startedAt ?? item.activitySummary?.createdAt
@@ -112,7 +112,7 @@ public enum HistoryRowProjection {
         add("answered", rows.filter { if case .answered = $0.outcome { true } else { $0.decision.map { !$0.pending } ?? false } }.count)
         add(rows.filter { $0.outcome == .message }.count == 1 ? "message" : "messages", rows.filter { $0.outcome == .message }.count)
         var parts = counts.map { "\($0.1) \($0.0)" }
-        if let now, let time = agentTimeLabel(agentTime(rows, now: now)) { parts.append("\(time) agent time") }
+        if let now, let time = agentTimeLabel(agentTime(rows, now: now)) { parts.append("\(time) session time") }
         return parts.joined(separator: " · ")
     }
 

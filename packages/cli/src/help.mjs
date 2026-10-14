@@ -1,23 +1,21 @@
 
-export const GUIDE = `Relo puts your work on the owner's iPhone as one Live Activity card per agent session.
+export const GUIDE = `Relo puts your work on the owner's iPhone: one open work per session, shown while it matters.
 
-  relo activity start --title "Deploy 0.7.57" --status "Building" --steps "Build,Test,Ship" --topic "Release 0.7.57"
-  relo activity update --status "Testing" --next-step
-  relo ask "Deploy to production?" --approval --topic "Release 0.7.57"
-  relo activity end --status "Live on production"
-  relo notify "0.7.57 is live" --title "Deployed" --topic "Release 0.7.57"
-Steps or progress: judgment work uses --steps (3-6 named phases, --next-step); a script or counted job
-(10 images, 400 rows) uses --progress 3/10 (labelled "3 of 10"). Never both; never a guess from time.
-Send only what changed (--step-current Ship also works). Over-long text is shortened, with a note.
-ask also takes --yes-no. In an agent session it waits up to 100s: exit 4 with state "timeout" means the
-question is still open, so run relo interaction wait ID.
-notify is rare: a finished outcome worth a buzz, never a question or progress.
-
-The card is chosen for you: every command in one agent session lands on that session's card. Auto-detected:
-Claude Code, Codex, OpenCode, Gemini CLI, Cursor. Any other harness: RELO_SOURCE="<harness>" and
-RELO_SESSION=<stable id> (or reuse the same --topic).
-Identity: source, project, computer and account are automatic; only --topic (the work, in the owner's words) is yours.
-Several agent accounts on this computer? Name each once: relo account work
+  relo work start --goal "Fix the login crash" --plan "Reproduce the crash,Find the cause,Choose the fix"
+  relo work update --status "Reproduced on iOS 17" --next-step
+  relo work update --add "Patch token refresh,Run the tests"     # the plan grows in place
+  relo ask "Deploy to production?" --approval
+  relo work finish --outcome "Login fixed: token refresh patched and tested"   (--failed | --dropped)
+  relo state                                                     # what this session has open
+Steps are milestones in order. Parallel work (subagents, several jobs) is one step with a count: --progress 2/6.
+A counted job without a plan: --progress 3/10. --plan "…" lists what is left (done steps stay; left-out steps
+are skipped); --step "…" jumps; update applies --next-step, --plan, --add, --step, --progress, then text.
+A repeat start continues the open work; another goal: start --new (the old one is parked: relo work resume).
+Waiting on CI or a review: --waiting "CI". Away: relo work pause --status "…". Every command prints the plan,
+what the owner sees and the exact next command; a refusal is three lines (Refused / State / Next).
+No session id (Gemini CLI, Cursor, OpenCode): pass the handle start prints as --work <handle>.
+ask also takes --yes-no. In a session it waits up to 100s: exit 4 means still open (relo interaction wait ID).
+The finish outcome is the notification; relo notify only when no work is open.
 
 Output is one compact JSON line (--full for the whole server reply). Errors print once, with a hint.
 Exit: 0 ok/approved/yes/chosen · 5 denied/no · 4 still open (resume) · 8 closed, no answer (do not act)
@@ -44,16 +42,27 @@ The topic is never guessed: name the work as the owner would ("Release 0.7.55", 
 not a step ("Running tests"). Generic values ("Project", "Task", "Unknown") are rejected.
 Computer and account are optional context: omitted when nothing identifies them.
 
-Cards: inside an agent session (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID, or RELO_SESSION=<stable id> for any
-harness or script) the card belongs to the session, so every command updates the same card even if the topic wording changes. Elsewhere the
+Cards: inside a session (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID; RELO_SESSION=<stable id> only outside a detected
+harness; nested harness ids count as none) the card belongs to the session, so every command updates the same card even if the topic wording changes. Elsewhere the
 card is source > project > topic. --name pins an explicit card name.
 
 Missing fields fail before any request (exit 2); the hint is a command with only the missing flags.
-relo notify inside an agent session takes source, project and topic from the session's card when it is running.`;
+relo notify inside a session takes source, project and topic from the session's card when it is running.`;
 
 export const HELP = `Relo: full reference (short version: relo help)
 
-Cards (Live Activities): the default for anything in progress or waiting on the owner
+The work: one open work per session (agents, and scripts with --producer KEY)
+  relo work start --goal TEXT [--plan "A,B,C"] [--progress n/m] [--status TEXT] [--new] [--dry-run]
+  relo work update [--status T] [--goal T] [--next-step | --step X] [--plan "A,B"] [--add "C"] [--progress n/m]
+                   [--waiting TEXT | --not-waiting] [--dry-run]
+  relo work pause --status TEXT · relo work resume [wrk_…] · relo work finish --outcome TEXT [--failed|--dropped] [--work wrk_…]
+  relo state [--sync]     What this session has open, parked and still queued (local copy; --sync asks the server).
+      The CLI identifies the session from the harness and scopes every command to it; a session never sees another's.
+      Subagents run no relo commands. A change that cannot reach the server is kept ("Queued: sends with the next
+      relo command") and goes out first with the next relo command. Scripts: --producer KEY (or RELO_SESSION=KEY),
+      --idempotency-key on start and ask, relo work heartbeat --lease 15m. The schema has every flag: relo schema work.
+
+Legacy Live Activity cards: scripts outside an agent session only (an agent gets a refusal that names the relo work command)
   relo activity start --title TITLE --status TEXT [--topic NAME] [--detail TEXT]
                       [--progress 0.4|40%|2/5 [--progress-label TEXT]] [--steps "A,B,C"|--step A --step B ...] [--step-current N|NAME]
       Steps vs progress: judgment work -> --steps (3-6 named phases, --next-step); script or counted job ->
@@ -81,13 +90,13 @@ Cards (Live Activities): the default for anything in progress or waiting on the 
       and print {"ok":true,"dryRun":true,"would":{"command","body"},"note"?} with no request and no login needed.
       update --next-step/--step-current cannot read the card in a dry run; the note says the step resolution is skipped.
 
-Questions: on this work's card, with answer buttons
+Questions: on this session's open work, with answer buttons
   relo ask QUESTION (--approval|--yes-no|--option LABEL ×2-4) [--detail TEXT] [--topic NAME] [--expires-in 5m] [--timeout 100s|--no-wait]
            [--primary-label L] [--secondary-label L] [--correlation-id ID]
            [--callback-url URL --callback-token-file PATH] [--name NAME] [--idempotency-key KEY]
       The question waits 5m by default; --expires-in asks for longer, up to the server's limit (7 days
       unless the admin changed it). Past 8h the card ends and the question keeps waiting in Relo. The
-      command waits up to 5m, or 100s inside an agent session (your shell tool would kill it sooner). Exit 0 approved/yes/chosen, 5 denied/no, 4 still open: run
+      command waits up to 5m, or 100s inside a session (your shell tool would kill it sooner). Exit 0 approved/yes/chosen, 5 denied/no, 4 still open: run
       relo interaction wait ID, 8 closed without an answer (expired, canceled): do not act. A question never starts
       a card: with none running it goes out as a notification with the answer buttons, and answering never ends one.
       QUESTION is the decision in one line of at most 120 characters: the card and its buttons show it.
@@ -97,7 +106,7 @@ Questions: on this work's card, with answer buttons
       Relo build; otherwise it is refused with choice_unsupported and nothing is asked.
       --notification-only asks with a notification that carries the answer buttons and takes no card. A login
       the owner limited to N open cards (Dashboard > Connections) does this on its own once the limit is reached.
-  relo interaction get ID · relo interaction wait ID [--timeout 60s; 100s in an agent session] · relo interaction cancel ID
+  relo interaction get ID · relo interaction wait ID [--timeout 60s; 100s in a session] · relo interaction cancel ID
   relo listen [--since CURSOR|TIME] [--once] [--timeout DURATION]
       Every answer to this login's questions as one JSON line each, over one connection the app opens (no
       inbound port needed). Each line has a cursor; --since CURSOR resumes after a restart. Answers can
@@ -107,7 +116,7 @@ Notifications: sparingly, for finished outcomes
   relo notify [BODY...] [--title T] [--summary T] [--markdown|--format text|markdown] [--image URL] [--url URL]
               [--topic NAME] [--device ID...] [--idempotency-key KEY] [--stdin]
   relo notify withdraw ID
-  In an agent session the topic comes from the session's card when it is running.
+  In a session the topic comes from the session's card when it is running.
 
 Identity (notify, ask, activity start): --source NAME --project NAME --topic NAME --computer NAME --account NAME.
   Source, project, computer and account are automatic; the topic is yours. See relo help identity.
@@ -160,20 +169,24 @@ Sign-in and phones
       RELO_NO_UPDATE_CHECK=1); it never changes ready.
   relo setup --mcp --agent claude-code|claude-desktop|cursor|codex|gemini|vscode (--global|--project) [--move] [--dry-run] · relo setup --mcp --remove
       Owner's choice: Relo's MCP server (relo mcp) in ONE harness config; same one-place rule, idempotent, --remove deletes only that entry.
-  relo setup (--project | --global --agent claude-code|gemini) --hooks [--move] [--dry-run] · relo setup --hooks --remove
-      Optional. Without hooks Relo works fully. With hooks, the server also knows when a session is working, waiting
-      or gone (presence only: hooks never start, change or end a card, work or question). Nothing installs them but this command; doctor never suggests them. One marked entry per event in ONE settings file
-      (Claude Code: SessionStart, UserPromptSubmit, PostToolUse, Stop, Notification (permission/input prompts only), SessionEnd in ~/.claude/settings.json or
+  relo setup (--project | --global --agent claude-code|gemini) --hooks off|reminders|presence [--move] [--dry-run] · relo setup --hooks off · relo hooks status · relo hooks off
+      Optional, off by default. Without hooks Relo works fully. The level is required. reminders (Claude Code): local only, sends
+      nothing; a Stop reminder of an open or unrefreshed work and a restore of what the session was doing. presence: adds the
+      session's phase for the owner's Sessions view: a local state machine reduces hook events to phases and only changes
+      (plus a heartbeat every 5 minutes while working) are queued in a durable outbox and sent with a harness credential that
+      can write presence and nothing else. Hooks never start, change or end a work, plan or question. Nothing installs them but
+      this command; doctor never suggests them. One marked entry per event in ONE settings file (~/.claude/settings.json or
       <repo>/.claude/settings.json; Gemini CLI: ~/.gemini/settings.json or <repo>/.gemini/settings.json), each running
-      "relo hook EVENT" (timeout 5). Entries are recognised by that command, so setup is idempotent and --remove deletes
-      only Relo's. "relo hook" sends the session id hash, event, project, computer and account; never prompts,
-      tool input/output or transcript paths. It prints nothing, exits 0 always, and RELO_DEBUG=1 logs its errors to a file.
-      Result: {"ok":true,"file","action":"created|updated|unchanged|moved|removed","hooks":["SessionStart",…]}.
-  relo sessions [--live]  {"ok":true,"sessions":[{harness,computer,account,project,phase,state,presence,lastEventAt,card}],"counts":{working,waiting,idle,ended,lost}}
+      "relo hook ROLE". Entries are recognised by that command, so setup is idempotent and off deletes only Relo's, and
+      revokes this computer's harness credential. "relo hook" never sends prompts, tool names, tool input/output or transcript
+      paths; it prints nothing, exits 0 always, and RELO_DEBUG=1 logs its errors to a file.
+      Result: {"ok":true,"file","action":"created|updated|unchanged|moved|removed","level",…}.
+  relo sessions [--live]  The owner's Sessions view from hooks (empty without them; refused inside an agent session):
+      {"ok":true,"sessions":[{harness,computer,account,project,phase,waitingFor,presence,lastSeenAt,card}],"counts":{working,waiting,idle,ended}}
       phase: working (mid-turn) | waiting (permission/input prompt, or a turn that ended in the last 5 min) | idle (open,
       nothing new) | ended | lost. --live lists only working and waiting; counts cover every phase. Subagents share their
       session. presence: working | quiet (card silent) | no_card | ended | lost.
-  Advanced: delivery reconcile, evidence timeline|metrics.
+  Advanced: delivery reconcile, evidence timeline|metrics, outbox status|flush (what is queued for the server).
 
 Links (--url): https:// pages, an app scheme (your-app://incidents/42) or shortcuts://run-shortcut?name=...
   http:, javascript:, data:, file:, blob: and about: are rejected. Images (--image): public https://.

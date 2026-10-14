@@ -37,7 +37,11 @@ import {
 import { registerDeviceRoutes } from "./api/device-routes.js";
 import { registerAgentSessionRoutes } from "./api/agent-session-routes.js";
 import { registerInboxRoutes } from "./api/inbox-routes.js";
+import { registerNowRoutes } from "./api/now-routes.js";
 import { registerNotificationRoutes } from "./api/interaction-routes.js";
+import { registerWorkRoutes } from "./works/index.js";
+import { registerScriptWorkRoutes } from "./works/script-routes.js";
+import { registerServiceWorkRoutes } from "./works/service-routes.js";
 import type { ApiRouteContext } from "./api/route-context.js";
 import { publicErrorPage, publicErrorPageSecurityPolicy, wantsHtmlPage } from "./web/public-page.js";
 export { inboxItemResource } from "./api/resources.js";
@@ -228,7 +232,10 @@ export function createApp(
   registerDeviceRoutes(app,routeContext);
   registerNotificationRoutes(app,routeContext);
   registerInboxRoutes(app,routeContext);
+  registerNowRoutes(app,routeContext);
   registerAgentSessionRoutes(app,routeContext);
+  registerWorkRoutes(app,routeContext);
+  registerScriptWorkRoutes(app,routeContext); registerServiceWorkRoutes(app,routeContext);
 
   registerActivityRoutes(app, db, dependencies?.apnsMode ?? "disabled", { contentCipher: notificationContentCipher,
     callbackEncryption });

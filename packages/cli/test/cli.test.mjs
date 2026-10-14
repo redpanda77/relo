@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -79,7 +80,8 @@ const WAIT_EVENT = "ntf_44444444-4444-4444-8444-444444444444";
 const DELIVERY_JOB = "job_55555555-5555-4555-8555-555555555555";
 const DELIVERY = { eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 };
 const CONTRACT_FIXTURE = JSON.parse(
-  readFileSync(new URL("../../contracts/fixtures/current-slice.json", import.meta.url), "utf8"),
+  // The CLI refuses placeholder statuses ("Starting"); the frozen shape is what this test pins.
+  readFileSync(new URL("../../contracts/fixtures/current-slice.json", import.meta.url), "utf8").replace('"status": "Starting"', '"status": "Loading fixtures"'),
 );
 const EVIDENCE_FIXTURE = JSON.parse(
   readFileSync(new URL("../../contracts/fixtures/delivery-evidence-v1.json", import.meta.url), "utf8"),
@@ -583,7 +585,7 @@ test("normalizes yes-no to the API enum and validates activity styles", async ()
   assert.equal(fake.calls.find((call) => ["ask", "question"].includes(call.op)).body.type, "yes_no");
   await assert.rejects(
     execute(
-      ["activity", "start", "--name", "build-1", "--title", "Build", "--status", "Starting", "--style", "unknown"],
+      ["activity", "start", "--name", "build-1", "--title", "Build", "--status", "Loading fixtures", "--style", "unknown"],
       overrides({}),
     ),
     /--style must be one of/,
@@ -591,7 +593,7 @@ test("normalizes yes-no to the API enum and validates activity styles", async ()
   for (const style of ["approval", "shell", "verdict", "signal"]) {
     await assert.rejects(
       execute(
-        ["activity", "start", "--name", "build-1", "--title", "Build", "--status", "Starting", "--style", style],
+        ["activity", "start", "--name", "build-1", "--title", "Build", "--status", "Loading fixtures", "--style", style],
         overrides({}),
       ),
       /reserved for interactive Live Activities/,
@@ -609,7 +611,7 @@ test("accepts all current task activity styles", async () => {
   };
   for (const style of ["standard", "hero", "terminal", "steps"]) {
     await execute(
-      ["activity", "start", "--name", `build-${style}`, "--title", "Build", "--status", "Starting", "--style", style],
+      ["activity", "start", "--name", `build-${style}`, "--title", "Build", "--status", "Loading fixtures", "--style", style],
       overrides(client),
     );
   }
@@ -629,11 +631,11 @@ test("forwards explicit presentation overrides while leaving defaults to the ser
     },
   };
   await execute([
-    "activity","start","--name","build-policy","--title","Build","--status","Starting",
+    "activity","start","--name","build-policy","--title","Build","--status","Loading fixtures",
     "--preset","terminal","--theme","dark","--accent-color","#63B3FF",
   ],overrides(client));
   assert.deepEqual(calls,[{
-    key: "build-policy",replace: false,title: "Build",status: "Starting",
+    key: "build-policy",replace: false,title: "Build",status: "Loading fixtures",
     preset: "terminal",theme: "dark",accentColor: "#63B3FF",
     acquireMode: "ensure",expiresInSeconds: 28_800,staleAfterSeconds: 1_200,context: testContext(),
   }]);
@@ -831,7 +833,7 @@ test("activity names and bounded list limits route to canonical client methods",
     listActivities: async (limit) => { seen.push(["list", limit]); return { activities: [] }; },
   };
   await execute(["activity", "get", "--name", "build-main"], overrides(client));
-  await execute(["activity", "update", "--name", "build-main", "--status", "Running"], overrides(client));
+  await execute(["activity", "update", "--name", "build-main", "--status", "Exporting rows"], overrides(client));
   await execute(["activity", "end", "--name", "build-main"], overrides(client));
   await execute(["activity", "list", "--limit", "100"], overrides(client));
   assert.deepEqual(seen, [
@@ -974,7 +976,7 @@ test("merges activity stdin with explicit flags taking precedence", async () => 
     readStdinJson: async () => ({
       name: "build-main",
       title: "stdin title",
-      status: "Starting",
+      status: "Loading fixtures",
       progress: 0.1,
       style: "standard",
     }),
@@ -991,7 +993,7 @@ test("merges activity stdin with explicit flags taking precedence", async () => 
     key: "build-main",
     replace: false,
     title: "Flag title",
-    status: "Starting",
+    status: "Loading fixtures",
     progress: 0.1,
     style: "standard",
     expiresInSeconds: 28_800,
@@ -1122,7 +1124,7 @@ test("supports full activity fields, key addressing, and clearable progress", as
       name: "deploy-main",
       replace: true,
       title: "Deploy",
-      status: "Starting",
+      status: "Loading fixtures",
       detail: "Production",
       progress: 0,
       symbol: "build",
@@ -1159,7 +1161,7 @@ test("supports full activity fields, key addressing, and clearable progress", as
     acquireMode: "ensure",
     replace: true,
     title: "Deploy",
-    status: "Starting",
+    status: "Loading fixtures",
     detail: "Production",
     progress: 0,
     symbol: "build",
@@ -1204,7 +1206,7 @@ test("supports full activity fields, key addressing, and clearable progress", as
         "--title",
         "No",
         "--status",
-        "Working",
+        "Applying migrations",
         "--privacy",
         "secret",
       ],
@@ -1839,7 +1841,7 @@ test("emits the frozen notification and activity-update contract shapes", async 
       "--title",
       "Build",
       "--status",
-      "Starting",
+      "Loading fixtures",
       "--progress",
       "0",
       "--symbol",
@@ -2092,7 +2094,7 @@ test("plain help is a short agent guide; the full reference is one topic away", 
   for (const argv of [[], ["--help"], ["help"]]) {
     const guide = (await execute(argv)).data.help;
     assert.match(guide, /relo ask/);
-    assert.match(guide, /relo activity start/);
+    assert.match(guide, /relo work start/);
     assert.match(guide, /relo help all/);
     assert.ok(guide.split("\n").length < 45, "the guide stays short enough to read in one pass");
   }
@@ -2104,7 +2106,7 @@ test("plain help is a short agent guide; the full reference is one topic away", 
 test("every recipe in the guide is a valid command", async () => {
   const { GUIDE } = await import("../src/cli.mjs");
   const { UsageError } = await import("../src/errors.mjs");
-  const recipes = GUIDE.split("\n").filter((line) => line.startsWith("  relo ")).map((line) =>
+  const recipes = GUIDE.split("\n").filter((line) => line.startsWith("  relo ")).map((line) => line.replace(/\s{2,}\(.*\)\s*$/u, "")).map((line) =>
     [...line.trim().matchAll(/"([^"]*)"|(\S+)/gu)].map((match) => match[1] ?? match[2]).slice(1));
   assert.ok(recipes.length >= 5);
   const stub = new Proxy({}, { get: () => async () => ({}) });

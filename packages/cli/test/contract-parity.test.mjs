@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 // The CLI validates relevance itself so it can stay dependency-free. This test holds that
 // validation to the shared contract: both must accept and reject exactly the same policies.
 import assert from "node:assert/strict";

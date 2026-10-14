@@ -1,19 +1,23 @@
 # Integrating an app with Relo
 
-An app, script or service asks the owner something on their iPhone and acts on the answer. It does
-that through the `relo` CLI or the same HTTP API the CLI calls
+An app, script or service shows its work on the owner's iPhone, asks the owner something and acts on
+the answer. It does that through the `relo` CLI or the same HTTP API the CLI calls
 ([`docs/api/openapi.json`](api/openapi.json), generated from the server's request schemas). This page
 covers what an integrator decides; [CHOICE-QUESTIONS.md](CHOICE-QUESTIONS.md) is the wire
-specification for option questions.
+specification for option questions. Agent sessions and their hooks are not integrations: an agent
+reports with `relo work` through its skill, and hooks are described in
+[HOOKS-AND-HARNESSES.md](HOOKS-AND-HARNESSES.md).
 
 ## Contents
 
 - [Sign in](#sign-in)
-- [Identity: which card a command lands on](#identity-which-card-a-command-lands-on)
+- [Producer types](#producer-types)
+- [Reporting work](#reporting-work)
 - [Asking](#asking)
 - [Getting the answer: four ways](#getting-the-answer-four-ways)
 - [Signed callbacks](#signed-callbacks)
 - [Retries and idempotency](#retries-and-idempotency)
+- [HTTP routes and scopes](#http-routes-and-scopes)
 - [Exit codes](#exit-codes)
 - [Limits the server admin controls](#limits-the-server-admin-controls)
 - [When access ends](#when-access-ends)
@@ -29,17 +33,68 @@ or print it.
 Everything a login asks belongs to the owner's account and only that account: other accounts on the
 same server cannot see it ([ADR 0004](adr/0004-isolated-multi-user-accounts.md)).
 
-## Identity: which card a command lands on
+## Producer types
 
-Every card, question and notification carries a source, project and topic. The CLI fills source and
-computer itself; the project defaults to the profile name (or the login's name when it is more than
-the computer's name), and the topic is
-the work as the owner would name it (`--topic "Nightly import"`).
+Relo keeps declared work (what a producer says it is doing) separate from observed session state and
+from derived policy ([ADR 0007](adr/0007-presence-messages-work-separation.md),
+[ADR 0008](adr/0008-relo-design-framework.md)). Each producer type has its own identity and surface;
+one cannot call another's.
 
-- Starting again with the same topic joins the card already running instead of making a second one.
-- Two processes that both want a card of their own pass `activity start --new`, or set
-  `RELO_SESSION=<stable id>` per process.
-- `relo ask --notification-only` skips the card and puts the question in Relo's Needs you.
+| Type | Identity | Surface |
+| --- | --- | --- |
+| Agent session (Claude Code, Codex) | the harness's session id, read by the CLI | `relo work` and `relo state` inside the session; see the skill |
+| Script (CLI or API key, no harness) | the login plus a producer key you choose | `relo work … --producer KEY`, `relo ask`, `relo listen` |
+| App or service (HTTP) | a login with scopes, or a service secret | the HTTP routes below; signed answer callbacks |
+| Harness hooks | a separate harness credential | observed phase snapshots only, never work |
+
+The server derives what the owner sees (attention, freshness, visibility, urgency) from the declared
+work and the observed evidence. A producer cannot set those.
+
+## Reporting work
+
+A script or app declares one goal at a time as a work: a goal, an optional plan of named steps, a
+status line and an outcome. The owner sees it on the Lock Screen and in Now while it is current.
+
+```bash
+relo work start --producer nightly-import --goal "Import yesterday's orders" \
+  --plan "Download,Validate,Load" --lease 15m --idempotency-key import-2026-10-14
+relo work update --producer nightly-import --status "Validating 4,200 rows" --next-step
+relo work heartbeat --producer nightly-import --lease 15m
+relo work finish --producer nightly-import --outcome "4,200 orders imported"
+```
+
+- **The producer key** (`--producer`, or `RELO_SESSION` for a process that has no agent harness)
+  names the job (1-100 characters of `A-Z a-z 0-9 . _ : -`). Later commands with the same key find
+  the same work. There is no guessing: without a key the command is refused.
+- **One open work per producer key.** Starting again continues it; `--new` parks the open one (it
+  stays readable) and starts another. Every start needs `--idempotency-key`: a retry returns the same
+  work.
+- **Plans grow in place.** `--plan "A,B"` lists what is left (done steps stay), `--add` appends,
+  `--next-step` and `--step` move on, `--progress 3/20` attaches a count to the current step.
+  Steps are named milestones in order; placeholders such as "Step 2" or "todo" are refused.
+- **Leases keep it fresh.** A script says how long it may stay silent (`--lease`, 1 minute to 60
+  minutes, default 15). While the lease holds, the work counts as moving; after it lapses the normal
+  freshness rules apply: dimmed after 20 minutes without a write, off the Lock Screen after 60. A
+  heartbeat renews the lease and declares nothing else.
+- **Finishing is explicit.** `finish --outcome "…"` is required; add `--failed` or `--dropped` when
+  it did not succeed. The outcome is the notification. Open steps become skipped.
+- **Pausing** (`pause --status "…"`) hides the work; `resume` brings it back.
+- **Work text is readable.** Scripts and services cannot seal text, so the account shows it as not
+  end-to-end encrypted ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md)).
+
+Over HTTP a script's work lives under `/api/producers/{producerKey}/works` (`producerKey` is the
+base64url SHA-256 of `producer:` plus the readable key; the CLI computes it). A service holding a
+`hook_…` secret uses `/hooks/{secret}/works` with `producerKey` in the start body. Both take
+`Idempotency-Key` on create and answer `{ "work": …, "disposition": … }`. A service's work does not
+start a Live Activity card yet.
+
+The older card commands (`relo activity start|update|end`, the `/api/live-activities` routes) remain
+for scripts and apps that want a card of their own without a work. Agent sessions cannot use them.
+
+Every card, question and notification also carries a source, project and topic. The CLI fills source
+and computer itself; the project defaults to the profile name, and the topic is the work as the owner
+would name it (`--topic "Nightly import"`). `relo ask --notification-only` skips the card and puts the
+question in Relo's Needs you.
 
 ## Asking
 
@@ -58,7 +113,15 @@ relo ask "Which region goes first?" --option EU --option US --option Both --topi
   Relo, never on the card or the notification.
 - **How long it stays open**: `--expires-in` (default 5 minutes, for example `2h` or `3d`) up to the
   admin's limit. A card lives at most 8 hours; a longer question keeps waiting in Relo after the card
-  ends. A question that expires unanswered is a no.
+  ends. A question that expires unanswered is a no. A question on an open work never ends that work.
+- **A question never starts a card.** On a running card it shows on that card; otherwise it goes out
+  as a notification with the answer buttons.
+- **One question at a time per card.** Asking on a card that is already waiting is refused with
+  `question_pending`: wait for the answer or cancel it first. A card update that asks a new question
+  cancels the pending one.
+- **Late answers are facts, not permission.** If the owner answers after the question expired, it
+  stays `expired` and carries the answer in `late` (`relo interaction get ID`). The owner can also
+  dismiss a missed question, which refuses a late answer.
 - A phone that runs an older Relo cannot show options; such an ask is refused with
   `choice_unsupported` and nothing is sent.
 - For phones this computer verified (`relo keys`), the CLI seals the question, its title and its detail
@@ -91,17 +154,32 @@ Relo POSTs JSON to the callback URL once the question settles:
 ```json
 {"type":"notification.response","eventId":"ntf_…","interactionId":"int_…","correlationId":"order-81",
  "kind":"choice","status":"replied","action":"choose","optionId":"eu","label":"EU","text":null,
- "respondedAt":"2026-10-13T09:14:02.511Z"}
+ "respondedAt":"2026-10-13T09:14:02.511Z","device":{"id":"dev_…","keyId":"…"},"signature":{…}}
 ```
 
-Headers: `Authorization: Bearer <token>`, `Relo-Delivery-Id: cbk_…` (the same on every retry of one
-answer: process each id once) and `Relo-Signature: t=UNIX,v1=HEX`, where HEX is HMAC-SHA256 keyed by
-the token over `UNIX.BODY` (the raw body). Verify the signature with a constant-time comparison and
-reject a `t` more than a few minutes old.
+`signature` is the phone's own signature over the answer, passed through untouched (it is `null`
+for a phone without published keys). A verifying receiver trusts the phone, not the server
+([ADR 0005](adr/0005-end-to-end-encrypted-content.md)).
 
-Answer with any 2xx. Anything else is retried after 30s, 2m, 10m and 1h. Expired or canceled
-questions never call back, so treat silence past the expiry as no. Callbacks go to public HTTPS
-addresses; private or local addresses work only when the server admin allows them.
+Headers: `Authorization: Bearer <token>`, `Relo-Delivery-Id: cbk_…` (the same on every retry of one
+answer: process each id once) and two signatures over the same body, so use whichever your stack
+verifies:
+
+- `Relo-Signature: t=UNIX,v1=HEX`, where HEX is HMAC-SHA256 keyed by the token over `UNIX.BODY`
+  (the raw body).
+- [Standard Webhooks](https://www.standardwebhooks.com): `webhook-id` (equal to `Relo-Delivery-Id`),
+  `webhook-timestamp` and `webhook-signature: v1,BASE64`, an HMAC-SHA256 over `ID.TIMESTAMP.BODY`.
+  A token that starts with `whsec_` is keyed by its base64-decoded bytes; any other token by its
+  UTF-8 bytes.
+
+Verify with a constant-time comparison and reject a timestamp more than a few minutes old.
+
+Answer with any 2xx. Anything else is retried after 30s, 2m, 10m, 1h, 3h, 6h, 12h, then daily, ten
+attempts in all and never past 72 hours from the first. A `410` stops retries at once. Expired or
+canceled questions never call back, so treat silence past the expiry as no, and reconcile with
+`relo interaction get ID` (HTTP: `GET /api/interactions/{id}`) when you restart. Callbacks go to
+public HTTPS addresses. A private address (where plain `http://` is accepted) works only when the
+server admin allows it; the server's own loopback, link-local and metadata addresses never do.
 
 ## Retries and idempotency
 
@@ -109,6 +187,33 @@ Every command that creates something takes `--idempotency-key` (HTTP: the `Idemp
 Repeating a request with the same key returns the first result instead of a second card or question,
 so after exit 6 (network) retry with the same key. Answers are recorded once; a second tap on another
 device does not change them.
+
+## HTTP routes and scopes
+
+[`openapi.json`](api/openapi.json) is the contract. Send `Authorization: Bearer <login token>`; each
+route needs the scope shown.
+
+| Route | Scope | Purpose |
+| --- | --- | --- |
+| `POST /api/notifications` | `notifications:send` | One-off notification |
+| `POST /api/interactions`, `GET …/{id}`, `GET …/{id}/wait`, `POST …/{id}/cancel` | `interactions:create`, `interactions:read` | Ask, read, wait, withdraw |
+| `GET /api/interactions/answers` | `interactions:read` | Answer feed with cursors |
+| `POST /api/producers/{producerKey}/works`, then `GET`, `PATCH`, `…/pause`, `…/resume`, `…/finish`, `…/heartbeat` | `activities:write` | A script's or app's work |
+| `POST /hooks/{secret}/works` and the same sub-routes | the service secret | A service's work |
+| `/api/live-activities…` | `activities:write` | Cards without a work |
+| `GET /api/devices` | `devices:read` | The account's phones |
+
+Routes for the other types are not for integrators and refuse a producer's credential:
+
+- `/api/session/works…` is an agent session's own work (the CLI sends the session key from the
+  harness).
+- `POST /api/agent-sessions/observed` accepts only a harness credential, whose single scope is
+  `presence:write`; every other route refuses it. `GET /api/agent-sessions` lists sessions for the
+  owner (`activities:read`).
+- `POST /api/harness-credentials`, `GET` and `DELETE …/{id}` mint, list and revoke harness
+  credentials (`services:write`, `services:read`).
+- `GET /api/works` and `GET /api/now` are the owner's reads; `/api/now` is the one place clients get
+  derived state, and the Dashboard and the apps only display it.
 
 ## Exit codes
 

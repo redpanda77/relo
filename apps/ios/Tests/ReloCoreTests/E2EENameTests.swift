@@ -65,8 +65,8 @@ final class E2EENameTests: XCTestCase {
         book = ReloNames.learning([project: "bank-transfer", topic: "deploy"], sender: "key-b", into: book)
         XCTAssertEqual(book[project]?.name, "relo", "another computer cannot rename a handle")
         XCTAssertEqual(book[topic], ReloNames.Entry(name: "deploy", sender: "key-b"))
-        book = ReloNames.learning([project: "relo-private"], sender: "key-a", into: book)
-        XCTAssertEqual(book[project]?.name, "relo-private", "the computer that named it may rename it")
+        book = ReloNames.learning([project: "relo-renamed"], sender: "key-a", into: book)
+        XCTAssertEqual(book[project]?.name, "relo-renamed", "the computer that named it may rename it")
         XCTAssertEqual(ReloNames.learning(["not-a-handle": "x"], sender: "key-a", into: [:]), [:])
     }
 
@@ -85,9 +85,9 @@ final class E2EENameTests: XCTestCase {
         // The stored form keeps the handle: names live only in this phone's Keychain.
         XCTAssertTrue(String(decoding: try JSONEncoder().encode(stored), as: UTF8.self).contains(project))
         let session = try ReloWireJSON.decoder().decode(AgentSession.self, from: Data(
-            #"{"id":"s1","harness":"claude-code","computer":"\#(computer)","project":"\#(project)","state":"active","startedAt":"2026-10-13T17:00:00.000Z","lastEventAt":"2026-10-13T17:00:00.000Z","presence":"working"}"#.utf8))
+            #"{"id":"s1","harness":"claude-code","computer":"\#(computer)","project":"\#(project)","startedAt":"2026-10-13T17:00:00.000Z","lastSeenAt":"2026-10-13T17:00:00.000Z","presence":"working"}"#.utf8))
         XCTAssertEqual(session.project, "relo")
-        XCTAssertEqual(AgentSessionsProjection.groupTitle(session), "Work Mac")
+        XCTAssertEqual(SessionSource.groupTitle(computer: session.computer, account: session.account), "Work Mac")
     }
 
     func testAnAgentSessionsSealedNamesTeachThePhoneItsNames() throws {
@@ -103,8 +103,8 @@ final class E2EENameTests: XCTestCase {
                                          recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)],
                                          content: try JSONSerialization.data(withJSONObject: ["names": [project: "relo"]]))
         let json = """
-        {"id":"ags_00000000-0000-4000-8000-000000000001","harness":"claude-code","project":"\(project)","state":"active",
-         "startedAt":"2026-10-13T17:00:00.000Z","lastEventAt":"2026-10-13T17:00:00.000Z","card":null,"presence":"no_card",
+        {"id":"ags_00000000-0000-4000-8000-000000000001","harness":"claude-code","project":"\(project)",
+         "startedAt":"2026-10-13T17:00:00.000Z","lastSeenAt":"2026-10-13T17:00:00.000Z","card":null,"presence":"no_card",
          "sealedNames":\(String(decoding: try JSONEncoder().encode(envelope), as: UTF8.self))}
         """
         let session = try ReloWireJSON.decoder().decode(AgentSession.self, from: Data(json.utf8))

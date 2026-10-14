@@ -143,28 +143,10 @@ public extension ReloSealedContent {
 
     /// One card open with the reason it failed: key ids and outcomes only, never text or keys.
     func openCard(_ envelope: ReloEnvelope) -> (data: Data?, outcome: ReloSealedOpenRecord.Outcome, detail: String?) {
-        let state: ReloKeyRingState
-        do {
-            guard let loaded = try ring.store.load() else { return (nil, .noKeys, nil) }
-            state = loaded
-        } catch {
-            return (nil, .keysUnreadable, String(describing: error))
-        }
-        let held = state.prekeys.map(\.id)
-        guard let entry = envelope.recipients.first(where: { held.contains($0.prekey) }) else {
-            let named = envelope.recipients.map { "\($0.device)/\($0.prekey)" }.joined(separator: ",")
-            return (nil, .notForThisPhone, "sealed for \(named); this phone holds \(held.joined(separator: ","))")
-        }
-        let senders: [String: Data]
-        do { senders = try trust.trustedSenders() } catch {
-            return (nil, .trustUnreadable, String(describing: error))
-        }
-        guard senders[envelope.sender] != nil else {
-            let pinned = (try? trust.all()) ?? []
-            let level = pinned.first { $0.keyId == envelope.sender }?.level
-            let known = pinned.map { "\($0.name)=\($0.keyId):\($0.level ?? "verified")" }.joined(separator: ",")
-            return (nil, level == "pending" ? .computerPending : level == "declined" ? .computerDeclined : .computerUnknown,
-                    "sender \(envelope.sender); trusted list \(known.isEmpty ? "empty" : known)")
+        let state: ReloKeyRingState, entry: ReloEnvelope.Recipient, senders: [String: Data]
+        switch precheck(envelope) {
+        case let .refused(outcome, detail): return (nil, outcome, detail)
+        case let .ready(ready): (state, entry, senders) = ready
         }
         switch open(envelope, deviceID: entry.device) {
         case .opened(let data):
@@ -186,6 +168,57 @@ public extension ReloSealedContent {
     }
 
     internal func ringState() throws -> ReloKeyRingState? { try ring.store.load() }
+
+    private enum Precheck {
+        case ready(ReloKeyRingState, ReloEnvelope.Recipient, [String: Data])
+        case refused(ReloSealedOpenRecord.Outcome, String?)
+    }
+
+    /// Everything an open needs short of decrypting: this phone's keys, a recipient entry for them,
+    /// and a trusted sender. A refusal names the reason.
+    private func precheck(_ envelope: ReloEnvelope) -> Precheck {
+        let state: ReloKeyRingState
+        do {
+            guard let loaded = try ring.store.load() else { return .refused(.noKeys, nil) }
+            state = loaded
+        } catch {
+            return .refused(.keysUnreadable, String(describing: error))
+        }
+        let held = state.prekeys.map(\.id)
+        guard let entry = envelope.recipients.first(where: { held.contains($0.prekey) }) else {
+            let named = envelope.recipients.map { "\($0.device)/\($0.prekey)" }.joined(separator: ",")
+            return .refused(.notForThisPhone, "sealed for \(named); this phone holds \(held.joined(separator: ","))")
+        }
+        let senders: [String: Data]
+        do { senders = try trust.trustedSenders() } catch {
+            return .refused(.trustUnreadable, String(describing: error))
+        }
+        guard senders[envelope.sender] != nil else {
+            let pinned = (try? trust.all()) ?? []
+            let level = pinned.first { $0.keyId == envelope.sender }?.level
+            let known = pinned.map { "\($0.name)=\($0.keyId):\($0.level ?? "verified")" }.joined(separator: ",")
+            return .refused(level == "pending" ? .computerPending : level == "declined" ? .computerDeclined : .computerUnknown,
+                            "sender \(envelope.sender); trusted list \(known.isEmpty ? "empty" : known)")
+        }
+        return .ready(state, entry, senders)
+    }
+
+    /// Why this phone cannot open `envelope`, without decrypting it: the outcome's raw value, or
+    /// "failed" when every precondition holds (the text itself, or a replay, kept it closed).
+    var diagnoser: ReloSealedDiagnoser {
+        let sealed = self
+        return { envelope in
+            if case let .refused(outcome, _) = sealed.precheck(envelope) { return outcome.rawValue }
+            return ReloSealedOpenRecord.Outcome.failed.rawValue
+        }
+    }
+
+    /// Opens a Now row's card and question for display, like a Live Activity does: no replay
+    /// ledger (the server repeats a card's latest envelope on every summary).
+    var displayOpener: ReloSealedOpener {
+        let sealed = self
+        return { envelope, _ in sealed.openCard(envelope).data }
+    }
 }
 
 /// One attempt to open a sealed card on this phone. Holds key ids and outcomes, never text or keys.

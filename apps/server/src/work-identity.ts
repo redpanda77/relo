@@ -30,20 +30,29 @@ function meaningful(value: string | undefined, placeholders: Set<string>) {
   return trimmed && !placeholders.has(trimmed.toLowerCase()) ? trimmed : undefined;
 }
 
+/**
+ * `topic: "optional"` (a work's card, whose goal is its title): a missing topic is simply absent, never
+ * invented, and gets no topic key, so the card reads "<source> · <project>".
+ */
 export function requireWorkIdentity(
   sourceName: string,
   context: WorkContext | undefined,
   origin: OriginDescriptor | undefined,
+  options: { topic?: "required" | "optional" } = {},
 ): WorkIdentityResult {
   const project = meaningful(context?.project, placeholderProjects) ?? meaningful(origin?.project, placeholderProjects);
   const topic = meaningful(context?.threadName, placeholderTopics) ?? meaningful(origin?.thread, placeholderTopics);
   const missing: ("project" | "topic")[] = [];
   if (!project) missing.push("project");
-  if (!topic) missing.push("topic");
-  if (!project || !topic) {
+  if (!topic && options.topic !== "optional") missing.push("topic");
+  if (!project || missing.length) {
     // Producers fail silently when a hook swallows the 422; the server log is the record.
     console.warn(JSON.stringify({ event: "work_identity_rejected", producer: sourceName, missing }));
     return { ok: false, missing };
+  }
+  if (!topic) {
+    const { threadName: _placeholder,...rest } = context ?? {};
+    return { ok: true, context: { ...rest, project } };
   }
   const normalized: WorkContext = { ...context, project, threadName: topic };
   if (normalized.providerThreadId === undefined && origin === undefined) {

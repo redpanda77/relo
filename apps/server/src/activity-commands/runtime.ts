@@ -1,3 +1,4 @@
+import { cardOwner } from "./card-owner.js";
 import { sealedAlertFor,storedSealedCard,type SealedNotice } from "../sealed-content.js";
 import { createHash,randomUUID } from "node:crypto";
 import { isQuestionBehavior } from "../choice-questions.js";
@@ -226,10 +227,15 @@ export async function createActivityCommands(
     (new Date(input.activity.expires_at).getTime()-Date.parse(decisionOccurredAt))/1_000)));
   let durableCommands = 0;
   let apnsJobs = 0;
+  const owner = await cardOwner(query,input.activity,input.operation);
+  // One question at a time: a card update that asks again retires the question it replaces.
+  if (decisionKind && input.operation === "update") {
+    await cancelPendingActivityInteractions(query,input.principalId,input.activity.id);
+  }
   for (const device of devices) {
     const lease = await syncActivityPresentationLease(query,{
       principalId: input.principalId,
-      activity: input.activity,
+      activity: { ...input.activity,owner },
       deviceId: device.id,
       operation: input.operation,
     });
@@ -278,6 +284,7 @@ export async function createActivityCommands(
           otherActiveCount: lease.otherActiveCount,
           priority: 10,
           dismissAfterSeconds: input.dismissAfterSeconds ?? null,
+          owner,
           interaction: null,
           // This phone's sealed card or question text; the widget opens it on the phone (E5).
           ...(canonical.privacy === "standard"
@@ -456,68 +463,6 @@ export async function endAllActiveActivities(db: Database,apnsMode: ApnsMode): P
   }
 }
 
-export async function expireLockedRows(
-  query: Queryable,
-  rows: ActivityRow[],
-  apnsMode: ApnsMode,
-): Promise<number> {
-  let expired = 0;
-  for (const current of rows) {
-    const stored = terminalPresentationColumnsFromRow(current,"Expired","warning");
-    const ended = (await query.query(
-      `UPDATE live_activities SET state='expired',title=$2,status=$3,detail=$4,progress=$5,
-         symbol=$6,privacy=$7,accent_color=$8,style=$9,presentation=$10,presentation_sha256=$11,
-         terminal_reason=CASE WHEN expires_at<=statement_timestamp() THEN 'absolute_expiry' ELSE 'inactivity_timeout' END,
-         terminal_actor='server',terminal_policy='lifecycle_reconciler',terminal_transition_at=statement_timestamp(),
-         sequence=sequence+1,ended_at=statement_timestamp(),updated_at=statement_timestamp()
-       WHERE id=$1 AND state='active' RETURNING *`,
-      [current.id,stored.title,stored.status,stored.detail,stored.progress,stored.symbol,
-        stored.privacy,stored.accentColor,stored.style,stored.presentation,stored.presentationHash],
-    )).rows[0];
-    if (!ended) continue;
-    await recordTerminalOperation(query,{
-      principalId: ended.principal_id,
-      sourceName: "Relo Lifecycle",
-      activity: ended,
-      state: "expired",
-      apnsMode,
-    });
-    expired += 1;
-  }
-  return expired;
-}
-
-
-export async function expireDueActivities(
-  db: Database,
-  apnsMode: ApnsMode,
-  limit = 50,
-): Promise<number> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    const due = await client.query<any>(
-      `SELECT * FROM live_activities
-       WHERE state='active'
-         -- A card past its stale time only dims on the phone (ADR 0007): nothing about presence or
-         -- silence ends it here. A provider lease ends at its stale time; every card at its hard
-         -- expiry. Work cards roll to a successor or are abandoned by the work reconciler.
-         AND (expires_at<=now() OR (lifecycle_provider IS NOT NULL AND stale_at<=now()))
-         AND presentation IS NOT NULL
-       ORDER BY LEAST(expires_at,stale_at) FOR UPDATE SKIP LOCKED LIMIT $1`,
-      [limit],
-    );
-    await expireLockedRows(client,due.rows,apnsMode);
-    await client.query("COMMIT");
-    return due.rows.length;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 export async function replaceBlockingTaskActivities(
   query: Queryable,
   input: {
@@ -559,25 +504,3 @@ export async function replaceBlockingTaskActivities(
 }
 
 
-/** iOS shows about five Live Activities per app. Before another card starts on a phone, end the
- * least recently updated cards there (never one holding a question) so the newest work is visible. */
-export const MAX_ACTIVE_CARDS_PER_DEVICE = 5;
-export async function retireOverflowCards(
-  query: Queryable,principalId: string,deviceIds: string[],apnsMode: ApnsMode,
-): Promise<number> {
-  if (!deviceIds.length) return 0;
-  const overflow = await query.query(
-    `WITH ranked AS (
-       SELECT a.id,d.id AS device_id,
-         row_number() OVER (PARTITION BY d.id ORDER BY a.updated_at DESC,a.id DESC) AS rank
-       FROM live_activities a CROSS JOIN LATERAL unnest(a.target_device_ids) AS d(id)
-       WHERE a.principal_id=$1 AND a.state='active' AND a.presentation IS NOT NULL
-         AND d.id=ANY($2::uuid[]))
-     SELECT a.* FROM live_activities a
-     WHERE a.id IN (SELECT id FROM ranked WHERE rank>=$3) AND a.resume_presentation IS NULL
-     FOR UPDATE SKIP LOCKED`,
-    [principalId,deviceIds,MAX_ACTIVE_CARDS_PER_DEVICE],
-  );
-  if (overflow.rows.length) await expireLockedRows(query,overflow.rows,apnsMode);
-  return overflow.rows.length;
-}

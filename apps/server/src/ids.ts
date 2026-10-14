@@ -1,4 +1,4 @@
-export type EntityPrefix = "usr" | "acc" | "key" | "svc" | "dev" | "ntf" | "int" | "job" | "act" | "cnv" | "wrk" | "pair" | "ags" | "brw" | "cbk";
+export type EntityPrefix = "usr" | "acc" | "key" | "svc" | "dev" | "ntf" | "int" | "job" | "act" | "cnv" | "wrk" | "pair" | "ags" | "brw" | "cbk" | "hck";
 
 export function publicId(prefix: EntityPrefix, id: string): string {
   return `${prefix}_${id}`;

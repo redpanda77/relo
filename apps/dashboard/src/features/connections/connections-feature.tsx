@@ -1,5 +1,5 @@
 import { Page } from "@/components/page"
-import { ClientsSection } from "@/features/connections/clients-page"
+import { ClientsSection, HarnessCredentialsSection } from "@/features/connections/clients-page"
 import { PhonesSection } from "@/features/connections/phones-page"
 import { WebhooksSection } from "@/features/connections/services-page"
 import type { ConnectionsDashboardBootstrap } from "@/features/connections/types"
@@ -23,6 +23,7 @@ export function ConnectionsFeature({
         <Page title="Connections">
           <PhonesSection initial={bootstrap.phones} total={bootstrap.summary.phones} api={service} />
           <ClientsSection initial={bootstrap.clients} total={bootstrap.summary.clients} api={service} />
+          <HarnessCredentialsSection initial={bootstrap.harnessCredentials} api={service} />
           <WebhooksSection initial={bootstrap.services} total={bootstrap.summary.services} api={service} />
         </Page>
       )

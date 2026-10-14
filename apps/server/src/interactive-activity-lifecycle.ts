@@ -58,23 +58,14 @@ export async function settleInteractiveLiveActivity(
     [activityId,input.principalId],
   );
   if (!current.rowCount) return;
+  // A work card that carried this question: any outcome (answered, canceled, expired) restores the
+  // declared work and keeps the card open. A question never ends work (1.10); an unanswered one is
+  // "missed" in the derived owner state.
   if (current.rows[0].resume_presentation) {
-    if (input.responseState !== "expired") {
-      await resumeFoldedQuestionCard(query,{ ...input,row: current.rows[0],sourceName: source.rows[0].source,status });
-      return;
-    }
-    // Unanswered in time: the card does not linger. It ends showing the work it was doing.
-    await settleFoldedQuestionCopies(query,{ ...input,row: current.rows[0] });
-    const working = persistedPresentationColumns(canonicalPresentation(current.rows[0].resume_presentation));
-    current.rows[0] = (await query.query(
-      `UPDATE live_activities SET title=$3,status=$4,detail=$5,progress=$6,symbol=$7,style=$8,
-         privacy=$9,accent_color=$10,presentation=$11,presentation_sha256=$12,
-         resume_presentation=NULL,question_fallback_at=NULL
-       WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
-      [activityId,input.principalId,working.title,working.status,working.detail,working.progress,working.symbol,
-        working.style,working.privacy,working.accentColor,working.presentation,working.presentationHash],
-    )).rows[0];
+    await resumeFoldedQuestionCard(query,{ ...input,row: current.rows[0],sourceName: source.rows[0].source,status });
+    return;
   }
+  // A question-only card (system.interactive.*) is a message: it ends with its answer.
   // Legacy custom presentations stored one request per device. The activity lock
   // arbitrates their common decision; no sibling prompt may survive its winner.
   await cancelPendingActivityInteractions(query,input.principalId,activityId);
@@ -193,7 +184,8 @@ async function resumeFoldedQuestionCard(query: Queryable, input: {
   await settleFoldedQuestionCopies(query,input);
   const working = canonicalPresentation(input.row.resume_presentation);
   // A card that `relo ask` started for the question has no work status of its own to return to.
-  const line = working.content.status === "Needs you" ? input.status : `${input.status} · ${working.content.status}`;
+  const line = input.responseState === "expired" ? working.content.status
+    : working.content.status === "Needs you" ? input.status : `${input.status} · ${working.content.status}`;
   const resumed = persistedPresentationColumns({
     ...working,
     content: { ...working.content,status: Array.from(line).length > 60 ? input.status : line },
@@ -202,7 +194,6 @@ async function resumeFoldedQuestionCard(query: Queryable, input: {
     `UPDATE live_activities SET title=$3,status=$4,detail=$5,progress=$6,symbol=$7,style=$8,
        privacy=$9,accent_color=$10,presentation=$11,presentation_sha256=$12,
        resume_presentation=NULL,question_fallback_at=NULL,
-       stale_at=LEAST(expires_at,statement_timestamp()+(COALESCE(stale_after_seconds,14400)*interval '1 second')),
        sequence=sequence+1,updated_at=statement_timestamp()
      WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
     [input.row.id,input.principalId,resumed.title,resumed.status,resumed.detail,resumed.progress,resumed.symbol,

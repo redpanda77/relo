@@ -23,7 +23,7 @@ characters), shown in Relo, never on the card.
 | --- | --- |
 | `POST /api/live-activities/:id/wait` (card question, `relo ask`) | `{"type":"choice","prompt":"…","options":[…],"detail"?,"expiresInSeconds"}` |
 | `POST /api/interactions` (both presentations) | `{"type":"choice","title","prompt","options":[…],"detail"?,…}` |
-| `POST /hooks/:secret` (webhook service) | `"response":{"type":"choice","options":[…],"expiresInSeconds"}` |
+| `POST /hooks` (webhook service; the secret in `Authorization: Bearer hook_…`, or `/hooks/:secret`) | `"response":{"type":"choice","options":[…],"expiresInSeconds"}` |
 
 Storage: `interaction_requests.kind = 'choice'`, `interaction_requests.options jsonb`.
 

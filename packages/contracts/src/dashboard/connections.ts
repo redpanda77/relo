@@ -87,11 +87,21 @@ const clientSchema = z.object({
   maxActiveCards: z.number().int().nullable().optional(),
 })
 
+/** A hooks credential (kind "harness"): posts observed session state only. */
+const harnessCredentialSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  prefix: z.string(),
+  createdAt: z.string(),
+  lastUsedAt: nullableDate,
+})
+
 export const connectionsOverviewSchema = z.object({
   ...base,
   kind: z.literal("connections"),
   phones: z.array(phoneSchema),
   clients: z.array(clientSchema),
+  harnessCredentials: z.array(harnessCredentialSchema),
   services: z.array(serviceSchema),
 })
 
@@ -107,4 +117,5 @@ export type ConnectionsOverview = z.infer<typeof connectionsOverviewSchema>
 export type ConnectionService = z.infer<typeof serviceSchema>
 export type ConnectionPhone = z.infer<typeof phoneSchema>
 export type ConnectionClient = z.infer<typeof clientSchema>
+export type ConnectionHarnessCredential = z.infer<typeof harnessCredentialSchema>
 export type ConnectionsPagination = z.infer<typeof paginationSchema>

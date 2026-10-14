@@ -38,13 +38,13 @@ suite("activity relationship evidence persistence", () => {
     const presentation = currentTestPresentationRecord();
     const activities = await db.query<{ id: string; activity_key: string }>(
       `INSERT INTO live_activities(
-         principal_id,activity_key,title,status,state,start_idempotency_key,origin_hash,generation,ended_at,
+         producer_type,principal_id,activity_key,title,status,state,start_idempotency_key,origin_hash,generation,ended_at,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision
        ) VALUES
-         ($1,'relationship-predecessor','Predecessor','Done','ended','relationship-start-1',$2,1,now(),$3::jsonb,$4,$5::jsonb,$6,$7,$8),
-         ($1,'relationship-successor','Successor','Running','active','relationship-start-2',$2,2,NULL,$3::jsonb,$4,$5::jsonb,$6,$7,$8),
-         ($1,'relationship-companion','Companion','Waiting','active','relationship-start-3',NULL,1,NULL,$3::jsonb,$4,$5::jsonb,$6,$7,$8)
+         ('script',$1,'relationship-predecessor','Predecessor','Done','ended','relationship-start-1',$2,1,now(),$3::jsonb,$4,$5::jsonb,$6,$7,$8),
+         ('script',$1,'relationship-successor','Successor','Running','active','relationship-start-2',$2,2,NULL,$3::jsonb,$4,$5::jsonb,$6,$7,$8),
+         ('script',$1,'relationship-companion','Companion','Waiting','active','relationship-start-3',NULL,1,NULL,$3::jsonb,$4,$5::jsonb,$6,$7,$8)
        RETURNING id,activity_key`,
       [principalId,originHash,presentation.presentation,presentation.presentationHash,
         presentation.presentationPolicy,presentation.presentationPolicySource,
@@ -126,10 +126,10 @@ suite("activity relationship evidence persistence", () => {
     const presentation = currentTestPresentationRecord("Other","Running");
     const other = await db.query<{ id: string }>(
       `INSERT INTO live_activities(
-         principal_id,activity_key,title,status,state,start_idempotency_key,generation,
+         producer_type,principal_id,activity_key,title,status,state,start_idempotency_key,generation,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision
-       ) VALUES ($1,'relationship-other','Other','Running','active','relationship-other-start',1,
+       ) VALUES ('script',$1,'relationship-other','Other','Running','active','relationship-other-start',1,
          $2::jsonb,$3,$4::jsonb,$5,$6,$7)
        RETURNING id`,
       [otherPrincipalId,presentation.presentation,presentation.presentationHash,

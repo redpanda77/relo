@@ -1,12 +1,25 @@
+import { answerProblem } from "../answer-verify.mjs";
 import { parseDuration } from "../args.mjs";
+import { keyStorePath, loadKeyStore } from "../keystore.mjs";
 import { AuthError, EXIT, UsageError } from "../errors.mjs";
 import { assertAllowedOptions, assertNoExtra, result } from "../support.mjs";
 
 const POLL_SECONDS = 60;
 const MAX_BACKOFF_SECONDS = 30;
+// Positive answers a phone signs; the same set `relo ask` verifies before acting.
+const SIGNED_STATES = new Set(["approved", "yes", "replied", "completed"]);
 
-/** One answer as one line: what was decided, for which question, and where to resume. */
-export function answerLine(answer) {
+/**
+ * One answer as one line: what was decided, for which question, who signed it, and where to resume.
+ * `verdict` is null (no trusted phone on this server: nothing to check), or the verification result.
+ */
+export function answerLine(answer, verdict = null) {
+  const response = answer?.response ?? {};
+  const keyId = typeof response.e2eeKeyId === "string" ? response.e2eeKeyId : undefined;
+  if (verdict?.problem) {
+    // Refused: the decision fields are withheld so nothing downstream acts on an unverified answer.
+    return { id: answer.id, eventId: answer.eventId, state: "unverified", reason: verdict.problem, cursor: answer.cursor };
+  }
   const chosen = answer?.type === "choice" && typeof answer?.response?.optionId === "string" ? answer.response : undefined;
   return {
     id: answer.id,
@@ -16,6 +29,11 @@ export function answerLine(answer) {
     ...(chosen ? { option: chosen.optionId, label: chosen.label } : {}),
     ...(answer.correlationId ? { correlationId: answer.correlationId } : {}),
     respondedAt: answer.respondedAt,
+    ...(typeof response.e2eeSignature === "string" ? { signed: true, device: { id: answer.respondingDevice?.id ?? null, keyId: keyId ?? null }, signature: {
+      keyId: keyId ?? null, signedAt: response.e2eeSignedAt ?? null, sig: response.e2eeSignature,
+      question: response.e2eeQuestion ?? null, questionSig: response.e2eeQuestionSignature ?? null,
+    } } : {}),
+    ...(verdict ? { verified: true } : {}),
     cursor: answer.cursor,
   };
 }
@@ -41,7 +59,19 @@ export async function runListenCommand(command) {
     : parseDuration(options.timeout, { minimumSeconds: 1, maximumSeconds: 30 * 86_400 });
   const now = () => dependencies.now();
   const deadline = stopAfter === undefined ? Infinity : now() + stopAfter * 1_000;
+  // Once this computer trusts a phone on this server, every positive answer must carry its valid signature.
+  let store = null;
+  const apiUrl = client?.apiUrl;
+  if (apiUrl && dependencies.configPath) {
+    const loaded = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
+    if (loaded.identity && Object.keys(loaded.trusted).some((entry) => entry.startsWith(`${apiUrl}|`))) store = loaded;
+  }
+  const verdictFor = (answer) => {
+    if (!store || !SIGNED_STATES.has(answer?.state)) return null;
+    return { problem: answerProblem(answer, store, apiUrl, {}, now()) };
+  };
   let received = 0;
+  let refused = 0;
   let failures = 0;
   for (;;) {
     const waitSeconds = Math.max(0, Math.min(POLL_SECONDS, Math.ceil((deadline - now()) / 1_000)));
@@ -50,8 +80,10 @@ export async function runListenCommand(command) {
       failures = 0;
       cursor = page.cursor ?? cursor;
       for (const answer of page.answers ?? []) {
-        dependencies.emit(answerLine(answer));
-        received += 1;
+        const verdict = verdictFor(answer);
+        dependencies.emit(answerLine(answer, verdict));
+        if (verdict?.problem) refused += 1;
+        else received += 1;
       }
     } catch (error) {
       // A revoked or expired login never comes back by waiting; anything else is retried.
@@ -61,5 +93,5 @@ export async function runListenCommand(command) {
     }
     if (options.once || now() >= deadline) break;
   }
-  return result("listen", { cursor, received });
+  return result("listen", { cursor, received, ...(refused ? { refused } : {}) });
 }

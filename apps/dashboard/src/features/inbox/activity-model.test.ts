@@ -14,8 +14,6 @@ import {
   nowMetrics,
   nowMix,
   nowSentence,
-  quietFor,
-  quietLabel,
   signalOf,
   todayActivity,
   stepStates,
@@ -117,14 +115,6 @@ describe("activity card model", () => {
     const strip = todayActivity(cards, new Date(now))
     expect(strip.rows).toHaveLength(4)
     expect(strip.legend.map((entry) => entry.text)).toEqual(["1 done", "1 to review", "1 stopped", "1 message"])
-  })
-
-  it("calls a card quiet after 20 minutes without an update", () => {
-    const card = cardFor(summary({ activity: activity({ updatedAt: "2026-08-07T12:05:00Z" }) }), now)
-    expect(quietFor(card, now)).toBe(25 * 60_000)
-    expect(quietLabel(25 * 60_000)).toBe("25M")
-    expect(quietLabel(125 * 60_000)).toBe("2H 5M")
-    expect(quietFor(cardFor(summary({ activity: activity({ updatedAt: "2026-08-07T12:20:00Z" }) }), now), now)).toBeNull()
   })
 })
 

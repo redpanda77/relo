@@ -59,7 +59,7 @@ struct PresentationWatchCard: View {
     private var projection: LiveActivitySurfaceProjection {
         .make(
             presentation: presentation, surface: .lockScreen,
-            interaction: state.displayInteraction, isStale: isStale, now: .now)
+            interaction: state.displayInteraction, isStale: isStale, owner: state.owner, now: .now)
     }
 
     var body: some View {
@@ -95,6 +95,9 @@ struct PresentationWatchCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             PresentationSourceMark(presentation: presentation, palette: palette)
+            if let chip = projection.chip {
+                OwnerChipView(chip: chip, owner: state.owner)
+            }
             Spacer(minLength: 0)
             if presentation.privacy != .private {
                 trailingFact

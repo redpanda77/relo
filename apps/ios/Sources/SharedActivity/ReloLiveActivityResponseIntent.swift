@@ -214,7 +214,7 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
         case "yes": "Answered Yes"
         case "no": "Answered No"
         case "replied": "Reply sent"
-        case "expired": "Request expired"
+        case "expired": "Missed · open Relo to answer"
         case "canceled": "Request canceled"
         default: "Response unavailable"
         }
@@ -224,7 +224,8 @@ struct LiveActivityResponseWidgetPresentation: Equatable, Sendable {
         switch state {
         case "approved", "yes", "replied": "checkmark.circle.fill"
         case "denied", "no": "xmark.circle.fill"
-        case "expired", "canceled": "clock.badge.xmark"
+        case "expired": "clock.badge.exclamationmark"
+        case "canceled": "clock.badge.xmark"
         default: "exclamationmark.triangle.fill"
         }
     }

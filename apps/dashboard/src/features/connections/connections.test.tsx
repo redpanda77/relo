@@ -13,6 +13,7 @@ const api: ConnectionsService = {
   deleteService: vi.fn(),
   revokePhone: vi.fn(),
   revokeClient: vi.fn(),
+  revokeHarnessCredential: vi.fn().mockResolvedValue(undefined),
   setClientCardLimit: vi.fn().mockResolvedValue(undefined),
   saveServiceLiveActivityPolicy: vi.fn(),
   resetServiceLiveActivityPolicy: vi.fn(),
@@ -61,6 +62,7 @@ function overview(overrides: Partial<ConnectionsOverview> = {}): ConnectionsOver
         liveActivityPolicySource: "system",
       },
     ],
+    harnessCredentials: [],
     services: [],
     ...overrides,
   }
@@ -76,6 +78,17 @@ describe("Connections", () => {
       expect(screen.getByRole("heading", { level: 2, name })).toBeTruthy()
     }
     expect(screen.getByText("No webhooks yet")).toBeTruthy()
+  })
+
+  it("lists hooks credentials only when there are some, and revokes one", async () => {
+    render(<ConnectionsFeature bootstrap={overview()} service={api} />)
+    expect(screen.queryByRole("heading", { level: 2, name: "Hooks" })).toBeNull()
+    cleanup()
+    render(<ConnectionsFeature bootstrap={overview({ harnessCredentials: [{ id: "hck_00000000-0000-4000-8000-000000000001",
+      name: "Studio Mac hooks", prefix: "relo_abc", createdAt: "2026-10-14T09:00:00.000Z", lastUsedAt: null }] })} service={api} />)
+    expect(screen.getByRole("heading", { level: 2, name: "Hooks" })).toBeTruthy()
+    expect(screen.getByText("Studio Mac hooks")).toBeTruthy()
+    expect(api.revokeHarnessCredential).not.toHaveBeenCalled()
   })
 
   it("states phone readiness in words and keeps removal explicit", () => {

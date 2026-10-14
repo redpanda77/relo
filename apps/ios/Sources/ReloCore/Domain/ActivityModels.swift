@@ -274,6 +274,8 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
     public var sealed: ReloEnvelope? = nil
     /// The work this card shows (ADR 0007); absent from servers before works.
     public var work: ReloWork? = nil
+    /// The server's derived owner state for this card (spec 6.2); absent on an end without one.
+    public var owner: LiveActivityOwner? = nil
 
     public init(
         operation: Operation,
@@ -366,7 +368,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         case operation, activityId, generation, targetDeviceId, style, sourceName, headline, detail, status
         case progress, symbol, privacy, privacyMode, accentColor, expiresAt, staleAt
         case primaryLabel, secondaryLabel, alertOwner, sequence, dismissAfterSeconds, interaction
-        case relevanceScore, presentationState, otherActiveCount, sealed, work
+        case relevanceScore, presentationState, otherActiveCount, sealed, work, owner
     }
 
     public init(from decoder: Decoder) throws {
@@ -374,6 +376,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         let decodedPresentation = try LiveActivityPresentation(from: decoder)
         sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
         work = (try? values.decodeIfPresent(ReloWork.self, forKey: .work)).flatMap { $0.isEmpty ? nil : $0 }
+        owner = try? values.decodeIfPresent(LiveActivityOwner.self, forKey: .owner)
         let rawInteraction = try values.decodeSupportedInteraction(
             LiveActivityInteractionCommand.self, forKey: .interaction, isSupported: InboxInteraction.isSupported
         )
@@ -452,6 +455,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         try values.encode(relevanceScore, forKey: .relevanceScore)
         try values.encodeIfPresent(sealed, forKey: .sealed)
         try values.encodeIfPresent(work, forKey: .work)
+        try values.encodeIfPresent(owner, forKey: .owner)
         try values.encode(presentationState, forKey: .presentationState)
         try values.encode(otherActiveCount, forKey: .otherActiveCount)
         try values.encodeIfPresent(dismissAfterSeconds, forKey: .dismissAfterSeconds)

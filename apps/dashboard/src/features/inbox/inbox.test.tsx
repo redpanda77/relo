@@ -244,7 +244,8 @@ describe("Inbox feature contracts", () => {
       )
     )
     expect(onSuccess).toHaveBeenCalledOnce()
-    expect(within(screen.getByRole("list", { name: "Needs you" })).getByRole("button", { name: "Open Release gate" })).toBeVisible()
+    // Needs you lists the server's derived works (overview.now), not the overview's pending responses.
+    expect(screen.queryByRole("list", { name: "Needs you" })).toBeNull()
   })
 
   it("coalesces a same-code double decision into one mutation", async () => {
@@ -752,8 +753,6 @@ describe("Inbox feature contracts", () => {
     expect(activity.getByText("End-to-end encrypted · open on iPhone to read")).toBeVisible()
     expect(activity.getByLabelText("Claude Code › Encrypted project › Encrypted topic")).toBeVisible()
     expect(activity.getByRole("button", { name: "Open encrypted item" })).toBeVisible()
-    const needsYou = within(screen.getByRole("list", { name: "Needs you" }))
-    expect(needsYou.getByText("End-to-end encrypted · open on iPhone to read")).toBeVisible()
     const page = document.body.textContent ?? ""
     for (const hidden of ["Encrypted notification", "Encrypted question", "Open Relo on your iPhone", "p-abcdefghijklmnop", "t-abcdefghijklmnop"])
       expect(page).not.toContain(hidden)

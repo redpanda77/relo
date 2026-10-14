@@ -45,6 +45,7 @@ function dashboardAnchor(target: EventTarget | null): HTMLAnchorElement | null {
 }
 
 function dashboardTitle(bootstrap: DashboardBootstrap) {
+  if (bootstrap.kind === "auth" && bootstrap.view === "landing") return "Relo · Every agent, one place"
   return `${bootstrap.kind === "auth" ? bootstrap.title : bootstrap.shell.title} · Relo`
 }
 

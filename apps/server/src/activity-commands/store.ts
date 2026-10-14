@@ -53,14 +53,14 @@ export async function updateCommandActivity(tx: SubjectTransaction,actor: Activi
         title=$3,status=$4,detail=$5,progress=$6,symbol=$7,privacy=$8,accent_color=$9,style=$10,presentation=$11,presentation_sha256=$12,
         expires_at=LEAST(statement_timestamp()+($13*interval '1 second'),created_at+($14::integer*interval '1 second')),
         stale_at=LEAST(statement_timestamp()+($15*interval '1 second'),created_at+($14::integer*interval '1 second')),
-        sequence=sequence+1,updated_at=statement_timestamp()
+        sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
         WHERE id=$1 AND principal_id=$2 AND state='active' AND expires_at>statement_timestamp()
           AND requester_credential_id IS NULL AND requester_service_id IS NULL RETURNING *`,
       [...values,lease.idleSeconds,lease.hardSeconds,lease.staleSeconds])).rows[0];
     }
     return (await tx.query<ActivityRow>(`UPDATE live_activities SET state='ended',
       title=$3,status=$4,detail=$5,progress=$6,symbol=$7,privacy=$8,accent_color=$9,style=$10,presentation=$11,presentation_sha256=$12,
-      sequence=sequence+1,ended_at=statement_timestamp(),updated_at=statement_timestamp()
+      sequence=sequence+1,ended_at=statement_timestamp(),updated_at=statement_timestamp(),declared_at=statement_timestamp()
       WHERE id=$1 AND principal_id=$2 AND state='active'
         AND requester_credential_id IS NULL AND requester_service_id IS NULL RETURNING *`,values)).rows[0];
   }
@@ -78,7 +78,7 @@ export async function updateCommandActivity(tx: SubjectTransaction,actor: Activi
     return (await tx.query<ActivityRow>(`UPDATE live_activities SET
       title=$3,status=$4,detail=$5,progress=$6,symbol=$7,privacy=$8,accent_color=$9,style=$10,presentation=$11,presentation_sha256=$12,
       context=CASE WHEN $13::jsonb IS NULL THEN context ELSE COALESCE(context,'{}'::jsonb)||$13::jsonb END,
-      stale_after_seconds=$14::integer,stale_at=LEAST(LEAST(statement_timestamp(),COALESCE($17::timestamptz,statement_timestamp()))+($14::integer*interval '1 second'),expires_at),sequence=sequence+1,updated_at=statement_timestamp()
+      stale_after_seconds=$14::integer,stale_at=LEAST(LEAST(statement_timestamp(),COALESCE($17::timestamptz,statement_timestamp()))+($14::integer*interval '1 second'),expires_at),sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
       WHERE id=$1 AND principal_id=$2 AND state='active'
         AND requester_credential_id IS NOT DISTINCT FROM $15::uuid AND requester_service_id IS NOT DISTINCT FROM $16::uuid RETURNING *`,
     [...values,command.input.context??null,command.input.staleAfterSeconds??previousStaleSeconds,owner.credentialId,owner.serviceId,command.input.occurredAt??null])).rows[0];
@@ -87,7 +87,7 @@ export async function updateCommandActivity(tx: SubjectTransaction,actor: Activi
   return (await tx.query<ActivityRow>(`UPDATE live_activities SET state='ended',
     title=$3,status=$4,detail=$5,progress=$6,symbol=$7,privacy=$8,accent_color=$9,style=$10,presentation=$11,presentation_sha256=$12,
     terminal_reason='explicit_end',terminal_actor=$13,terminal_policy='producer_terminal',terminal_transition_at=statement_timestamp(),
-    sequence=sequence+1,ended_at=statement_timestamp(),updated_at=statement_timestamp()
+    sequence=sequence+1,ended_at=statement_timestamp(),updated_at=statement_timestamp(),declared_at=statement_timestamp()
     WHERE id=$1 AND principal_id=$2 AND state='active'
       AND requester_credential_id IS NOT DISTINCT FROM $14::uuid AND requester_service_id IS NOT DISTINCT FROM $15::uuid RETURNING *`,
   [...values,terminalActor,owner.credentialId,owner.serviceId])).rows[0];

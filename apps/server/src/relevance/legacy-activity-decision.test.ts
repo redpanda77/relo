@@ -51,19 +51,21 @@ suite("Legacy activity decision boundaries",()=>{
       await db.query("UPDATE interaction_requests SET expires_at='2000-01-01'");
       expect(await expireDueInteractiveActivities(db,"sandbox")).toBe(1);
     }
-    expect((await request(`/api/notifications/ntf_${other.id}/interactions`,secondToken,{kind:"no",idempotencyKey:randomUUID()})).status).toBe(409);
-    expect((await db.query("SELECT count(*)::int AS n FROM interactions")).rows[0].n).toBe(terminal==="response"?1:0);
+    expect((await request(`/api/notifications/ntf_${other.id}/interactions`,secondToken,{kind:"no",idempotencyKey:randomUUID()})).status).toBe(terminal==="expiry"?200:409);
+    // After expiry a late answer is stored as a fact on the expired request (never permission), so it is accepted.
+    if(terminal!=="expiry")expect((await db.query("SELECT count(*)::int AS n FROM interactions")).rows[0].n).toBe(terminal==="response"?1:0);
+    if(terminal==="expiry")expect((await db.query("SELECT count(*)::int AS n FROM interaction_requests WHERE late_response IS NOT NULL")).rows[0].n).toBe(1);
     expect((await db.query("SELECT count(*)::int AS n FROM interaction_requests WHERE state='pending'")).rows[0].n).toBe(0);
     const job=(await db.query("SELECT state,claim_phase,apns_payload_sha256 FROM delivery_jobs WHERE notification_event_id=$1",[other.id])).rows[0];
     expect(job.state).toBe(fenced?"processing":"canceled");
     if(fenced)expect(job).toMatchObject({claim_phase:"dispatch_started",apns_payload_sha256:"a".repeat(64)});
   });
-  test("producer end settles canonical status and cancels only its unsent decision jobs",async()=>{
+  test("producer end of the card leaves its question open (questions and cards are decoupled)",async()=>{
     const decision=await request("/api/interactions",owner,{title:"Review",prompt:"Continue?",type:"yes_no",presentation:"live_activity"});
     expect(decision.status).toBe(201);
     expect((await request(`/api/live-activities/${decision.body.liveActivityId}/end`,owner,{})).status).toBe(200);
-    expect((await db.query("SELECT relevance->>'status' AS status FROM notification_relevance WHERE notification_event_id=$1",[decision.body.eventId.slice(4)])).rows[0].status).toBe("settled");
-    expect((await db.query("SELECT state FROM delivery_jobs WHERE notification_event_id=$1",[decision.body.eventId.slice(4)])).rows[0].state).toBe("canceled");
+    expect((await db.query("SELECT relevance->>'status' AS status FROM notification_relevance WHERE notification_event_id=$1",[decision.body.eventId.slice(4)])).rows[0].status).toBe("active");
+    expect((await db.query("SELECT count(*)::int AS n FROM interaction_requests WHERE state='pending'")).rows[0].n).toBe(1);
   });
 
 });

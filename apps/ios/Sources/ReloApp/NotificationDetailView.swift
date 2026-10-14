@@ -18,8 +18,12 @@ struct NotificationDetailView: View {
         return model.decisionAvailability(draft.identity).permitsSubmission
             && !model.responseIsQueued(for: item.id) && !model.responseIsAccepted(for: item.id)
     }
-    private var stale: Bool { InboxAttentionProjection.isStale(currentItem, now: model.attentionDate) }
-    private var messageText: String? { currentItem.content?.body ?? presentation.subtitle }
+    /// Stale only when the server says so (the item's owner state in the Now summary), never by the local clock.
+    private var stale: Bool {
+        model.nowSummary?.allItems.first { $0.notificationId == currentItem.id }?.owner.state == .stale
+    }
+    /// A sealed item this iPhone could not open says why, instead of an empty body.
+    private var messageText: String? { currentItem.content?.body ?? presentation.subtitle ?? currentItem.unreadableLine }
     /// What the header does not already say; empty means no About section.
     private var aboutRows: [(label: String, value: String, monospaced: Bool)] {
         let context = InboxHierarchyProjection.context(for: currentItem)

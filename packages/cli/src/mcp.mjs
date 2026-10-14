@@ -11,6 +11,7 @@
 // stdout carries protocol messages and nothing else; logs go to stderr only when RELO_DEBUG=1.
 import { randomBytes } from "node:crypto";
 import { ReloApiClient } from "./api-client.mjs";
+import { MCP_SESSION_VARIABLE } from "./caller.mjs";
 
 export const SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 export const PROGRESS_INTERVAL_MS = 15_000;
@@ -44,55 +45,62 @@ const identity = {
 
 export const TOOLS = [
   {
-    name: "relo_card_start",
-    title: "Start the Relo card",
-    description: RULES + "Start this session's card for work that takes more than a minute or two (calling it again reuses the card). "
-      + "Judgment work: pass `steps` (3-6 named phases) and move on with relo_card_update next_step. A counted job (10 images, 400 rows): pass "
-      + "`progress` as \"3/10\" instead. Never both, never a percentage guessed from time. " + CARD_TEXT,
+    name: "relo_work_start",
+    title: "Start work",
+    description: RULES + "Declare this session's work for anything longer than a minute or two (calling it again with the same goal continues it). "
+      + "Judgment work: pass `plan` (3-6 named steps) and move on with relo_work_update next_step. A counted job (10 images, 400 rows): pass "
+      + "`progress` as \"3/10\". " + CARD_TEXT,
     inputSchema: {
-      type: "object", additionalProperties: false, required: ["title", "status"],
+      type: "object", additionalProperties: false, required: ["goal"],
       properties: {
-        title: string("Short card title, e.g. \"Deploying 0.7.57\" (80 characters)."),
-        status: string("What is happening now, e.g. \"Building\" (60 characters)."),
-        ...identity,
-        steps: { type: "array", items: { type: "string" }, minItems: 2, maxItems: 8, description: "Named phases for judgment work. Do not combine with progress." },
-        progress: { type: ["string", "number"], description: "Counted job only: \"3/10\", \"40%\" or 0.4. Do not combine with steps." },
-        detail: string("One short line of context (240 characters)."),
+        goal: string("The work in the owner's words, e.g. \"Release 0.7.57\" (120 characters)."),
+        status: string("What is happening now, e.g. \"Building the image\" (120 characters)."),
+        plan: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 30, description: "Named steps for judgment work." },
+        progress: string("Counted job: \"3/10\"."),
+        new: { type: "boolean", description: "Park the open work and start this as a separate one." },
       },
     },
-    annotations: { title: "Start the Relo card", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { title: "Start work", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   {
-    name: "relo_card_update",
-    title: "Update the Relo card",
-    description: RULES + "Update this session's card at real milestones (a phase finishes, a blocker appears), not on every tool call; send only what changed. "
-      + "Steps cards move with next_step or step_current; counted jobs send progress \"4/10\". " + CARD_TEXT,
+    name: "relo_work_update",
+    title: "Update work",
+    description: RULES + "Update this session's open work at real milestones, not on every tool call; send only what changed. " + CARD_TEXT,
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
-        status: string("What is happening now (60 characters)."),
-        progress: { type: ["string", "number"], description: "Counted jobs only: \"4/10\", \"40%\" or 0.4." },
-        next_step: { type: "boolean", description: "Move a steps card on by one step." },
-        step_current: { type: ["string", "integer"], description: "Jump to a step by number (from 1) or name." },
-        detail: string("One short line of context (240 characters)."),
-        ...identity,
+        status: string("What is happening now (120 characters)."),
+        progress: string("Counted progress: \"4/10\"."),
+        next_step: { type: "boolean", description: "Mark the current step done and move to the next." },
+        step: string("Jump to a step by id (s3) or name."),
+        plan: { type: "array", items: { type: "string" }, description: "The steps that are left, replacing the remaining plan." },
+        add: { type: "array", items: { type: "string" }, description: "Steps to append." },
+        waiting: string("What the work waits on, e.g. \"CI\"."),
+        not_waiting: { type: "boolean", description: "The wait is over." },
       },
     },
-    annotations: { title: "Update the Relo card", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { title: "Update work", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   {
-    name: "relo_card_end",
-    title: "End the Relo card",
-    description: RULES + "End this session's card exactly once, honestly: say what happened, and set failed when the work did not succeed.",
+    name: "relo_work_finish",
+    title: "Finish work",
+    description: RULES + "Finish this session's open work exactly once, honestly: say what happened; set failed or dropped when it did not succeed.",
     inputSchema: {
-      type: "object", additionalProperties: false,
+      type: "object", additionalProperties: false, required: ["outcome"],
       properties: {
-        status: string("Final status, e.g. \"Live on production\" (default \"Complete\", or \"Failed\")."),
-        failed: { type: "boolean", description: "True when the work failed or was abandoned (warning icon)." },
-        ...identity,
+        outcome: string("What happened, e.g. \"0.7.57 live on production\" (200 characters)."),
+        failed: { type: "boolean", description: "The work failed." },
+        dropped: { type: "boolean", description: "The work was abandoned." },
       },
     },
-    annotations: { title: "End the Relo card", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    annotations: { title: "Finish work", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: "relo_work_state",
+    title: "Show work state",
+    description: RULES + "Show this session's open and parked work, as the server has it.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    annotations: { title: "Show work state", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: "relo_ask",
@@ -154,12 +162,13 @@ function identityFlags(args) {
 }
 
 const ARGV = {
-  relo_card_start: (a) => ["activity", "start", ...flag("title", a.title), ...flag("status", a.status), ...identityFlags(a),
-    ...(a.steps ?? []).flatMap((step) => flag("step", step)), ...flag("progress", a.progress), ...flag("detail", a.detail)],
-  relo_card_update: (a) => ["activity", "update", ...flag("status", a.status), ...flag("progress", a.progress), ...(a.next_step ? ["--next-step"] : []),
-    ...flag("step-current", a.step_current), ...flag("detail", a.detail), ...identityFlags(a)],
-  relo_card_end: (a) => ["activity", "end", ...flag("status", a.status ?? (a.failed ? "Failed" : undefined)),
-    ...(a.failed ? ["--symbol=warning"] : []), ...identityFlags(a)],
+  relo_work_start: (a) => ["work", "start", "--json", ...flag("goal", a.goal), ...flag("status", a.status),
+    ...(a.plan?.length ? flag("plan", a.plan.join(",")) : []), ...flag("progress", a.progress), ...(a.new ? ["--new"] : [])],
+  relo_work_update: (a) => ["work", "update", "--json", ...flag("status", a.status), ...flag("progress", a.progress), ...(a.next_step ? ["--next-step"] : []),
+    ...flag("step", a.step), ...(a.plan?.length ? flag("plan", a.plan.join(",")) : []), ...(a.add?.length ? flag("add", a.add.join(",")) : []),
+    ...flag("waiting", a.waiting), ...(a.not_waiting ? ["--not-waiting"] : [])],
+  relo_work_finish: (a) => ["work", "finish", "--json", ...flag("outcome", a.outcome), ...(a.failed ? ["--failed"] : []), ...(a.dropped ? ["--dropped"] : [])],
+  relo_work_state: () => ["state", "--sync", "--json"],
   relo_ask: (a) => ["ask", safe(a.question), a.kind === "approval" ? "--approval" : "--yes-no", `--timeout=${a.timeout_seconds ?? QUESTION_SECONDS}s`, ...identityFlags(a)],
   relo_interaction_wait: (a) => ["interaction", "wait", safe(a.id), `--timeout=${a.timeout_seconds ?? QUESTION_SECONDS}s`],
   relo_notify: (a) => ["notify", "send", safe(a.body), ...flag("title", a.title), ...identityFlags(a)],
@@ -245,7 +254,8 @@ export async function serveMcp({ input, output, run, version, env = process.env,
   const sessionEnv = () => {
     const source = sourceFromClient(state.clientInfo?.name);
     state.session ??= `${state.clientInfo?.name ?? "mcp"}-${startedAt}-${randomBytes(6).toString("hex")}`;
-    return { ...env, ...(env.RELO_SESSION?.trim() ? {} : { RELO_SESSION: state.session }),
+    // One agent session per connection; a harness session id, or an owner's RELO_SESSION outside a harness, wins (detectCaller).
+    return { ...env, [MCP_SESSION_VARIABLE]: state.session,
       ...(source && !env.RELO_SOURCE?.trim() ? { RELO_SOURCE: source } : {}) };
   };
 
@@ -321,7 +331,7 @@ export async function serveMcp({ input, output, run, version, env = process.env,
           protocolVersion: SUPPORTED_PROTOCOLS.includes(requested) ? requested : SUPPORTED_PROTOCOLS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "relo", title: "Relo", version },
-          instructions: "Relo puts your work on the owner's iPhone. Use the relo_card_* tools for work longer than a couple of minutes, "
+          instructions: "Relo puts your work on the owner's iPhone. Use the relo_work_* tools for work longer than a couple of minutes, "
             + "relo_ask before risky actions (only an approved approval question is permission), relo_notify rarely for finished outcomes.",
         });
       }

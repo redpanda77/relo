@@ -5,7 +5,7 @@ import { LIVE_ACTIVITY_PRESET_IDS } from "@relo/notification-contracts";
 import type { Hono } from "hono";
 import type { AccountAuth } from "./account-auth.js";
 import {
-expireDueActivities,
+
 
 type ApnsMode
 } from "./activities.js";
@@ -36,7 +36,6 @@ export type WebAuthDependencies = {
   appUrl: string;
   credentialDerivationSecret: string;
   apnsMode: ApnsMode;
-  reconcileActivities?: () => Promise<number>;
 };
 
 export type { OwnerAccount } from "./web/owner-account.js";
@@ -82,7 +81,6 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
     releaseIdentity,
     getAccount: (headers) => getOwnerAccount(db,accountAuth,headers),
     renderDocument: renderDashboardAppDocument,
-    reconcileActivities: dependencies.reconcileActivities ?? (() => expireDueActivities(db,apnsMode)),
     contentCipher: notificationContentCipher,
   });
   const systemHandlers = createDashboardSystemHandlers({
@@ -170,15 +168,18 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
   registerInboxActionRoutes(app,routeContext);
   registerBrowserRoutes(app,routeContext);
 
-  app.get("/", createDashboardAuthHandler({
+  const dashboardAuth = createDashboardAuthHandler({
     db,
+    appUrl,
     getAccount: (headers: Headers) => getOwnerAccount(db,accountAuth,headers),
     renderDocument: renderDashboardAppDocument,
-  }));
+  });
+  app.get("/", dashboardAuth);
+  app.get("/sign-in", dashboardAuth);
 
   const testLabPage = async (context: any) => {
     const account = await getOwnerAccount(db, accountAuth, context.req.raw.headers);
-    if (!account) return context.redirect(`/?next=${encodeURIComponent(context.req.path)}`);
+    if (!account) return context.redirect(`/sign-in?next=${encodeURIComponent(context.req.path)}`);
     const requestedActivityId = context.req.param("activityId") ?? context.req.query("activity");
     const requestedActivityInternalId = requestedActivityId ? internalId("act",requestedActivityId) : null;
     if (requestedActivityId && !requestedActivityInternalId) return context.notFound();

@@ -1,4 +1,4 @@
-import { TerminalSquare } from "lucide-react"
+import { Activity as HooksIcon, TerminalSquare } from "lucide-react"
 import * as React from "react"
 
 import { Empty, Section } from "@/components/page"
@@ -8,7 +8,7 @@ import {
   DestructiveAction,
   OperationStatus,
 } from "@/features/connections/components"
-import type { ConnectionClient } from "@/features/connections/types"
+import type { ConnectionClient, ConnectionHarnessCredential } from "@/features/connections/types"
 import { formatConnectionDate } from "@/features/connections/utils"
 import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
@@ -156,6 +156,77 @@ export function ClientsSection({
       {total > initial.length ? (
         <p className="mt-3 text-xs text-muted-foreground">Showing {initial.length} of {total}.</p>
       ) : null}
+    </Section>
+  )
+}
+
+function HarnessCredentialRow({
+  credential,
+  api,
+  onRevoke,
+}: {
+  credential: ConnectionHarnessCredential
+  api: ConnectionsService
+  onRevoke(id: string): void
+}) {
+  const [pending, setPending] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  return (
+    <li aria-busy={pending}>
+      <div className="flex min-w-0 items-center gap-3 px-4 py-3.5">
+        <HooksIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{credential.name}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {credential.lastUsedAt ? `Used ${relativeTime(credential.lastUsedAt)}` : "Not used yet"}
+          </p>
+        </div>
+        <OperationStatus pending={pending} error={error} pendingLabel="Revoking…" />
+        <DestructiveAction
+          label="Revoke"
+          title={`Revoke ${credential.name}?`}
+          description="Hooks on that computer stop reporting sessions. Cards and questions keep working. Run relo setup to turn hooks on again."
+          pending={pending}
+          onConfirm={() => {
+            setPending(true)
+            setError(null)
+            void api
+              .revokeHarnessCredential(credential.id)
+              .then(() => onRevoke(credential.id))
+              .catch((cause) => setError(cause instanceof Error ? cause.message : "Request failed."))
+              .finally(() => setPending(false))
+          }}
+        />
+      </div>
+    </li>
+  )
+}
+
+/** Hooks credentials: they only report what sessions are doing, never cards or questions. */
+export function HarnessCredentialsSection({
+  initial,
+  api,
+}: {
+  initial: ConnectionHarnessCredential[]
+  api: ConnectionsService
+}) {
+  const [credentials, setCredentials] = React.useState(initial)
+  if (!credentials.length) return null
+  return (
+    <Section title="Hooks">
+      <ConnectionList ariaLabel="Hooks">
+        {credentials.map((credential) => (
+          <HarnessCredentialRow
+            key={credential.id}
+            credential={credential}
+            api={api}
+            onRevoke={(id) => setCredentials((current) => current.filter((item) => item.id !== id))}
+          />
+        ))}
+      </ConnectionList>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Hooks report whether a session is working or waiting on you. They cannot change cards, plans or questions.
+      </p>
     </Section>
   )
 }

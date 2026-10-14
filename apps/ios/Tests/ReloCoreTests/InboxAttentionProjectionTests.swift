@@ -20,11 +20,11 @@ struct InboxAttentionProjectionTests {
     private func project(_ items: [InboxItem], at date: Date? = nil, accepted: Set<String> = [], queued: Set<String> = []) -> InboxAttentionProjection.Snapshot {
         InboxAttentionProjection.make(items: items, now: date ?? now, acceptedNotificationIDs: accepted, queuedNotificationIDs: queued)
     }
-    @Test("Expires locally at the exact deadline") func expiry() {
+    @Test("A question past its deadline stays: the server keeps it as missed") func expiry() {
         let request = item()
         #expect(project([request]).requests.count == 1)
         #expect(project([request]).nextTransitionAt == now.addingTimeInterval(60))
-        #expect(project([request], at: now.addingTimeInterval(60)).requests.isEmpty)
+        #expect(project([request], at: now.addingTimeInterval(60)).requests.count == 1) // the server decides missed
         #expect(request.interaction?.state == .pending)
     }
     @Test(arguments: ["ended", "expired", "replaced"])
@@ -131,33 +131,7 @@ struct InboxAttentionProjectionTests {
             createdAt: now.addingTimeInterval(-age))
     }
 
-    @Test("Very recent alerts remain visible even after reading and expire at the cutoff")
-    func recentCutoff() {
-        let alert = notification("read", age: 899, read: true)
-        let result = project([alert, notification("old", age: 900), notification("future", age: -1)])
-        #expect(result.recentNotifications == [alert])
-        #expect(result.nextTransitionAt == now.addingTimeInterval(1))
-        #expect(project([alert], at: now.addingTimeInterval(1)).recentNotifications.isEmpty)
-    }
 
-    @Test("Recent alerts are unique, newest first, bounded, and exclude withdrawn events")
-    func recentOrdering() {
-        let alerts = (0..<7).map { notification("alert-\($0)", age: Double($0)) }
-        let result = project(alerts.reversed() + [alerts[0], notification("withdrawn", age: 0, withdrawn: true)])
-        #expect(result.recentNotifications.map(\.id) == Array(alerts.prefix(5)).map(\.id))
-        #expect(result.nextTransitionAt == now.addingTimeInterval(896))
-    }
 
-    @Test("Attention takes priority without duplicating recent notifications")
-    func recentPriority() {
-        let request = InboxItem(id: "pending", kind: .notification, sourceName: "Agent", title: "Approve",
-            createdAt: now, interaction: .init(id: "approval", kind: .approval,
-                prompt: "Approve?", state: .pending, expiresAt: now.addingTimeInterval(60)))
-        #expect(project([request]).requests == [request])
-        #expect(project([request]).recentNotifications.isEmpty)
-        #expect(project([request], queued: [request.id]).recentNotifications.isEmpty)
-        #expect(project([request], accepted: [request.id]).recentNotifications == [request])
-        #expect(project([request], at: now.addingTimeInterval(60)).recentNotifications == [request])
-    }
 
 }

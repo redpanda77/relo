@@ -12,12 +12,16 @@ import {
 } from "@/app/dashboard-page-loaders"
 import { RouteLoadingFallback } from "@/app/route-loading-fallback"
 import { AuthPage } from "@/features/auth/auth-page"
+import { LandingBoundary } from "@/features/landing/landing-boundary"
 import { DashboardShell } from "@/layouts/dashboard-shell"
 import {
   createHttpTestLabService,
   type TestLabService,
 } from "@/services/test-lab-service"
 
+const LandingPage = lazy(() =>
+  import("@/features/landing/landing-page").then((module) => ({ default: module.LandingPage }))
+)
 const AccountPage = lazy(loadAccountPage)
 const ConnectionsFeature = lazy(loadConnectionsFeature)
 const DocumentationPage = lazy(loadDocumentationPage)
@@ -33,6 +37,14 @@ export function DashboardApp({
   bootstrap: DashboardBootstrap
   service?: TestLabService
 }) {
+  if (bootstrap.kind === "auth" && bootstrap.view === "landing")
+    return (
+      <LandingBoundary>
+        <Suspense fallback={<main id="main-content" className="canvas min-h-[100dvh]" aria-busy="true" />}>
+          <LandingPage />
+        </Suspense>
+      </LandingBoundary>
+    )
   if (bootstrap.kind === "auth") return <AuthPage bootstrap={bootstrap} />
 
   let content: ReactNode

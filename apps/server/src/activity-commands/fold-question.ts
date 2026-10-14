@@ -53,12 +53,11 @@ export async function foldQuestionIntoCard(client: Queryable, input: {
     `UPDATE live_activities SET title=$3,status=$4,detail=$5,progress=$6,symbol=$7,style=$8,
        privacy=$9,accent_color=$10,presentation=$11,presentation_sha256=$12,
        resume_presentation=$13::jsonb,question_fallback_at=NULL,
-       stale_at=LEAST(expires_at,statement_timestamp()+($14::integer*interval '1 second')),
-       sequence=sequence+1,updated_at=statement_timestamp()
+       sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
      WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
     [row.id,input.principalId,question.title,question.status,question.detail,question.progress,
       question.symbol,question.style,question.privacy,question.accentColor,question.presentation,
-      question.presentationHash,working,asked.expiresInSeconds],
+      question.presentationHash,working],
   )).rows[0];
   const source = await client.query(
     `SELECT source FROM notification_events

@@ -42,7 +42,8 @@ admin chooses how people join:
   and, when the iPhone allows Live Activities, a card on the Lock Screen. Answering either one, or
   deciding in the Dashboard, settles both.
 - **Open**: anyone who can reach the server can register and sign in at once. Keep this for
-  private networks, since there are no per-account quotas yet.
+  private networks, since there are no per-account quotas yet; on a public HTTPS origin, Open acts
+  as Approval.
 
 The admin can also sign an account out everywhere, revoke its access (every session, CLI key,
 service and phone stops working, and its data is kept), restore it, or delete it with all its
@@ -63,38 +64,41 @@ phone keeps its own history (item E1.4 of the plan), a short window means a shor
 
 ## Completion links and artifacts
 
-An ordinary notification can carry one HTTPS link to a report, artifact, file, or page:
+An ordinary notification can carry one link to a report, artifact, file or page: an `https://` page,
+an app scheme (`your-app://incidents/42`) or a Shortcuts link:
 
 ```sh
 relo notify "The architecture report is ready" --title "Codex" \
   --url "https://reports.example.com/architecture.html" \
-  --project "Relo" --thread-name "Architecture review" --json
+  --project "Relo" --topic "Architecture review" --json
 ```
 
-The URL is stored with the notification, delivered as APNs custom data, and shown with an attached
-link indicator in the Dashboard and iOS Inbox. Opening the notification exposes the explicit link
-action; tapping the system notification also routes to the validated HTTPS destination. Relo does
-not download, inspect, or execute the target. Pergam pages, time-bounded MinIO links, Drive links,
-and other HTTPS destinations use the same field. If a signed link expires, the notification remains
-durable but the remote host decides whether the target is still available.
+The link is stored and delivered with the notification and shown with it in the Dashboard and on
+the iPhone; tapping the notification opens it. Relo does not download, inspect or execute the
+target. If a signed link expires, the notification remains, and the remote host decides whether the
+target is still available.
 
-## Remote access
+## Choose an origin
 
-Keep the API bound to `127.0.0.1`. `RELO_APP_URL` is the one origin browsers, the iPhone and the CLI
-use; every installation sets its own, and both apps ask for it at sign-in. Change it, restart the
-API and worker, then sign in again on each phone and computer.
+`RELO_APP_URL` is the one origin browsers, the iPhone and the CLI use; every installation sets its
+own, and both apps ask for it at sign-in. Change it, restart the API and worker, then sign in again
+on each phone and computer. Relo does not care how you provide the origin, only that it meets this
+checklist:
 
-### Private: Tailscale Serve
-
-Put the host and iPhone on the same tailnet and expose the loopback service through
-[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve):
-
-```sh
-tailscale serve --bg http://127.0.0.1:8180
-tailscale serve status
-```
-
-Set `RELO_APP_URL` to the exact `https://…ts.net` origin printed by Serve. Use Serve, not Funnel.
+- Keep the API bound to `127.0.0.1` (`RELO_BIND_ADDRESS`); a proxy, tunnel or overlay service
+  reaches the loopback listener.
+- HTTPS with a certificate the iPhone trusts. The iPhone app accepts plain `http` only for
+  `localhost`, `*.local`, loopback, link-local, and private (RFC 1918, `fc00::/7`) addresses
+  (`ServerEndpointPolicy.swift`); use that only for a local trial.
+- Reachable from every device that will use Relo: the browser, the iPhone and each computer that
+  runs the CLI.
+- Behind a proxy, set `RELO_CLIENT_IP_HEADER` to a header the proxy overwrites (never one a client
+  can append to, such as `x-forwarded-for`). Without it every request appears to come from the
+  proxy and per-client sign-in limits become one shared limit. The header is believed only from a
+  loopback or private peer.
+- If the proxy offers a login for the pages people open in a browser, use it; let the app, CLI and
+  webhook paths through to Relo's own authentication.
+- Keep registration **Closed** or **Approval** on a public address.
 
 ### Public: Cloudflare Tunnel and Access
 
@@ -131,8 +135,33 @@ Leave Bot Fight Mode off for the hostname and bypass the cache. Event streams se
 public address. Cloudflare terminates TLS: end-to-end sealed content stays opaque to it, while
 credentials in transit and metadata do not ([what stays readable](END-TO-END-ENCRYPTION.md)).
 
-Other reverse proxies work the same way: proxy to the loopback listener, set `RELO_APP_URL` to the
-public origin and `RELO_CLIENT_IP_HEADER` to the header the proxy overwrites (never one a client can
-append to, such as `x-forwarded-for`).
+### Any reverse proxy: Caddy
+
+```caddyfile
+relo.example.com {
+    reverse_proxy 127.0.0.1:8180
+}
+```
+
+Set `RELO_APP_URL=https://relo.example.com`. Caddy obtains the certificate itself. Set
+`RELO_CLIENT_IP_HEADER` to a header your proxy overwrites with the client address (Caddy does not
+add one by default; with a CDN in front, use the CDN's header). nginx and Traefik work the same way:
+proxy to the loopback listener, keep long-lived event streams open (no response buffering, a read
+timeout above 15 seconds).
+
+### Private overlay network: Tailscale Serve
+
+A VPN or overlay network keeps the origin off the public internet; the host and every device must
+be on it. With [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) as the
+example:
+
+```sh
+tailscale serve --bg http://127.0.0.1:8180
+tailscale serve status
+```
+
+Set `RELO_APP_URL` to the exact `https://…` origin printed by Serve. Use Serve, not Funnel (Funnel
+publishes it to the internet). WireGuard or another overlay with an HTTPS-terminating proxy works
+the same way.
 
 Relo needs no public inbound endpoint for APNs; it only makes outbound connections to Apple.

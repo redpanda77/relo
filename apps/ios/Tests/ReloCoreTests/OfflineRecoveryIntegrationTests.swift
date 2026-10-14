@@ -42,7 +42,6 @@ struct OfflineRecoveryIntegrationTests {
         state.verifiedVersions = [independent.id: independent.version, latest.id: latest.version]
         let current = CurrentInboxPresentation(state: state, now: reconnected)
         #expect(current.needsMe.map(\.interaction.id) == [validIdentity.interactionID])
-        #expect(current.running.map(\.version.revision) == [31])
         #expect(current.actionableCount == 1)
         #expect(CurrentInboxPresentation.availability(for: expiredIdentity, state: state, now: time) == .expired)
         #expect(CurrentInboxPresentation.availability(for: validIdentity, state: state, now: reconnected) == .available)

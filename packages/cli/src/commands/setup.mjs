@@ -1,12 +1,15 @@
 import { realpathSync, statSync } from "node:fs";
+import { ADAPTERS, DEFAULT_ADAPTER } from "../harness/adapters/index.mjs";
+import { ensureHarnessCredential } from "../harness/core/credential.mjs";
 import { UsageError } from "../errors.mjs";
 import { GLOBAL_AGENT_NAMES, expandPath, findBlocks, globalFile, commitPlan, planFile, projectFile, shortPath } from "../setup.mjs";
-import { HOOK_AGENT_NAMES, HOOK_TARGETS, commitHooks, findHooks, hookAgent, planHooksFile } from "../hooks-settings.mjs";
+import { commitLevel, findHooks, hookAgent, planLevelFile } from "../hooks-settings.mjs";
+import { turnHooksOff } from "./hooks.mjs";
 import { MCP_AGENT_NAMES, commitMcp, findMcp, mcpAgent, mcpPath, planMcpFile, wantedEntry } from "../mcp-config.mjs";
 import { inspectSkill, skillAdvice } from "../skill.mjs";
 import { assertAllowedOptions, assertNoExtra, result } from "../support.mjs";
 
-const USAGE = "Usage: relo setup --mcp --agent NAME (--global | --project) [--move] [--dry-run] | relo setup --mcp --remove | relo setup (--project | --global --agent NAME | --file PATH) [--move] [--dry-run] | relo setup --remove | relo setup (--project | --global --agent NAME) --hooks [--move] [--dry-run] | relo setup --hooks --remove";
+const USAGE = "Usage: relo setup --mcp --agent NAME (--global | --project) [--move] [--dry-run] | relo setup --mcp --remove | relo setup (--project | --global --agent NAME | --file PATH) [--move] [--dry-run] | relo setup --remove | relo setup (--project | --global --agent NAME) --hooks <reminders|presence> [--move] [--dry-run] | relo setup --hooks off";
 const CHOICES = `relo setup --project (this repo) | relo setup --global --agent <${GLOBAL_AGENT_NAMES.join("|")}> | relo setup --file PATH`;
 
 function chooseTarget(options, { env, home, cwd }) {
@@ -53,6 +56,7 @@ const skillFields = (dependencies) => {
 export async function runSetupCommand(command) {
   const { options, group, action, rest, dependencies } = command;
   if (group !== "setup") return undefined;
+  if (options.hooks) return setupHookLevel(command);
   assertNoExtra([action, ...rest].filter((word) => word !== undefined), 0, USAGE);
   assertAllowedOptions(options, ["global", "project", "file", "agent", "dry-run", "remove", "move", "hooks", "mcp"]);
   const { home, cwd, env } = dependencies;
@@ -60,7 +64,6 @@ export async function runSetupCommand(command) {
   const probe = { env, home, cwd };
   if (options.mcp && options.hooks) throw new UsageError("--mcp and --hooks are separate: run setup once for each.");
   if (options.mcp) return setupMcp(options, { ...probe, platform: dependencies.platform }, dryRun, dependencies);
-  if (options.hooks) return setupHooks(options, probe, dryRun);
 
   if (options.remove) {
     if (options.move) throw new UsageError("--remove and --move cannot be combined.");
@@ -131,58 +134,77 @@ function moveFlags(options) {
 }
 
 const shownPath = (path, home) => shortPath(path, home);
+const ALL_HOOK_LEVELS = [...new Set(Object.values(ADAPTERS).flatMap((adapter) => adapter.install.levels))];
 
-/** `relo setup --hooks`: Relo's session hooks in exactly one harness settings file. */
-async function setupHooks(options, probe, dryRun) {
-  const { home } = probe;
-  if (Array.isArray(options.file) && options.file.length > 0) {
-    throw new UsageError("--hooks goes in a harness's settings.json: use --project or --global --agent NAME, not --file.");
-  }
-  if (options.remove) {
-    if (options.move) throw new UsageError("--remove and --move cannot be combined.");
-    const plans = [];
-    for (const found of findHooks(probe)) plans.push(await planHooksFile(found.path, found.agent, { remove: true }));
-    const removable = plans.filter(({ plan }) => plan.action === "removed");
-    if (!dryRun) for (const item of removable) await commitHooks(item);
-    if (removable.length === 0) return result("setup", { action: "unchanged", hooks: [], ...(dryRun ? { dryRun: true } : {}) }, { message: "No Relo hooks found." });
-    return result("setup", {
-      file: shownPath(removable[0].path, home), action: "removed", hooks: removable[0].plan.hooks,
-      ...(removable.length > 1 ? { files: removable.map(({ path }) => shownPath(path, home)) } : {}),
-      ...(dryRun ? { dryRun: true } : {}),
+/** `relo setup --hooks <off|reminders|presence>` (slice 3 §3.1): the level is required; bare --hooks is refused. */
+async function setupHookLevel({ options, action, rest, dependencies }) {
+  assertNoExtra(rest.filter((word) => word !== undefined), 0, USAGE);
+  if (options.mcp) throw new UsageError("--mcp and --hooks are separate: run setup once for each.");
+  assertAllowedOptions(options, ["global", "project", "agent", "dry-run", "move", "hooks", "yes", "file", "remove"]);
+  if (Array.isArray(options.file) && options.file.length > 0) throw new UsageError("--hooks goes in a harness's settings.json: use --project or --global --agent NAME, not --file.");
+  if (options.remove) throw new UsageError("--hooks --remove is gone: use relo setup --hooks off (or relo hooks off).");
+  const level = action;
+  if (!ALL_HOOK_LEVELS.includes(level)) {
+    throw new UsageError(level === undefined ? "--hooks needs a level: off, reminders or presence." : `Unknown hook level "${level}".`, {
+      hint: "relo setup --project --hooks reminders (recommended for Claude Code) | --hooks presence (reminders plus session presence) | --hooks off",
     });
   }
-  if (options.project && options.global) {
-    throw new UsageError("Pick exactly one of --project or --global --agent NAME (the hooks live in one file).");
+  const { home, cwd, env } = dependencies;
+  const probe = { env, home, cwd };
+  const dryRun = Boolean(options["dry-run"]);
+  if (level === "off") return setupHooksOff(options, probe, dryRun, dependencies);
+  const agent = options.project && options.agent === undefined ? DEFAULT_ADAPTER : hookAgent(options.agent ?? DEFAULT_ADAPTER);
+  const adapter = ADAPTERS[agent];
+  if (!adapter.install.levels.includes(level)) {
+    const offered = adapter.install.levels.filter((name) => name !== "off").map((name) => `--hooks ${name}`).join(", ");
+    throw new UsageError(`${agent} offers only ${offered} or --hooks off.`);
   }
+  if (options.project && options.global) throw new UsageError("Pick exactly one of --project or --global --agent NAME (the hooks live in one file).");
   if (!options.project && !options.global) {
     throw new UsageError("Nothing was written: pick the one settings file Relo's hooks go in.", {
-      hint: `relo setup --project --hooks (this repo, claude-code) | relo setup --global --agent <${HOOK_AGENT_NAMES.join("|")}> --hooks`,
+      hint: `relo setup --project --hooks ${level} | relo setup --global --agent ${agent} --hooks ${level}`,
     });
   }
-  if (options.global && options.agent === undefined) {
-    throw new UsageError("--global needs the harness whose settings to use.", { hint: `relo setup --global --agent <${HOOK_AGENT_NAMES.join("|")}> --hooks` });
-  }
-  const agent = hookAgent(options.agent);
-  const place = options.project ? "project" : "global";
-  const path = HOOK_TARGETS[agent][place](probe);
+  const path = adapter.install[options.project ? "project" : "global"](probe);
   const others = findHooks(probe).filter((found) => found.agent === agent && found.path !== path);
   if (others.length > 0 && !options.move) {
     throw new UsageError(`Relo hooks are already set up in ${shownPath(others[0].path, home)}.`, {
-      hint: `Keep them, or move them: relo setup ${options.project ? "--project" : `--global --agent ${agent}`} --hooks --move`,
+      hint: `Keep them, or move them: relo setup ${options.project ? "--project" : `--global --agent ${agent}`} --hooks ${level} --move`,
     });
   }
+  const written = await planLevelFile(path, agent, level);
   const removals = [];
-  for (const other of others) removals.push(await planHooksFile(other.path, agent, { remove: true }));
-  const written = await planHooksFile(path, agent, { remove: false });
+  for (const other of others) removals.push(await planLevelFile(other.path, agent, "off"));
+  let harnessCredential;
   if (!dryRun) {
-    await commitHooks(written, { makeDirectory: true });
-    for (const item of removals) await commitHooks(item);
+    await commitLevel(written);
+    for (const item of removals) await commitLevel(item);
+    // Hooks that send need this computer's harness credential. Minted now when the server is reachable;
+    // otherwise the outbox flusher mints it on its first send.
+    if (adapter.install.sending.includes(level)) {
+      harnessCredential = await ensureHarnessCredential(dependencies).then(() => "ready", () => "pending");
+    }
   }
-  const moved = removals.some(({ plan }) => plan.action === "removed");
+  const moved = removals.some((item) => item.plan.action === "removed");
   return result("setup", {
-    file: shownPath(path, home), action: moved ? "moved" : written.plan.action, hooks: written.plan.hooks,
-    ...(moved ? { from: shownPath(others[0].path, home) } : {}),
+    file: shownPath(path, home), level, action: moved ? "moved" : written.plan.action, hooks: written.plan.changes.after,
+    ...(moved ? { from: shownPath(others[0].path, home) } : {}), ...(harnessCredential ? { harnessCredential } : {}),
     ...(dryRun ? { dryRun: true } : {}),
+  });
+}
+
+/** `relo setup --hooks off`: Relo's hooks out of every settings file, and the harness credential revoked. */
+async function setupHooksOff(options, probe, dryRun, dependencies) {
+  if (options.move) throw new UsageError("--hooks off and --move cannot be combined.");
+  const { removable, credential } = await turnHooksOff(probe, dependencies, { dryRun });
+  const revoked = credential && credential !== "none" ? { harnessCredential: credential } : {};
+  if (removable.length === 0) {
+    return result("setup", { action: "unchanged", hooks: [], ...revoked, ...(dryRun ? { dryRun: true } : {}) }, { message: "No Relo hooks found." });
+  }
+  return result("setup", {
+    file: shownPath(removable[0].path, probe.home), action: "removed", hooks: removable[0].plan.changes.before,
+    ...(removable.length > 1 ? { files: removable.map(({ path }) => shownPath(path, probe.home)) } : {}),
+    ...revoked, ...(dryRun ? { dryRun: true } : {}),
   });
 }
 

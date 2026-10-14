@@ -6,6 +6,9 @@ import { bootstrapOwner } from "./bootstrap.js";
 import { generateToken, hashToken } from "./auth.js";
 import { createDatabase, type Database } from "./db.js";
 import { migrate } from "./migrate.js";
+import { loadOwnerStateInputs } from "./derive/load.js";
+import { deriveOwnerState } from "./derive/owner-state.js";
+import { OWNER_STATE_TIMING } from "@relo/notification-contracts";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import { cancelUndeliverableDeliveryJobs } from "./delivery-lifecycle.js";
 import { currentTestPresentationRecord } from "./test-current-presentation.js";
@@ -2053,7 +2056,7 @@ suite("Relo API persistence boundaries", () => {
     });
   });
 
-  test("task activity expiry is terminal, emits cleanup, and interactive styles fail closed", async () => {
+  test("a task card past its old expiry is retired by derived policy only: reads never write; interactive styles fail closed", async () => {
     const phone = await pair(ownerOneToken,"20202020-2020-4020-8020-202020202020",true);
     const rejected = await request("/api/live-activities",ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "interactive-task-rejected-12345678" },
@@ -2066,22 +2069,28 @@ suite("Relo API persistence boundaries", () => {
       body: JSON.stringify({ key: "expiring", title: "Expiring", status: "Starting", deviceIds: [phone.deviceId] }),
     });
     const activityId = (await started.json() as any).activity.id;
-    await db.query(
-      "UPDATE live_activities SET expires_at=now()-interval '1 second',stale_at=now()-interval '1 second' WHERE id=$1",[
-      activityId.slice("act_".length),
-    ]);
+    const internal = activityId.slice("act_".length);
+    await db.query("UPDATE live_activities SET expires_at=now()-interval '1 second',stale_at=now()-interval '1 second' WHERE id=$1",[internal]);
+    const before = (await db.query("SELECT * FROM live_activities WHERE id=$1",[internal])).rows[0];
+    const operationsBefore = (await db.query("SELECT count(*)::int AS n FROM live_activity_operations WHERE live_activity_id=$1",[internal])).rows[0].n;
+    // Reading never writes: the declared card is unchanged and no cleanup operation is queued by a read.
     const fetched = await request(`/api/live-activities/${activityId}`,ownerOneToken);
-    expect((await fetched.json() as any).activity).toMatchObject({ state: "expired", status: "Expired", sequence: 1 });
+    expect(fetched.status).toBe(200);
+    expect((await fetched.json() as any).activity).toMatchObject({ state: "active", status: "Starting", sequence: 0 });
+    expect((await db.query("SELECT * FROM live_activities WHERE id=$1",[internal])).rows[0]).toEqual(before);
+    expect((await db.query("SELECT count(*)::int AS n FROM live_activity_operations WHERE live_activity_id=$1",[internal])).rows[0].n)
+      .toBe(operationsBefore);
+    // Retirement is derived from the declared write's age (no signal after T_retire), never stored on the card.
+    const principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner-one'")).rows[0].id;
+    const loaded = await loadOwnerStateInputs(db,principalId,[activityId],
+      new Date(Date.parse(before.declared_at) + (OWNER_STATE_TIMING.retireSeconds + 60) * 1000));
+    expect(deriveOwnerState(loaded[0]!.input).state).toBe("no_signal");
+    expect((await db.query("SELECT state::text FROM live_activities WHERE id=$1",[internal])).rows[0].state).toBe("active");
+    // The producer may still write: a declared write is never refused because time passed.
     const update = await request(`/api/live-activities/${activityId}`,ownerOneToken,{
-      method: "PATCH", body: JSON.stringify({ status: "Too late" }),
+      method: "PATCH", body: JSON.stringify({ status: "Still going" }),
     });
-    expect(update.status).toBe(409);
-    const operations = await db.query<{ operation: string; state: string }>(
-      `SELECT o.operation,a.state FROM live_activity_operations o
-       JOIN live_activities a ON a.id=o.live_activity_id WHERE a.id=$1`,
-      [activityId.slice("act_".length)],
-    );
-    expect(operations.rows).toContainEqual({ operation: "end", state: "expired" });
+    expect(update.status).toBeLessThan(300);
   });
 
   test("concurrent ordinary responses replay exact reuse and conflict changed reuse without a 500", async () => {

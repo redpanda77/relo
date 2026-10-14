@@ -1,29 +1,30 @@
 import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import {
-  AGENT_SESSION_WAITING_AFTER_STOP_SECONDS,AGENT_SESSION_WAITING_ON_PROMPT_SECONDS,agentSessionListResponseSchema,
-  agentSessionPhase,inboxSnapshotResponseSchema,
+  OWNER_STATE_QUIET_SECONDS,OWNER_STATE_TIMING,agentSessionListResponseSchema,harnessCredentialCreateResponseSchema,
+  inboxSnapshotResponseSchema,
 } from "@relo/notification-contracts";
+import { deriveSessionRow } from "./derive/agent-session-evidence.js";
 import { createApp } from "./app.js";
 import { generateToken,hashToken } from "./auth.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
-import { expireDueActivities } from "./activities.js";
 import {
-  SESSION_IDLE_LOST_AFTER_SECONDS,SESSION_LIST_MAX,SESSION_LOST_AFTER_SECONDS,
+  SESSION_LIST_MAX,
   listAgentSessions,readAgentSessions,reconcileAgentSessions,
 } from "./agent-sessions.js";
 
 const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
-suite("Agent sessions: events, read model and the reconciler",() => {
-  let db: Database,principalId: string,app: ReturnType<typeof createApp>;
+suite("Agent sessions: observed snapshots, read model and retention",() => {
+  let db: Database,principalId: string,app: ReturnType<typeof createApp>,hooks: string;
   const owner = "agent_sessions_owner_abcdefghijklmnopqrstuvwxyz";
   const secret = "agent-sessions-secret-with-at-least-32-characters";
   const context = { providerName: "Claude Code",project: "relo",threadName: "Release" };
   const sessionHash = (id: string) => createHash("sha256").update(`claude-code\0${id}`).digest("hex");
   const cardKeyFor = (hash: string) => `session-claude-code-${hash.slice(0,24)}`;
   const S1 = sessionHash("one");
+  const seqs = new Map<string,number>();
 
   beforeAll(async () => {
     db = createDatabase(process.env.TEST_DATABASE_URL!); await migrate(db);
@@ -33,6 +34,8 @@ suite("Agent sessions: events, read model and the reconciler",() => {
   beforeEach(async () => {
     await db.query("TRUNCATE owner_principals, request_rate_limits CASCADE"); await bootstrapOwner(db,"owner",owner);
     principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner'")).rows[0].id;
+    seqs.clear();
+    hooks = await mintHooks();
   });
 
   async function request(method: string,path: string,body?: unknown,token: string | null = owner) {
@@ -42,8 +45,21 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body) });
     return { status: response.status,body: await response.json().catch(() => null) as any,headers: response.headers };
   }
-  const event = (body: Record<string,unknown>,token: string | null = owner) =>
-    request("POST","/api/agent-sessions/events",{ session: S1,harness: "claude-code",...body },token);
+  async function mintHooks(token = owner) {
+    const minted = await request("POST","/api/harness-credentials",{ name: "Test computer hooks" },token);
+    expect(minted.status).toBe(201);
+    return harnessCredentialCreateResponseSchema.parse(minted.body).token;
+  }
+  const at = (secondsAgo = 0) => new Date(Date.now() - secondsAgo * 1000).toISOString();
+  /** One snapshot of the CLI's state machine; seq grows per session unless given. */
+  function snapshot(body: Record<string,unknown>,token: string | null = hooks) {
+    const session = String(body.session ?? S1);
+    const seq = "seq" in body ? body.seq : (seqs.get(session) ?? 0) + 1;
+    if (typeof seq === "number" && Number.isSafeInteger(seq)) seqs.set(session,Math.max(seqs.get(session) ?? 0,seq));
+    const now = at();
+    return request("POST","/api/agent-sessions/observed",{ session,harness: "claude-code",phase: "working",
+      phaseSince: now,lastSeenAt: now,openToolSince: null,...body,seq },token);
+  }
   const row = async (hash = S1) => (await db.query("SELECT * FROM agent_sessions WHERE session_hash=$1",[hash])).rows[0];
   async function keyWith(scopes: string[]) {
     const token = generateToken();
@@ -63,441 +79,314 @@ suite("Agent sessions: events, read model and the reconciler",() => {
     expect(response.status).toBe(201);
     return response.body.activity.id as string;
   };
-  const cardRow = async (key: string) => (await db.query("SELECT * FROM live_activities WHERE activity_key=$1",[key])).rows[0];
+  /** Moves a session's observed times back, as if the snapshot had arrived `seconds` ago. */
   const ago = (hash: string,seconds: number) => db.query(
-    "UPDATE agent_sessions SET last_event_at=now()-make_interval(secs=>$2::double precision) WHERE session_hash=$1",[hash,seconds]);
-  const reconcile = () => reconcileAgentSessions(db);
+    `UPDATE agent_sessions SET phase_since=phase_since-make_interval(secs=>$2::double precision),
+       last_seen_at=last_seen_at-make_interval(secs=>$2::double precision) WHERE session_hash=$1`,[hash,seconds]);
 
-  describe("POST /api/agent-sessions/events",() => {
-    test("stores a session and answers compactly",async () => {
-      const posted = await event({ event: "start",project: "relo",computer: "mac",account: "work",cardKey: cardKeyFor(S1) });
-      expect(posted).toMatchObject({ status: 200,body: { ok: true,state: "active" } });
-      expect(Object.keys(posted.body).sort()).toEqual(["ok","state"]);
-      expect(await row()).toMatchObject({ harness: "claude-code",project: "relo",computer: "mac",account: "work",
-        state: "active",last_event: "start",card_key: cardKeyFor(S1),ended_at: null });
-      expect((await event({ event: "stop" })).body.state).toBe("idle");
-      expect((await event({ event: "prompt" })).body.state).toBe("active");
-      expect((await row()).project).toBe("relo");
+  describe("POST /api/agent-sessions/observed",() => {
+    test("stores the snapshot and answers compactly",async () => {
+      const since = at(30);
+      const posted = await snapshot({ phase: "open",phaseSince: since,lastSeenAt: since,project: "relo",computer: "mac",account: "work" });
+      expect(posted).toMatchObject({ status: 200,body: { ok: true } });
+      expect(Object.keys(posted.body)).toEqual(["ok"]);
+      const stored = await row();
+      expect(stored).toMatchObject({ harness: "claude-code",project: "relo",computer: "mac",account: "work",phase: "open",
+        open_tool_since: null,seq: "1" });
+      expect(stored.phase_since.toISOString()).toBe(since);
+      expect(stored.started_at.toISOString()).toBe(since);
+      const tool = at(5);
+      await snapshot({ phase: "working",phaseSince: at(10),lastSeenAt: at(2),openToolSince: tool });
+      expect(await row()).toMatchObject({ phase: "working",project: "relo",seq: "2" });
+      expect((await row()).open_tool_since.toISOString()).toBe(tool);
     });
 
-    test("rejects anything outside the bounded labels",async () => {
+    test("rejects anything outside the strict snapshot shape",async () => {
       const bad: Record<string,unknown>[] = [
-        { event: "start",session: "short" },
-        { event: "start",session: `${"a".repeat(129)}` },
-        { event: "start",session: "has spaces in it 123456" },
-        { event: "pause" },
-        { event: "start",harness: "Claude Code" },
-        { event: "start",harness: "a".repeat(41) },
-        { event: "start",project: "x".repeat(121) },
-        { event: "start",computer: "x".repeat(121) },
-        { event: "start",account: "x".repeat(41) },
-        { event: "start",cardKey: "x".repeat(101) },
-        { event: "start",project: "line\nbreak" },
-        { event: "start",at: "yesterday" },
-        { event: "start",prompt: "free text" },
-        { event: "start",transcript: "/tmp/x" },
+        { session: "short" },
+        { session: `${"a".repeat(129)}` },
+        { session: "has spaces in it 123456" },
+        { phase: "tool" },
+        { phase: "prompt" },
+        { phase: "lost" },
+        { harness: "Claude Code" },
+        { harness: "a".repeat(41) },
+        { project: "x".repeat(121) },
+        { computer: "x".repeat(121) },
+        { account: "x".repeat(41) },
+        { project: "line\nbreak" },
+        { phaseSince: "yesterday" },
+        { openToolSince: undefined },
+        { seq: 0 },
+        { seq: -1 },
+        { seq: 2.5 },
+        { seq: "3" },
+        { event: "prompt" },
+        { prompt: "free text" },
+        { tool: "Bash" },
+        { transcript: "/tmp/x" },
       ];
       for (const body of bad) {
-        const response = await event(body);
+        const response = await snapshot(body);
         expect(response.status,JSON.stringify(body)).toBe(400);
         expect(response.body.error).toBe("invalid_request");
       }
-      expect((await request("POST","/api/agent-sessions/events","{not json")).status).toBe(400);
+      expect((await request("POST","/api/agent-sessions/observed","{not json",hooks)).status).toBe(400);
       expect((await db.query("SELECT count(*)::int AS n FROM agent_sessions")).rows[0].n).toBe(0);
     });
 
     test("accepts a base64url session hash",async () => {
       const hash = createHash("sha256").update("x").digest("base64url");
-      expect((await event({ session: hash,event: "start" })).status).toBe(200);
+      expect((await snapshot({ session: hash })).status).toBe(200);
     });
 
-    test("scopes: sessions:write and activities:write write; others, phones and strangers do not",async () => {
-      expect((await event({ event: "start" },null)).status).toBe(401);
-      expect((await event({ event: "start" },await keyWith(["notifications:send"]))).status).toBe(403);
-      expect((await event({ event: "start" },await keyWith(["sessions:write"]))).status).toBe(200);
-      expect((await event({ event: "start" },await keyWith(["activities:write"]))).status).toBe(200);
+    test("only a harness credential posts snapshots: CLI keys of any scope, phones and strangers are refused",async () => {
+      expect((await snapshot({},null)).status).toBe(401);
+      expect((await snapshot({},"relo_not-a-real-token-at-all-aaaaaaaaaaaaaaaaaaa")).status).toBe(401);
+      for (const token of [owner,await keyWith(["activities:write"]),await keyWith(["services:write","activities:read"])]) {
+        expect(await snapshot({},token)).toMatchObject({ status: 403,body: { error: "harness_credential_required" } });
+      }
       const device = await phone();
       const credential = generateToken();
       await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read','activities:write'])",
         [device,hashToken(credential)]);
-      expect((await event({ event: "start" },credential)).status).toBe(403);
-      // New keys carry the scope by default.
-      expect((await db.query("SELECT scopes FROM principal_api_keys WHERE token_hash=$1",[hashToken(owner)])).rows[0].scopes)
-        .toContain("sessions:write");
+      expect((await snapshot({},credential)).status).toBe(403);
+      expect((await db.query("SELECT count(*)::int AS n FROM agent_sessions")).rows[0].n).toBe(0);
+      expect((await snapshot({})).status).toBe(200);
+      // The scope is gone: no key carries it, new keys included.
+      expect((await db.query("SELECT count(*)::int AS n FROM principal_api_keys WHERE 'sessions:write'=ANY(scopes)")).rows[0].n).toBe(0);
     });
 
-    test("reading needs activities:read or sessions:write",async () => {
-      await event({ event: "start" });
+    test("reading the list needs an owner credential with activities:read; never the harness credential",async () => {
+      await snapshot({});
       expect((await request("GET","/api/agent-sessions",undefined,await keyWith(["notifications:send"]))).status).toBe(403);
       expect((await request("GET","/api/agent-sessions",undefined,null)).status).toBe(401);
-      for (const scope of ["activities:read","sessions:write"]) {
-        const read = await request("GET","/api/agent-sessions",undefined,await keyWith([scope]));
-        expect(read.status).toBe(200);
-        expect(agentSessionListResponseSchema.parse(read.body).sessions).toHaveLength(1);
-      }
+      expect(await request("GET","/api/agent-sessions",undefined,hooks))
+        .toMatchObject({ status: 403,body: { error: "harness_credential_not_allowed" } });
+      const read = await request("GET","/api/agent-sessions",undefined,await keyWith(["activities:read"]));
+      expect(read.status).toBe(200);
+      expect(agentSessionListResponseSchema.parse(read.body).sessions).toHaveLength(1);
     });
 
-    test("is rate limited per credential",async () => {
-      const token = await keyWith(["sessions:write"]);
+    test("is rate limited per harness credential",async () => {
       let last = 200;
-      for (let i = 0; i < 121 && last === 200; i += 1) last = (await event({ event: "tool" },token)).status;
+      for (let i = 0; i < 121 && last === 200; i += 1) last = (await snapshot({})).status;
       expect(last).toBe(429);
-      const limited = await event({ event: "tool" },token);
+      const limited = await snapshot({});
       expect(limited.body).toMatchObject({ error: "rate_limited",scope: "client" });
       expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
-      // Another credential of the account still writes.
-      expect((await event({ event: "tool" },await keyWith(["sessions:write"]))).status).toBe(200);
+      // Another harness credential of the account still writes.
+      expect((await snapshot({},await mintHooks())).status).toBe(200);
     });
 
-    test("is idempotent and ignores events older than the newest seen",async () => {
-      const now = Date.now();
-      const t = (minutes: number) => new Date(now-minutes*60_000).toISOString();
-      await event({ event: "start",at: t(10) });
-      await event({ event: "prompt",at: t(5) });
-      const before = await row();
-      for (let i = 0; i < 3; i += 1) expect((await event({ event: "prompt",at: t(5) })).body).toEqual({ ok: true,state: "active" });
+    test("ordered by seq: a repeat or an older snapshot never overwrites a newer one",async () => {
+      await snapshot({ phase: "working",phaseSince: at(300),lastSeenAt: at(60),seq: 5 });
+      const newer = await row();
+      for (let i = 0; i < 3; i += 1) {
+        expect((await snapshot({ phase: "working",phaseSince: at(300),lastSeenAt: at(60),seq: 5 })).body).toEqual({ ok: true });
+      }
+      // A late snapshot from before (lower seq) with a later-looking clock still changes nothing.
+      expect((await snapshot({ phase: "stopped",phaseSince: at(1),lastSeenAt: at(1),seq: 4,project: "late" })).status).toBe(200);
+      expect((await snapshot({ phase: "ended",phaseSince: at(1),lastSeenAt: at(1),seq: 1 })).status).toBe(200);
+      expect(await row()).toEqual(newer);
       expect(await db.query("SELECT 1 FROM agent_sessions")).toHaveProperty("rowCount",1);
-      expect((await row()).last_event_at).toEqual(before.last_event_at);
-      // An older stop arrives late: state and time do not move.
-      expect((await event({ event: "stop",at: t(7) })).body.state).toBe("active");
-      expect(await row()).toMatchObject({ state: "active",last_event: "prompt" });
-      expect((await row()).last_event_at).toEqual(before.last_event_at);
       // A newer one applies.
-      expect((await event({ event: "stop",at: t(1) })).body.state).toBe("idle");
+      await snapshot({ phase: "stopped",phaseSince: at(1),lastSeenAt: at(1),seq: 6 });
+      expect(await row()).toMatchObject({ phase: "stopped",seq: "6" });
     });
 
-    test("end finishes the session; stale or late events do not revive it, a newer start does",async () => {
-      const now = Date.now();
-      const t = (minutes: number) => new Date(now-minutes*60_000).toISOString();
-      await event({ event: "start",at: t(10) });
-      expect((await event({ event: "end",at: t(5) })).body.state).toBe("ended");
-      const ended = await row();
-      expect(ended).toMatchObject({ state: "ended",ended_reason: "session_end" });
-      expect(ended.ended_at).toEqual(ended.last_event_at);
-      expect((await event({ event: "end",at: t(5) })).body.state).toBe("ended");
-      expect((await event({ event: "tool",at: t(5) })).body.state).toBe("ended");
-      expect((await event({ event: "tool",at: t(8) })).body.state).toBe("ended");
-      expect((await event({ event: "stop",at: t(1) })).body.state).toBe("ended");
-      expect((await row()).ended_at).toEqual(ended.ended_at);
-      expect((await event({ event: "start",at: t(1) })).body.state).toBe("active");
-      expect(await row()).toMatchObject({ state: "active",ended_at: null,ended_reason: null });
+    test("the CLI decides the phase: an ended session reported working again is working",async () => {
+      const first = at(600);
+      await snapshot({ phase: "open",phaseSince: first,lastSeenAt: first });
+      await snapshot({ phase: "ended",phaseSince: at(300),lastSeenAt: at(300) });
+      await snapshot({ phase: "working",phaseSince: at(10),lastSeenAt: at(10) });
+      expect(await row()).toMatchObject({ phase: "working" });
+      expect((await row()).started_at.toISOString()).toBe(first);
     });
 
-    test("a future timestamp is clamped to the server clock",async () => {
-      await event({ event: "start",at: new Date(Date.now()+86_400_000).toISOString() });
-      const seconds = (await db.query("SELECT extract(epoch FROM last_event_at-now()) AS s FROM agent_sessions")).rows[0].s;
-      expect(Number(seconds)).toBeLessThan(310);
+    test("future times are clamped to the server clock; last seen is never before the phase began",async () => {
+      const future = new Date(Date.now() + 86_400_000).toISOString();
+      await snapshot({ phaseSince: future,lastSeenAt: future,openToolSince: future });
+      const seconds = (await db.query(`SELECT extract(epoch FROM phase_since-now()) AS a,extract(epoch FROM last_seen_at-now()) AS b,
+        extract(epoch FROM open_tool_since-now()) AS c FROM agent_sessions`)).rows[0];
+      for (const value of Object.values(seconds)) expect(Number(value)).toBeLessThan(310);
+      await snapshot({ phaseSince: at(10),lastSeenAt: at(60) });
+      const stored = await row();
+      expect(stored.last_seen_at.valueOf()).toBe(stored.phase_since.valueOf());
+    });
+
+    test("no per-event storage: one row per session, whatever the number of snapshots",async () => {
+      for (const phase of ["open","working","waiting","working","stopped","working","stopped","ended"]) {
+        expect((await snapshot({ phase })).status).toBe(200);
+      }
+      expect((await db.query("SELECT count(*)::int AS n FROM agent_sessions")).rows[0].n).toBe(1);
+      const columns = (await db.query<{ column_name: string }>(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='agent_sessions'")).rows.map((column) => column.column_name);
+      // The snapshot and its labels, nothing per event.
+      expect(columns.sort()).toEqual(["account","computer","created_at","harness","id","last_seen_at","open_tool_since","phase",
+        "phase_since","principal_id","project","sealed_names","seq","session_hash","started_at","updated_at"]);
+      const tables = (await db.query<{ table_name: string }>(
+        "SELECT table_name FROM information_schema.tables WHERE table_name ~ '(session|hook).*event'")).rows;
+      expect(tables).toEqual([]);
     });
   });
 
-  describe("reconciler: presence never owns work (ADR 0007)",() => {
-    async function sessionWithCard(hash = S1) {
-      await phone();
-      const key = cardKeyFor(hash);
-      const id = await startCard(key);
-      await event({ session: hash,event: "start",cardKey: key });
-      await event({ session: hash,event: "prompt" });
-      return { key,id };
-    }
-    /** Everything a session rule could touch: the card row and its questions. */
-    const snapshotOf = async (key: string) => ({
-      card: await db.query("SELECT id,state,sequence,title,status,detail,presentation,sealed,ended_at,terminal_reason FROM live_activities WHERE activity_key=$1",[key])
-        .then(result => result.rows[0]),
-      questions: (await db.query("SELECT id,state,responded_at FROM interaction_requests ORDER BY id")).rows,
-      events: (await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n,
+  describe("harness credentials",() => {
+    test("an owner credential with services:write mints, lists and revokes; the token is hashed at rest",async () => {
+      const minted = await request("POST","/api/harness-credentials",{ name: "Second computer" });
+      expect(minted.status).toBe(201);
+      const { id,token } = harnessCredentialCreateResponseSchema.parse(minted.body);
+      const stored = (await db.query("SELECT * FROM harness_credentials WHERE id=$1",[id.slice(4)])).rows[0];
+      expect(stored.token_hash).not.toContain(token);
+      expect(JSON.stringify(stored)).not.toContain(token);
+      const listed = await request("GET","/api/harness-credentials");
+      expect(listed.body.credentials.map((credential: any) => credential.name)).toContain("Second computer");
+      expect(JSON.stringify(listed.body)).not.toContain(token);
+      expect((await snapshot({},token)).status).toBe(200);
+      expect(await request("DELETE",`/api/harness-credentials/${id}`)).toMatchObject({ status: 200,body: { revoked: true } });
+      expect(await snapshot({},token)).toMatchObject({ status: 401,body: { error: "credential_revoked" } });
+      expect((await request("DELETE","/api/harness-credentials/hck_00000000-0000-4000-8000-000000000000")).status).toBe(404);
     });
 
-    test("invariant: a session end, loss or idle leaves every card and question untouched",async () => {
-      const { key,id } = await sessionWithCard();
-      expect((await request("POST",`/api/live-activities/${id}/wait`,{ type: "yes_no",prompt: "Continue?" })).status).toBe(201);
-      const before = await snapshotOf(key);
-      for (const step of [
-        () => event({ event: "stop" }),
-        () => event({ event: "wait" }),
-        () => ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60),
-        () => event({ event: "end" }),
-        () => ago(S1,SESSION_LOST_AFTER_SECONDS+3_600),
-      ]) {
-        await step();
-        await reconcile(); await reconcile();
-        expect(await snapshotOf(key)).toEqual(before);
-      }
-      expect(before.card.state).toBe("active");
-      expect(before.questions.map((question: any) => question.state)).toEqual(["pending"]);
+    test("minting needs an owner credential with services:write; a harness credential cannot mint or revoke",async () => {
+      expect((await request("POST","/api/harness-credentials",{ name: "x" },await keyWith(["activities:write"]))).status).toBe(403);
+      expect(await request("POST","/api/harness-credentials",{ name: "x" },hooks))
+        .toMatchObject({ status: 403,body: { error: "harness_credential_not_allowed" } });
+      expect((await request("POST","/api/harness-credentials",{ name: "" })).status).toBe(400);
+      expect((await request("POST","/api/harness-credentials",{ name: "x",scopes: ["activities:write"] })).status).toBe(400);
+      const { id } = (await request("GET","/api/harness-credentials")).body.credentials[0];
+      expect((await request("DELETE",`/api/harness-credentials/${id}`,undefined,hooks)).status).toBe(403);
+    });
+  });
+
+  describe("retention: prunes only; phases are derived, never stored",() => {
+    test("reconcileAgentSessions changes no row it does not delete; old sessions go after the retention period",async () => {
+      await snapshot({ phase: "working" });
+      await ago(S1,9 * 3600);
+      const before = await row();
+      expect(await reconcileAgentSessions(db)).toEqual({ pruned: 0 });
+      expect(await row()).toEqual(before);
+      await ago(S1,8 * 24 * 3600);
+      expect(await reconcileAgentSessions(db)).toEqual({ pruned: 1 });
+      expect(await row()).toBeUndefined();
     });
 
-    test("invariant: a lost mid-turn session leaves its card (no question) untouched",async () => {
-      const { key } = await sessionWithCard();
-      const before = await snapshotOf(key);
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+3_600);
-      expect(await reconcile()).toEqual({ lost: 1,pruned: 0 });
-      expect(await row()).toMatchObject({ state: "lost",ended_reason: "lost" });
-      await reconcile();
-      expect(await expireDueActivities(db,"sandbox")).toBe(0);
-      expect(await snapshotOf(key)).toEqual(before);
-    });
-
-    test("invariant: an ended session never ends a later card with the same key",async () => {
-      await phone();
-      const key = cardKeyFor(S1);
-      await event({ event: "start",cardKey: key });
-      await event({ event: "end" });
-      await startCard(key);
-      const before = await snapshotOf(key);
-      await reconcile();
-      expect(await snapshotOf(key)).toEqual(before);
-      expect(before.card.state).toBe("active");
-    });
-
-    test("silence for the lost threshold marks the session lost; nothing else changes",async () => {
-      await sessionWithCard();
-      await ago(S1,SESSION_LOST_AFTER_SECONDS-60);
-      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
-      expect((await row()).state).toBe("active");
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
-      expect(await reconcile()).toEqual({ lost: 1,pruned: 0 });
-      expect(await row()).toMatchObject({ state: "lost",ended_reason: "lost" });
-    });
-
-    test("an idle session waiting for the owner is not lost after the turn threshold, only after the idle one",async () => {
-      await sessionWithCard();
-      await event({ event: "stop" });
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+600);
-      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
-      expect((await row()).state).toBe("idle");
-      expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ state: "idle" });
-      await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
-      expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ state: "lost",presence: "lost" });
-      expect(await reconcile()).toMatchObject({ lost: 1 });
-      const stored = await row();
-      expect(stored.state).toBe("lost");
-      expect(new Date(stored.ended_at).getTime()-new Date(stored.last_event_at).getTime()).toBe(SESSION_IDLE_LOST_AFTER_SECONDS*1000);
-    });
-
-    test("a stale card only dims, whatever its session does; it ends at its hard expiry",async () => {
-      const { key } = await sessionWithCard();
-      await event({ event: "stop" });
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '3 hours' WHERE activity_key=$1",[key]);
-      const staleAt = (await cardRow(key)).stale_at;
-      expect(await expireDueActivities(db,"sandbox")).toBe(0);
-      expect(await cardRow(key)).toMatchObject({ state: "active",stale_at: staleAt });
-      await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
-      await reconcile();
-      expect(await expireDueActivities(db,"sandbox")).toBe(0);
-      expect((await cardRow(key)).state).toBe("active");
-      await db.query("UPDATE live_activities SET expires_at=clock_timestamp()-interval '1 second' WHERE activity_key=$1",[key]);
-      expect(await expireDueActivities(db,"sandbox")).toBe(1);
-      expect((await cardRow(key)).state).toBe("expired");
-    });
-
-    test("a state change wakes the current-state stream; a tool event does not",async () => {
+    test("a phase change wakes the current-state stream; a heartbeat does not",async () => {
       const client = await db.connect();
       const hints: string[] = [];
       client.on("notification",message => { if (message.channel === "relo_current_changes") hints.push(message.payload ?? ""); });
       try {
         await client.query("LISTEN relo_current_changes");
-        await event({ event: "start",at: new Date(Date.now()-3_000).toISOString() });
-        await event({ event: "tool",at: new Date(Date.now()-2_000).toISOString() });
-        await event({ event: "stop",at: new Date(Date.now()-1_000).toISOString() });
+        await snapshot({ phase: "open" });
+        await snapshot({ phase: "working",phaseSince: at(),lastSeenAt: at() });
+        await snapshot({ phase: "working",lastSeenAt: at() });
+        await snapshot({ phase: "stopped" });
         await new Promise(resolve => setTimeout(resolve,200));
         expect(hints.map(hint => JSON.parse(hint))).toEqual([
-          { principalId,subjectId: null },{ principalId,subjectId: null },
+          { principalId,subjectId: null },{ principalId,subjectId: null },{ principalId,subjectId: null },
         ]);
       } finally {
         await client.query("UNLISTEN relo_current_changes");
         client.release();
       }
     });
-
-    test("a lost session that speaks again is active",async () => {
-      const { key } = await sessionWithCard();
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
-      await reconcile();
-      expect((await row()).state).toBe("lost");
-      await event({ event: "tool" });
-      expect(await row()).toMatchObject({ state: "active",ended_at: null });
-      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
-      expect((await cardRow(key)).state).toBe("active");
-    });
-
-    test("an active session whose card went stale is quiet",async () => {
-      const { key,id } = await sessionWithCard();
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '3 minutes',updated_at=clock_timestamp()-interval '14 minutes' WHERE activity_key=$1",[key]);
-      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
-      expect((await cardRow(key)).state).toBe("active");
-      const [session] = await listAgentSessions(db,principalId);
-      expect(session).toMatchObject({ state: "active",presence: "quiet",card: { id,state: "active" } });
-      expect(session!.card!.quietForSeconds).toBeGreaterThanOrEqual(14*60);
-      expect(session!.card!.quietForSeconds).toBeLessThan(15*60);
-    });
-
-    test("an active session with a fresh card is working",async () => {
-      const { id } = await sessionWithCard();
-      const [session] = await listAgentSessions(db,principalId);
-      expect(session).toMatchObject({ presence: "working",card: { id } });
-      expect(session!.card!.quietForSeconds).toBeLessThan(5);
-    });
-
-    test("an active session without a card is listed as no_card and nothing is pushed",async () => {
-      await phone();
-      await event({ event: "start",cardKey: cardKeyFor(S1) });
-      await event({ session: sessionHash("nokey"),event: "start" });
-      const before = (await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n;
-      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
-      expect((await listAgentSessions(db,principalId)).map(session => [session.presence,session.card])).toEqual([["no_card",null],["no_card",null]]);
-      expect((await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n).toBe(before);
-    });
-
-    test("an ended session lists without the card that expired",async () => {
-      const { key } = await sessionWithCard();
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '1 minute',expires_at=clock_timestamp()-interval '1 second' WHERE activity_key=$1",[key]);
-      await expireDueActivities(db,"sandbox");
-      expect((await cardRow(key)).state).toBe("expired");
-      await event({ event: "end" });
-      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
-      expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ presence: "ended",card: null });
-    });
-
-    test("settled sessions are removed after the retention period",async () => {
-      await event({ event: "start" }); await event({ event: "end" });
-      await db.query("UPDATE agent_sessions SET last_event_at=now()-interval '8 days'");
-      expect(await reconcile()).toMatchObject({ pruned: 1 });
-      expect(await row()).toBeUndefined();
-    });
   });
 
-  describe("phases: working, waiting, idle",() => {
-    const phaseOf = async (hash = S1) => {
+  describe("phases: working, waiting, idle, ended",() => {
+    const listed = async (hash = S1) => {
       const id = `ags_${(await row(hash)).id}`;
-      return (await listAgentSessions(db,principalId)).find(session => session.id === id)?.phase;
+      return (await listAgentSessions(db,principalId)).find(session => session.id === id);
     };
 
-    test("a prompt or tool is working; a stop waits five minutes, then is idle",async () => {
-      await event({ event: "prompt" });
-      expect(await phaseOf()).toBe("working");
-      await event({ event: "stop" });
-      expect(await phaseOf()).toBe("waiting");
-      await ago(S1,AGENT_SESSION_WAITING_AFTER_STOP_SECONDS+5);
-      expect(await phaseOf()).toBe("idle");
-      await event({ event: "tool" });
-      expect(await phaseOf()).toBe("working");
+    test("working, unseen for T_fresh/2 idle; stopped waits T_fresh (your turn); a prompt waits T_history (input)",async () => {
+      await snapshot({ phase: "working" });
+      expect(await listed()).toMatchObject({ phase: "working",waitingFor: null });
+      await ago(S1,OWNER_STATE_QUIET_SECONDS + 5);
+      expect((await listed())?.phase).toBe("idle");
+      await snapshot({ phase: "stopped" });
+      expect(await listed()).toMatchObject({ phase: "waiting",waitingFor: "turn" });
+      await ago(S1,OWNER_STATE_TIMING.freshSeconds + 5);
+      expect(await listed()).toMatchObject({ phase: "idle",waitingFor: null });
+      await snapshot({ phase: "waiting" });
+      await ago(S1,OWNER_STATE_TIMING.historySeconds - 60);
+      expect(await listed()).toMatchObject({ phase: "waiting",waitingFor: "input" });
+      await ago(S1,120);
+      expect((await listed())?.phase).toBe("idle");
     });
 
-    test("a permission or input prompt (wait) is waiting for an hour, stored between turns",async () => {
-      await event({ event: "prompt" });
-      expect((await event({ event: "wait" })).body.state).toBe("idle");
-      expect(await row()).toMatchObject({ state: "idle",last_event: "wait" });
-      await ago(S1,AGENT_SESSION_WAITING_ON_PROMPT_SECONDS-60);
-      expect(await phaseOf()).toBe("waiting");
-      await ago(S1,AGENT_SESSION_WAITING_ON_PROMPT_SECONDS+60);
-      expect(await phaseOf()).toBe("idle");
-      // A wait never revives an ended session.
-      await event({ event: "end" });
-      expect((await event({ event: "wait" })).body.state).toBe("ended");
-    });
-
-    test("a session that only started is idle and is not lost after the mid-turn threshold",async () => {
-      await event({ event: "start" });
-      expect(await phaseOf()).toBe("idle");
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
-      expect(await reconcile()).toMatchObject({ lost: 0 });
-      expect(await phaseOf()).toBe("idle");
-      await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
-      expect(await phaseOf()).toBe("lost");
-      expect(await reconcile()).toMatchObject({ lost: 1 });
-    });
-
-    test("a start in the middle of a turn (after a compaction) keeps it working; after a stop it is idle",async () => {
-      await event({ event: "tool" });
-      await event({ event: "start" });
-      expect(await row()).toMatchObject({ state: "active",last_event: "tool" });
-      expect(await phaseOf()).toBe("working");
-      await event({ event: "stop" });
-      await event({ event: "start" });
-      expect(await row()).toMatchObject({ state: "active",last_event: "start" });
-      expect(await phaseOf()).toBe("idle");
+    test("a heartbeat keeps a long turn working",async () => {
+      await snapshot({ phase: "working",phaseSince: at(3600),lastSeenAt: at(3600) });
+      expect((await listed())?.phase).toBe("idle");
+      await snapshot({ phase: "working",phaseSince: at(3600),lastSeenAt: at(30) });
+      expect((await listed())?.phase).toBe("working");
     });
 
     test("?phase= lists only those phases, live first; counts cover every phase; a bad phase is a 400",async () => {
       const [working,waiting,idle,ended] = ["w","x","i","e"].map(sessionHash);
-      await event({ session: working,event: "tool" });
-      await event({ session: waiting,event: "stop" });
-      await event({ session: idle,event: "stop" }); await ago(idle,AGENT_SESSION_WAITING_AFTER_STOP_SECONDS+5);
-      await event({ session: ended,event: "end" });
+      await snapshot({ session: working,phase: "working" });
+      await snapshot({ session: waiting,phase: "stopped" });
+      await snapshot({ session: idle,phase: "stopped" }); await ago(idle,OWNER_STATE_TIMING.freshSeconds + 5);
+      await snapshot({ session: ended,phase: "ended" });
       const all = await request("GET","/api/agent-sessions");
       expect(all.body.sessions.map((session: any) => session.phase)).toEqual(["working","waiting","idle","ended"]);
       const live = await request("GET","/api/agent-sessions?phase=working,waiting");
       expect(live.status).toBe(200);
       expect(agentSessionListResponseSchema.parse(live.body).sessions.map(session => session.phase)).toEqual(["working","waiting"]);
-      expect(live.body.counts).toEqual({ working: 1,waiting: 1,idle: 1,ended: 1,lost: 0 });
-      expect((await request("GET","/api/agent-sessions?phase=idle")).body.sessions).toHaveLength(1);
+      expect(live.body.counts).toEqual({ working: 1,waiting: 1,idle: 1,ended: 1 });
       expect((await request("GET","/api/agent-sessions?phase=asleep")).status).toBe(400);
-      expect((await request("GET","/api/agent-sessions?other=1")).status).toBe(400);
     });
 
-    test("the server's phase and the shared rule agree",async () => {
-      for (const [hash,events,seconds] of [
-        [sessionHash("a"),["prompt"],0],[sessionHash("b"),["stop"],60],[sessionHash("c"),["stop"],AGENT_SESSION_WAITING_AFTER_STOP_SECONDS+60],
-        [sessionHash("d"),["wait"],600],[sessionHash("e"),["start"],0],[sessionHash("f"),["end"],0],
+    test("the listing's phases equal deriveSessionRow for every row",async () => {
+      for (const [hash,phase,seconds] of [
+        [sessionHash("a"),"working",0],[sessionHash("b"),"stopped",60],[sessionHash("c"),"stopped",OWNER_STATE_TIMING.freshSeconds + 60],
+        [sessionHash("d"),"waiting",600],[sessionHash("e"),"open",0],[sessionHash("f"),"ended",0],
       ] as const) {
-        for (const name of events) await event({ session: hash,event: name });
+        await snapshot({ session: hash,phase });
         await ago(hash,seconds);
       }
+      const now = new Date();
+      const rows = (await db.query("SELECT * FROM agent_sessions")).rows;
       for (const session of await listAgentSessions(db,principalId)) {
-        expect(agentSessionPhase(session,Date.now())).toBe(session.phase);
-      }
-    });
-
-    test("a wait after a stop wakes the current-state stream; a second wait does not",async () => {
-      await event({ event: "stop",at: new Date(Date.now()-3_000).toISOString() });
-      const client = await db.connect();
-      const hints: string[] = [];
-      client.on("notification",message => { if (message.channel === "relo_current_changes") hints.push(message.payload ?? ""); });
-      try {
-        await client.query("LISTEN relo_current_changes");
-        await event({ event: "wait",at: new Date(Date.now()-2_000).toISOString() });
-        await event({ event: "wait",at: new Date(Date.now()-1_000).toISOString() });
-        await new Promise(resolve => setTimeout(resolve,200));
-        expect(hints).toHaveLength(1);
-      } finally {
-        await client.query("UNLISTEN relo_current_changes");
-        client.release();
+        const stored = rows.find((candidate) => `ags_${candidate.id}` === session.id);
+        const derived = deriveSessionRow({ now: now.toISOString(),observed: { phase: stored.phase,
+          phaseSince: stored.phase_since.toISOString(),lastSeenAt: stored.last_seen_at.toISOString() },lastDeclaredAt: null });
+        expect([derived.phase,derived.waitingFor]).toEqual([session.phase,session.waitingFor]);
       }
     });
   });
 
   describe("read model and exposure",() => {
-    test("lists the last 24 hours, at most 20, live sessions first, with a silent session reading as lost",async () => {
-      for (let i = 0; i < SESSION_LIST_MAX+4; i += 1) {
-        await event({ session: sessionHash(`many-${i}`),event: "prompt",computer: `mac-${i}` });
+    test("lists the last 24 hours, at most 20, live sessions first, a quiet session reading as idle",async () => {
+      for (let i = 0; i < SESSION_LIST_MAX + 4; i += 1) {
+        await snapshot({ session: sessionHash(`many-${i}`),phase: "working",computer: `mac-${i}` });
       }
-      await event({ session: sessionHash("old"),event: "start" });
-      await db.query("UPDATE agent_sessions SET last_event_at=now()-interval '25 hours' WHERE session_hash=$1",[sessionHash("old")]);
-      await event({ session: sessionHash("ended"),event: "start" }); await event({ session: sessionHash("ended"),event: "end" });
-      await ago(sessionHash("many-0"),SESSION_LOST_AFTER_SECONDS+30);
+      await snapshot({ session: sessionHash("old"),phase: "open" });
+      await ago(sessionHash("old"),25 * 3600);
+      await snapshot({ session: sessionHash("ended"),phase: "open" }); await snapshot({ session: sessionHash("ended"),phase: "ended" });
+      await ago(sessionHash("many-0"),OWNER_STATE_QUIET_SECONDS + 30);
       const read = await readAgentSessions(db,principalId);
-      const listed = read.sessions;
-      expect(listed).toHaveLength(SESSION_LIST_MAX);
-      expect(listed.some(session => session.computer === "mac-0")).toBe(false);
+      const sessions = read.sessions;
+      expect(sessions).toHaveLength(SESSION_LIST_MAX);
+      expect(sessions.some(session => session.computer === "mac-0")).toBe(false);
       expect(agentSessionListResponseSchema.parse(read).sessions).toHaveLength(SESSION_LIST_MAX);
-      expect(read.counts).toEqual({ working: SESSION_LIST_MAX+3,waiting: 0,idle: 0,ended: 1,lost: 1 });
-      expect(listed.every(session => session.state === "active")).toBe(true);
+      expect(read.counts).toEqual({ working: SESSION_LIST_MAX + 3,waiting: 0,idle: 1,ended: 1 });
       await db.query("DELETE FROM agent_sessions WHERE session_hash NOT IN ($1,$2)",[sessionHash("many-0"),sessionHash("ended")]);
-      expect((await listAgentSessions(db,principalId)).map(session => session.state)).toEqual(["ended","lost"]);
+      expect((await listAgentSessions(db,principalId)).map(session => session.phase)).toEqual(["idle","ended"]);
     });
 
     test("has the documented JSON shape",async () => {
       await phone();
       const key = cardKeyFor(S1);
       const id = await startCard(key);
-      await event({ event: "start",project: "relo",computer: "mac",account: "work",cardKey: key });
-      await event({ event: "prompt" });
+      await db.query("UPDATE live_activities SET producer_type='agent_session',session_key=$2 WHERE id=$1",[id.slice(4),S1]);
+      await snapshot({ phase: "open",project: "relo",computer: "mac",account: "work" });
+      await snapshot({ phase: "working" });
       const { body } = await request("GET","/api/agent-sessions");
       expect(body.sessions).toHaveLength(1);
-      expect(body.counts).toEqual({ working: 1,waiting: 0,idle: 0,ended: 0,lost: 0 });
+      expect(body.counts).toEqual({ working: 1,waiting: 0,idle: 0,ended: 0 });
       expect(body.sessions[0]).toEqual({
         id: expect.stringMatching(/^ags_[0-9a-f-]{36}$/),harness: "claude-code",computer: "mac",account: "work",project: "relo",
-        state: "active",phase: "working",lastEvent: "prompt",startedAt: expect.any(String),lastEventAt: expect.any(String),
+        phase: "working",waitingFor: null,startedAt: expect.any(String),lastSeenAt: expect.any(String),
         card: { id,state: "active",quietForSeconds: expect.any(Number) },presence: "working",
       });
     });
@@ -506,38 +395,38 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       const device = await phone();
       const credential = generateToken();
       await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[device,hashToken(credential)]);
-      await event({ event: "start",computer: "mac" });
-      const snapshot = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
-      expect(snapshot.sessions).toHaveLength(1);
-      expect(snapshot.sessions[0]).toMatchObject({ computer: "mac",presence: "no_card",state: "active" });
+      await snapshot({ phase: "open",computer: "mac" });
+      const inbox = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
+      expect(inbox.sessions).toHaveLength(1);
+      expect(inbox.sessions[0]).toMatchObject({ computer: "mac",presence: "no_card",phase: "idle" });
     });
 
     test("sealed session names reach the phone's snapshot only, as stored",async () => {
       const bytes = (n: number) => randomBytes(n).toString("base64url");
       const names = { v: "relo.e2e.v1",kind: "names",context: "ses:abc",sender: `k_${bytes(16)}`,
         recipients: [{ device: "dev_1",prekey: "pk_1",enc: bytes(65),key: bytes(48) }],nonce: bytes(12),ct: bytes(272),sig: bytes(64) };
-      expect((await event({ event: "start",project: "p-aaaaaaaaaaaaaaaa",sealedNames: { ...names,kind: "notice" } })).status).toBe(400);
-      expect((await event({ event: "start",project: "p-aaaaaaaaaaaaaaaa",sealedNames: { ...names,ct: "short" } })).status).toBe(400);
-      expect((await event({ event: "start",project: "p-aaaaaaaaaaaaaaaa",sealedNames: names })).status).toBe(200);
-      expect((await event({ event: "tool" })).status).toBe(200);
+      expect((await snapshot({ phase: "open",project: "p-aaaaaaaaaaaaaaaa",sealedNames: { ...names,kind: "notice" } })).status).toBe(400);
+      expect((await snapshot({ phase: "open",project: "p-aaaaaaaaaaaaaaaa",sealedNames: { ...names,ct: "short" } })).status).toBe(400);
+      expect((await snapshot({ phase: "open",project: "p-aaaaaaaaaaaaaaaa",sealedNames: names })).status).toBe(200);
+      expect((await snapshot({ phase: "working" })).status).toBe(200);
       const device = await phone();
       const credential = generateToken();
       await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[device,hashToken(credential)]);
-      const snapshot = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
-      expect(snapshot.sessions[0]!.sealedNames).toEqual(names);
-      const listed = await request("GET","/api/agent-sessions");
-      expect(listed.body.sessions[0].sealedNames).toBeUndefined();
+      const inbox = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
+      expect(inbox.sessions[0]!.sealedNames).toEqual(names);
+      const read = await request("GET","/api/agent-sessions");
+      expect(read.body.sessions[0].sealedNames).toBeUndefined();
     });
 
     test("another account never sees the sessions",async () => {
-      await event({ event: "start",computer: "mac-private" });
+      await snapshot({ phase: "open",computer: "mac-private" });
       const other = (await db.query("INSERT INTO owner_principals(handle) VALUES ('other2') RETURNING id")).rows[0].id;
       const token = generateToken();
       await db.query("INSERT INTO principal_api_keys(principal_id,label,token_hash) VALUES ($1,'k',$2)",[other,hashToken(token)]);
       const read = await request("GET","/api/agent-sessions",undefined,token);
-      expect(read.body).toEqual({ sessions: [],counts: { working: 0,waiting: 0,idle: 0,ended: 0,lost: 0 } });
+      expect(read.body).toEqual({ sessions: [],counts: { working: 0,waiting: 0,idle: 0,ended: 0 } });
       // The same hash on another account is its own session.
-      expect((await request("POST","/api/agent-sessions/events",{ session: S1,harness: "codex",event: "start" },token)).status).toBe(200);
+      expect((await snapshot({ phase: "open",harness: "codex",seq: 1 },await mintHooks(token))).status).toBe(200);
       expect((await db.query("SELECT count(*)::int AS n FROM agent_sessions")).rows[0].n).toBe(2);
     });
   });

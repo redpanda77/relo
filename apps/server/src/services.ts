@@ -11,7 +11,6 @@ activityEndSchema,
 activityResolveSchema,
 activityStartSchema,
 activityUpdateSchema,
-expireDueActivities,
 serializeTaskActivity,
 taskActivityRequestHash,
 type ApnsMode
@@ -381,7 +380,6 @@ function registerServiceActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     const service = await serviceForSecret(db,context.req.param("secret"));
     if (!service) return context.json({ ok: false,error: "activity_not_found" },404);
     const input = activityResolveSchema.parse(await context.req.json());
-    await expireDueActivities(db,apnsMode);
     const selection = await resolveActivitySelector(db,{
       principalId: service.principal_id,credentialId: null,serviceId: service.id,
     },input);
@@ -404,7 +402,6 @@ function registerServiceActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
   app.get("/hooks/:secret/live-activities/:identifier", async (context) => {
     const service = await serviceForSecret(db,context.req.param("secret"));
     if (!service) return context.json({ ok: false, error: "activity_not_found" },404);
-    await expireDueActivities(db,apnsMode);
     const activity = await resolveServiceActivity(
       db,service.principal_id,service.id,context.req.param("identifier") ?? "",
     );

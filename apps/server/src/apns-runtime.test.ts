@@ -199,14 +199,15 @@ describe("clean-room APNs worker runtime", () => {
     expect(transport.connection.requests).toHaveLength(0);
   });
 
-  test.each([14_400,20_000])("bounds native dismissal duration %s in provider bytes",async dismissAfterSeconds=>{
+  test.each([14_400,20_000])("ignores producer dismissal %s; the owner-state table sets it",async dismissAfterSeconds=>{
     const transport=new RecordingTransport([{kind:"response",status:200,body:Buffer.alloc(0)}]);
     const runtime=new CleanroomApnsRuntime(new FakeDatabase() as never,config(),transport);
     await runtime.send(job({transport:"live_activity_update",activityCommand:{generation:1,sequence:1,operation:"end",
       providerTimestamp:1_786_060_800,status:"Done",dismissAfterSeconds}}),recipient());
     const aps=JSON.parse(Buffer.from(transport.connection.requests[0]!.body).toString()).aps;
     expect(aps.event).toBe("end");expect(aps["content-state"].status).toBe("Done");
-    expect(aps["dismissal-date"]-aps.timestamp).toBe(dismissAfterSeconds<=14_400?dismissAfterSeconds:0);
+    // End dismissal comes from the owner-state table, never the producer: a card without a final owner state leaves at once.
+    expect(aps["dismissal-date"]-aps.timestamp).toBe(0);
   });
 
   test("prewarms and reuses one HTTP/2 session", async () => {
@@ -267,6 +268,7 @@ describe("clean-room APNs worker runtime", () => {
       aps: {
         alert: { title: "Build complete", body: "The build succeeded" },
         sound: "default", badge: 2, "mutable-content": 1, "thread-id": "svc_stable",
+        "interruption-level": "active",
       },
     });
     expect(db.payloadHash).toMatch(/^[0-9a-f]{64}$/);
@@ -373,16 +375,17 @@ describe("clean-room APNs worker runtime", () => {
       expect(aps["mutable-content"]).toBeUndefined();
       expect(aps["input-push-token"]).toBe(index === 0 ? 1 : undefined);
       expect(aps["content-state"].generation).toBe(7);
-      expect(aps["relevance-score"]).toBe(0.95);
+      expect(aps["relevance-score"]).toBe(index === 2 ? 0 : 0.7); // OWNER_STATE_SURFACES.moving.relevance; an end ranks 0
       if (index === 0) expect(aps.attributes.generation).toBe(7);
     }
+    // Plain progress spends priority 5; start and end are 10 (slice 1 item 1.8).
     expect(transport.connection.requests.map((request) => request.headers["apns-priority"]))
-      .toEqual(["10", "10", "10"]);
+      .toEqual(["10", "5", "10"]);
     expect(transport.connection.requests.map((request) => request.headers["apns-expiration"]))
       .toEqual(["0","0","0"]);
     const terminal = JSON.parse(Buffer.from(transport.connection.requests[2]!.body).toString()).aps;
     expect(terminal).toMatchObject({
-      event: "end",timestamp: 1_786_060_802,"dismissal-date": 1_786_060_807,
+      event: "end",timestamp: 1_786_060_802,"dismissal-date": 1_786_060_802, // no owner state: leaves at once
       "content-state": { headline: "Build",status: "Approved",progress: null,sequence: 3 },
     });
   });
@@ -405,7 +408,9 @@ describe("clean-room APNs worker runtime", () => {
       },
     }),recipient());
     const aps = JSON.parse(Buffer.from(transport.connection.requests[0]!.body).toString()).aps;
-    expect(aps["content-state"]).toEqual({ generation: 7,...fixture });
+    // staleAt is derived from the owner state (evidence + T_fresh), never copied from the producer.
+    expect(aps["content-state"]).toMatchObject({ generation: 7,...fixture,staleAt: null });
+    expect(Object.keys(aps["content-state"]).sort()).toEqual([...Object.keys(fixture),"generation","owner"].sort());
   });
 
   test("sends the shared flat current projection without a nested canonical record",async () => {

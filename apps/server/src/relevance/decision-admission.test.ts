@@ -65,7 +65,8 @@ suite("Canonical ordinary decisions",() => {
     expect(await pendingInteractionBadgeCount(db,deviceId)).toBe(0);
     const replay=await ask({ ...command(),occurredAt:first.body.relevance.deadlines.occurredAt },key);
     expect(replay.status).toBe(200);expect(replay.body.relevance).toEqual(first.body.relevance);
-    expect((await answer(first.body.eventId)).status).toBe(409);
+    // A late answer to an expired question is stored as a fact, never permission.
+    expect((await answer(first.body.eventId)).status).toBe(200);
     await db.query("DELETE FROM notification_events WHERE id=$1",[raw(first.body.eventId)]);
     const pruned=await ask({ ...command(),occurredAt:first.body.relevance.deadlines.occurredAt },key);
     expect(pruned.status).toBe(409);expect(pruned.body.error).toBe("retired_replay");

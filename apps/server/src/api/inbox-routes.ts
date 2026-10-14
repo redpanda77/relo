@@ -6,8 +6,6 @@ import { decodePendingCursor,loadPendingInteractions } from "../pending-inventor
 import { decodeCurrentCursor,loadCurrentState } from "../current-state.js";
 import { currentStateStream } from "../current-state-stream.js";
 import { Hono } from "hono";
-import {
-  expireDueActivities } from "../activities.js";
 import { currentSubjectIdSchema } from "@relo/notification-contracts";
 import {  requireScope } from "../auth.js";
 import { internalId, publicId } from "../ids.js";
@@ -17,7 +15,7 @@ import type { ApiRouteContext } from "./route-context.js";
 
 /** The phone inbox read API: change stream, current state, pending decisions, history and read state. */
 export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
-  const { db,apnsMode,dependencies,integratedDependencies,notificationContentCipher } = shared;
+  const { db,dependencies,integratedDependencies,notificationContentCipher } = shared;
   app.get("/api/inbox/events",requireScope("inbox:read"),context=>currentStateStream(context,db,dependencies?.currentChanges));
 
   app.get("/api/inbox/current", requireScope("inbox:read"), async (context) => {
@@ -153,7 +151,6 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
 
   app.get("/api/inbox/live-activities/active", requireScope("inbox:read"), async (context) => {
     const auth = context.get("auth");
-    await expireDueActivities(db,apnsMode);
     const values: unknown[] = [auth.principalId];
     if (auth.deviceId) values.push(auth.deviceId);
     const result = await db.query<any>(

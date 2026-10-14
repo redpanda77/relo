@@ -5,8 +5,8 @@ roadmap describes the current product contract and the next adopter-facing outco
 release evidence and environment-specific operations are intentionally not part of this document.
 
 <!-- current-truth:start -->
-Current baseline: server, worker, and Dashboard `0.16.8`, CLI/notifier/skill `0.15.5`, and iOS
-`0.9.45` build `57` source-only.
+Current baseline: server, worker, and Dashboard `0.18.15`, CLI/notifier/skill `0.16.3`, and iOS
+`0.10.5` build `68` source-only.
 <!-- current-truth:end -->
 
 ## Product contract
@@ -18,7 +18,8 @@ send durable notifications, decisions, and Live Activity progress to that phone.
 - The worker owns APNs delivery attempts and retries.
 - APNs acceptance and phone application are reported as separate facts.
 - The CLI is the primary control and diagnosis interface.
-- Hooks are optional reduced-context adapters, never a prerequisite or source of truth.
+- Declared work, observed session state and derived policy are three separate sources; one server function derives what the owner sees, and the apps only display it.
+- Hooks are optional: they observe session state and remind the agent, never write declared work, and nothing requires them.
 - A server origin is selected explicitly during setup and retained with the scoped CLI credential.
 - Relo is licensed for noncommercial use under PolyForm Noncommercial 1.0.0.
 
@@ -27,7 +28,10 @@ send durable notifications, decisions, and Live Activity progress to that phone.
 - Docker Compose self-hosting with a restricted runtime database role.
 - First-owner setup, account management, and browser sign-in for the iPhone app.
 - Browser-link-first CLI authorization with page-and-code fallback.
-- Notifications, approval/yes-no/text decisions, and Live Activities.
+- Notifications, approval, yes/no and option decisions, and Live Activities.
+- Work reporting for agent sessions, scripts and services (`relo work`, a versioned plan with stable steps), the Now view and the Sessions view.
+- Optional hooks for Claude Code and Gemini CLI (reminders and presence), with a separate harness credential.
+- End-to-end encrypted cards, notices and questions sealed on the computer and opened on the phone.
 - Delivery diagnosis across server, worker, APNs, and exact phone receipt boundaries.
 - Dashboard history, device/client/service administration, and connection guidance.
 - Native iOS inbox, ActivityKit presentation, recovery, and authenticated receipts.

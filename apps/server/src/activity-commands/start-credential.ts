@@ -9,11 +9,12 @@ import { preserveActivePresentationPolicy } from "../presentation-policy.js";
 import { PresentationRuntimeError,assertAccountPresentationAssets } from "../presentation-runtime.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
 import { NativeOccurrenceError,assertNativeStartChronology } from "../relevance/native-occurrence.js";
-import { createActivityCommands,storeSealedCard,eligibleDevices,expireLockedRows,replaceBlockingTaskActivities,retireOverflowCards,serializeTaskActivity } from "./runtime.js";
+import { createActivityCommands,storeSealedCard,eligibleDevices,replaceBlockingTaskActivities,serializeTaskActivity } from "./runtime.js";
 import { activityReplay,completeActiveCardReuse,replayStoredStart,replayedOperation } from "./start-store.js";
 import type { ActivityStartRow } from "./start-types.js";
 import { startAccepted,startRejected,type ActivityStartResult,type ProducerStartCommand } from "./start-types.js";
 import { lockActivityActor } from "./store.js";
+import { credentialProducer,producerColumns } from "./producer-identity.js";
 import type { ActivityActor } from "./types.js";
 type Queryable=SubjectTransaction;
 
@@ -75,17 +76,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
     try {
       if(!await lockActivityActor(client,actor)) {await transaction.rollback();return startRejected({error:"not_found"},"missing");}
       await assertAccountPresentationAssets(client,auth.principalId,input.presentation);
-      const expireDue = async () => {
-        const due = await client.query<ActivityStartRow>(
-          `SELECT * FROM live_activities WHERE principal_id=$1 AND state='active' AND expires_at<=now()
-             AND presentation IS NOT NULL
-           ORDER BY expires_at FOR UPDATE`,
-          [auth.principalId],
-        );
-        await expireLockedRows(client,due.rows,apnsMode);
-      };
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text,0))",[auth.principalId]);
-      await expireDue();
       const concurrentLifecycle = await retainedLifecycleResponse(client);
       if (concurrentLifecycle) {
         await transaction.commit();
@@ -103,11 +94,11 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         `SELECT * FROM live_activities
          WHERE principal_id=$1 AND state='active'
            AND presentation IS NOT NULL
-           AND (($2::text IS NOT NULL AND requester_credential_id=$4
-                 AND requester_service_id IS NULL AND activity_key=$2)
-             OR (cardinality($3::uuid[])>0 AND target_device_ids && $3::uuid[]))
+           -- A start only ever meets the caller's own card for this key (never another producer's).
+           AND $2::text IS NOT NULL AND requester_credential_id=$3
+           AND requester_service_id IS NULL AND activity_key=$2
          ORDER BY created_at FOR UPDATE`,
-        [auth.principalId,input.key ?? null,devices.map((device) => device.id),auth.credentialId],
+        [auth.principalId,input.key ?? null,auth.credentialId],
       );
       const latestOrigin = originSlot?.latest;
       if (latestOrigin) await assertNativeStartChronology(client,latestOrigin,input.occurredAt);
@@ -196,7 +187,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
              presentation_policy_source=COALESCE(presentation_policy_source,$20),
              presentation_preset_id=COALESCE(presentation_preset_id,$21),
              presentation_preset_revision=COALESCE(presentation_preset_revision,$22),
-             sequence=sequence+1,updated_at=statement_timestamp()
+             sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
            WHERE id=$1 AND principal_id=$2 AND state='active'
              AND requester_credential_id=$18 AND requester_service_id IS NULL RETURNING *`,
           [current.id,auth.principalId,activePresentation.title,activePresentation.status,activePresentation.detail,activePresentation.progress,activePresentation.symbol,activePresentation.style,activePresentation.privacy,activePresentation.accentColor,activePresentation.presentation,activePresentation.presentationHash,input.context ?? null,input.staleAfterSeconds,originHash,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,auth.credentialId,input.key ?? null,current.presentation_policy_source,current.presentation_preset_id,current.presentation_preset_revision,input.occurredAt ?? null],
@@ -269,7 +260,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
              presentation_policy_source=COALESCE(presentation_policy_source,$17),
              presentation_preset_id=COALESCE(presentation_preset_id,$18),
              presentation_preset_revision=COALESCE(presentation_preset_revision,$19),
-             sequence=sequence+1,updated_at=statement_timestamp()
+             sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
            WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
           [current.id,auth.principalId,activePresentation.title,activePresentation.status,activePresentation.detail,activePresentation.progress,activePresentation.symbol,activePresentation.style,activePresentation.privacy,activePresentation.accentColor,activePresentation.presentation,activePresentation.presentationHash,input.context ?? null,input.staleAfterSeconds,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,current.presentation_policy_source,current.presentation_preset_id,current.presentation_preset_revision,input.occurredAt ?? null],
         );
@@ -366,7 +357,6 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         await transaction.rollback();
         return startRejected(cardLimitBody(cap),"conflict");
       }
-      await retireOverflowCards(client,auth.principalId,devices.map((device) => device.id),apnsMode);
       const storedKey = key ?? `server:${randomUUID()}`;
       const privacy = storedPresentation.privacy;
       const startTime = Math.min(Date.now(),input.occurredAt ? Date.parse(input.occurredAt) : Date.now());
@@ -376,15 +366,17 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         expiresAt.getTime(),
       ));
       const generation = originSlot?.nextGeneration ?? 1;
+      const producer = producerColumns(credentialProducer({ sessionKey: (input as { sessionKey?: string }).sessionKey,key: input.key }));
       const result = await client.query<ActivityStartRow>(
         `INSERT INTO live_activities(
            principal_id,requester_credential_id,activity_key,title,status,detail,progress,symbol,style,privacy,accent_color,
            target_device_ids,start_idempotency_key,start_request_hash,context,expires_at,stale_at,
            start_replace_requested,start_replaced_count,presentation,presentation_sha256,origin_hash,generation,
            lifecycle_provider,lifecycle_run_id,presentation_policy,presentation_policy_source,
-           presentation_preset_id,presentation_preset_revision,stale_after_seconds,created_at,updated_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,statement_timestamp(),statement_timestamp()) RETURNING *`,
-        [auth.principalId,auth.credentialId,input.key ?? null,input.title,input.status,input.detail ?? null,input.progress ?? null,input.symbol,input.style,privacy,input.accentColor,devices.map((device) => device.id),storedKey,hash,input.context ?? null,expiresAt,staleAt,input.replace,replaced,input.presentation,storedPresentation.presentationHash,originHash,generation,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,presentationPolicy,presentationPolicy.source,presentationPolicy.presetId,presentationPolicy.presetRevision,input.staleAfterSeconds],
+           presentation_preset_id,presentation_preset_revision,stale_after_seconds,producer_type,session_key,created_at,updated_at,declared_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,statement_timestamp(),statement_timestamp(),statement_timestamp()) RETURNING *`,
+        [auth.principalId,auth.credentialId,input.key ?? null,input.title,input.status,input.detail ?? null,input.progress ?? null,input.symbol,input.style,privacy,input.accentColor,devices.map((device) => device.id),storedKey,hash,input.context ?? null,expiresAt,staleAt,input.replace,replaced,input.presentation,storedPresentation.presentationHash,originHash,generation,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,presentationPolicy,presentationPolicy.source,presentationPolicy.presetId,presentationPolicy.presetRevision,input.staleAfterSeconds,
+          producer.producerType,producer.sessionKey],
       );
       const delivery = await createActivityCommands(client,{
         occurredAt: input.occurredAt,

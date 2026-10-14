@@ -149,6 +149,20 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
     const prior=await responseEvidence(tx,row.principal_id,command.idempotencyKey,command.value);
     if(prior) return await finish(exact(prior)?{kind:"replayed",evidenceId:prior.id,interactionId:row.id,state:row.state,respondedAt:row.responded_at}:reject("idempotency_conflict"),exact(prior));
     if(relevance.evaluation?.action==="superseded") return await finish(reject(capability?"interaction_terminal":"interaction_superseded",row.state));
+    // A late answer from the app (1.10): stored and marked late on the expired request. It is a fact
+    // for the agent, never permission (D3): the request stays expired. Live Activity buttons stay refused.
+    if(!capability&&row.state==="expired") {
+      const late=(await tx.query<{late_responded_at:Date}>(`UPDATE interaction_requests
+        SET late_response=$2::jsonb,late_responded_at=clock_timestamp()
+        WHERE id=$1 AND state='expired' AND late_response IS NULL AND owner_dismissed_at IS NULL RETURNING late_responded_at`,
+      [row.id,{state:nextState,...response}])).rows[0];
+      // The owner dismissed this missed question: it no longer needs them, so no late answer either.
+      if(!late&&row.owner_dismissed_at) return await finish(reject("question_dismissed",row.state));
+      if(!late) return await finish(reject("interaction_not_pending",row.state));
+      const lateEvidence=await insertResponseEvidence(tx,row,actor.deviceId,command);
+      if(!lateEvidence) return await finish(reject("idempotency_conflict"));
+      return await finish({kind:"accepted",late:true,evidenceId:lateEvidence.id,interactionId:row.id,state:"expired",respondedAt:late.late_responded_at},true);
+    }
     if(row.state!=="pending"||row.event_state!=="active") return await finish(reject(capability?"interaction_terminal":"interaction_not_pending",row.state));
     if(relevance.evaluation&&!["available","expired"].includes(relevance.evaluation.action)) return await finish(reject(capability?"interaction_terminal":"interaction_not_pending",row.state));
     const accepted=relevance.evaluation?.action==="expired"?null:await acceptLockedResponse(tx,row,nextState,response);

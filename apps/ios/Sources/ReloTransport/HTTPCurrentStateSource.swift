@@ -158,7 +158,7 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
         if Task.isCancelled || (error as? URLError)?.code == .cancelled { return CancellationError() }
         if let network = error as? URLError,
            [.cannotFindHost, .dnsLookupFailed, .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost].contains(network.code) {
-            return InboxRemoteError.tailnetUnavailable
+            return InboxRemoteError.serverUnreachable
         }
         if error is URLError { return InboxRemoteError.unavailable }
         return error

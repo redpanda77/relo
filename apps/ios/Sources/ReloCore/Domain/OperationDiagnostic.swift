@@ -42,7 +42,7 @@ public struct OperationDiagnostic: Codable, Equatable, Sendable, Identifiable {
         if let error = error as? MobileAPIError {
             switch error {
             case .reauthenticationRequired, .forbidden, .invalidCredentials, .accountDisabled: return .unauthorized
-            case .unavailable, .tailnetUnavailable: return .offline
+            case .unavailable, .serverUnreachable: return .offline
             case .rateLimited: return .providerBackoff
             case .decisionRejected(let reason): return reason == .expired ? .expired : reason == .superseded || reason == .versionMismatch ? .superseded : .failed
             default: return .failed

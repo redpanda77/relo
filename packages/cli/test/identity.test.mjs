@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { noRunningCards } from "./fake-cards.mjs";
@@ -11,7 +12,7 @@ function dependencies(client, stdin) {
 }
 const creates = [
   ["notify", "send", "Ready"], ["ask", "Continue?", "--approval"],
-  ["activity", "start", "--title", "Release", "--status", "Working"],
+  ["activity", "start", "--title", "Release", "--status", "Applying migrations"],
 ];
 
 test("every creation rejects each missing or blank grouping level without an API call", async () => {

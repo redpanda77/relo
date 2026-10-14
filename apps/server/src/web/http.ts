@@ -28,7 +28,7 @@ export async function accountOrRedirect<Account>(
   getAccount: (headers: Headers) => Promise<Account | null>,
 ): Promise<Account | Response> {
   const account = await getAccount(context.req.raw.headers);
-  return account ?? context.redirect(`/?next=${encodeURIComponent(context.req.path)}`);
+  return account ?? context.redirect(`/sign-in?next=${encodeURIComponent(context.req.path)}`);
 }
 
 export function isoDate(value: unknown): string | null {

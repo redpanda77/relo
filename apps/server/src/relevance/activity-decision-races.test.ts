@@ -56,9 +56,18 @@ suite("Activity decision transaction ordering",()=>{
         deviceId:row.device_id,principalId:row.principal_id,credentialVersion:Number(row.credential_version),expiresAt:new Date(row.expires_at)}),
       idempotencyKey:randomUUID()};
   }
+  // Questions are decoupled from the card: ending a card no longer takes the request lock, so it
+  // finishes while an answer holds the request row (no lock ordering left to deadlock on).
+  test("end does not wait on a held request lock",async ()=>{
+    const decision=await ask(),holder=await db.connect();
+    await holder.query("BEGIN");await holder.query("SELECT id FROM interaction_requests WHERE id=$1 FOR UPDATE",[decision.interaction.id.slice(4)]);
+    try{
+      const ended=await request(`/api/live-activities/${decision.liveActivityId}/end`,owner,{});
+      expect(ended.status).toBe(200);
+    }finally{await holder.query("ROLLBACK");holder.release();}
+  });
   test.each([
-    {first:"answer",surface:"phone"},{first:"end",surface:"phone"},
-    {first:"answer",surface:"capability"},{first:"end",surface:"capability"},
+    {first:"answer",surface:"phone"},{first:"answer",surface:"capability"},
   ])("$surface $first first settles without a request/activity deadlock",async ({first,surface})=>{
     const decision=await ask(),holder=await db.connect();
     await holder.query("BEGIN");await holder.query("SELECT id FROM interaction_requests WHERE id=$1 FOR UPDATE",[decision.interaction.id.slice(4)]);

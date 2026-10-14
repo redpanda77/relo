@@ -4,7 +4,7 @@ import { createApp } from "./app.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
-import { expireDueActivities } from "./activities.js";
+import { retireByPolicy } from "./activity-commands/retirement.js";
 import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import { notifyUnseenQuestionCards } from "./activity-commands/question-fallback.js";
 import { registerActivityUpdateToken } from "./activity-token-registration.js";
@@ -51,10 +51,11 @@ suite("Card lifecycle: fallback, idle cleanup and the per-phone cap",() => {
     expect((await db.query("SELECT kind FROM notification_events WHERE payload ? 'questionFallback'")).rows[0].kind).toBe("notification");
     expect(await notifyUnseenQuestionCards(db,{ apnsMode: "sandbox",contentCipher: createNotificationContentCipher(secret) })).toBe(0);
     expect(await fallbacks()).toBe(1);
-    // Unanswered: the question expires, the card ends, and the fallback notification is withdrawn.
+    // Unanswered: the question expires (missed), the card returns to its work and stays open, and the
+    // fallback notification is withdrawn. A question never ends work (1.10).
     await db.query("UPDATE interaction_requests SET expires_at=clock_timestamp()-interval '1 second'");
     expect(await expireDueInteractiveActivities(db,"sandbox")).toBeGreaterThan(0);
-    expect((await db.query("SELECT state,status FROM live_activities")).rows).toEqual([{ state: "expired",status: "No answer" }]);
+    expect((await db.query("SELECT state,status FROM live_activities")).rows).toEqual([{ state: "active",status: "Working" }]);
     expect((await db.query("SELECT withdrawn_at IS NOT NULL AS withdrawn FROM notification_events WHERE payload ? 'questionFallback'")).rows)
       .toEqual([{ withdrawn: true }]);
   });
@@ -77,33 +78,38 @@ suite("Card lifecycle: fallback, idle cleanup and the per-phone cap",() => {
     expect(await fallbacks()).toBe(1);
   });
 
-  test("a card that stopped updating only dims (ADR 0007); it ends at its hard expiry, never for silence",async () => {
+  test("a card that stopped updating leaves the Lock Screen at T_retire, still open; a card holding a question stays",async () => {
     await phone(true);
     const idle = await start("work-idle");
     const asking = await start("work-asking");
     await post(`/api/live-activities/${asking.body.activity.id}/wait`,{ type: "yes_no",prompt: "Continue?" });
-    await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '3 hours'");
-    expect(await expireDueActivities(db,"disabled")).toBe(0);
+    const before = (await db.query("SELECT * FROM live_activities WHERE activity_key='work-idle'")).rows[0];
+    await db.query("UPDATE live_activities SET declared_at=clock_timestamp()-interval '61 minutes'");
+    const retiredBefore = (await db.query("SELECT * FROM live_activities WHERE activity_key='work-idle'")).rows[0];
+    expect((await retireByPolicy(db,"disabled")).retired).toBe(1);
     const states = async () => Object.fromEntries((await db.query("SELECT activity_key,state FROM live_activities")).rows
       .map((row: any) => [row.activity_key,row.state]));
     expect(await states()).toEqual({ "work-idle": "active","work-asking": "active" });
-    await db.query("UPDATE live_activities SET expires_at=clock_timestamp()-interval '1 second' WHERE activity_key='work-idle'");
-    expect(await expireDueActivities(db,"disabled")).toBe(1);
-    expect(await states()).toEqual({ "work-idle": "expired","work-asking": "active" });
+    // Retirement never writes the card row.
+    expect((await db.query("SELECT * FROM live_activities WHERE activity_key='work-idle'")).rows[0]).toEqual(retiredBefore);
+    expect(before.sequence).toEqual(retiredBefore.sequence);
+    expect((await db.query(`SELECT l.state,l.reason FROM live_activity_presentation_leases l JOIN live_activities a
+      ON a.id=l.live_activity_id WHERE a.activity_key='work-idle'`)).rows).toEqual([{ state: "not_presented",reason: "retired_no_signal" }]);
+    expect((await retireByPolicy(db,"disabled")).retired).toBe(0);
     expect(idle.status).toBe(201);
   });
 
-  test("a sixth card on a phone ends the least recently updated idle card",async () => {
+  test("a start ends nothing at a device's sixth card; display keeps the top 3",async () => {
     await phone(true);
-    for (let index = 0; index < 5; index += 1) {
-      expect((await start(`work-${index}`)).status).toBe(201);
-      await db.query("UPDATE live_activities SET updated_at=updated_at-($1*interval '1 minute') WHERE activity_key=$2",[10-index,`work-${index}`]);
-    }
-    expect((await start("work-5")).status).toBe(201);
+    for (let index = 0; index < 6; index += 1) expect((await start(`work-${index}`)).status).toBe(201);
     const active = (await db.query("SELECT activity_key FROM live_activities WHERE state='active' ORDER BY activity_key")).rows
       .map((row: any) => row.activity_key);
-    expect(active).toEqual(["work-1","work-2","work-3","work-4","work-5"]);
+    expect(active).toEqual(["work-0","work-1","work-2","work-3","work-4","work-5"]);
+    await retireByPolicy(db,"disabled");
+    expect((await db.query(`SELECT count(*)::int AS n FROM live_activity_presentation_leases
+      WHERE state IN ('eligible','foreground','background','pending_token')`)).rows[0].n).toBe(3);
   });
+
   test("the phone's proof that it showed a card outlives the card",async () => {
     const device = await phone(true);
     const card = await start("work-shown");

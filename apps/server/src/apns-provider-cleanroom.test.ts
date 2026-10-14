@@ -369,6 +369,16 @@ describe("clean-room APNs provider", () => {
     expect(sandbox.poolKey).not.toBe(production.poolKey);
   });
 
+  it("an ordinary alert with interruptionLevel writes aps interruption-level", async () => {
+    const transport = new ScriptedTransport([[response(200), response(200)]]);
+    const p = provider(transport, new MutableClock());
+    await p.sendAlert({ recipient: recipient(), alert: "question", interruptionLevel: "time-sensitive" });
+    await p.sendAlert({ recipient: recipient(), alert: "plain" });
+    const [first, second] = transport.connections[0]!.requests;
+    expect(JSON.parse(Buffer.from(first!.body).toString()).aps["interruption-level"]).toBe("time-sensitive");
+    expect(JSON.parse(Buffer.from(second!.body).toString()).aps).not.toHaveProperty("interruption-level");
+  });
+
   it("builds a signed cached ES256 bearer JWT and reuses a healthy connection", async () => {
     const transport = new ScriptedTransport([[response(200), response(200)]]);
     const clock = new MutableClock();

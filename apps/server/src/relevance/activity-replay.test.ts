@@ -81,7 +81,7 @@ suite("Retained ActivityKit run replay",()=>{
       expect(slot.active?.id).toBe(state==="active"?latest.body.activity.id.slice(4):undefined);
     }finally{await holder.query("ROLLBACK");holder.release();await selector.query("ROLLBACK");selector.release();}
   });
-  test.each(["credential","service"])("%s rejects changed start intent when expiry wins before acquisition",async actor=>{
+  test.each(["credential","service"])("%s start after a lapsed lease never creates a second card",async actor=>{
     const service=actor==="service"?await createWebhookService(db,principalId,"Replay","http://127.0.0.1:8180"):null;
     const path=service?new URL(service.webhookUrl).pathname+"/live-activities":"/api/live-activities";
     const body={title:"Expired run",status:"Working",lifecycle:{provider:"codex",runId:"expired-original-run"},
@@ -89,7 +89,10 @@ suite("Retained ActivityKit run replay",()=>{
     const first=await request(path,body);expect(first.status).toBe(201);
     await db.query("UPDATE live_activities SET expires_at='2000-01-01',stale_at='2000-01-01' WHERE id=$1",[first.body.activity.id.slice(4)]);
     const changed=await request(path,{...body,status:"Changed after expiry"});
-    expect(changed.status).toBe(409);expect(changed.body.error).toBe("lifecycle_run_conflict");
+    // A lapsed lease never ends the card: a credential start lands on the same still-active card; a service
+    // keeps its exact-replay contract and refuses a changed intent.
+    if(service){expect(changed.status).toBe(409);expect(changed.body.error).toBe("lifecycle_run_conflict");}
+    else{expect(changed.status).toBe(200);expect(changed.body.activity.id).toBe(first.body.activity.id);}
     expect((await db.query("SELECT count(*)::int AS n FROM live_activities")).rows[0].n).toBe(1);
   });
 });

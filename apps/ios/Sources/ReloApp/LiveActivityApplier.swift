@@ -142,12 +142,11 @@ final class LiveActivityApplier {
             presentation: presentation,
             startedAt: startedAt,
             sealed: command.sealed,
-            work: command.work
+            work: command.work,
+            owner: command.owner
         )
-        let fallbackStaleDate = Date().addingTimeInterval(600)
+        // The server's staleDate (evidence + T_fresh); nil only on an end. The phone invents none.
         let staleDate = command.staleAt
-            ?? command.expiresAt.map { min($0, fallbackStaleDate) }
-            ?? fallbackStaleDate
         let content = ActivityContent(
             state: state,
             staleDate: staleDate,
@@ -390,33 +389,6 @@ final class LiveActivityApplier {
                 try await ActivityKitMutationAdapter.end(nativeID: existingID, content: content, dismissal: dismissal)
             }
         }
-    }
-
-    /// Ends cards nothing will keep current (past expiry, or stale well beyond the server's idle
-    /// end), for every account, online or not. Returns how many ended, by reason.
-    /// - Parameter running: card IDs of agent sessions in the middle of a turn, kept past stale.
-    static func endAbandonedActivities(now: Date, running: Set<String> = []) async -> [LiveActivityAbandonmentPolicy.Reason: Int] {
-        var ended: [LiveActivityAbandonmentPolicy.Reason: Int] = [:]
-        for activity in Activity<ReloActivityAttributes>.activities
-        where activity.activityState == .active || activity.activityState == .stale {
-            let content = activity.content
-            guard let reason = LiveActivityAbandonmentPolicy.reason(
-                expiresAt: content.state.expiresAt,
-                staleAt: content.state.staleAt ?? content.staleDate,
-                sessionRunning: running.contains(activity.attributes.eventID),
-                now: now
-            ) else { continue }
-            var state = content.state
-            state.interaction = nil
-            state.updatedAt = now
-            await activity.end(ActivityContent(state: state, staleDate: nil), dismissalPolicy: .immediate)
-            ended[reason, default: 0] += 1
-        }
-        if !ended.isEmpty {
-            Logger(subsystem: "relo.app", category: "live-activities").notice(
-                "Ended abandoned cards: expired \(ended[.expired] ?? 0), stale \(ended[.abandoned] ?? 0)")
-        }
-        return ended
     }
 
     static func snapshot(

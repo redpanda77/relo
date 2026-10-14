@@ -97,7 +97,7 @@ suite("Canonical expiry for ordinary decisions",()=>{
       expect((await db.query("SELECT state FROM interaction_requests WHERE id=$1",[held.requestId])).rows[0].state).toBe("approved");
     }finally{await tx.query("ROLLBACK");tx.release();}
   });
-  test("expiry winner rejects a racing API response and records no answer",async()=>{
+  test("a response racing the expiry winner is stored as a late answer, never permission",async()=>{
     const row=await decision(),locked=deferred(),release=deferred();
     const wrapped={connect:async()=>{const client=await db.connect();return{
       release:()=>client.release(),query:async(sql:string,args?:unknown[])=>{
@@ -108,8 +108,8 @@ suite("Canonical expiry for ordinary decisions",()=>{
     };}} as Database;
     const expiry=expireDueInteractiveActivities(wrapped,"disabled");await locked.promise;
     const response=respond(row.eventId);release.resolve();expect(await expiry).toBe(1);
-    const result=await response;expect(result.status).toBe(409);expect(await result.json()).toMatchObject({state:"expired"});
-    expect((await db.query("SELECT count(*)::int AS count FROM interactions WHERE notification_event_id=$1",[row.eventId])).rows[0].count).toBe(0);
+    const result=await response;expect(result.status).toBe(200);expect(await result.json()).toMatchObject({late:true,decision:{state:"expired"}});
+    expect((await db.query("SELECT state,late_response IS NOT NULL AS late FROM interaction_requests WHERE notification_event_id=$1",[row.eventId])).rows[0]).toEqual({state:"expired",late:true});
   });
   test("queue failure rolls request and event expiry back together",async()=>{
     const row=await decision();await db.query("INSERT INTO delivery_jobs(notification_event_id,device_id) VALUES ($1,$2)",[row.eventId,deviceId]);

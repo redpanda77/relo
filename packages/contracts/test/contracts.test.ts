@@ -434,15 +434,22 @@ test("the cross-package current-slice fixture matches the canonical schemas", ()
   }
 });
 
-test("agent session events accept only bounded labels", async () => {
-  const { agentSessionEventRequestSchema, inboxSnapshotResponseSchema } = await import("../src/index.js");
-  const ok = { session: "a".repeat(64), harness: "claude-code", event: "start" };
-  assert.equal(agentSessionEventRequestSchema.safeParse(ok).success, true);
-  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, event: "pause" }).success, false);
-  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, prompt: "hello" }).success, false);
-  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, session: "short" }).success, false);
-  assert.equal(agentSessionEventRequestSchema.safeParse({ ...ok, project: "x".repeat(121) }).success, false);
-  assert.equal(apiTokenScopeSchema.parse("sessions:write"), "sessions:write");
+test("observed session snapshots accept only a phase, times, a seq and bounded labels", async () => {
+  const { agentSessionObservedRequestSchema, inboxSnapshotResponseSchema } = await import("../src/index.js");
+  const at = "2026-10-14T10:00:00.000Z";
+  const ok = { session: "a".repeat(64), harness: "claude-code", phase: "working", phaseSince: at, lastSeenAt: at,
+    openToolSince: null, seq: 1 };
+  assert.equal(agentSessionObservedRequestSchema.safeParse(ok).success, true);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, phase: "tool" }).success, false, "no raw event names");
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, event: "prompt" }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, prompt: "hello" }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, tool: "Bash" }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, seq: 0 }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, seq: 1.5 }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, openToolSince: undefined }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, session: "short" }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, project: "x".repeat(121) }).success, false);
+  assert.equal(apiTokenScopeSchema.safeParse("sessions:write").success, false, "declared credentials never write observed state");
   const snapshot = inboxSnapshotResponseSchema.parse({
     items: [], total: 0, serverTime: new Date().toISOString(), readWatermark: null, unread: { account: 0, projects: {} },
   });

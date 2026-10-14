@@ -19,12 +19,15 @@ describe("activity presentation relevance",() => {
     expect(activityPresentationScopeKey({ id: "activity-4" })).toBe("activity:activity-4");
   });
 
-  test("ranks interaction and attention above measured and informational work",() => {
+  test("relevance is the derived owner state's table relevance, never status text",() => {
+    expect(activityRelevanceScore({ state: "active",owner: { state: "needs_you" } },"update")).toBe(1);
+    expect(activityRelevanceScore({ state: "active",owner: { state: "failed" } },"update")).toBe(0.9);
+    expect(activityRelevanceScore({ state: "active",owner: { state: "working_quietly" } },"update")).toBe(0.5);
+    expect(activityRelevanceScore({ state: "active",owner: { state: "stale" },status: "Needs attention" },"update")).toBe(0.3);
+    expect(activityRelevanceScore({ state: "active",owner: { state: "paused" } },"update")).toBe(0);
+    // Without an attached owner state: a question card is needs_you, anything else moving.
     expect(activityRelevanceScore({ state: "active",presentation: { behavior: { type: "approval" } } },"start")).toBe(1);
-    expect(activityRelevanceScore({ state: "active",symbol: "warning",status: "Needs attention" },"update")).toBe(0.95);
-    expect(activityRelevanceScore({ state: "active",progress: 0.4,status: "Building" },"update")).toBe(0.72);
-    expect(activityRelevanceScore({ state: "active",progress: null,status: "Working" },"update")).toBe(0.65);
-    expect(activityRelevanceScore({ state: "active",status: "Waiting" },"update")).toBe(0.45);
+    expect(activityRelevanceScore({ state: "active",symbol: "warning",status: "Failed" },"update")).toBe(0.7);
   });
 
   test("terminal commands have no foreground relevance",() => {
@@ -44,7 +47,7 @@ describe("activity presentation relevance",() => {
     await expect(syncActivityPresentationLease({ query } as never,{
       principalId: "principal-1",deviceId: "device-1",operation: "update",
       activity: { id: "activity-1",generation: 4,sequence: 7,state: "active",progress: 0.4 },
-    })).resolves.toMatchObject({ state: "pending_token",relevanceScore: 0.72 });
+    })).resolves.toMatchObject({ state: "pending_token",relevanceScore: 0.7 });
     expect(calls.find(({ text }) => text.includes("live_activity_update_tokens"))?.values)
       .toEqual(["activity-1","device-1",4]);
     expect(calls.some(({ text }) => text.includes("l.state NOT IN ('pending_token'"))).toBe(true);

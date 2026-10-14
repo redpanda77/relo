@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdtemp, stat } from "node:fs/promises";
@@ -15,7 +16,7 @@ const SPARE = "dev_mnopqrstuvwx";
 const DEVICE_CODE = "d".repeat(43);
 const TOKEN = `relo_${"s".repeat(43)}`;
 const SCOPES = ["activities:read", "activities:write", "devices:read", "interactions:create", "interactions:read",
-  "notifications:send", "services:read", "services:write", "sessions:write"];
+  "notifications:send", "services:read", "services:write"];
 const topic = ["--topic", "Release 0.7.57"];
 
 async function cli(argv, dependencies) {
@@ -69,9 +70,10 @@ test("agent harnesses are recognized only by confirmed markers", () => {
   }
 });
 
-test("RELO_SESSION gives any harness or script one card per session", () => {
+test("RELO_SESSION gives a script or the owner's shell one card per session, never a harness", () => {
   assert.deepEqual(agentSession({ RELO_SESSION: " s-42 " }), { agent: "relo", id: "s-42" });
-  assert.deepEqual(agentSession({ RELO_SESSION: "s", CLAUDE_CODE_SESSION_ID: "c" }), { agent: "relo", id: "s" });
+  assert.deepEqual(agentSession({ RELO_SESSION: "s", CLAUDE_CODE_SESSION_ID: "c" }), { agent: "claude-code", id: "c" });
+  assert.equal(agentSession({ RELO_SESSION: "s", GEMINI_CLI: "1" }), null);
   assert.equal(agentSession({ GEMINI_CLI: "1" }), null);
   const a = cardKey({ env: { RELO_SESSION: "one" }, context: { providerName: "Aider", project: "p", threadName: "t" } });
   const b = cardKey({ env: { RELO_SESSION: "one" }, context: { providerName: "Aider", project: "p", threadName: "other" } });
@@ -116,7 +118,7 @@ test("--progress N/TOTAL labels itself 'N of TOTAL' unless a label is given", as
   const { client, calls: all } = fakeCards();
   const calls = new Proxy(all, { get: (target, name) => target.filter((call) => call.op !== "get")[name] });
   const deps = cardDependencies(client, { env: { RELO_SESSION: "p" } });
-  await cli(["activity", "start", "--title", "T", "--status", "S", "--progress", "3/20", ...topic], deps);
+  await cli(["activity", "start", "--title", "Translate the book", "--status", "Translating chapters", "--progress", "3/20", ...topic], deps);
   assert.equal(calls[0].body.progressLabel, "3 of 20");
   await cli(["activity", "update", "--progress", "4/20"], deps);
   assert.equal(calls[1].body.progressLabel, "4 of 20");
@@ -124,7 +126,7 @@ test("--progress N/TOTAL labels itself 'N of TOTAL' unless a label is given", as
   assert.equal(calls[2].body.progressLabel, "Chapters");
   await cli(["activity", "update", "--progress", "40%"], deps);
   assert.equal(calls[3].body.progressLabel, undefined);
-  await cli(["activity", "update", "--status", "x"], deps);
+  await cli(["activity", "update", "--status", "Reviewing chapter four"], deps);
   assert.equal(calls[4].body.progressLabel, undefined);
 });
 
@@ -424,11 +426,9 @@ test("a rejected sign-in is a login step with exit 3", async () => {
 });
 
 test("help and schema state the steps-vs-progress rule and the any-harness wording", () => {
-  for (const text of [GUIDE, HELP]) {
-    assert.match(text, /judgment work/u);
-    assert.match(text, /Never both/u);
-    assert.match(text, /RELO_SESSION/u);
-  }
+  assert.match(GUIDE, /Steps are milestones in order\. Parallel work \(subagents, several jobs\) is one step with a count/u);
+  assert.match(GUIDE, /relo state/u);
+  assert.match(HELP, /RELO_SESSION/u);
   assert.match(OPTIONS.steps.description, /never both/iu);
   assert.match(OPTIONS.progress.description, /done\/total/u);
   assert.match(OPTIONS.progress.description, /never both/iu);

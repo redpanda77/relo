@@ -1,4 +1,5 @@
 import { checkSealedCard,sealedQuestionRequest,unsignedSealed,withUnsignedSealed } from "./sealed-content.js";
+import { recordQuestionOnWork } from "./works/questions.js";
 import { carriesCardText,END_TO_END_REQUIRED,endToEndRequired } from "./end-to-end-policy.js";
 import { continueQuestionBeyondCard } from "./activity-commands/long-question.js";
 import { assertQuestionWait } from "./question-wait.js";
@@ -10,7 +11,7 @@ type RelevanceItem
 import { Hono } from "hono";
 import { z } from "zod";
 import { executeActivityCommand } from "./activity-commands/commands.js";
-import { expireDueActivities,expireLockedRows,serializeTaskActivity,taskActivityRequestHash } from "./activity-commands/runtime.js";
+import { serializeTaskActivity,taskActivityRequestHash } from "./activity-commands/runtime.js";
 import { notifyQuestionFallback } from "./activity-commands/question-fallback.js";
 import type { NotificationContentCipher } from "./notification-content.js";
 import { foldQuestionIntoCard } from "./activity-commands/fold-question.js";
@@ -41,7 +42,7 @@ persistedPresentationColumns
 } from "./presentation-runtime.js";
 import { NativeOccurrenceError } from "./relevance/native-occurrence.js";
 import { requireWorkIdentity,workIdentityError } from "./work-identity.js";
-export { activityProviderTimestamp,activityStartedAt,boundedPresentationText,cancelPendingActivityInteractions,createActivityCommands,expireDueActivities,replaceBlockingTaskActivities,serializeTaskActivity,taskActivityRequestHash } from "./activity-commands/runtime.js";
+export { activityProviderTimestamp,activityStartedAt,boundedPresentationText,cancelPendingActivityInteractions,createActivityCommands,replaceBlockingTaskActivities,serializeTaskActivity,taskActivityRequestHash } from "./activity-commands/runtime.js";
 export { activityDeliverySummarySchema,activityEndSchema,activityHeartbeatSchema,activityResolveSchema,activityStartSchema,activityUpdateSchema,activityWaitSchema,liveActivityStyles,liveActivitySymbols,taskLiveActivityStyles } from "./activity-commands/schemas.js";
 export type { ActivityDeliverySummary,ApnsMode } from "./activity-commands/schemas.js";
 
@@ -255,16 +256,7 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
         return context.json({ error: "activity_owner_conflict",code: "ACTIVITY_OWNER_CONFLICT",
           disposition: "blocked" },409);
       }
-      const leaseExpired = current.lifecycle_provider !== null
-        && new Date(current.stale_at) <= new Date();
-      if (current.state === "active" && (new Date(current.expires_at) <= new Date() || leaseExpired)) {
-        await expireLockedRows(client,[current],apnsMode);
-        await transaction.commit();
-        const terminal = await resolveOwnedActivity(
-          db,auth.principalId,publicId("act",current.id),false,auth.credentialId,
-        );
-        return context.json({ error: "activity_terminal",activity: serializeTaskActivity(terminal) },409);
-      }
+      // A write past expires_at (or a provider's lease) continues the card: time never ends work.
       if (current.state !== "active") {
         await transaction.rollback();
         return context.json({ error: "activity_terminal",activity: serializeTaskActivity(current) },409);
@@ -446,6 +438,8 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
       }
       const updated = { rows: [folded.activity] };
       const delivery = folded.delivery;
+      // A question on a work's card attaches to that work (never ends it).
+      await recordQuestionOnWork(client,parentRow,folded.interactionRequestId);
       // Asked to wait past the usual 5 minutes and longer than the card lives: the same decision keeps
       // waiting in Relo after the card ends. A usual question still ends with its card.
       const cardSeconds = Math.floor((new Date(parentRow.expires_at).getTime()-Date.now())/1_000);
@@ -553,7 +547,6 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     if (!auth.scopes.has("activities:read")) return context.json({ error: "forbidden" },403);
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
     const input = activityResolveSchema.parse(await context.req.json());
-    await expireDueActivities(db,apnsMode);
     const result = await resolveActivitySelector(db,{
       principalId: auth.principalId,credentialId: auth.credentialId,serviceId: null,
     },input);
@@ -569,7 +562,6 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     const auth = context.get("auth");
     if (!auth.scopes.has("activities:read")) return context.json({ error: "forbidden" },403);
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
-    await expireDueActivities(db,apnsMode);
     const result = await db.query<any>(
       `SELECT * FROM live_activities WHERE principal_id=$1 AND requester_credential_id=$2
        AND requester_service_id IS NULL
@@ -583,7 +575,6 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
     const auth = context.get("auth");
     if (!auth.scopes.has("activities:read")) return context.json({ error: "forbidden" },403);
     if (!auth.credentialId) return context.json({ error: "principal_credential_required" },403);
-    await expireDueActivities(db,apnsMode);
     const row = await resolveOwnedActivity(db,auth.principalId,context.req.param("activityId") ?? "",false,auth.credentialId);
     return row ? context.json({ activity: serializeTaskActivity(row) }) : context.json({ error: "not_found" },404);
   });

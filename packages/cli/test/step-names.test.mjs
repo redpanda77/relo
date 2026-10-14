@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { checkStepNames, isGenericStepName } from "../src/step-names.mjs";

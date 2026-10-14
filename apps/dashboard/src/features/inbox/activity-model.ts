@@ -12,7 +12,6 @@ export type Tone =
   | "magenta"
   | "coral"
   | "mint"
-  | "amber"
   | "orange"
   | "yellow"
   | "red"
@@ -396,23 +395,6 @@ export function nowMix(input: { cards: ActivityCard[]; running: number; needsYou
   if (input.needsYou > 0) mix.needsYou = (mix.needsYou ?? 0) + input.needsYou
   if (input.running > 0) mix.running = (mix.running ?? 0) + input.running
   return mix
-}
-
-/** A card with no update for this long reads as quiet. */
-export const QUIET_AFTER_MS = 20 * 60_000
-
-/** Milliseconds of silence for a running card that has gone quiet; otherwise null. */
-export function quietFor(card: ActivityCard, now: number): number | null {
-  if (card.outcome.kind !== "running" || !card.at) return null
-  const silence = now - new Date(card.at).valueOf()
-  return Number.isFinite(silence) && silence >= QUIET_AFTER_MS ? silence : null
-}
-
-/** "25M", "2H" or "2H 5M": how long a quiet card has been silent. */
-export function quietLabel(ms: number): string {
-  const minutes = Math.max(1, Math.floor(ms / 60_000))
-  if (minutes < 60) return `${minutes}M`
-  return minutes % 60 === 0 ? `${minutes / 60}H` : `${Math.floor(minutes / 60)}H ${minutes % 60}M`
 }
 
 /** "updated 5 min ago". */

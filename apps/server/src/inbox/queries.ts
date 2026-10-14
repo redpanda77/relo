@@ -141,6 +141,6 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     if (!parsed.success) console.warn("inbox snapshot: skipped an unreadable item", value.id, parsed.error.issues.map(issue => issue.path.join(".")).join(","));
     return parsed.success;
   });
-  return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions,{ withSealedNames: true }),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
+  return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions,{ withSealedNames: true,now: row.server_time }),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
     readWatermark:row.latest_at && row.latest_id ? Buffer.from(JSON.stringify([row.latest_at,row.latest_id])).toString("base64url") : null});
 }

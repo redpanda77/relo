@@ -16,7 +16,6 @@ export const allowedCliScopes = [
   "interactions:read",
   "activities:write",
   "activities:read",
-  "sessions:write",
   "devices:read",
   "services:read",
   "services:write",
@@ -80,83 +79,89 @@ const cliAuthorizationPage = `<!doctype html>
       <div class="terminal-actions" id="terminal-actions" hidden><a class="button-link deny" href="/dashboard">Return to dashboard</a></div>
     </section>
   </main>
-  <script>
-    const code=document.querySelector('#code');
-    const codeField=document.querySelector('#code-field');
-    const box=document.querySelector('#request');
-    const message=document.querySelector('#message');
-    const title=document.querySelector('#state-title');
-    const detail=document.querySelector('#state-detail');
-    const actions=document.querySelector('#decision-actions');
-    const terminalActions=document.querySelector('#terminal-actions');
-    const approve=document.querySelector('#approve');
-    const deny=document.querySelector('#deny');
-    let refreshTimer;
-    let busy=false;
-    code.value=new URLSearchParams(location.search).get('code')||'';
-
-    function clearRefresh(){if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=undefined}}
-    function scheduleRefresh(){clearRefresh();refreshTimer=setTimeout(()=>load(false),750)}
-    function showState(state,heading,description,terminal=false){
-      message.hidden=false;message.dataset.state=state;title.textContent=heading;detail.textContent=description;
-      terminalActions.hidden=!terminal;
-      if(terminal)message.focus();
-    }
-    function hideState(){message.hidden=true;message.removeAttribute('data-state');terminalActions.hidden=true}
-    function renderRequest(request){
-      document.querySelector('#client').textContent=request.clientName;
-      document.querySelector('#shown-code').textContent=request.userCode;
-      document.querySelector('#scopes').replaceChildren(...request.scopes.map((scope)=>{const item=document.createElement('div');item.className='scope';item.textContent=scope;return item}));
-      document.querySelector('#expiry').textContent='Request expires '+new Date(request.expiresAt).toLocaleString()+' · credential expires '+new Date(request.credentialExpiresAt).toLocaleString();
-      box.hidden=request.status==='consumed';codeField.hidden=request.status==='consumed';
-      actions.hidden=request.status!=='pending';approve.disabled=busy||request.status!=='pending';deny.disabled=busy||request.status!=='pending';
-      clearRefresh();
-      if(request.status==='pending'){hideState();return}
-      if(request.status==='approved'){
-        showState('approved','Waiting for the CLI to connect','Authorization is approved. Keep the CLI window open while it securely collects the credential.');
-        scheduleRefresh();return;
-      }
-      if(request.status==='consumed'){
-        showState('consumed','Connected successfully','The CLI collected its credential. You can close this tab.',true);return;
-      }
-      if(request.status==='denied'){
-        showState('denied','Request denied','No credential was issued. You can close this tab.',true);return;
-      }
-      if(request.status==='expired'){
-        showState('expired','Request expired','Start authorization again from the CLI to receive a new code.',true);return;
-      }
-      showState('error','Authorization unavailable','Return to the CLI and start authorization again.',true);
-    }
-    async function load(announce=true){
-      const normalized=code.value.trim();if(!normalized){box.hidden=true;hideState();return}
-      try{
-        const response=await fetch('/api/device-authorizations/requests/'+encodeURIComponent(normalized),{cache:'no-store'});
-        const body=await response.json();
-        if(!response.ok){box.hidden=true;showState('error','Request not found',body.error==='authorization_not_found'?'Check the code or start authorization again from the CLI.':'Unable to inspect this request. Try again.');return}
-        renderRequest(body.request);
-        if(announce&&body.request.status!=='pending')message.focus();
-      }catch{
-        showState('error','Connection interrupted','Check your connection. Relo will try this request again.');scheduleRefresh();
-      }
-    }
-    async function decide(action){
-      if(busy)return;busy=true;approve.disabled=true;deny.disabled=true;
-      showState('approved',action==='approve'?'Authorizing…':'Denying…','Recording your decision securely.');
-      try{
-        const response=await fetch('/api/device-authorizations/requests/'+encodeURIComponent(code.value)+'/'+action,{method:'POST'});
-        if(!response.ok&&response.status!==409){const body=await response.json();showState('error','Decision not recorded',body.error||'Try again from the CLI.');return}
-        await load();
-      }catch{
-        showState('error','Decision not recorded','Check your connection and try again.');
-      }finally{busy=false;if(!actions.hidden){approve.disabled=false;deny.disabled=false}}
-    }
-    code.addEventListener('change',()=>load());
-    approve.addEventListener('click',()=>decide('approve'));
-    deny.addEventListener('click',()=>decide('deny'));
-    load();
-  </script>
+  <script src="/cli/authorize.js"></script>
 </body>
 </html>`;
+
+// Served as a same-origin file so the page's CSP allows no inline script.
+const cliAuthorizationScript = `const code=document.querySelector('#code');
+const codeField=document.querySelector('#code-field');
+const box=document.querySelector('#request');
+const message=document.querySelector('#message');
+const title=document.querySelector('#state-title');
+const detail=document.querySelector('#state-detail');
+const actions=document.querySelector('#decision-actions');
+const terminalActions=document.querySelector('#terminal-actions');
+const approve=document.querySelector('#approve');
+const deny=document.querySelector('#deny');
+let refreshTimer;
+let busy=false;
+code.value=new URLSearchParams(location.search).get('code')||'';
+
+function clearRefresh(){if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=undefined}}
+function scheduleRefresh(){clearRefresh();refreshTimer=setTimeout(()=>load(false),750)}
+function showState(state,heading,description,terminal=false){
+  message.hidden=false;message.dataset.state=state;title.textContent=heading;detail.textContent=description;
+  terminalActions.hidden=!terminal;
+  if(terminal)message.focus();
+}
+function hideState(){message.hidden=true;message.removeAttribute('data-state');terminalActions.hidden=true}
+function renderRequest(request){
+  document.querySelector('#client').textContent=request.clientName;
+  document.querySelector('#shown-code').textContent=request.userCode;
+  document.querySelector('#scopes').replaceChildren(...request.scopes.map((scope)=>{const item=document.createElement('div');item.className='scope';item.textContent=scope;return item}));
+  document.querySelector('#expiry').textContent='Request expires '+new Date(request.expiresAt).toLocaleString()+' · credential expires '+new Date(request.credentialExpiresAt).toLocaleString();
+  box.hidden=request.status==='consumed';codeField.hidden=request.status==='consumed';
+  actions.hidden=request.status!=='pending';approve.disabled=busy||request.status!=='pending';deny.disabled=busy||request.status!=='pending';
+  clearRefresh();
+  if(request.status==='pending'){hideState();return}
+  if(request.status==='approved'){
+    showState('approved','Waiting for the CLI to connect','Authorization is approved. Keep the CLI window open while it securely collects the credential.');
+    scheduleRefresh();return;
+  }
+  if(request.status==='consumed'){
+    showState('consumed','Connected successfully','The CLI collected its credential. You can close this tab.',true);return;
+  }
+  if(request.status==='denied'){
+    showState('denied','Request denied','No credential was issued. You can close this tab.',true);return;
+  }
+  if(request.status==='expired'){
+    showState('expired','Request expired','Start authorization again from the CLI to receive a new code.',true);return;
+  }
+  showState('error','Authorization unavailable','Return to the CLI and start authorization again.',true);
+}
+async function load(announce=true){
+  const normalized=code.value.trim();if(!normalized){box.hidden=true;hideState();return}
+  try{
+    const response=await fetch('/api/device-authorizations/requests/'+encodeURIComponent(normalized),{cache:'no-store'});
+    const body=await response.json();
+    if(!response.ok){box.hidden=true;showState('error','Request not found',body.error==='authorization_not_found'?'Check the code or start authorization again from the CLI.':'Unable to inspect this request. Try again.');return}
+    renderRequest(body.request);
+    if(announce&&body.request.status!=='pending')message.focus();
+  }catch{
+    showState('error','Connection interrupted','Check your connection. Relo will try this request again.');scheduleRefresh();
+  }
+}
+async function decide(action){
+  if(busy)return;busy=true;approve.disabled=true;deny.disabled=true;
+  showState('approved',action==='approve'?'Authorizing…':'Denying…','Recording your decision securely.');
+  try{
+    const response=await fetch('/api/device-authorizations/requests/'+encodeURIComponent(code.value)+'/'+action,{method:'POST'});
+    if(!response.ok&&response.status!==409){const body=await response.json();showState('error','Decision not recorded',body.error||'Try again from the CLI.');return}
+    await load();
+  }catch{
+    showState('error','Decision not recorded','Check your connection and try again.');
+  }finally{busy=false;if(!actions.hidden){approve.disabled=false;deny.disabled=false}}
+}
+code.addEventListener('change',()=>load());
+approve.addEventListener('click',()=>decide('approve'));
+deny.addEventListener('click',()=>decide('deny'));
+load();
+`;
+
+// The page fetches only this server and runs only /cli/authorize.js; nothing may frame it or post elsewhere.
+const cliAuthorizationContentSecurityPolicy =
+  "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
 function domainHash(domain: string, value: string): string {
   return hashToken(`relo:${domain}:v1\n${value}`);
@@ -396,13 +401,21 @@ export function registerPublicDeviceAuthorizationRoutes(app: Hono, db: Database,
     const account = await getOwnerAccount(db, accountAuth, context.req.raw.headers);
     if (!account) {
       const next = `/cli/authorize${new URL(context.req.url).search}`;
-      return context.redirect(`/?next=${encodeURIComponent(next)}`);
+      return context.redirect(`/sign-in?next=${encodeURIComponent(next)}`);
     }
     return context.html(cliAuthorizationPage, 200, {
+      "Content-Security-Policy": cliAuthorizationContentSecurityPolicy,
       "Referrer-Policy": "no-referrer",
       "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
     });
   });
+
+  app.get("/cli/authorize.js", (context) => context.body(cliAuthorizationScript, 200, {
+    "Content-Type": "text/javascript; charset=utf-8",
+    "Cache-Control": "no-cache",
+    "X-Content-Type-Options": "nosniff",
+  }));
 }
 
 export function registerMachineAuthRoutes(app: Hono, db: Database): void {

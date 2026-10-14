@@ -15,9 +15,9 @@
     "sha256": "8605b8ba08c20d42f9e455151871896d0e0de980596286fb736d11eec013e2a4"
   },
   {
-    "origin": "https://relo.tail0000.ts.net:8180/",
-    "normalized": "https://relo.tail0000.ts.net:8180",
-    "sha256": "26e247fda31b032f9023d7a13eea4546a85a968c1daa733d80d6211496af39b1"
+    "origin": "https://relo.example.test/",
+    "normalized": "https://relo.example.test",
+    "sha256": "2502475f128fcb945f3936968582b9bc02b8fad74a686762a2ff7dd15ad9989c"
   },
   {
     "origin": "http://[::1]:8180/",

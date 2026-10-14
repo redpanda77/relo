@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { authenticateOwner, verifySecondStep } from "@/features/auth/auth-service"
+import { GITHUB_URL, GitHubMark } from "@/features/auth/github"
 import type { DashboardAuth } from "@/features/auth/types"
 
 function friendlyAuthError(cause: unknown): string {
@@ -32,9 +33,20 @@ const promises = [
   { icon: LockKeyhole, text: "End-to-end encrypted, on a server you run." },
 ] as const
 
-function serverHost(): string {
-  return typeof window === "undefined" ? "" : window.location.host
+/** Desktop shows the deck alone and large; phones get a smaller deck so the whole form fits one screen. */
+function useMedia(query: string): boolean {
+  const [matches, setMatches] = React.useState(() => typeof window !== "undefined" && window.matchMedia?.(query).matches === true)
+  React.useEffect(() => {
+    const media = window.matchMedia?.(query)
+    if (!media) return
+    const update = () => setMatches(media.matches)
+    update()
+    media.addEventListener("change", update)
+    return () => media.removeEventListener("change", update)
+  }, [query])
+  return matches
 }
+
 
 export function AuthPage({
   bootstrap,
@@ -43,6 +55,9 @@ export function AuthPage({
   bootstrap: DashboardAuth
   onAuthenticated?: (path: string) => void
 }) {
+  const wideDeck = useMedia("(min-width: 1024px)")
+  const phone = useMedia("(max-width: 639px)")
+  const short = useMedia("(max-height: 700px)")
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState("")
   const [mode, setMode] = React.useState(bootstrap.mode)
@@ -121,13 +136,27 @@ export function AuthPage({
       id="main-content"
       className="canvas relative min-h-[100dvh] overflow-hidden"
     >
-      <header className="absolute inset-x-0 top-0 z-10 flex h-16 items-center px-5 sm:px-8">
-        <BrandLockup orbClassName="size-7" />
+      <header className="absolute inset-x-0 top-0 z-10">
+        <div className="mx-auto flex h-16 w-full max-w-[1240px] items-center justify-between px-5 sm:px-8 lg:h-20 lg:px-12">
+          <a href="/" aria-label="Relo home">
+            <BrandLockup orbClassName="size-7" />
+          </a>
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="external noopener"
+            className="inline-flex min-h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-[13px] text-[#d6d6e2] transition-colors hover:border-white/25 hover:text-foreground"
+          >
+            <GitHubMark className="size-4" />
+            <span className="hidden sm:inline">View on GitHub</span>
+            <span className="sm:hidden">GitHub</span>
+          </a>
+        </div>
       </header>
-      <div className="mx-auto grid min-h-[100dvh] w-full max-w-6xl items-center gap-x-12 gap-y-6 px-4 pt-16 pb-10 sm:px-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,25rem)] lg:pt-10">
+      <div className="mx-auto grid min-h-[100dvh] w-full max-w-[1240px] items-center gap-x-20 gap-y-4 px-4 pt-14 pb-4 sm:gap-y-6 sm:px-8 sm:pt-16 sm:pb-10 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,27rem)] lg:px-12 lg:pt-24 lg:pb-16">
         <section aria-label="Relo" className="min-w-0">
-          <div className="mx-auto max-w-[34rem]">
-            <React.Suspense fallback={<div className="h-[330px]" aria-hidden="true" />}>
+          <div className="auth-deck mx-auto max-w-[34rem] lg:max-w-none">
+            <React.Suspense fallback={<div className="h-[200px] sm:h-[330px] lg:h-[600px]" aria-hidden="true" />}>
               <NowHud
                 welcome={{ label: stageLabel }}
                 today={0}
@@ -136,15 +165,16 @@ export function AuthPage({
                 needsYou={0}
                 arcs={[]}
                 sentence=""
+                stage={wideDeck ? 600 : phone ? (short ? 150 : 200) : undefined}
               />
             </React.Suspense>
           </div>
-          <h1 className="rise-in mt-2 text-center font-[family-name:var(--font-rounded)] text-[2.25rem] leading-[1.08] font-bold tracking-tight text-balance sm:text-[2.75rem] lg:text-left">
-            Your agents.
+          <h1 className="rise-in text-center font-[family-name:var(--font-rounded)] text-[1.75rem] leading-[1.08] sm:mt-2 sm:text-[2.25rem] font-bold tracking-tight text-balance sm:text-[2.75rem] lg:sr-only">
+            Every agent.
             <br />
-            <span className="text-[var(--muted-foreground)]">One calm Inbox.</span>
+            <span className="text-[var(--muted-foreground)]">One place.</span>
           </h1>
-          <ul className="rise-in rise-in-2 mx-auto mt-6 hidden max-w-md space-y-3 sm:block lg:mx-0">
+          <ul className="rise-in rise-in-2 mx-auto mt-7 hidden w-fit max-w-md space-y-3 sm:block lg:hidden">
             {promises.map(({ icon: Icon, text }) => (
               <li key={text} className="flex items-start gap-3 text-[15px] text-[#d6d6e2]">
                 <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.05] text-[var(--neon-cyan)]">
@@ -158,7 +188,7 @@ export function AuthPage({
 
         <section
           aria-labelledby="auth-title"
-          className="glass rise-in rise-in-1 w-full justify-self-center rounded-[28px] p-6 sm:max-w-[25rem] sm:p-8"
+          className="glass rise-in rise-in-1 w-full justify-self-center rounded-[28px] p-5 sm:max-w-[27rem] sm:p-8 lg:p-10"
         >
           <h2 id="auth-title" className="text-2xl font-bold tracking-tight">
             {awaitingApproval ? "Waiting for approval" : secondStep ? "Two-step sign-in" : title}
@@ -172,17 +202,7 @@ export function AuthPage({
                   ? "Enter one of the backup codes you saved when you turned on two-step sign-in."
                   : description}
           </p>
-          <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-black/25 px-4 py-3">
-            <div className="min-w-0">
-              <p className="micro">Your server</p>
-              <p className="mt-1 truncate font-mono text-[13px] text-foreground">{serverHost()}</p>
-            </div>
-            <span className="micro inline-flex shrink-0 items-center gap-1.5 text-[var(--neon-mint)]">
-              <span className="ink-dot tone-mint" aria-hidden="true" />
-              Online
-            </span>
-          </div>
-          <div className="mt-6">
+          <div className="mt-5 sm:mt-6">
             {awaitingApproval ? (
               <Button
                 type="button"
@@ -215,7 +235,7 @@ export function AuthPage({
                 <input type="checkbox" name="trustDevice" className="size-4" disabled={pending} />
                 Don't ask again on this browser for 30 days
               </label>
-              <p role="alert" className="min-h-5 text-sm text-destructive">{error}</p>
+              <p role="alert" className="text-sm text-destructive empty:hidden">{error}</p>
               <button type="submit" disabled={pending} className="capsule-cta w-full disabled:opacity-60">
                 {pending ? "Checking…" : "Continue"}
               </button>
@@ -234,7 +254,7 @@ export function AuthPage({
               id="auth-form"
               data-mode={mode}
               data-next={bootstrap.route.nextPath}
-              className="space-y-4"
+              className="space-y-3.5 sm:space-y-4"
               onSubmit={(event) => void submit(event)}
             >
               {!signingIn ? (
@@ -281,7 +301,7 @@ export function AuthPage({
               <p
                 id="error"
                 role="alert"
-                className="min-h-5 text-sm text-destructive"
+                className="text-sm text-destructive empty:hidden"
               >
                 {error}
               </p>

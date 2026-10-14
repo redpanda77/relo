@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { describe,expect,test } from "vitest";
 import {
   dashboardAppAssetResponse,
+  landingPreloadTags,
   renderDashboardAppDocumentFromIndex,
   type TestLabDashboardBootstrap,
 } from "./dashboard-app.js";
@@ -76,6 +77,7 @@ describe("dashboard React application delivery", () => {
     const auth: DashboardAuthBootstrap = {
       version: 1,
       kind: "auth",
+      view: "form",
       route: { path: "/", nextPath: "/dashboard" },
       mode: "sign-in",
       title: "Sign in to Relo",
@@ -86,6 +88,37 @@ describe("dashboard React application delivery", () => {
     expect(html).toContain('data-dashboard-entry="auth"');
     expect(html).toContain("<title>Sign in to Relo · Relo</title>");
     expect(html).toContain("Loading authentication…");
+  });
+
+  test("the landing chunk, its imports and CSS are preloaded with the document; the entry and unsafe paths are not", () => {
+    const tags = landingPreloadTags({
+      "index.html": { file: "assets/index-a.js", isEntry: true, imports: ["_utils-b.js"] },
+      "_utils-b.js": { file: "assets/utils-b.js" },
+      "_icon-c.js": { file: "assets/icon-c.js", imports: ["index.html"] },
+      "_bad.js": { file: "../../etc/passwd" },
+      "src/features/landing/landing-page.tsx": {
+        file: "assets/landing-page-d.js", css: ["assets/landing-page-e.css"],
+        imports: ["_utils-b.js", "_icon-c.js", "index.html", "_bad.js"],
+      },
+      "src/features/landing/landing-scene.ts": { file: "assets/landing-scene-f.js" },
+    });
+    expect(tags).toContain('<link rel="stylesheet" crossorigin href="/assets/landing-page-e.css">');
+    for (const file of ["landing-page-d.js","utils-b.js","icon-c.js"])
+      expect(tags).toContain(`<link rel="modulepreload" crossorigin href="/assets/${file}">`);
+    expect(tags).toContain('<link rel="modulepreload" crossorigin href="/assets/landing-scene-f.js" fetchpriority="low">');
+    expect(tags).not.toContain("index-a.js");
+    expect(tags).not.toContain("passwd");
+    expect(landingPreloadTags({})).toBe("");
+  });
+
+  test("the landing document carries a description for link previews; the form does not", () => {
+    const indexHtml = `<!doctype html><html><head><title>Dashboard</title></head><body><div id="root"></div></body></html>`;
+    const base: DashboardAuthBootstrap = {
+      version: 1, kind: "auth", view: "landing", route: { path: "/", nextPath: "/dashboard" },
+      mode: "sign-in", registration: "closed", title: "Sign in to Relo", description: "x",
+    };
+    expect(renderDashboardAppDocumentFromIndex(indexHtml,base)).toContain('<meta name="description"');
+    expect(renderDashboardAppDocumentFromIndex(indexHtml,{ ...base, view: "form" })).not.toContain('<meta name="description"');
   });
 
   test("injects bootstrap JSON without permitting a script breakout", () => {

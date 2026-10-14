@@ -12,11 +12,52 @@ The error code says why a working login stopped: `account_disabled` (the server 
 account off; retrying will not help), `credential_revoked` (the owner revoked this login; sign in again
 only if they want it back), `login_expired` (run `relo auth login`).
 
-## `card_limit_reached`
+## "This Relo server is older than relo work"
 
-This login already keeps as many cards running as the owner allows. End a card you no longer need
-(`relo activity list`, `relo activity end ID`) or ask the owner to raise the limit in Dashboard ›
-Connections. `relo ask` still works: the question waits in Relo's Needs you instead of on a card.
+`Refused: this Relo server is older than relo work (server 0.18.0 or newer is needed).` (exit `1`, code
+`SERVER_TOO_OLD`): the CLI is newer than the server, and nothing was sent. Run `relo doctor` and tell the
+owner once; the server and CLI update together. Do not fall back to older commands.
+
+## A refusal
+
+Every refusal is three lines: `Refused:` what went wrong, `State:` where things are, `Next:` the exact
+command. Run the `Next` command (fill in the `…`); do not retry the refused one unchanged. Common ones:
+
+- `this session has no open work`: `relo work start --goal "…"`, or `relo work resume wrk_…` for a parked one.
+- `relo work update needs at least one change`, `this work has no plan, so there is no next step`,
+  `every step is already done` (finish, or `--add`), `--progress takes a count like 3/10`.
+- A placeholder word, a path or a secret in work text: rewrite it in the owner's words.
+- `step "…" is something the owner does`: a plan holds only your own work; ask the owner
+  (`relo ask "…" --approval`) or put it in the status.
+- `the work changed twice while this command ran` (code `VERSION_CONFLICT`): another relo command in
+  this session raced it; run the same command again.
+
+## Step names unreadable here (R-21)
+
+`Refused: this computer cannot read this work's step names (it was started elsewhere), so steps can't
+be matched by name.` The account seals work text and this computer has no copy of the labels. Steps
+still work by id: the `State:` line lists `s1 (done), s2 (current), s3 (open)`; use
+`relo work update --step s3`, `--next-step` or `--add "…"`. `--plan` and `--step <label>` need the names.
+
+## Owner-only commands refused
+
+`Refused: relo sessions shows every session; it is for the owner, not for an agent inside a session.`
+(exit `2`, code `OWNER_ONLY`). Inside an agent session `relo sessions`, `relo listen` and the
+card lookups (`list`, `get`, `status`, `diagnose`) are refused. Use `relo state` for this session's
+own work. The owner runs those commands in a terminal outside the agent.
+
+## No session id (Gemini CLI, Cursor, OpenCode)
+
+`Refused: this shell has no session id (…), so Relo cannot tell which work is yours.` Pass the handle
+that `relo work start` printed (`--work wrk_….<token>`) to every later command. `no work matches that
+handle` means a wrong or foreign handle: start a new work.
+
+## "Queued: sends with the next relo command"
+
+A work change made while the server was unreachable is kept on this computer and sent, oldest first,
+before the next relo command does its own work. Nothing is lost and you need not retry. `relo state`
+shows how many changes are still queued; `relo state --sync` asks the server. A question still needs
+the server: it is never queued and the command fails with exit `6`.
 
 ## Network failure
 
@@ -38,16 +79,15 @@ the prerequisite. Do not claim delivery and do not allow a protected action.
 ## Unanswered question
 
 Exit `4` with state `timeout` ("No answer yet; the question is still open"): the wait ended before the
-question did (about 100s in an agent session). Run the hint, `relo interaction wait ID --timeout 100s`,
+question did (about 100s in a session). Run the hint, `relo interaction wait ID --timeout 100s`,
 as often as needed until the question closes. Exit `8` with state `expired` or `canceled` ("closed
-… Do not act"): treat it as no. The card ended; `relo activity start` opens a new one if the work
-continues. Never ask again just to extend the wait. `question_pending` means the
-card already shows a question: wait, or `relo interaction cancel ID` first. `private_activity_question`
-means the card is private and cannot show questions.
+… Do not act"): treat it as no. The work stays as it was; keep updating it. An answer that shows up
+later in an echo is marked late and is never permission: ask again. Never ask again just to extend the wait. `question_pending` means the
+work already shows a question: wait, or `relo interaction cancel ID` first.
 
 ## Unknown command or option
 
-A typo fails with exit `2` and a hint such as `Did you mean --status?` or `Did you mean activity update?`.
+A typo fails with exit `2` and a hint such as `Did you mean --status?` or `Did you mean work update?`.
 Without a close match the hint lists the command's flags; `relo help all` shows everything.
 
 ## Doctor says `ready:false`
@@ -76,26 +116,21 @@ mean: on the iPhone, iOS Settings > Relo > Live Activities is on and the Relo ap
 then `relo devices list` shows the phone with `liveActivities:true`, then `relo test --again`. A phone that
 passed is remembered and never asked again unless it is removed.
 
-## Progress did not change on a steps card
+## A finished work
 
-`"note":"progress follows this card's steps; …"` means `--progress` was ignored because the card draws
-progress from its steps. Move it with `--next-step` or `--step-current`.
+A finished work is never reopened: `resume` of one is refused with `relo work start --new --goal "…"`
+as the next command. Finish exactly once.
 
-## "This card already ended."
+## Lost track
 
-An update or end after the card ended (answered-then-expired question, stale timeout, or ended
-earlier) fails with that message. Start a new one: `relo activity start --title … --status …`.
-
-## Activity sequence conflict
-
-Run `relo activity get ID`, compare the current sequence and state with the intended update, and
-send a new mutation only if it remains valid. Do not blindly overwrite newer progress. End an
-activity exactly once; a terminal state is not retried as a new activity.
+After compaction or a break run `relo state` (`--sync` reads the server when the local copy is old).
+It prints the open work's echo and any parked works with their resume and finish commands.
 
 ## Live Activity missing or stale on the phone
 
-Run `relo activity diagnose --wait --timeout 30s` (add a card ID or `--name` for another card). The diagnosis
-stops at the last proven boundary:
+Check the echo's `Owner sees:` line first: a dimmed or quiet card (no update for 20 or 60 min) comes
+back with any update, and a paused work is off the Lock Screen by design. For delivery problems the owner
+runs the diagnosis from a terminal outside the agent (it is owner-only). It stops at the last proven boundary:
 
 - `problemStage: "server"` means the canonical activity exists but direct delivery was disabled,
   misconfigured, or no command job was created.
@@ -109,10 +144,11 @@ claim display from provider acceptance. For starts, a current-generation update-
 is creation proof; for updates and ends, only the receipt tied to that exact event and device proves
 application. Diagnostics report token presence but never token values.
 
-## Two cards for one piece of work
+## Two works for one piece of work
 
-Only outside Claude Code/Codex, when the topic changed between commands: reuse the exact `--topic`
-or pass `--name`. `relo activity list` shows what is open; end strays with `relo activity end ID`.
+One open work per session: a repeat start continues it. Two works appear only when `start --new` was
+used for the same goal (finish the stray with `relo work finish --work wrk_… --outcome "…" --dropped`),
+or from two sessions, which are separate by design.
 
 ## APNs and delivery meaning
 

@@ -78,8 +78,10 @@ suite("linked browsers (docs/END-TO-END-ENCRYPTION.md, Linked browsers)",() => {
     const bytes = (n: number) => randomBytes(n).toString("base64url");
     const names = { v: "relo.e2e.v1",kind: "names",context: "ses:abc",sender: `k_${bytes(16)}`,
       recipients: [{ device: mine.browserId,prekey: "pk_1",enc: bytes(65),key: bytes(48) }],nonce: bytes(12),ct: bytes(272),sig: bytes(64) };
-    expect((await call(apiKey,"POST","/api/agent-sessions/events",{ session: "b".repeat(64),harness: "claude-code",event: "start",
-      sealedNames: names })).status).toBe(200);
+    const hooks = (await call(apiKey,"POST","/api/harness-credentials",{ name: "Test computer hooks" })).body.token as string;
+    const observedAt = new Date().toISOString();
+    expect((await call(hooks,"POST","/api/agent-sessions/observed",{ session: "b".repeat(64),harness: "claude-code",phase: "open",
+      phaseSince: observedAt,lastSeenAt: observedAt,openToolSince: null,seq: 1,sealedNames: names })).status).toBe(200);
     const sessionId = (await call(apiKey,"GET","/api/agent-sessions")).body.sessions[0].id;
 
     const sealedPath = `/api/dashboard/sealed?id=${sessionId}&id=ntf_${randomUUID()}`;

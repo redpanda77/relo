@@ -8,7 +8,8 @@ The table under [Delivery plan](#delivery-plan) is the current truth for what sh
 What an agent tells you through Relo is readable only on the computers and iPhones you paired. The
 Relo server, its database, its backups, the person who runs it, and Apple's push service carry
 that content without being able to read it. They also cannot forge it, and cannot forge your
-answer to a question. Content on the server expires after a short window (10 hours by default).
+answer to a question. Content on the server can expire after a short window
+(`RELO_CONTENT_RETENTION_HOURS`; 10 hours is the recommended value).
 Once a phone has rotated past the key that sealed a message, no copy of that message anywhere can
 be decrypted again, including copies made before the purge.
 
@@ -190,11 +191,12 @@ fields that the CLI computes from plaintext before sealing:
 ### Live Activities
 
 Live Activity content state is delivered by ActivityKit straight to the widget, with no extension
-hook to decrypt it first. The plan has two routes; a spike (item E2 below) picks one:
+hook to decrypt it first. Route 1 is built (the widget opens the envelope with the App Group key
+mirror described under Phone surfaces); route 2 is the documented alternative:
 
 1. **Decrypt while rendering.** The widget's SwiftUI view opens the sealed `presentation` field
-   using the shared Secure Enclave key. This needs the decryption to fit the widget's memory and
-   time budget on a locked device.
+   with the prekey from the App Group mirror. This needs the decryption to fit the widget's memory
+   and time budget on a locked device.
 2. **Neutral content state.** Pushed content state carries only state, progress, tone and times.
    Text arrives sealed in a silent push or a sync, and the app re-applies it locally with
    `Activity.update`. On a cold Lock Screen the card shows generic labels until the app runs.
@@ -207,8 +209,8 @@ is.
 - **Server.** Notification history, questions, replies and sealed bodies are deleted after
   `RELO_CONTENT_RETENTION_HOURS` (the recommended value is 10), with the same safeguards as the
   manual tool: pending questions, active cards and current relevance heads are never pruned.
-  Ended Live Activity rows, operation snapshots and unused project handles follow later in the
-  plan.
+  Ended cards, with their steps and snapshots, go once their events are gone (E1.2). Without the
+  variable, content stays until an operator runs `pnpm notification-retention`.
 - **Phone.** History lives on the phone, in file-protected caches, under the phone's own retention
   setting. Server history returns metadata, and the app fills in text from its cache. Text that
   has expired on both sides shows as *Expired*.
@@ -218,8 +220,8 @@ is.
   - From that moment, every envelope sealed to that prekey is unreadable, including any copy
     taken before the purge.
   - If the phone has not run for a long time, the CLI keeps using the newest signed prekey. The
-    server refuses to give out a prekey older than 7 days and tells the CLI the phone needs to be
-    opened.
+    server marks a prekey older than 7 days as stale, and `relo keys status` shows it as `stale`:
+    the phone needs to be opened.
 
 ### Losing a phone
 
@@ -402,37 +404,37 @@ needed; the CLI announces "approved from <browser>" so an unexpected approval is
 mode (`relo keys strict on`) refuses browser approvals entirely, so a phone then needs a phone's
 approval or `relo keys verify`/`approve`.
 
-## Current state (13 October 2026)
+## Current state (14 October 2026)
 
-Built and tested in source, **not yet in a release**:
+Shipped in the current server, CLI and iOS releases unless the row says otherwise:
 
 | Item | State |
 | --- | --- |
 | E0.3 Interop | Done: `packages/cli/src/e2ee.mjs` (RFC 9180 HPKE on `node:crypto`) and `ReloCore/E2EE/ReloE2EE.swift` (CryptoKit) seal and open each other's envelopes, signatures and safety numbers (`e2ee-v1.json`). |
 | E0.2 iOS spike | Half done: on a Mac a Secure Enclave key opens HPKE envelopes and signs answers (`E2EEKeyRingTests`). Still to prove on a locked iPhone: extension and widget budgets. |
-| E1.1 Retention | Done in source: `RELO_CONTENT_RETENTION_HOURS`, migration `0063`. |
-| E2.1 Phone keys | Done in source: Secure Enclave identity + prekeys rotated every 10 h, private prekeys deleted after retention + 2 h, published with each heartbeat; shared Keychain group for the app and both extensions. |
-| E2.2 Key directory | Done in source: migrations `0064`/`0065`, `PUT/GET /api/devices/…/keys`, `PUT /api/clients/self/keys`, `GET /api/clients/keys`. |
+| E1.1 Retention | Done: `RELO_CONTENT_RETENTION_HOURS`, migration `0063`. |
+| E2.1 Phone keys | Done: a Secure Enclave identity key; prekeys kept in the Keychain group shared by the app and both extensions (`AfterFirstUnlockThisDeviceOnly`), rotated every 10 h, private halves deleted after retention + 2 h, published with each heartbeat. |
+| E2.2 Key directory | Done: migrations `0064`/`0065`, `PUT/GET /api/devices/…/keys`, `PUT /api/clients/self/keys`, `GET /api/clients/keys`. |
 | E2.3 CLI trust | Done: trust on first use, automatically; `relo keys status` shows "security code changed" notices; `verify` (optional, a person), `strict on|off`, `forget`, `rotate`. |
-| E2.4 Phone trust | Done in source: the phone trusts the account's computers automatically on launch and foreground; Settings → Security leads with "End-to-end encrypted with …", shows "Security code changed" lines, and keeps "Verify security code" optional. |
-| E3.1–E3.2 Sealed notices | Done in source: `relo notify` seals for verified phones; the server stores envelopes and placeholders only; the Notification Service Extension and the app open them. Project and topic names are still metadata (E2.5). |
-| E4.2 Signed answers | Done in source: the iPhone signs every answer when it is queued (in the app, from a notification, or from a Live Activity button); once a computer trusts a phone, `relo ask` acts on approved, yes or replied only with a valid signature from a trusted phone, and otherwise exits 8 (do not act). Negative answers need no signature. |
-| E4.1 Sealed questions | Done in source: `relo ask` seals the question's title and prompt for verified phones on both the card path and the in-app path; the server stores the placeholder "Encrypted question" and the envelopes; the iPhone opens them in the app and the notification. A card shows the placeholder until E5. Answer button labels stay readable. |
+| E2.4 Phone trust | Done: the phone trusts the account's computers automatically on launch and foreground; Settings → Security leads with "End-to-end encrypted with …", shows "Security code changed" lines, and keeps "Verify security code" optional. |
+| E3.1–E3.2 Sealed notices | Done: `relo notify` seals for trusted phones; the server stores envelopes and placeholders only; the Notification Service Extension and the app open them. Project and topic names travel as keyed handles (E2.5). |
+| E4.2 Signed answers | Done: the iPhone signs every answer when it is queued (in the app, from a notification, or from a Live Activity button); once a computer trusts a phone, `relo ask` acts on approved, yes or replied only with a valid signature from a trusted phone, and otherwise exits 8 (do not act). Negative answers need no signature. |
+| E4.1 Sealed questions | Done: `relo ask` seals the question's title, prompt and detail for trusted phones on both the card path and the in-app path; the server stores the placeholder "Encrypted question" and the envelopes; the iPhone opens them in the app, the notification and the card (E5). Answer button labels stay readable. |
 | E4.3 Sealed replies | Not needed for now: new questions take tappable answers only (typed replies were removed). If typed replies return, they must be sealed to a per-question key carried inside the sealed question. |
-| E1.2 Card retention | Done in source: the retention window also deletes ended cards (title, status, steps, snapshots) once their events are gone; active cards are never touched (migration `0069`). |
-| E1.3 Keyed body digest | Done in source: bodies are digested with a server-keyed HMAC instead of plain SHA-256, and earlier plain hashes are overwritten (migration `0068`). |
-| E6.3 Replay protection | Done in source: the iPhone remembers which notification first carried each envelope context, in the shared Keychain, and blocks the same envelope under another notification ("A repeated encrypted message was blocked"). |
-| E5 Sealed cards | Done in source: `relo activity start/update/end` seal the card's title, status, detail, step labels and progress label for verified phones. The server stores placeholders ("Encrypted card", "Updating…", "Step n") and the latest envelopes (migration `0082`), and each phone's Live Activity push carries its own envelope. The phone opens it while decoding the card state, so the Lock Screen, Dynamic Island and Watch show the real text; words the server writes itself ("Approved", "Expired") are kept. A question folded into a card shows its real prompt the same way. The CLI keeps each card's text in a private local cache (0600, removed when the card ends) so an update can seal the whole card. |
-| E6.1 Enforcement | Done in source: `relo keys require on` (a person at a terminal) makes the account refuse readable notices, questions and card text from CLI keys with `end_to_end_required` (migration `0083`); webhooks and server-made messages are unaffected and labelled. The card `relo ask` starts is sealed too. |
+| E1.2 Card retention | Done: the retention window also deletes ended cards (title, status, steps, snapshots) once their events are gone; active cards are never touched (migration `0069`). |
+| E1.3 Keyed body digest | Done: bodies are digested with a server-keyed HMAC instead of plain SHA-256, and earlier plain hashes are overwritten (migration `0068`). |
+| E6.3 Replay protection | Done: the iPhone remembers which notification first carried each envelope context, in the shared Keychain, and blocks the same envelope under another notification ("A repeated encrypted message was blocked"). |
+| E5 Sealed cards | Done: a work's card is sealed. `relo work` start, update, pause and finish seal the goal, status, outcome, waiting reason and step labels for trusted phones; the request carries `{sealed: true}` in place of the text and one card envelope (kind `card`: title, status and steps) that the phone's widget opens. The server stores placeholders ("Encrypted card", "Updating…") and the latest envelopes (migration `0082`), keeps plan structure (step ids, states, counts) in the clear so it can check the plan, and each phone's Live Activity push carries its own envelope. The phone opens it while decoding the card state, so the Lock Screen, Dynamic Island and Watch show the real text; words the server writes itself ("Approved", "Expired") are kept. A question folded into a card shows its real prompt the same way. The producer's own sealed copy: because the server cannot read a work's text, the CLI also uploads the goal, status, waiting reason and step labels sealed under a key derived from this computer's identity key (AES-256-GCM, `relo.work-self.v1`). Only that computer can open it; the server returns it only to the same session, and the CLI rebuilds its local working copy from it when the state file is lost. Scripts and services cannot seal, so their work is readable text and is labelled as such. |
+| E6.1 Enforcement | Done: `relo keys require on` (a person at a terminal) makes the account refuse readable notices, questions and card text from CLI keys with `end_to_end_required` (migration `0083`); webhooks and server-made messages are unaffected and labelled. The card `relo ask` starts is sealed too. |
 | E6.4 Proof | Done: `apps/server/src/compromised-server.test.ts` runs the real `relo` CLI against a real server for a verified phone (notice, card with steps, an update, a question), then searches every row of every table for the agent's words, project and computer names and finds none; a control run with the policy off proves the search finds readable text. An internal adversarial review (13 October 2026) found and fixed: approvals replayable across questions and re-targetable to another question (now bound to the interaction, the question's context and the time asked); server-added phones trusted silently (now *pending*); readable fallback after a key problem (now fails closed); a card key that leaked the project name (now keyed); a new computer added without notice on the phone (now "Added …" on Settings → Security, which also lists computers the server stopped listing); one computer able to rename another's projects (names are kept per sender); server text shown on unopened sealed rows (now placeholders); encryption state kept across sign-out (now deleted). `packages/cli/test/e2ee-review.test.mjs` and the iOS `E2EE*Tests` cover them. The key, client-key and policy routes need no extra scope: they return public keys and a flag only. Still open: an external review of the protocol and code. |
-| E2.5 Opaque names | Done in source: the CLI sends keyed handles (`p-…`, `t-…`, `w-…`, `c-…`, `a-…`) for project, topic, task, computer and account, keyed per computer, and seals the names (agent-session hooks too); the iPhone remembers handle → name and shows the names everywhere (inbox, history, Now, cards). The same project used from two computers has two handles but one name on the phone. |
+| E2.5 Opaque names | Done: the CLI sends keyed handles (`p-…`, `t-…`, `w-…`, `c-…`, `a-…`) for project, topic, task, computer and account, keyed per computer, and seals the names (session names too, see below); the iPhone remembers handle → name and shows the names everywhere (inbox, history, Now, cards). The same project used from two computers has two handles but one name on the phone. |
 | Default policy | Encryption is required automatically once a phone of the account has keys (migration `0084`): CLI keys then must seal. `relo keys require off` (a person) turns it off; `on` and `auto` need nobody. |
-| Phone surfaces | Every feed the iPhone reads carries that phone's envelopes next to the placeholders: inbox detail and history, the snapshot, current state (Now → Live now) and pending decisions, plus Live Activity pushes. The app opens them on arrival, so no screen shows "Encrypted card" or a handle when the phone holds the key. The web Dashboard has no key by design: its JSON carries only an `encrypted` flag (never the envelopes), and it shows a lock with "End-to-end encrypted · open on iPhone to read" in place of a sealed title, body, status or prompt (time, state, source and step counts stay), and names handles "Encrypted project", "Encrypted topic", "Encrypted task", "Encrypted computer" or "Encrypted account". |
-| Locked phone | Fixed in source (P0): CryptoKit's default made Secure Enclave keys usable only while unlocked, so the Lock Screen and notifications stayed on placeholders. Prekeys are now Secure Enclave keys usable after the first unlock since boot (like WhatsApp's and Signal's message keys), and an older unlock-only prekey is replaced at once. The identity key still needs the phone unlocked, so approving still needs an unlocked phone. |
-| Names on stored rows | Fixed in source (P0): rows the app stored before a name arrived kept showing handles; handles are now swapped for names when a row is shown, and only the handle is stored. |
-| Agent session names | Fixed in source (P0): agent sessions come from hooks, which carried only handles, so the Agents section showed `p-…`/`c-…`. The hook now sends the names once per session sealed for the phones (envelope kind `names`, migration `0085`); the server stores it as is and gives it only to phones in the snapshot, never to the Dashboard or the CLI list. |
-| Linked browsers | Done in source (13 October 2026), verified end to end against a local server: the Dashboard made its own WebCrypto keys, a phone with real keys signed its QR link, a fresh `relo` trusted the browser only through that signature, and the Dashboard opened the sealed notice, card and agent-session names itself. Items sealed before linking stay locked. Signing out deletes the browser's keys. |
-| Device trust in the Dashboard | Done in source (14 October 2026): Account → Security → Devices lists phones, computers and browsers with a plain encryption status, friendly model names and Remove (which deletes what only that device could open); a linked browser approves a pending phone (with a two-step code when it is on); simulators are labelled and never vouch for a real phone. Server tests: `web/dashboard-devices.test.ts`, `device-approvals.test.ts`, `device-models.test.ts`. |
+| Phone surfaces | Every feed the iPhone reads carries that phone's envelopes next to the placeholders: inbox detail and history, the snapshot, current state (Now → Live now), `GET /api/now` (each item's `sealed.card` and `sealed.question` content envelopes, phones only) and pending decisions, plus Live Activity pushes. The app opens them on arrival, so no screen shows "Encrypted card" or a handle when the phone holds the key. The web Dashboard has no key by design: its JSON carries only an `encrypted` flag (never the envelopes), and it shows a lock with "End-to-end encrypted · open on iPhone to read" in place of a sealed title, body, status or prompt (time, state, source and step counts stay), and names handles "Encrypted project", "Encrypted topic", "Encrypted task", "Encrypted computer" or "Encrypted account". The Live Activity widget process has no Keychain at all, so the app and the Notification Service Extension also write a widget key mirror into the App Group container whenever they save: the software prekeys' private halves, the trusted computers and the project names, never the identity key, which stays in the Secure Enclave. The mirror is readable only after the first unlock since boot, only by Relo and its extensions, is excluded from backups, and never leaves the iPhone; retired prekeys leave it with the key ring. |
+| Locked phone | Fixed (P0): a CryptoKit Secure Enclave key works only in the process that created it (the app), so the Lock Screen widget and the Notification Service Extension stayed on placeholders. Prekeys are now software keys in the shared Keychain item, usable after the first unlock since boot and never leaving the phone (like WhatsApp's and Signal's message keys); an older Secure Enclave prekey is replaced on the app's next run. The identity key stays in the Secure Enclave, so approving still needs an unlocked phone. |
+| Names on stored rows | Fixed (P0): rows the app stored before a name arrived kept showing handles; handles are now swapped for names when a row is shown, and only the handle is stored. |
+| Session names and handles | A session's project, computer and account travel as keyed handles, and the session's name is read from Claude Code's own files on the computer (the title the owner or Claude gave the conversation). The outbox flusher seals the names and the title for the phones (envelope kind `names`, migration `0085`) when it sends the session's next observed phase snapshot, once per session and again only when they change; the server stores the envelope as is and returns it only to phones (`GET /api/now`, the Sessions rows) and to linked browsers through `GET /api/dashboard/sealed`, never in the Dashboard JSON or the CLI's `relo sessions` list. A prompt, tool name or transcript never leaves the computer ([HOOKS-AND-HARNESSES.md](HOOKS-AND-HARNESSES.md)). |
+| Linked browsers | Done (13 October 2026), verified end to end against a local server: the Dashboard made its own WebCrypto keys, a phone with real keys signed its QR link, a fresh `relo` trusted the browser only through that signature, and the Dashboard opened the sealed notice, card and agent-session names itself. Items sealed before linking stay locked. Signing out deletes the browser's keys. |
+| Device trust in the Dashboard | Done (14 October 2026): Account → Security → Devices lists phones, computers and browsers with a plain encryption status, friendly model names and Remove (which deletes what only that device could open); a linked browser approves a pending phone (with a two-step code when it is on); simulators are labelled and never vouch for a real phone. Server tests: `web/dashboard-devices.test.ts`, `device-approvals.test.ts`, `device-models.test.ts`. |
 | Everything else | Open, in the order below. |
 
 ## Delivery plan

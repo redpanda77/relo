@@ -5,8 +5,12 @@ import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
 import { notificationRelevance } from "../relevance.mjs";
 import { activeCard, activityName, validateActivityWaitResponse } from "./activity.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
-import { agentSession, cardKey, creationContext, inAgentContext, partialIdentity } from "../identity.mjs";
+import { cardOwner, waitsShort } from "../caller.mjs";
+import { cardKey, creationContext, partialIdentity } from "../identity.mjs";
+import { readSession } from "../agent/session-file.mjs";
+import { drainDeclared } from "../work/declared-lane.mjs";
 import { assertAllowedOptions, assertAtMostOne, assertNoExtra, definedFields, dryRunResult, deliveryGuard, enumOption, fitRequiredText, fitText, joinedText, optionalText, result, stdinDeviceIds, stdinObject, validateIdempotencyKey } from "../support.mjs";
+import { sessionName } from "../agent/session-name.mjs";
 
 export function notificationBody(value) {
   const body = requireText(value, "Notification body", 65_536).replace(/\r\n?/gu, "\n").trim();
@@ -146,7 +150,8 @@ export async function askInApp({ prompt, detail, choices, type, expiresInSeconds
     correlationId: optionalText(options["correlation-id"] ?? stdin.correlationId, "Correlation ID", 100),
     callback: await callbackOption(options, stdin, dependencies),
     deviceIds: sealed ? undefined : deviceIds,
-  }), `${idempotencyKey}:in-app`));
+  }), `${idempotencyKey}:in-app`,
+  dependencies.caller?.type === "agent_session" ? dependencies.caller.sessionKey : undefined));
   // With buttons the owner answers right on the notification; without, the phone has no card and opens Relo.
   const message = reason ?? (buttons ? undefined
     : "This phone cannot show Live Activities, so the owner answers in Relo from a notification.");
@@ -196,7 +201,7 @@ export const AGENT_WAIT_SECONDS = 100;
 
 const ASK_EXAMPLE = 'relo ask "Deploy?" --approval';
 
-export const agentWaitSeconds = (dependencies) => (inAgentContext(dependencies.env) ? AGENT_WAIT_SECONDS : undefined);
+export const agentWaitSeconds = (dependencies) => (waitsShort(dependencies.caller) ? AGENT_WAIT_SECONDS : undefined);
 
 /** The longest any server lets a question wait; each server's admin sets a lower limit (default 7 days). */
 export const QUESTION_CEILING_SECONDS = 30 * 86_400;
@@ -253,8 +258,11 @@ export async function askOnCard({ prompt, detail, choices, type, labels, expires
   if (dependencies.dryRun) {
     return dryAsk({ prompt, detail, choices, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies });
   }
-  const defaults = dependencies.creationDefaults();
+  const defaults = await agentDefaults(dependencies, dependencies.creationDefaults());
   const idempotencyKey = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
+  // Queued work changes go first (EDGE.3): the question lands on the work as it now is. A question is
+  // never queued itself: an approval needs the server now.
+  await drainDeclared({ client, config, dependencies });
   const named = activityName(options, stdin);
   // An app that should not take a card asks with a notification that carries the answer buttons.
   if (options["notification-only"]) {
@@ -262,7 +270,7 @@ export async function askOnCard({ prompt, detail, choices, type, labels, expires
       command, idempotencyKey, buttons: true, context: creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) });
   }
   // Outside an agent session the identity names the card, so validate it before any request.
-  const known = named === undefined && !agentSession(dependencies.env)
+  const known = named === undefined && !cardOwner(dependencies.caller)
     ? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) : undefined;
   const card = await workCard(options, stdin, client, dependencies, known ?? partialIdentity(options, stdin, defaults));
   if (!card) {
@@ -287,7 +295,8 @@ export async function askOnCard({ prompt, detail, choices, type, labels, expires
   } catch (error) {
     if (error?.code !== "ACTIVITY_TARGET_UNAVAILABLE") throw error;
     return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
-      command, idempotencyKey, title: card.title, context: known ?? cardIdentity(card) });
+      // A work card names no source/topic itself: inside a session the session's defaults name it.
+      command, idempotencyKey, title: card.title, context: known ?? cardIdentity(card) ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) });
   }
   const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt: sealed ? undefined : prompt });
   if (sealed) await rememberQuestion(dependencies.env, { interactionId: created.interaction.id,
@@ -313,9 +322,31 @@ function cardIdentity(card) {
   return context?.providerName && context?.project && context?.threadName ? context : undefined;
 }
 
+/** Inside an agent session: the session's open work (local copy), or null. */
+async function sessionWork(dependencies) {
+  if (dependencies.caller?.type !== "agent_session") return null;
+  try { return (await readSession(dependencies.caller, dependencies))?.open ?? null; } catch { return null; }
+}
+
+/**
+ * Inside an agent session a question or notice needs no --topic: it names the session's open work, or,
+ * with none open, the session itself (a standalone message).
+ */
+async function agentDefaults(dependencies, defaults) {
+  if (dependencies.caller?.type !== "agent_session" || defaults?.threadName) return defaults;
+  const open = await sessionWork(dependencies);
+  const harness = { "claude-code": "Claude Code", codex: "Codex", mcp: "MCP" }[dependencies.caller.harness] ?? dependencies.caller.harness;
+  // The topic is the session: its own name (plan 3.7), else what it is working on.
+  return { ...defaults, providerName: defaults?.providerName ?? harness, threadName: sessionName(dependencies) ?? open?.goal ?? `${harness} session` };
+}
+
 /** The running card of this work, or null. Only reads: a question never creates or changes a card. */
 async function workCard(options, stdin, client, dependencies, context) {
-  const key = cardKey({ name: activityName(options, stdin), env: dependencies.env, context });
+  if (dependencies.caller?.type === "agent_session") {
+    const cardId = (await sessionWork(dependencies))?.card?.id;
+    return cardId ? activeCard(client, cardId) : null;
+  }
+  const key = cardKey({ name: activityName(options, stdin), env: dependencies.env, caller: dependencies.caller, context });
   return key === undefined ? null : activeCard(client, key);
 }
 
@@ -323,17 +354,17 @@ async function workCard(options, stdin, client, dependencies, context) {
 async function dryAsk({ prompt, detail, choices, type, labels, expiresInSeconds, wait, timeoutSeconds, options, stdin, dependencies }) {
   const notes = [];
   validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
-  const defaults = dependencies.creationDefaults();
+  const defaults = await agentDefaults(dependencies, dependencies.creationDefaults());
   const named = activityName(options, stdin);
   let context;
   try {
     context = creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE);
   } catch (error) {
     // With a card name or an agent session the identity may come from the running card.
-    if (!(error instanceof UsageError) || (named === undefined && !agentSession(dependencies.env))) throw error;
+    if (!(error instanceof UsageError) || (named === undefined && !cardOwner(dependencies.caller))) throw error;
     notes.push("source, project and topic are read from the session's card when it is running; starting one needs them");
   }
-  const key = cardKey({ name: named, env: dependencies.env, context: context ?? partialIdentity(options, stdin, defaults) });
+  const key = cardKey({ name: named, env: dependencies.env, caller: dependencies.caller, context: context ?? partialIdentity(options, stdin, defaults) });
   const callback = await callbackOption(options, stdin, dependencies);
   if (options.device.length > 0) notes.push("device IDs are not checked against the server in a dry run");
   return dryRunResult("ask", definedFields({
@@ -424,10 +455,11 @@ export function mergeCreatedAndWaitedInteraction(created, waited) {
  * source, project, topic, computer and account instead of asking the agent to repeat them.
  */
 export async function sessionCardDefaults(options, stdin, client, dependencies, defaults) {
-  if (!agentSession(dependencies.env)) return defaults;
+  if (dependencies.caller?.type === "agent_session") return agentDefaults(dependencies, defaults);
+  if (!cardOwner(dependencies.caller)) return defaults;
   const known = partialIdentity(options, stdin, defaults);
   if (known.providerName && known.project && known.threadName) return defaults;
-  const key = cardKey({ name: activityName(options, stdin), env: dependencies.env,
+  const key = cardKey({ name: activityName(options, stdin), env: dependencies.env, caller: dependencies.caller,
     context: known });
   const card = key === undefined ? null : await activeCard(client, key);
   const inherited = definedFields({
@@ -470,13 +502,13 @@ export async function runNotifyCommand(command) {
     const dryRun = Boolean(dependencies.dryRun);
     // The body comes first: with nothing to send, the identity is not the problem to report.
     const noticeBody = notificationBody(joinedText(rest) ?? stdin.body);
-    const baseDefaults = dryRun ? dependencies.creationDefaults()
+    const baseDefaults = dryRun ? await agentDefaults(dependencies, dependencies.creationDefaults())
       : await sessionCardDefaults(options, stdin, client, dependencies, dependencies.creationDefaults());
     let context;
     try {
       context = creationContext(options, stdin, undefined, baseDefaults, 'relo notify "Done"');
     } catch (error) {
-      if (!dryRun || !(error instanceof UsageError) || !agentSession(dependencies.env)) throw error;
+      if (!dryRun || !(error instanceof UsageError) || !cardOwner(dependencies.caller)) throw error;
       notes.push("source, project and topic are read from the session's card when it is running");
       context = definedFields({ ...baseDefaults, ...partialIdentityContext(options, stdin, baseDefaults) });
     }
@@ -507,11 +539,13 @@ export async function runNotifyCommand(command) {
     }
     const capturedBody=await dependencies.prepareNotificationCommand({config,key,body,kind:"notice",
       occurredAt:dependencies.commandOccurredAt},{root:dependencies.activityCaptureDirectory,environment:dependencies.env});
+    // Queued work changes go first (EDGE.3), so the notice never overtakes them.
+    await drainDeclared({ client, config, dependencies });
     // Sealed end to end for the phones this computer verified (relo keys verify); plain otherwise.
     const outgoing = await sealNoticeRequest({ body: capturedBody, key, client, config, dependencies, notes });
     const data = deliveryGuard(
       await client.sendNotification(
-        outgoing,key,
+        outgoing,key,dependencies.caller?.type === "agent_session" ? dependencies.caller.sessionKey : undefined,
       ),
     );
     return result("notify.send", { ...data, endToEnd: Boolean(outgoing.sealed) }, { notes });

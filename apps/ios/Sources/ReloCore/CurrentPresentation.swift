@@ -74,32 +74,26 @@ public struct CurrentDecisionDraft: Equatable, Sendable, Identifiable {
 
 /// UI partitions are projections of current state, never inferred from the newest history row.
 public struct CurrentInboxPresentation: Equatable, Sendable {
+    /// The questions with their answer path (decision drafts, availability). Now's sections are
+    /// the server's `NowSummary`; this feed only carries what answering needs.
     public let needsMe: [PendingCurrentDecision]
-    public let running: [CurrentSubjectProjection]
-    public let recentChanges: [CurrentSubjectProjection]
     public let actionableCount: Int?
     public let unreadCount: Int?
     public let checkedAt: Date?
 
     public init(state: CurrentRuntimeState?, now: Date) {
         guard let state else {
-            needsMe = []; running = []; recentChanges = []
+            needsMe = []
             actionableCount = nil; unreadCount = nil; checkedAt = nil
             return
         }
-        var snapshot = state.snapshot
-        snapshot.expire(at: now)
-        let subjects = snapshot.subjects.values.map(\.projection)
+        // No local expiry: a question past its deadline stays until the server retires it
+        // (missed questions accept late answers).
+        let snapshot = state.snapshot
         needsMe = (snapshot.pending?.entries.values.map(\.item) ?? []).sorted {
             if $0.urgencyRank != $1.urgencyRank { return $0.urgencyRank < $1.urgencyRank }
             if $0.interaction.expiresAt != $1.interaction.expiresAt { return $0.interaction.expiresAt < $1.interaction.expiresAt }
             return $0.id < $1.id
-        }
-        running = subjects.filter { $0.kind == .progress || $0.kind == .incident }.sorted {
-            $0.updatedAt == $1.updatedAt ? $0.subjectId < $1.subjectId : $0.updatedAt > $1.updatedAt
-        }
-        recentChanges = subjects.filter { $0.kind == .notice }.sorted {
-            $0.updatedAt == $1.updatedAt ? $0.subjectId < $1.subjectId : $0.updatedAt > $1.updatedAt
         }
         let metadata = snapshot.metadata
         let trusted = state.countsAreCurrent && state.timeVerified

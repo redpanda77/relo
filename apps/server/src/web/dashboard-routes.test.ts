@@ -109,6 +109,7 @@ function authenticatedRouteApp(options: { empty?: boolean } = {}): Hono {
   const db = {
     query: async (sql: string) => {
       if (sql.includes("FROM agent_sessions")) return rows([]);
+      if (sql.includes("a.producer_type,a.session_key")) return rows([]);
       // Pending CLI logins also check how many accounts exist; answer them as such.
       if (sql.includes("FROM account_identities") && !sql.includes("FROM device_authorizations")) {
         return rows([{ principal_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }]);
@@ -203,7 +204,7 @@ describe("dashboard web routes", () => {
     ]) {
       const response = await app.request(path);
       expect(response.status, path).toBe(302);
-      expect(response.headers.get("location"), path).toBe(`/?next=${encodeURIComponent(path)}`);
+      expect(response.headers.get("location"), path).toBe(`/sign-in?next=${encodeURIComponent(path)}`);
     }
 
     const docs = await app.request("/docs");

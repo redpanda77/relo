@@ -35,6 +35,8 @@ export type NowHudProps = {
   agentTime?: string | null
   /** The signed-out Welcome stage: the living deck with the wordmark and no numbers, as on the iPhone. */
   welcome?: { label: string }
+  /** Stage size in CSS pixels (the particle shell and the deck height); 330 as on the iPhone. */
+  stage?: number
 }
 
 function usePrefersReducedMotion() {
@@ -221,8 +223,14 @@ export function NowHud({
   syncing = false,
   agentTime = null,
   welcome,
+  stage = STAGE_HEIGHT,
 }: NowHudProps) {
   const dustRef = React.useRef<HTMLCanvasElement>(null)
+  // Read by the draw loop; a new size changes the deck's height, which the resize observer picks up.
+  const stageRef = React.useRef(stage)
+  React.useLayoutEffect(() => {
+    stageRef.current = stage
+  }, [stage])
   const farRef = React.useRef<HTMLCanvasElement>(null)
   const nearRef = React.useRef<HTMLCanvasElement>(null)
   const coreRef = React.useRef<HTMLCanvasElement>(null)
@@ -365,9 +373,9 @@ export function NowHud({
         })
       }
       if (deckWidth) {
-        const common = { width: deckWidth, height: STAGE_HEIGHT, now, state: stateRef.current, mix: mixRef.current, waves }
+        const common = { width: deckWidth, height: stageRef.current, now, state: stateRef.current, mix: mixRef.current, waves }
         const planeTime = reduced ? 4 : (now - origin) / 1000
-        const planes = { ...common, time: planeTime, arcs: currentArcs, center: { x: deckWidth / 2, y: STAGE_HEIGHT / 2 } }
+        const planes = { ...common, time: planeTime, arcs: currentArcs, center: { x: deckWidth / 2, y: stageRef.current / 2 } }
         if (farContext) drawOrbitPlane(farContext, { ...planes, half: "far" })
         if (nearContext) drawOrbitPlane(nearContext, { ...planes, half: "near" })
         if (dustContext && dust) {
@@ -399,8 +407,8 @@ export function NowHud({
       const rect = deck.getBoundingClientRect()
       if (rect.width > 0 && rect.height > 0) {
         deckWidth = rect.width
-        fit(far, farContext, rect.width, STAGE_HEIGHT, ratio)
-        fit(near, nearContext, rect.width, STAGE_HEIGHT, ratio)
+        fit(far, farContext, rect.width, stageRef.current, ratio)
+        fit(near, nearContext, rect.width, stageRef.current, ratio)
         fit(dust, dustContext, rect.width, rect.height, ratio)
       }
       render()
@@ -503,17 +511,18 @@ export function NowHud({
           className="absolute inset-0"
           data-hud-glow
           style={{
-            background: `radial-gradient(ellipse 60% 52% at 50% ${STAGE_HEIGHT / 2}px, ${css(accent, 0.16)} 0%, ${css(accent, 0.05)} 55%, transparent 100%)`,
+            background: `radial-gradient(ellipse 60% 52% at 50% ${stage / 2}px, ${css(accent, 0.16)} 0%, ${css(accent, 0.05)} 55%, transparent 100%)`,
             transition: "background 900ms ease",
           }}
         />
         <canvas ref={dustRef} className="absolute inset-0 block" data-hud-dust />
       </div>
-      <div className="relative w-full" style={{ height: STAGE_HEIGHT }}>
+      <div className="relative w-full" style={{ height: stage }}>
         <canvas ref={farRef} aria-hidden="true" className={cn(layer, "block")} data-hud-plane="far" />
         <div
           ref={boxRef}
-          className="absolute top-1/2 left-1/2 aspect-square w-[min(330px,94vw)] -translate-x-1/2 -translate-y-1/2"
+          className="absolute top-1/2 left-1/2 aspect-square -translate-x-1/2 -translate-y-1/2"
+          style={{ width: `min(${stage}px, 94vw)` }}
         >
           <canvas
             ref={coreRef}
@@ -531,11 +540,12 @@ export function NowHud({
         />
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-1/2 flex w-40 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center"
+          className="pointer-events-none absolute top-1/2 left-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center"
+          style={{ width: (160 * stage) / STAGE_HEIGHT }}
           data-hud-centre={centre.label}
         >
           {welcome ? (
-            <span className="wordmark wordmark-glow text-[3.75rem]">relo</span>
+            <span className="wordmark wordmark-glow" style={{ fontSize: `${(3.75 * stage) / STAGE_HEIGHT}rem` }}>relo</span>
           ) : (
           <span
             key={centre.label}
@@ -556,7 +566,7 @@ export function NowHud({
               className={cn("ink-dot", live && !reduced && "breathe")}
               style={{ ["--tone" as string]: accentCss }}
             />
-            <span className="micro hud-center" style={{ color: accentCss }}>{centre.label}</span>
+            <span className="micro hud-center" style={{ color: accentCss, fontSize: welcome ? `${(10.5 * stage) / STAGE_HEIGHT}px` : undefined }}>{centre.label}</span>
           </span>
         </div>
         {welcome ? null : (<>

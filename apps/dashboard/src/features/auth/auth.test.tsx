@@ -18,7 +18,7 @@ describe("AuthPage", () => {
       <AuthPage
         bootstrap={{
           version: 1,
-          kind: "auth",
+          kind: "auth", view: "form",
           route: { path: "/", nextPath: "/dashboard/testing" },
           mode: "sign-in",
           registration: "closed",
@@ -54,7 +54,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", route: { path: "/", nextPath: "/dashboard" }, mode: "sign-in",
+          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" }, mode: "sign-in",
           registration: "closed", title: "Sign in to Relo", description: "Sign in.",
         }}
         onAuthenticated={onAuthenticated}
@@ -86,7 +86,7 @@ describe("AuthPage", () => {
       <AuthPage
         bootstrap={{
           version: 1,
-          kind: "auth",
+          kind: "auth", view: "form",
           route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-up",
           registration: "closed",
@@ -105,7 +105,7 @@ describe("AuthPage", () => {
 
   test("offers registration only when the admin allows it", () => {
     const base = {
-      version: 1 as const, kind: "auth" as const,
+      version: 1 as const, kind: "auth" as const, view: "form" as const,
       route: { path: "/" as const, nextPath: "/dashboard" },
       mode: "sign-in" as const, title: "Sign in to Relo", description: "Use your account.",
     }
@@ -126,7 +126,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", route: { path: "/", nextPath: "/dashboard" },
+          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-in", registration: "approval", title: "Sign in to Relo", description: "Use your account.",
         }}
         onAuthenticated={onAuthenticated}
@@ -148,7 +148,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", route: { path: "/", nextPath: "/dashboard" },
+          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-in", registration: "closed", title: "Sign in to Relo", description: "Use your account.",
         }}
       />

@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +11,7 @@ const HOME_TOKEN = `relo_${"h".repeat(43)}`;
 const WORK_TOKEN = `relo_${"w".repeat(43)}`;
 const ENV_TOKEN = `relo_${"e".repeat(43)}`;
 const SCOPES = ["activities:read", "activities:write", "devices:read", "interactions:create", "interactions:read",
-  "notifications:send", "services:read", "services:write", "sessions:write"];
+  "notifications:send", "services:read", "services:write"];
 const PHONE = { verifiedAt: "2026-10-13T10:00:00Z", deviceId: "dev_abcdefghijkl" };
 
 async function cli(argv, dependencies) {

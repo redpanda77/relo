@@ -111,7 +111,7 @@ export function createDashboardProjectHandlers(dependencies: Dependencies): {
 
   async function render(context: any,selectedProjectId: string | null): Promise<Response> {
     const account = await getAccount(context.req.raw.headers);
-    if (!account) return context.redirect(`/?next=${encodeURIComponent(context.req.path)}`);
+    if (!account) return context.redirect(`/sign-in?next=${encodeURIComponent(context.req.path)}`);
     const selectedInternalId = selectedProjectId?.slice(4) ?? null;
     const [projectsResult,summaryResult] = await Promise.all([
       db.query<any>(

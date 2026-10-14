@@ -34,6 +34,11 @@ struct ReloActivityAttributes: Codable {
         var sealed: ReloEnvelope?
         /// The work this card shows (ADR 0007): its id scopes the last known step labels; absent before works.
         var work: ReloWork?
+        /// The server's derived owner state for this card (spec 6.2). Each card renders alone in the
+        /// widget process, so cross-card facts (the needs-you count) arrive in every card's content.
+        var owner: Owner?
+
+        typealias Owner = LiveActivityOwner
 
         init(
             generation: Int,
@@ -45,7 +50,8 @@ struct ReloActivityAttributes: Codable {
             presentation: LiveActivityPresentation,
             startedAt: Date? = nil,
             sealed: ReloEnvelope? = nil,
-            work: ReloWork? = nil
+            work: ReloWork? = nil,
+            owner: Owner? = nil
         ) {
             precondition(generation > 0, "Live Activity generation must be positive")
             self.generation = generation
@@ -61,6 +67,7 @@ struct ReloActivityAttributes: Codable {
             self.startedAt = startedAt
             self.sealed = sealed
             self.work = work
+            self.owner = owner
         }
 
         /// The presentation with this phone's sealed text applied (step labels by id) and handles named.
@@ -82,7 +89,7 @@ struct ReloActivityAttributes: Codable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed, work
+            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed, work, owner
         }
 
         init(from decoder: Decoder) throws {
@@ -105,6 +112,7 @@ struct ReloActivityAttributes: Codable {
             expiresAt = try Self.decodeDateIfPresent(.expiresAt, from: values)
             staleAt = try Self.decodeDateIfPresent(.staleAt, from: values)
             startedAt = try Self.decodeDateIfPresent(.startedAt, from: values)
+            owner = try? values.decodeIfPresent(Owner.self, forKey: .owner)
             let decoded = try values.decodeIfPresent(Interaction.self, forKey: .interaction)
             interaction = presentation.permitsLiveActivityActions
                 && decoded?.isValidForPresentation == true ? decoded : nil
@@ -122,6 +130,7 @@ struct ReloActivityAttributes: Codable {
             try values.encodeIfPresent(interaction, forKey: .interaction)
             try values.encodeIfPresent(sealed, forKey: .sealed)
             try values.encodeIfPresent(work, forKey: .work)
+            try values.encodeIfPresent(owner, forKey: .owner)
         }
 
         private static func decodeDateIfPresent(

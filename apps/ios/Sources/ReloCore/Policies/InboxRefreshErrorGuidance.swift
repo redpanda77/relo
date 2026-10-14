@@ -3,7 +3,7 @@ import Foundation
 public enum InboxRefreshErrorGuidance {
     public static func message(for error: any Error) -> String {
         switch error as? InboxRemoteError {
-        case .tailnetUnavailable:
+        case .serverUnreachable:
             "Server unreachable"
         case .incompatibleResponse:
             "Relo server returned incompatible activity data"

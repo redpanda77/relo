@@ -16,8 +16,8 @@ suite("open registration on a public origin (HARDENING gap 6)",() => {
   test("a saved Open acts as Approval on a public address and stays Open on a private one",async () => {
     await setRegistrationMode(db,"open");
     expect(await registrationMode(db,"https://relo.example.com")).toBe("approval");
-    for (const privateOrigin of ["http://localhost:8180","https://relo.tail1234.ts.net:8180","https://192.168.1.10","https://relo.lan"]) {
-      expect(await registrationMode(db,privateOrigin)).toBe(privateOrigin.includes("ts.net") ? "approval" : "open");
+    for (const privateOrigin of ["http://localhost:8180","https://relo.overlay.example:8180","https://192.168.1.10","https://relo.lan"]) {
+      expect(await registrationMode(db,privateOrigin)).toBe(privateOrigin.includes("overlay") ? "approval" : "open");
     }
     expect(await registrationMode(db)).toBe("open");
     await setRegistrationMode(db,"closed");

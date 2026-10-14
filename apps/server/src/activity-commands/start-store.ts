@@ -120,7 +120,7 @@ export async function completeActiveCardReuse(client:Queryable,input:{
   /** The start's sealed card text: stored with the presentation it describes (ADR 0007, A3). */
   sealed?:SealedNotice|undefined;
 }):Promise<{snapshot:ActivitySnapshot;delivery:ActivityDeliverySummary}>{
-  await cancelPendingActivityInteractions(client,input.principalId,input.activityId);
+  // A continuing start never cancels a pending question (1.10).
   const delivery=await createActivityCommands(client,{occurredAt:input.occurredAt,principalId:input.principalId,
     sourceName:input.sourceName,activity:await storeSealedCard(client,input.updated,input.sealed),operation:"update",apnsMode:input.apnsMode});
   if(input.requester.kind==="service"){

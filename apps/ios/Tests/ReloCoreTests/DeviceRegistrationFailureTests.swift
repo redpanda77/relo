@@ -15,7 +15,7 @@ struct DeviceRegistrationFailureTests {
     }
 
     @Test func transientServerProblemsRetryOnTheirOwn() {
-        for error in [MobileAPIError.tailnetUnavailable, .unavailable, .idempotencyConflict] {
+        for error in [MobileAPIError.serverUnreachable, .unavailable, .idempotencyConflict] {
             let failure = DeviceRegistrationPolicy.failure(for: error, at: .network)
             #expect(failure.retry == .scheduled(retryAfterSeconds: nil), "\(error)")
             #expect(failure.accountEffect == .none)

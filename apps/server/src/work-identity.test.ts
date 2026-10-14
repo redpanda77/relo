@@ -33,3 +33,20 @@ describe("required work identity", () => {
     expect(requireWorkIdentity("svc",{ project: "Relo",threadName: "Codex tasks backlog" },undefined).ok).toBe(true);
   });
 });
+
+describe("work card identity (topic optional)", () => {
+  test("a missing topic stays absent: no placeholder name and no topic key", () => {
+    expect(requireWorkIdentity("svc",{ project: "Relo" },undefined,{ topic: "optional" }))
+      .toEqual({ ok: true,context: { project: "Relo" } });
+    expect(requireWorkIdentity("svc",{ project: "Relo",threadName: "Task" },undefined,{ topic: "optional" }))
+      .toEqual({ ok: true,context: { project: "Relo" } });
+  });
+
+  test("still requires a project, and keeps a real topic with its key", () => {
+    expect(requireWorkIdentity("svc",{ threadName: "Release review" },undefined,{ topic: "optional" }))
+      .toEqual({ ok: false,missing: ["project"] });
+    expect(requireWorkIdentity("svc",{ project: "Relo",threadName: "Release review" },undefined,{ topic: "optional" }))
+      .toEqual({ ok: true,context: { project: "Relo",threadName: "Release review",
+        providerThreadId: expect.stringMatching(/^topic:[0-9a-f]{64}$/) } });
+  });
+});

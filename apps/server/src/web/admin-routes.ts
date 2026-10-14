@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { approveDeviceFromBrowser,browserApprovalSchema } from "../device-approvals.js";
 import { dashboardDevices,twoFactorEnabled } from "../device-overview.js";
+import { revokeHarnessCredential } from "../harness-credentials.js";
 import { internalId,publicId } from "../ids.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
 
@@ -304,6 +305,14 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     if (!credentialId) return context.json({ error: "not_found" }, 404);
     const result = await db.query("UPDATE principal_api_keys SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 AND principal_id=$2 RETURNING id", [credentialId,account.principalId]);
     return result.rowCount ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
+  });
+
+  // Hooks credentials (kind "harness"): the owner can revoke one from the Dashboard too.
+  app.post("/api/dashboard/harness-credentials/:harnessCredentialId/revoke", async (context) => {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    return await revokeHarnessCredential(db,account.principalId,context.req.param("harnessCredentialId"))
+      ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
   });
 
   app.put("/api/dashboard/credentials/:credentialId/card-limit", async (context) => {

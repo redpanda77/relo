@@ -1,3 +1,4 @@
+import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { noRunningCards } from "./fake-cards.mjs";
@@ -53,7 +54,7 @@ function startHarness({ disposition = "created", env = {} } = {}) {
   };
   return { overrides, bodies };
 }
-const start = ["activity", "start", "--title", "Export", "--status", "Running", "--topic", "Nightly export"];
+const start = ["activity", "start", "--title", "Export", "--status", "Exporting rows", "--topic", "Nightly export"];
 
 test("two runs of one script share the topic's card unless --new gives each its own", async () => {
   const shared = startHarness();

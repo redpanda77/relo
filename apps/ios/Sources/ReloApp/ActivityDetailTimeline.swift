@@ -192,11 +192,12 @@ struct ReloMissionTimeline: View {
             Text(steps.isEmpty ? "TELEMETRY" : "MISSION")
                 .font(.caption.monospaced().weight(.bold)).tracking(1.4).foregroundStyle(.techGradient)
             Spacer(minLength: 8)
-            if !steps.isEmpty {
-                let done = steps.filter { phase($0) == .done }.count
-                Text("\(done)/\(steps.count)").font(.caption.monospacedDigit().weight(.semibold))
+            // The plan line, not a ratio: plans grow (2.15).
+            if outcome == .running, let line = LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(steps)) {
+                Text(line).font(.caption.weight(.semibold))
                     .foregroundStyle(Color.reloSecondaryText)
-                    .accessibilityLabel("\(done) of \(steps.count) steps done")
+                    .lineLimit(1).truncationMode(.tail)
+                    .accessibilityLabel(line)
             }
         }
         .accessibilityAddTraits(.isHeader)

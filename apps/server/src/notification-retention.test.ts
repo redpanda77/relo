@@ -104,10 +104,10 @@ suite("bounded notification retention", () => {
     const presentation = currentTestPresentationRecord("Active","Running");
     const activity = (await db.query<{ id: string }>(
       `INSERT INTO live_activities(
-         principal_id,activity_key,title,status,target_device_ids,start_idempotency_key,expires_at,
+         producer_type,principal_id,activity_key,title,status,target_device_ids,start_idempotency_key,expires_at,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,
          presentation_preset_id,presentation_preset_revision
-       ) VALUES ($1,'retention-active','Active','Running',ARRAY[$2::uuid],
+       ) VALUES ('script',$1,'retention-active','Active','Running',ARRAY[$2::uuid],
          'retention-active-start','2027-01-01',$3::jsonb,$4,$5::jsonb,$6,$7,$8) RETURNING id`,
       [principal,device,presentation.presentation,presentation.presentationHash,
         presentation.presentationPolicy,presentation.presentationPolicySource,
@@ -241,10 +241,10 @@ suite("bounded notification retention", () => {
     const presentation = currentTestPresentationRecord("Secret card","Secret status");
     const card = async (key: string,state: "active" | "ended",endedHoursAgo: number) => (await db.query<{ id: string }>(
       `INSERT INTO live_activities(
-         principal_id,activity_key,title,status,target_device_ids,start_idempotency_key,expires_at,state,ended_at,updated_at,
+         producer_type,principal_id,activity_key,title,status,target_device_ids,start_idempotency_key,expires_at,state,ended_at,updated_at,
          presentation,presentation_sha256,presentation_policy,presentation_policy_source,presentation_preset_id,
          presentation_preset_revision
-       ) VALUES ($1,$2,'Secret card','Secret status',ARRAY[$3::uuid],$2,now()+interval '1 day',$4::live_activity_state,
+       ) VALUES ('script',$1,$2,'Secret card','Secret status',ARRAY[$3::uuid],$2,now()+interval '1 day',$4::live_activity_state,
          CASE WHEN $4='ended' THEN now()-make_interval(hours => $5) END,now()-make_interval(hours => $5),
          $6::jsonb,$7,$8::jsonb,$9,$10,$11) RETURNING id`,
       [principal,key,device,state,endedHoursAgo,presentation.presentation,presentation.presentationHash,

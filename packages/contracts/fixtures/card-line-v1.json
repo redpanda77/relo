@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "step with a count",
+      "work": { "goal": "Resize images", "plan": { "steps": [
+        { "id": "s1", "state": "done", "label": "Collect" },
+        { "id": "s2", "state": "done", "label": "Check" },
+        { "id": "s3", "state": "current", "label": "Resize", "progress": { "done": 2, "total": 6 } },
+        { "id": "s4", "state": "open", "label": "Upload" }
+      ] } },
+      "expected": "Step 3 · 1 to go · Resize · 2 of 6"
+    },
+    {
+      "name": "count complete gets a check",
+      "work": { "goal": "Resize images", "plan": { "steps": [
+        { "id": "s1", "state": "current", "label": "Resize", "progress": { "done": 6, "total": 6 } },
+        { "id": "s2", "state": "open", "label": "Upload" }
+      ] } },
+      "expected": "Step 1 · 1 to go · Resize · 6 of 6 ✓"
+    },
+    {
+      "name": "step without a count",
+      "work": { "goal": "Ship", "plan": { "steps": [
+        { "id": "s1", "state": "done", "label": "Build" },
+        { "id": "s2", "state": "current", "label": "Test" },
+        { "id": "s3", "state": "open", "label": "Deploy" },
+        { "id": "s4", "state": "open", "label": "Verify" }
+      ] } },
+      "expected": "Step 2 · 2 to go · Test"
+    },
+    {
+      "name": "skipped steps are neither done nor to go",
+      "work": { "goal": "Ship", "plan": { "steps": [
+        { "id": "s1", "state": "done", "label": "Build" },
+        { "id": "s2", "state": "skipped", "label": "Lint" },
+        { "id": "s3", "state": "current", "label": "Test" },
+        { "id": "s4", "state": "skipped", "label": "Bench" },
+        { "id": "s5", "state": "open", "label": "Deploy" }
+      ] } },
+      "expected": "Step 2 · 1 to go · Test"
+    },
+    {
+      "name": "last step",
+      "work": { "goal": "Ship", "plan": { "steps": [
+        { "id": "s1", "state": "done", "label": "Build" },
+        { "id": "s2", "state": "current", "label": "Deploy" }
+      ] } },
+      "expected": "Step 2 · 0 to go · Deploy"
+    },
+    {
+      "name": "sealed step has no label and no placeholder",
+      "work": { "plan": { "steps": [
+        { "id": "s1", "state": "current", "progress": { "done": 1, "total": 4 } },
+        { "id": "s2", "state": "open" }
+      ] } },
+      "expected": "Step 1 · 1 to go · 1 of 4"
+    },
+    {
+      "name": "no plan: the label alone",
+      "work": { "goal": "Fix the login bug", "status": "Reading the auth middleware" },
+      "expected": "Reading the auth middleware"
+    },
+    {
+      "name": "no plan and no status: the goal",
+      "work": { "goal": "Fix the login bug" },
+      "expected": "Fix the login bug"
+    },
+    {
+      "name": "no plan, counted job",
+      "work": { "goal": "Import rows", "status": "Importing", "progress": { "done": 120, "total": 400 } },
+      "expected": "Importing · 120 of 400"
+    },
+    {
+      "name": "no plan, waiting",
+      "work": { "goal": "Deploy", "status": "Ready", "waiting": { "reason": "CI" } },
+      "expected": "Waiting on CI"
+    },
+    {
+      "name": "empty plan reads as no plan",
+      "work": { "goal": "Tidy up", "status": "Tidying", "plan": { "steps": [] } },
+      "expected": "Tidying"
+    }
+  ]
+}

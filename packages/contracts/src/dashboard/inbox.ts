@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { deliveryEvidenceItemSchema } from "../delivery-evidence.js"
 import { agentSessionListSchema } from "../agent-sessions.js"
+import { nowSummarySchema } from "../owner-state.js"
 
 const nullableDate = z.string().nullable()
 
@@ -208,6 +209,8 @@ export const inboxOverviewSchema = z.object({
   recentNotifications: z.array(notificationSummarySchema),
   runningActivities: z.array(notificationSummarySchema).optional(),
   sessions: agentSessionListSchema.optional(),
+  /** The derived Now (`/dashboard?since=<ISO>`), the same summary phones read from GET /api/now (no sealed names). */
+  now: nowSummarySchema.optional(),
 })
 
 export const notificationHistorySchema = z.object({

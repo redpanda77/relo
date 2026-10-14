@@ -32,7 +32,7 @@ export type RespondCommand = {
 
 export type ActivityCapabilityActor = { kind: "live_activity"; deviceId: string; credential: string };
 export type ResponseResult =
-  | { kind: "accepted" | "replayed"; evidenceId: string; interactionId: string; state: InteractionRow["state"]; respondedAt: Date | null }
+  | { kind: "accepted" | "replayed"; late?: boolean; evidenceId: string; interactionId: string; state: InteractionRow["state"]; respondedAt: Date | null }
   | { kind: "rejected"; error: "forbidden" | "not_found" | "invalid_credential" | "interaction_not_found" | "invalid_action"
       | "idempotency_conflict" | "interaction_version_mismatch" | "interaction_superseded" | "interaction_not_pending"
-      | "interaction_terminal" | "interaction_expired"; state?: InteractionRow["state"] };
+      | "interaction_terminal" | "interaction_expired" | "question_dismissed"; state?: InteractionRow["state"] };

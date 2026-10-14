@@ -64,7 +64,7 @@ struct OriginAndAgentTimeTests {
     @Test func daySummaryAppendsAgentTimeOnlyWhenAsked() {
         let ended = card("a", context: nil, started: -7200, ended: -3600)
         #expect(HistoryRowProjection.daySummary([ended]) == "1 done")
-        #expect(HistoryRowProjection.daySummary([ended], now: now) == "1 done · 1h agent time")
+        #expect(HistoryRowProjection.daySummary([ended], now: now) == "1 done · 1h session time")
     }
 
     @Test func todaysAgentTimeIgnoresOtherDays() {

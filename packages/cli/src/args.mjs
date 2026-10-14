@@ -24,6 +24,10 @@ const BOOLEAN_OPTIONS = new Set([
   "live",
   "clear",
   "next-step",
+  "failed",
+  "dropped",
+  "not-waiting",
+  "sync",
   "global",
   "dry-run",
   "remove",
@@ -37,6 +41,14 @@ const BOOLEAN_OPTIONS = new Set([
 ]);
 const VALUE_OPTIONS = new Set([
   "client-name",
+  "goal",
+  "plan",
+  "add",
+  "outcome",
+  "waiting",
+  "work",
+  "producer",
+  "lease",
   "scope",
   "expires-in",
   "title",
@@ -279,7 +291,7 @@ export function validateCallbackUrl(value, name) {
   if (host === "localhost" || host.endsWith(".localhost") || /^127\./u.test(host) || host === "::1" || host === "0.0.0.0"
     || /^169\.254\./u.test(host)) {
     throw new UsageError(`--${name} cannot be the server's own localhost or a link-local address`, {
-      hint: "Use an address the Relo server can reach, for example your machine's Tailscale name",
+      hint: "Use an address the Relo server can reach, such as its hostname or LAN address",
     });
   }
   if (String(value).length > 2048) throw new UsageError(`--${name} is longer than 2,048 characters`);

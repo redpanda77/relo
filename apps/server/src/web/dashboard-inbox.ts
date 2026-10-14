@@ -12,6 +12,7 @@ import {
 } from "../notification-content.js";
 import { accountOrRedirect,isoDate,pageNumber,secureHtml } from "./http.js";
 import type { z } from "zod";
+import { loadNowSummary } from "../api/now-routes.js";
 import { inboxDashboardBootstrapSchema,inboxOverviewSchema,notificationHistorySchema,deliveryHistorySchema,notificationDetailSchema,inboxShellSchema } from "@relo/notification-contracts/dashboard/inbox";
 
 const pageSize = 25;
@@ -188,7 +189,6 @@ type InboxHandlerDependencies = {
   releaseIdentity: string;
   getAccount(headers: Headers): Promise<InboxDashboardAccount | null>;
   renderDocument(bootstrap: InboxDashboardBootstrap): Promise<string>;
-  reconcileActivities?(): Promise<number>;
   contentCipher?: NotificationContentCipher;
 };
 
@@ -657,7 +657,6 @@ export function createDashboardInboxHandlers(
   const {
     db,
     getAccount,
-    reconcileActivities,
     releaseIdentity,
     renderDocument,
     contentCipher,
@@ -666,7 +665,6 @@ export function createDashboardInboxHandlers(
   const overview: Handler = async (context) => {
     const account = await accountOrRedirect(context, getAccount);
     if (account instanceof Response) return account;
-    await reconcileActivities?.();
     const counts = await loadCounts(db, account.principalId);
     const requestedPage = pageNumber(context.req.query("page"));
     const approvalPages = pagination(
@@ -712,6 +710,9 @@ export function createDashboardInboxHandlers(
       ),
       listAgentSessions(db, account.principalId),
     ]);
+    const since = context.req.query("since");
+    const now = await loadNowSummary(db, account.principalId, undefined,
+      since && Number.isFinite(Date.parse(since)) ? new Date(since).toISOString() : undefined);
     const bootstrap: InboxOverviewBootstrap = {
       version: 1,
       kind: "inbox-overview",
@@ -755,6 +756,7 @@ export function createDashboardInboxHandlers(
       recentNotifications: notifications.rows.map(notificationSummary),
       runningActivities: running.rows.map(notificationSummary),
       sessions,
+      now,
     };
     return secureHtml(context, await renderDocument(bootstrap));
   };
@@ -762,7 +764,6 @@ export function createDashboardInboxHandlers(
   const history: Handler = async (context) => {
     const account = await accountOrRedirect(context, getAccount);
     if (account instanceof Response) return account;
-    await reconcileActivities?.();
     const kind =
       notificationKinds.find((value) => value === context.req.query("kind")) ??
       null;
@@ -899,7 +900,6 @@ export function createDashboardInboxHandlers(
   const detail: Handler = async (context) => {
     const account = await accountOrRedirect(context, getAccount);
     if (account instanceof Response) return account;
-    await reconcileActivities?.();
     const notificationId = internalId(
       "ntf",
       context.req.param("notificationId") ?? "",
