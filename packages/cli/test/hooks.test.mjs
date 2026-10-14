@@ -8,7 +8,6 @@ import test from "node:test";
 import { ReloApiClient } from "../src/api-client.mjs";
 import { EXIT, run } from "../src/cli.mjs";
 import { setupWarnings } from "../src/doctor.mjs";
-import { cardKey } from "../src/identity.mjs";
 import { cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 const SESSION_ID = "9f2c1c34-5c0e-4d63-8a3a-7f1d3bd2c001";
@@ -29,7 +28,11 @@ async function hookBox({ input, env = {}, fail, config = {} } = {}) {
   const box = { state, repo, sent: [], clock: 1_800_000_000_000, stored: [], stdin: undefined };
   box.stdin = input ?? { session_id: SESSION_ID, hook_event_name: "SessionStart", cwd: repo, transcript_path: "/Users/x/.claude/t.jsonl",
     prompt: SECRET_PROMPT, tool_name: "Bash", tool_input: { command: "cat ~/.ssh/id_rsa" }, tool_response: { stdout: "secret" } };
-  const client = { sendAgentSessionEvent: async (body) => { if (fail) throw fail; box.sent.push(body); return { ok: true, state: "active" }; } };
+  // Any call but the presence event is recorded: hooks never reach a card, work or question (ADR 0007).
+  box.other = [];
+  const client = new Proxy({ sendAgentSessionEvent: async (body) => { if (fail) throw fail; box.sent.push(body); return { ok: true, state: "active" }; } },
+    { get: (target, name) => target[name] ?? (typeof name === "string" && name !== "then"
+      ? async (...args) => { box.other.push({ name, args }); return {}; } : undefined) });
   box.deps = () => ({
     ...cardDependencies(client, { env }),
     loadConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), ...config }),
@@ -48,7 +51,7 @@ async function hookBox({ input, env = {}, fail, config = {} } = {}) {
   return box;
 }
 
-test("relo hook sends only the session facts: hashed id, event, project, computer, account and card key", async () => {
+test("relo hook sends only the session facts: hashed id, event, project, computer and account", async () => {
   const box = await hookBox();
   const out = await box.run(["hook", "start"]);
   assert.equal(out.exitCode, 0);
@@ -63,8 +66,8 @@ test("relo hook sends only the session facts: hashed id, event, project, compute
   assert.equal(body.at, new Date(box.clock).toISOString());
   assert.equal(body.project, box.repo.split("/").at(-1));
   assert.equal(body.computer, "Studio Mac");
-  assert.equal(body.cardKey, cardKey({ env: { CLAUDE_CODE_SESSION_ID: SESSION_ID } }));
-  assert.deepEqual(Object.keys(body).sort(), ["at", "cardKey", "computer", "event", "harness", "project", "session"]);
+  assert.equal(body.cardKey, undefined, "presence carries no card key: nothing joins a session to a card");
+  assert.deepEqual(Object.keys(body).sort(), ["at", "computer", "event", "harness", "project", "session"]);
   const text = JSON.stringify(body);
   for (const forbidden of [SECRET_PROMPT, "hunter2", "id_rsa", "transcript", SESSION_ID, "Bash"]) {
     assert.equal(text.includes(forbidden), false, `${forbidden} must never be sent`);
@@ -287,7 +290,7 @@ test("Claude hooks resolve the account like the card does (custom config folder 
   assert.equal(box.sent[0].account, "work");
 });
 
-test("Gemini CLI hooks map its event names and link a card only through RELO_SESSION", async () => {
+test("Gemini CLI hooks map its event names and never link a card", async () => {
   const names = { SessionStart: "start", BeforeAgent: "prompt", AfterTool: "tool", AfterAgent: "stop", SessionEnd: "end" };
   for (const [gemini, event] of Object.entries(names)) {
     const box = await hookBox({ input: { session_id: "gem-session-0123456789", hook_event_name: gemini, cwd: tmpdir() } });
@@ -299,7 +302,7 @@ test("Gemini CLI hooks map its event names and link a card only through RELO_SES
   }
   const linked = await hookBox({ env: { RELO_SESSION: "shared-id" }, input: { session_id: "gem-session-0123456789", hook_event_name: "SessionStart", cwd: tmpdir() } });
   await linked.run(["hook", "start", "--agent", "gemini"]);
-  assert.equal(linked.sent[0].cardKey, cardKey({ env: { RELO_SESSION: "shared-id" } }));
+  assert.equal(linked.sent[0].cardKey, undefined);
 });
 
 test("the client posts hooks to the sessions route with a 2 second ceiling and never retries a 429", async () => {
@@ -540,11 +543,11 @@ test("a full start, update, ask, end flow with no hooks installed makes no sessi
   const deps = { ...cardDependencies(client), home: box.home, cwd: box.cwd, env: {} };
   const topic = ["--topic", "Release 0.7.57"];
   const step = async (argv) => { const out = await cli(argv, deps); assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out.line)); };
-  await step(["activity", "start", "--title", "Deploy", "--status", "Building", "--steps", "A,B", ...topic]);
+  await step(["activity", "start", "--title", "Deploy", "--status", "Building", "--steps", "Build image,Ship it", ...topic]);
   await step(["activity", "update", "--status", "Testing", ...topic]);
   await step(["ask", "Deploy?", "--approval", ...topic]);
   await step(["notify", "Done", ...topic]);
-  await step(["activity", "end", "--status", "Live", "--name", fake.calls[0].body.key]);
+  await step(["activity", "end", "--status", "Live", "--name", fake.calls.find((call) => call.op === "start").body.key]);
   assert.ok(requested.length > 4, "the flow really ran");
   assert.deepEqual(requested.filter((name) => /session/iu.test(name)), [], "no session event or session list was requested");
   // setup without --hooks writes no hooks, and doctor never suggests them.
@@ -619,4 +622,20 @@ test("setup --hooks puts Relo's matcher on its own Notification group, never on 
   const settings = JSON.parse(await readFile(box.global, "utf8"));
   assert.deepEqual(settings.hooks.Notification, [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", timeout: 5 }] }]);
   assert.equal(settings.hooks.Stop[0].matcher, "", "a shared group keeps the owner's matcher");
+});
+
+test("invariant: no hook event, subagent event or session end ever touches a card, work or question", async () => {
+  const events = [["start", "SessionStart"], ["prompt", "UserPromptSubmit"], ["tool", "PostToolUse"], ["stop", "Stop"],
+    ["wait", "Notification"], ["end", "SessionEnd"]];
+  for (const env of [{}, { RELO_SESSION: "shared-id" }, { CLAUDE_CODE_SESSION_ID: SESSION_ID }]) {
+    for (const [event, name] of events) {
+      for (const agent of [undefined, "agent-7"]) {
+        const box = await hookBox({ env, input: { session_id: SESSION_ID, hook_event_name: name, cwd: tmpdir(),
+          notification_type: "permission_prompt", ...(agent ? { agent_id: agent } : {}) } });
+        assert.equal(await (await box.run(["hook", event])).exitCode, 0);
+        assert.deepEqual(box.other, [], `${event}${agent ? " (subagent)" : ""} reached ${box.other.map((call) => call.name).join(", ")}`);
+        for (const body of box.sent) assert.deepEqual(Object.keys(body).filter((key) => /card|work|activity|interaction/iu.test(key)), []);
+      }
+    }
+  }
 });

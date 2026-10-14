@@ -147,6 +147,7 @@ export function compactData(command, data) {
         disposition: data?.disposition,
         reused: data?.reused === true ? true : undefined,
         held: data?.heldForQuestion === true ? true : undefined,
+        next: data?.disposition === "continuing" ? data?.next : undefined,
       });
     case "activity.status":
       return data?.found === false || !data?.activity
@@ -337,6 +338,10 @@ function compactDetails(error) {
     id: typeof details.interactionId === "string" ? details.interactionId : undefined,
     retryAfterSeconds: details.retryAfterSeconds,
     missing: details.missing,
+    // The running card or work a refused command names, so the agent can continue it.
+    card: details.card && typeof details.card === "object" ? details.card : undefined,
+    work: details.work && typeof details.work === "object" ? details.work : undefined,
+    candidates: Array.isArray(details.candidates) ? details.candidates : undefined,
   });
   return Object.keys(kept).length > 0 ? kept : undefined;
 }

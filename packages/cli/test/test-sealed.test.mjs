@@ -32,7 +32,7 @@ test("relo test seals its card and question when the account's phone has keys", 
   try {
     await run(["test"], { stdout: () => {}, stderr: () => {} }, deps);
     const start = fake.calls.find((call) => call.op === "start");
-    const ask = fake.calls.find((call) => call.op === "ask");
+    const ask = fake.calls.find((call) => ["ask", "question"].includes(call.op));
     assert.ok(start?.body?.sealed, "the test card is sealed");
     assert.ok(!JSON.stringify(start.body).includes("Tap Yes"), "no readable card text reaches the server");
     assert.ok(ask?.body?.sealed, "the test question is sealed");

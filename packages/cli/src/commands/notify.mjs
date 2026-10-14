@@ -1,10 +1,9 @@
 import { sealNoticeRequest, sealQuestion } from "../seal-notice.mjs";
 import { rememberQuestion, verifyAnswer } from "../answer-verify.mjs";
-import { saveCardText, sealCardRequest, sealedCardDirectory } from "../seal-card.mjs";
 import { parseDuration, requireText, validateCallbackUrl, validateDestinationUrl, validatePublicHttpsUrl } from "../args.mjs";
 import { ApiError, TerminalInteractionError, UsageError } from "../errors.mjs";
 import { notificationRelevance } from "../relevance.mjs";
-import { DEFAULT_ACTIVITY_EXPIRES_SECONDS, DEFAULT_ACTIVITY_STALE_SECONDS, activeCard, activityName, validateActivityWaitResponse } from "./activity.mjs";
+import { activeCard, activityName, validateActivityWaitResponse } from "./activity.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
 import { agentSession, cardKey, creationContext, inAgentContext, partialIdentity } from "../identity.mjs";
 import { assertAllowedOptions, assertAtMostOne, assertNoExtra, definedFields, dryRunResult, deliveryGuard, enumOption, fitRequiredText, fitText, joinedText, optionalText, result, stdinDeviceIds, stdinObject, validateIdempotencyKey } from "../support.mjs";
@@ -236,14 +235,18 @@ export async function askCommand(words, options, client, config, dependencies, c
       defaultSeconds: Math.min(expiresInSeconds, agentWaitSeconds(dependencies) ?? QUESTION_SECONDS),
       minimumSeconds: 1, maximumSeconds: expiresInSeconds })
     : undefined;
+  const labels = { primary: options["primary-label"] ?? stdin.primaryLabel, secondary: options["secondary-label"] ?? stdin.secondaryLabel };
+  // Checked before anything is sent, wherever the question ends up (a card or a notification).
+  actionLabel(labels.primary, "primary-label");
+  actionLabel(labels.secondary, "secondary-label");
   return askOnCard({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin,
-    client, config, dependencies, command,
-    labels: { primary: options["primary-label"] ?? stdin.primaryLabel, secondary: options["secondary-label"] ?? stdin.secondaryLabel } });
+    client, config, dependencies, command, labels });
 }
 
 /**
- * Asks on this work's card: the question appears on the card with answer buttons, and the
- * card returns to the work once answered. No card yet? Ask starts one for the question.
+ * Asks on this work's card: the question appears on the card with answer buttons, and the card
+ * returns to the work once answered. A question never starts a card (ADR 0007): with no card
+ * running for this work it goes out as a notification that carries the answer buttons.
  */
 export async function askOnCard({ prompt, detail, choices, type, labels, expiresInSeconds, wait, timeoutSeconds,
   options, stdin, client, config, dependencies, command }) {
@@ -252,7 +255,6 @@ export async function askOnCard({ prompt, detail, choices, type, labels, expires
   }
   const defaults = dependencies.creationDefaults();
   const idempotencyKey = validateIdempotencyKey(options["idempotency-key"], dependencies.generateIdempotencyKey);
-  let createdByAsk = false;
   const named = activityName(options, stdin);
   // An app that should not take a card asks with a notification that carries the answer buttons.
   if (options["notification-only"]) {
@@ -262,46 +264,11 @@ export async function askOnCard({ prompt, detail, choices, type, labels, expires
   // Outside an agent session the identity names the card, so validate it before any request.
   const known = named === undefined && !agentSession(dependencies.env)
     ? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) : undefined;
-  const key = cardKey({ name: named, env: dependencies.env, context: known ?? partialIdentity(options, stdin, defaults) });
-  let card = key === undefined ? null : await activeCard(client, key);
+  const card = await workCard(options, stdin, client, dependencies, known ?? partialIdentity(options, stdin, defaults));
   if (!card) {
-    const context = known ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE);
-    const startBody = definedFields({
-      key: key ?? cardKey({ env: {}, context }),
-      acquireMode: "ensure",
-      title: requireText(context.taskTitle ?? context.threadName, "Card title", 80),
-      status: "Needs you",
-      context,
-      expiresInSeconds: Math.min(28_800, Math.max(DEFAULT_ACTIVITY_EXPIRES_SECONDS, expiresInSeconds + 300)),
-      staleAfterSeconds: DEFAULT_ACTIVITY_STALE_SECONDS,
-      deviceIds: await resolveTargetDevices(client, options.device.length > 0 ? options.device : []),
-    });
-    // The card a question starts is sealed like any other card (E5).
-    const sealedStart = await sealCardRequest({ body: startBody, cardId: null, key: `${idempotencyKey}:card`, client, config,
-      dependencies, notes: [], deviceIds: startBody.deviceIds });
-    let started;
-    try {
-      started = await client.startActivity(sealedStart.body, `${idempotencyKey}:card`);
-    } catch (error) {
-      // This login may keep only so many cards open (set in the Dashboard): ask by notification instead.
-      if (error?.code !== "CARD_LIMIT_REACHED") throw error;
-      return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
-        command, idempotencyKey, context, buttons: true,
-        reason: "This login already has its maximum of open cards, so the question went out as a notification." });
-    }
-    if (sealedStart.text && started?.activity?.id) {
-      await saveCardText(sealedCardDirectory(dependencies.env), started.activity.id, sealedStart.text);
-    }
-    card = started?.activity;
-    createdByAsk = true;
-    if (!started?.delivery?.durableCommands) {
-      // No phone can show a card (Live Activities off): don't leave an empty card behind.
-      if (card?.id) {
-        await client.endActivity(card.id, { status: "Ended", dismissAfterSeconds: 0 }, `${idempotencyKey}:void`).catch(() => {});
-      }
-      return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
-        command, idempotencyKey, context });
-    }
+    return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
+      command, idempotencyKey, buttons: true, context: known ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE),
+      reason: "No card is running for this work, so the question went out as a notification with answer buttons." });
   }
   const callback = await callbackOption(options, stdin, dependencies);
   const notes = [];
@@ -320,34 +287,36 @@ export async function askOnCard({ prompt, detail, choices, type, labels, expires
   } catch (error) {
     if (error?.code !== "ACTIVITY_TARGET_UNAVAILABLE") throw error;
     return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
-      command, idempotencyKey, title: card.title });
+      command, idempotencyKey, title: card.title, context: known ?? cardIdentity(card) });
   }
   const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt: sealed ? undefined : prompt });
   if (sealed) await rememberQuestion(dependencies.env, { interactionId: created.interaction.id,
     questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
-  const data = { ...created, card: { id: card.id, createdForQuestion: createdByAsk }, endToEnd: Boolean(sealed) };
+  const data = { ...created, card: { id: card.id }, endToEnd: Boolean(sealed) };
   if (!wait) return result(command, data, { notes });
-  // A card started only for this question ends once answered, unless an agent session keeps
-  // using it as its live view.
-  const settle = async (state, chosenLabel) => {
-    if (!createdByAsk || agentSession(dependencies.env)) return;
-    await client.endActivity(card.id, { status: chosenLabel ?? ANSWER_LABELS[state] ?? "Answered",
-      symbol: state === "approved" || state === "yes" || chosenLabel ? "success" : "warning", dismissAfterSeconds: 60 },
-    `${idempotencyKey}:end`).catch(() => {});
-  };
+  // The card belongs to the work: answering never ends it.
   try {
     const waited = await waitForInteraction(client, created.interaction.id, timeoutSeconds, dependencies);
-    const answer = waited?.interaction ?? waited;
-    await settle(answer?.state, answer?.type === "choice" ? answer?.response?.label : undefined);
     return result(command, mergeCreatedAndWaitedInteraction(data, waited), { notes });
   } catch (error) {
     if (!(error instanceof TerminalInteractionError)) throw error;
     const { state, result: waitedResult, ...details } = error.details ?? {};
-    if (state !== "timeout") await settle(state);
     throw new TerminalInteractionError(error.message, {
       state, details: { ...details, result: mergeCreatedAndWaitedInteraction(data, waitedResult) },
     });
   }
+}
+
+/** A running card's source, project and topic, when it carries all three. */
+function cardIdentity(card) {
+  const context = card?.context;
+  return context?.providerName && context?.project && context?.threadName ? context : undefined;
+}
+
+/** The running card of this work, or null. Only reads: a question never creates or changes a card. */
+async function workCard(options, stdin, client, dependencies, context) {
+  const key = cardKey({ name: activityName(options, stdin), env: dependencies.env, context });
+  return key === undefined ? null : activeCard(client, key);
 }
 
 /** `relo ask --dry-run`: every local check of the real ask, then what it would send. No request. */

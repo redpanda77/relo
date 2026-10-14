@@ -296,7 +296,7 @@ test("progress on a card that draws it from steps is flagged, never silently dro
   assert.equal(update.line.note, note);
   const quiet = await cli(["activity", "update", "--status", "Working"], deps);
   assert.equal(quiet.line.note, undefined);
-  const start = await cli(["activity", "start", "--title", "T", "--status", "S", "--progress", "0.2", ...topic], deps);
+  const start = await cli(["activity", "start", "--title", "T", "--status", "S", "--progress", "0.2", "--new", ...topic], deps);
   assert.equal(start.line.note, note);
   const refused = await cli(["activity", "start", "--title", "T", "--status", "S", "--steps", "A,B", "--progress", "0.2", ...topic], deps);
   assert.equal(refused.exitCode, EXIT.USAGE);

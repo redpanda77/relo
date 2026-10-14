@@ -15,6 +15,7 @@ export const BLOCK_LINES = [
   "## Relo (live status on the owner's iPhone)",
   "For work longer than a couple of minutes, keep one Relo card current; ask on it before risky actions.",
   '- `relo activity start --title "…" --status "…" --steps "A,B,C" --topic "<the work>"` → `update --status … --next-step` → `end --status "…"`',
+  '- One start per goal; update between phases (extend `--steps`), end once at the end. Never start a new card for continued work; subagents run no relo commands. Name steps concretely ("Run migrations"), never "Step 2" or "todo".',
   "- Judgment work: `--steps` (3-6 named phases). A counted job (10 images, 400 rows): `--progress 3/10`. Never both.",
   '- `relo ask "Deploy to production?" --approval`: only exit 0 with state `approved` is permission; anything else means no.',
   '- `relo notify "…"` only for a finished outcome worth a buzz. Never put secrets, paths or raw output in card text.',

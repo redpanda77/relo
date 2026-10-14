@@ -2,7 +2,7 @@ import { hookLabelsWithNames } from "../opaque-names.mjs";
 import { sealSessionNames } from "../seal-notice.mjs";
 // `relo hook <event>`: the one entry point for agent-harness hooks (installed by `relo setup --hooks`).
 // It reports THAT a session started, is working, stopped or ended, on its own channel, never what the
-// agent did. From the harness's hook JSON (stdin) it keeps the session id, the event name and the cwd
+// agent did. Hooks write presence only: they never create, change or end work, cards or questions. From the harness's hook JSON (stdin) it keeps the session id, the event name and the cwd
 // (only to name the git project); prompts, tool input/output and transcript paths are dropped unread.
 // It prints nothing (Claude Code injects hook stdout into the model's context), never fails, and
 // the caller exits 0 whatever happens. RELO_DEBUG=1 writes errors to a debug log in Relo's state folder.
@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assertAllowedOptions, definedFields, result } from "../support.mjs";
-import { agentSession, cardKey, detectAccount, detectAgent, repositoryName } from "../identity.mjs";
+import { detectAccount, detectAgent, repositoryName } from "../identity.mjs";
 
 export const HOOK_EVENTS = ["start", "prompt", "tool", "stop", "wait", "end"];
 
@@ -26,16 +26,14 @@ export const WAITING_NOTIFICATIONS = ["permission_prompt", "elicitation_dialog",
  *    cwd, hook_event_name, transcript_path; notification_type on Notification; agent_id inside a subagent, which
  *    shares its parent's session_id, so a subagent is never a session of its own.
  *  - Gemini CLI: geminicli.com/docs/hooks. Same settings shape (`hooks.<Event>[].hooks[]`, timeout in ms), same
- *    base stdin fields. Its shell carries no session id, so its cards are not linked unless RELO_SESSION is set.
+ *    base stdin fields.
  */
 export const HOOK_HARNESSES = {
   "claude-code": { label: "Claude Code", events: {
     SessionStart: "start", UserPromptSubmit: "prompt", PostToolUse: "tool", Stop: "stop", Notification: "wait", SessionEnd: "end" },
-  matchers: { Notification: WAITING_NOTIFICATIONS.join("|") },
-  linksCard: true },
+  matchers: { Notification: WAITING_NOTIFICATIONS.join("|") } },
   gemini: { label: "Gemini CLI", events: {
-    SessionStart: "start", BeforeAgent: "prompt", AfterTool: "tool", AfterAgent: "stop", SessionEnd: "end" },
-  linksCard: false },
+    SessionStart: "start", BeforeAgent: "prompt", AfterTool: "tool", AfterAgent: "stop", SessionEnd: "end" } },
 };
 
 export const TOOL_COALESCE_MS = 60_000;
@@ -207,12 +205,9 @@ export async function processHook({ positionals, options, dependencies }) {
     const { computer, account } = labels;
     const client = dependencies.clientFactory(config);
     const sealedNames = event === "end" ? undefined : await sessionNames(stateDirectory, session, names, client, config, dependencies);
-    // The card key the activity commands derive for this session, so the server can link card and session.
-    const explicit = agentSession(dependencies.env)?.agent === "relo";
-    const key = explicit ? cardKey({ env: dependencies.env })
-      : harness.linksCard ? cardKey({ env: { CLAUDE_CODE_SESSION_ID: id } }) : undefined;
+    // Presence only (ADR 0007): no card key, nothing that names or reaches a card, work or question.
     const body = definedFields({ session, harness: harnessName, event, at: new Date(now).toISOString(),
-      project, computer, account, cardKey: label(key, 100), sealedNames: sealedNames?.envelope });
+      project, computer, account, sealedNames: sealedNames?.envelope });
     await send(client, body);
     if (event === "tool") await recordToolSent(stateDirectory, session, now);
     if (sealedNames) await writeFile(sealedNames.marker, sealedNames.digest, { mode: 0o600 }).catch(() => {});

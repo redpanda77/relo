@@ -104,6 +104,6 @@ extension InboxItem {
             readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: destinationUrl, privacy: privacy, interaction: request, context: context, resources: resources,
-            activityEvent: activityEvent ?? self.activityEvent, activity: activity, sealed: sealed)
+            activityEvent: activityEvent ?? self.activityEvent, activity: activity, sealed: sealed, work: work)
     }
 }

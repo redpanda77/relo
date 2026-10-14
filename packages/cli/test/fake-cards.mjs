@@ -48,6 +48,13 @@ export function fakeCards({ answer = "approved", answerAfterPolls = 1, response 
       return { parentActivityId: id, companionActivityId: null, interaction: { ...interaction, polls: undefined },
         eventId: interaction.eventId, delivery: DELIVERY, queued: 1, deliveryMode: "queued_for_direct_apns", replayed: false };
     },
+    // A question with no card running: a standalone message with answer buttons (it never makes a card).
+    async createInteraction(body, key) {
+      calls.push({ op: "question", body, key });
+      const interaction = { id: `int_${randomUUID()}`, type: body.type, prompt: body.prompt, state: "pending", polls: 0 };
+      questions.set(interaction.id, interaction);
+      return { interaction: { id: interaction.id, type: body.type, prompt: body.prompt, state: "pending" }, delivery: DELIVERY };
+    },
     async waitForInteraction(id) {
       const interaction = questions.get(id);
       interaction.polls += 1;
@@ -63,7 +70,7 @@ export function fakeCards({ answer = "approved", answerAfterPolls = 1, response 
 export function cardDependencies(client, { env = {}, identity = { providerName: "Claude Code", project: "relo" } } = {}) {
   return {
     loadConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44) }),
-    clientFactory: () => client,
+    clientFactory: () => noRunningCards(client),
     identityDefaults: () => identity,
     readStdinJson: async () => ({}),
     env,
@@ -88,4 +95,11 @@ export async function fakeHome({ block = false, skillVersion, agents = [".claude
     await writeFile(join(skill, "SKILL.md"), "---\nname: relo-notifications\n---\n");
   }
   return home;
+}
+
+/** A test client that answers "no such card" for any card it was not given: nothing is running yet. */
+export function noRunningCards(client) {
+  if (!client || typeof client !== "object") return client;
+  const missing = async () => { throw Object.assign(new Error("not_found"), { status: 404, code: "NOT_FOUND" }); };
+  return new Proxy(client, { get: (target, name) => (name === "getActivity" && !(name in target) ? missing : target[name]) });
 }

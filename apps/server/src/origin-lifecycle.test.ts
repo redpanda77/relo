@@ -310,7 +310,7 @@ suite("origin-slot lifecycle", () => {
     ]);
   });
 
-  test("reuses one manual keyed activity without creating provider ownership", async () => {
+  test("an ensure start with an active key returns that card unchanged (ADR 0007)", async () => {
     const manualBody = {
       acquireMode: "ensure",key: "manual-release",title: "Manual release",status: "Starting",
       progress: 0.1,deviceIds: [deviceId],
@@ -326,8 +326,8 @@ suite("origin-slot lifecycle", () => {
     },"manual-ensure-update");
     expect(ensured.status).toBe(200);
     expect(await ensured.json()).toMatchObject({
-      disposition: "reused",reused: true,
-      activity: { id: startedBody.activity.id,ownerKind: "manual_key",sequence: 1,progress: 0.5 },
+      disposition: "existing",reused: true,queued: 0,
+      activity: { id: startedBody.activity.id,ownerKind: "manual_key",sequence: 0,progress: 0.1,status: "Starting" },
     });
     expect((await db.query<{ count: number }>(
       `SELECT count(*)::int AS count FROM live_activities
@@ -434,8 +434,8 @@ suite("origin-slot lifecycle", () => {
     },"named-manual-exact-update");
     expect(manualUpdate.status).toBe(200);
     expect(await manualUpdate.json()).toMatchObject({
-      disposition: "reused",
-      activity: { id: manualBody.activity.id,ownerKind: "manual_key",sequence: 1,progress: 0.5 },
+      disposition: "existing",
+      activity: { id: manualBody.activity.id,ownerKind: "manual_key",sequence: 0,progress: 0.1 },
     });
 
     expect((await db.query<{ count: number }>(

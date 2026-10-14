@@ -49,7 +49,59 @@ final class E2EESealedCardTests: XCTestCase {
             .applying(ReloSealedCardText(title: "Encrypted card", summary: "Deploy now?"))
         XCTAssertEqual(question.subtitle, "Deploy now?")
         XCTAssertEqual(question.title, "Encrypted card", "a placeholder title in the sealed text never replaces")
-        XCTAssertEqual(placeholderCard().applying(ReloSealedCardText(steps: ["Only one"])).components, placeholderCard().components)
+        // Each step on its own: a short list labels what it can, never all or nothing.
+        guard case let .steps(_, _, partial) = placeholderCard().applying(ReloSealedCardText(steps: ["Only one"])).components[0]
+        else { return XCTFail("steps") }
+        XCTAssertEqual(partial.map(\.label), ["Only one", "Step 2"])
+    }
+
+    func testDecodedContentStateLabelsAWorksStepsByID() throws {
+        let ring = ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory())
+        let state = try ring.maintain()
+        let trust = ReloTrustedClients(store: TrustStore())
+        let mac = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
+        try trust.markVerified(ReloClientKey(clientId: "key_1", name: "Mac", keyId: ReloE2EE.keyID(publicKeyX963: mac.publicKeyX963),
+                                             publicKey: ReloE2EE.base64URL(mac.publicKeyX963), changedAt: ""))
+        ReloSealedCards.install(ReloSealedContent(ring: ring, trust: trust).cardOpener)
+        defer { ReloSealedCards.install { _ in nil } }
+
+        let text: [String: Any] = ["title": "Ship 0.13", "status": "Testing", "phases": [
+            ["id": "ph_plan", "title": "Plan", "steps": [["id": "st_scope", "label": "Scope"]]],
+            ["id": "ph_build", "title": "Build", "steps": [["id": "st_code", "label": "Code"], ["id": "st_test", "label": "Test"]]],
+        ]]
+        let envelope = try ReloE2EE.seal(kind: "card", context: "ntf:work", sender: mac,
+                                         recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)],
+                                         content: try JSONSerialization.data(withJSONObject: text))
+        let card = LiveActivityPresentation(title: "Encrypted card", subtitle: nil, status: "Updating…", components: [
+            .steps(id: "named_steps", colorRole: .thread, items: [
+                .init(id: "st_scope", label: "Step 1", state: .complete), .init(id: "st_code", label: "Step 2", state: .complete),
+                .init(id: "st_test", label: "Step 3", state: .current),
+            ]),
+        ])
+        let content = ReloActivityAttributes.ContentState(generation: 1, updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+                                                          sequence: 3, interaction: nil, presentation: card)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(content)) as? [String: Any])
+        json["sealed"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(envelope))
+        json["work"] = ["id": "wrk_e2e", "version": 3, "phase": ["id": "ph_build", "index": 2, "count": 2],
+                        "steps": ["st_code", "st_test"], "step": "st_test"]
+        let decoded = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.work?.id, "wrk_e2e")
+        guard case let .steps(_, _, items) = decoded.presentation.components[0] else { return XCTFail("steps") }
+        XCTAssertEqual(items.map(\.label), ["Scope", "Code", "Test"], "every step labelled by id")
+
+        // The app stores and ActivityKit decodes the state again: the same card.
+        let reread = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONEncoder().encode(decoded))
+        XCTAssertEqual(reread.presentation, decoded.presentation)
+
+        // Without works (today's server) the labels still open by id.
+        json["work"] = nil
+        let legacy = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(legacy.presentation, decoded.presentation)
+        let command = try JSONDecoder().decode(LiveActivityCommand.self, from: JSONSerialization.data(withJSONObject: [
+            "operation": "update", "activityId": "act_1", "generation": 1, "targetDeviceId": "dev_1",
+            "work": ["id": "wrk_e2e"],
+        ].merging(try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(card)) as? [String: Any])) { old, _ in old }))
+        XCTAssertEqual(command.work?.id, "wrk_e2e")
     }
 
     func testDecodedContentStateShowsTheSealedTextFromAVerifiedComputer() throws {

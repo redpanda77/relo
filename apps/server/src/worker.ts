@@ -111,11 +111,11 @@ const shutdown = new AbortController();
 process.on("SIGTERM", () => { stopping = true; shutdown.abort(); });
 process.on("SIGINT", () => { stopping = true; shutdown.abort(); });
 
-/** Session facts become card endings here, beside card expiry; one failure never stops the cycle. */
-async function reconcileSessions(mode: "disabled" | "sandbox" | "production"): Promise<void> {
+/** Silent sessions become lost (presence only, never cards or work); one failure never stops the cycle. */
+async function reconcileSessions(): Promise<void> {
   try {
-    const result = await reconcileAgentSessions(db,mode);
-    if (result.lost || result.cardsEnded || result.pruned) {
+    const result = await reconcileAgentSessions(db);
+    if (result.lost || result.pruned) {
       console.info(JSON.stringify({ event: "agent_session_reconciled",...result }));
     }
   } catch (error) {
@@ -151,7 +151,7 @@ async function purgeUnreadable(mode: "disabled" | "sandbox" | "production"): Pro
   unreadablePurgeDueAt = Date.now()+CONTENT_RETENTION_INTERVAL_MS;
   try {
     const result = await purgeAllUnreadableContent(db,mode);
-    if (result.cardsEnded || result.eventsPurged) console.info(JSON.stringify({ event: "unreadable_content_purged",...result }));
+    if (result.cardsUnsealed || result.eventsPurged) console.info(JSON.stringify({ event: "unreadable_content_purged",...result }));
     const asked = await requestAllPendingApprovals(db,mode,notificationContentCipher);
     if (asked) console.info(JSON.stringify({ event: "device_approval_requested",devices: asked }));
   } catch (error) {
@@ -198,7 +198,7 @@ if (config.APNS_MODE === "disabled") {
     cycle.reconciliationRequired = swept.reconciliationRequired;
     cycle.expiredActivities = await expireDueActivities(db,"disabled");
     cycle.expiredInteractions = await expireDueInteractiveActivities(db,"disabled");
-    await reconcileSessions("disabled");
+    await reconcileSessions();
     await pruneExpiredContent();
     await purgeUnreadable("disabled");
     cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);
@@ -255,7 +255,7 @@ if (config.APNS_MODE === "disabled") {
         cycle.reconciliationRequired = swept.reconciliationRequired;
         cycle.expiredActivities = await expireDueActivities(db,config.APNS_MODE);
         cycle.expiredInteractions = await expireDueInteractiveActivities(db,config.APNS_MODE);
-        await reconcileSessions(config.APNS_MODE);
+        await reconcileSessions();
         await pruneExpiredContent();
         await purgeUnreadable(config.APNS_MODE);
         cycle.canceledUndeliverable = await cancelUndeliverableDeliveryJobs(db);

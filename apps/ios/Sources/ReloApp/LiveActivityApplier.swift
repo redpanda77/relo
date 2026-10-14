@@ -141,7 +141,8 @@ final class LiveActivityApplier {
             } : nil,
             presentation: presentation,
             startedAt: startedAt,
-            sealed: command.sealed
+            sealed: command.sealed,
+            work: command.work
         )
         let fallbackStaleDate = Date().addingTimeInterval(600)
         let staleDate = command.staleAt

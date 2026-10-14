@@ -40,19 +40,21 @@ test("cards start with the computer and account; flags override", async () => {
   const { client, calls } = fakeCards();
   const deps = { ...cardDependencies(client), originDefaults: () => ({ computer: "Studio", account: "work" }) };
   await execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release"], deps);
-  assert.equal(calls[0].body.context.computer, "Studio");
-  assert.equal(calls[0].body.context.account, "work");
+  const start = calls.find((call) => call.op === "start");
+  assert.equal(start.body.context.computer, "Studio");
+  assert.equal(start.body.context.account, "work");
   const second = fakeCards();
   await execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release", "--computer", "Laptop", "--account", "  home "],
     { ...cardDependencies(second.client), originDefaults: () => ({ computer: "Studio", account: "work" }) });
-  assert.equal(second.calls[0].body.context.computer, "Laptop");
-  assert.equal(second.calls[0].body.context.account, "home");
+  const secondStart = second.calls.find((call) => call.op === "start");
+  assert.equal(secondStart.body.context.computer, "Laptop");
+  assert.equal(secondStart.body.context.account, "home");
   await assert.rejects(execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release", "--account", "x".repeat(41)], deps), /at most 40/);
   // Without any account, the field is simply absent.
   const third = fakeCards();
   await execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release"],
     { ...cardDependencies(third.client), originDefaults: () => ({ computer: "Studio" }) });
-  assert.equal("account" in third.calls[0].body.context, false);
+  assert.equal("account" in third.calls.find((call) => call.op === "start").body.context, false);
 });
 
 function accountDeps(initial = {}) {
@@ -117,8 +119,13 @@ test("activity commands print one compact line; --full prints the envelope", asy
   const full = JSON.parse((await cli(["activity", "update", "--status", "More", "--full"], deps)).stdout[0]);
   assert.equal(full.command, "activity.update");
   assert.equal(full.data.delivery.durableCommands, 1);
-  const again = JSON.parse((await cli(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release"], deps)).stdout[0]);
-  assert.equal(again.reused, true);
+  const again = await cli(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release"], deps);
+  assert.equal(again.exitCode, EXIT.OK ?? 0, "a repeat start continues the running card");
+  const continued = JSON.parse(again.stdout[0]);
+  assert.equal(continued.ok, true);
+  assert.equal(continued.disposition, "continuing");
+  assert.match(continued.id, /^act_/u);
+  assert.match(continued.next, /relo activity update/u);
   const ended = JSON.parse((await cli(["activity", "end", "--status", "Done"], deps)).stdout[0]);
   assert.equal(ended.state, "ended");
 });
@@ -128,7 +135,9 @@ test("ask, interaction and notify print compact lines", async () => {
   const deps = { ...cardDependencies(client, { env: { CLAUDE_CODE_SESSION_ID: "s2" } }),
     sendNotification: undefined };
   const asked = JSON.parse((await cli(["ask", "Go?", "--approval", "--topic", "T"], deps)).stdout[0]);
-  assert.deepEqual({ ...asked, id: undefined, card: undefined }, { ok: true, id: undefined, state: "approved", card: undefined });
+  // No card is running in this session, so the question went out as a notification with buttons.
+  assert.deepEqual({ ...asked, id: undefined, note: undefined }, { ok: true, id: undefined, state: "approved", fallback: "notification", note: undefined });
+  assert.match(asked.note, /no card is running/iu);
   assert.match(asked.id, /^int_/u);
   const notified = JSON.parse((await cli(["notify", "Done", "--topic", "T"], {
     ...deps, clientFactory: () => ({ sendNotification: async () => ({ eventId: "ntf_1", delivery: { eligibleDevices: 2, durableCommands: 2, apnsJobs: 2 }, queued: 2, replayed: false }) }),
@@ -181,7 +190,7 @@ test("steps accept a comma list, and the current step by number or name", async 
   const { client, calls } = fakeCards();
   const deps = cardDependencies(client, { env: { CLAUDE_CODE_SESSION_ID: "s5" } });
   await execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "X", "--steps", "Plan,Build,Ship", "--step-current", "build"], deps);
-  assert.deepEqual(calls[0].body.steps, { labels: ["Plan", "Build", "Ship"], current: 2 });
+  assert.deepEqual(calls.find((call) => call.op === "start").body.steps, { labels: ["Plan", "Build", "Ship"], current: 2 });
   const sent = [];
   const update = (card, args) => {
     const { deps: d } = stepDeps(card);

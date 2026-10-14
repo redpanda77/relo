@@ -242,6 +242,9 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
     public let resources: InboxResourceLinks?
     /// End-to-end sealed envelopes (docs/END-TO-END-ENCRYPTION.md); text above is a placeholder until opened.
     public let sealed: InboxSealedNotice?
+    /// The work this item belongs to (ADR 0007): a card of it, or a question or notice that references it.
+    /// Sent as `work: { id, … }` or `workId`; absent from servers before works.
+    public let work: ReloWork?
 
     public init(
         id: String,
@@ -268,7 +271,8 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         resources: InboxResourceLinks? = nil,
         activityEvent: InboxHistoryMetadata.ActivityEvent? = nil,
         activity: InboxCardDigest? = nil,
-        sealed: InboxSealedNotice? = nil
+        sealed: InboxSealedNotice? = nil,
+        work: ReloWork? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -295,6 +299,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         self.context = context
         self.resources = resources
         self.sealed = sealed
+        self.work = work.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     public var validatedDestinationURL: URL? {
@@ -311,6 +316,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         case result, deliveryState
         case apnsAcceptedAt, receivedAt, openedAt, createdAt, destinationUrl, privacy
         case liveActivity, activitySummary, interaction, context, resources, activityEvent, activity, sealed
+        case work, workId
     }
 
     public init(from decoder: Decoder) throws {
@@ -342,6 +348,58 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         context = try values.decodeIfPresent(InboxContext.self, forKey: .context)
         resources = try values.decodeIfPresent(InboxResourceLinks.self, forKey: .resources)
         sealed = try values.decodeIfPresent(InboxSealedNotice.self, forKey: .sealed)
+        // A work the app cannot read leaves the item readable without it.
+        var work = (try? values.decodeIfPresent(ReloWork.self, forKey: .work)) ?? nil
+        let plainID = ((try? values.decodeIfPresent(String.self, forKey: .workId)) ?? nil)
+            ?? ((try? values.decodeIfPresent(String.self, forKey: .work)) ?? nil)
+        if work?.id == nil, let id = ReloWork.text(plainID) {
+            work = (work ?? ReloWork(id: nil)).with(id: id)
+        }
+        self.work = work.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(kind, forKey: .kind)
+        try values.encode(sourceName, forKey: .sourceName)
+        try values.encodeIfPresent(sourceImageUrl, forKey: .sourceImageUrl)
+        try values.encode(title, forKey: .title)
+        try values.encodeIfPresent(detail, forKey: .detail)
+        try values.encodeIfPresent(content, forKey: .content)
+        try values.encodeIfPresent(readAt, forKey: .readAt)
+        try values.encodeIfPresent(withdrawnAt, forKey: .withdrawnAt)
+        try values.encodeIfPresent(result, forKey: .result)
+        try values.encodeIfPresent(deliveryState, forKey: .deliveryState)
+        try values.encodeIfPresent(apnsAcceptedAt, forKey: .apnsAcceptedAt)
+        try values.encodeIfPresent(receivedAt, forKey: .receivedAt)
+        try values.encodeIfPresent(openedAt, forKey: .openedAt)
+        try values.encode(createdAt, forKey: .createdAt)
+        try values.encodeIfPresent(destinationUrl, forKey: .destinationUrl)
+        try values.encode(privacy, forKey: .privacy)
+        try values.encodeIfPresent(liveActivity, forKey: .liveActivity)
+        try values.encodeIfPresent(activitySummary, forKey: .activitySummary)
+        try values.encodeIfPresent(interaction, forKey: .interaction)
+        try values.encodeIfPresent(context, forKey: .context)
+        try values.encodeIfPresent(resources, forKey: .resources)
+        try values.encodeIfPresent(activityEvent, forKey: .activityEvent)
+        try values.encodeIfPresent(activity, forKey: .activity)
+        try values.encodeIfPresent(sealed, forKey: .sealed)
+        try values.encodeIfPresent(work, forKey: .work)
+    }
+
+    /// The work this item belongs to, from wherever the server put it.
+    public var workID: String? { work?.id ?? activity?.work?.id }
+
+    /// The same item, its work replaced.
+    public func replacingWork(_ work: ReloWork?) -> InboxItem {
+        InboxItem(
+            id: id, kind: kind, sourceName: sourceName, sourceImageUrl: sourceImageUrl, title: title, detail: detail,
+            content: content, readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
+            apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
+            destinationUrl: destinationUrl, privacy: privacy, liveActivity: liveActivity, activitySummary: activitySummary,
+            interaction: interaction, context: context, resources: resources, activityEvent: activityEvent,
+            activity: activity, sealed: sealed, work: work)
     }
 }
 

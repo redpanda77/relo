@@ -132,15 +132,16 @@ suite("Activity wait canonical admission",()=>{
       expect((await post("/api/interactions",{type:"yes_no",prompt:"Continue?",expiresInSeconds:3601})).status).toBe(400);
     } finally { await db.query("UPDATE server_settings SET max_question_seconds=604800"); }
   });
-  test("a start sent while a question waits succeeds and is shown after the answer",async()=>{
+  test("a start sent while a question waits answers existing and changes nothing (ADR 0007)",async()=>{
     const context={providerName:"Claude Code",project:"relo",threadName:"Release"};
     const first=await post("/api/live-activities",{key:"session-x",acquireMode:"ensure",title:"Release",status:"Building",context});
     expect(first.status).toBe(201);const id=first.body.activity.id;
     expect((await post(`/api/live-activities/${id}/wait`,{type:"yes_no",prompt:"Continue?"})).status).toBe(201);
     const again=await post("/api/live-activities",{key:"session-x",acquireMode:"ensure",title:"Release",status:"Testing",context});
     expect(again.status).toBe(200);expect(again.body.activity.id).toBe(id);expect(again.body.delivery.durableCommands).toBe(0);
+    expect(again.body.disposition).toBe("existing");
     const held=await card(id);
-    expect(held.status).toBe("Needs you");expect(held.resume_presentation.content.status).toBe("Testing");
+    expect(held.status).toBe("Needs you");expect(held.resume_presentation.content.status).toBe("Building");
   });
   test("a card that ask started for the question shows only the answer afterwards, named by its agent",async()=>{
     const context={providerName:"Claude Code",project:"relo",threadName:"Release"};

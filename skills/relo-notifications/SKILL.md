@@ -15,8 +15,9 @@ relo activity end --status "Live on production"
 **The card** is the tool, for work that is happening or waiting on the owner. `relo notify "…"` is a
 rare buzz for a finished outcome. Never a question, never progress. **One card per agent**: in an agent
 session (Claude Code, Codex, OpenCode, Gemini CLI, Cursor; any other harness: `RELO_SOURCE="<harness>"` and
-`RELO_SESSION=<stable id>`) every command lands on the session's card; a second start, update or ask never makes
-another. Subagents run no relo commands. Elsewhere reuse the same `--topic`. Flags: `relo help all`, `relo schema activity update`.
+`RELO_SESSION=<stable id>`) every command lands on the session's card. Start once per goal, update between
+phases, end once; never a new card for continued work. `ask` never makes one. Subagents run no
+relo commands.
 
 ## Identity
 Every start, ask and notify requires nonempty source, project, and topic. Only the **topic** is
@@ -41,8 +42,8 @@ Exit `8` (expired, canceled): do not act.
 
 ## Keep the card honest
 1. Start early; update on real milestones (a phase, a blocker), not every tool call.
-2. Progress is measured or absent. Judgment work: `--steps` (3-6 phases the owner would recognize,
-   `--next-step`). A script or counted job (10 images, 400 rows): `--progress 3/10`. Never both on one
+2. Progress is measured or absent. Judgment work: `--steps` (3-6 concrete phases, `--next-step`;
+   "Step 1", "todo", "misc" are refused). A script or counted job (10 images, 400 rows): `--progress 3/10`. Never both on one
    card; never a percentage guessed from time.
 3. Ask only when the work depends on it: one line, ≤120 chars; the why in `--detail`.
 4. End exactly once, honestly (`--symbol warning` on failure). Leave `--style`/`--privacy` alone.

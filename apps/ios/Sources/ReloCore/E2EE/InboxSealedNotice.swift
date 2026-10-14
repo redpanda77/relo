@@ -53,7 +53,7 @@ public extension InboxItem {
             activitySummary: activitySummary?.opening(title: notice.title, status: nil, detail: nil),
             // A sealed question shows its real prompt once opened (E4.1).
             interaction: interaction.map { $0.replacingPrompt(notice.summary ?? notice.body ?? $0.prompt) }, context: context,
-            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed
+            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed, work: work?.withoutText
         )
     }
 
@@ -176,7 +176,10 @@ extension InboxItem {
     /// A card event in History or Now: real title, status and current step from the card's envelope.
     func openingSealedCard(_ sealed: InboxSealedNotice, open: ReloSealedOpener) -> InboxItem {
         guard let data = open(sealed.content, id) ?? sealed.alert.flatMap({ open($0, id) }),
-              let text = try? JSONDecoder().decode(ReloSealedCardText.self, from: data) else { return self }
+              let text = try? JSONDecoder().decode(ReloSealedCardText.self, from: data) else {
+            // Unopened: the plan keeps only what the server may know in the clear.
+            return replacingWork(work?.withoutText)
+        }
         let placeholders: Set<String> = ["Encrypted card", "Encrypted question"]
         let realTitle = text.title.flatMap { placeholders.contains($0) ? nil : $0 }
         let shownTitle = placeholders.contains(title) ? (realTitle ?? title) : title
@@ -186,13 +189,16 @@ extension InboxItem {
         }
         let card = activity.map { digest -> InboxCardDigest in
             let steps = digest.steps.map { steps -> InboxCardDigest.Steps in
-                guard let current = steps.current, let labels = text.steps, current.hasPrefix("Step "),
-                      let number = Int(current.dropFirst(5)), labels.indices.contains(number - 1) else { return steps }
-                return .init(done: steps.done, total: steps.total, current: labels[number - 1])
+                // By the current step's id (v2), else by the placeholder's number (v1).
+                guard let current = steps.current, ReloSealedCards.isPlaceholderStep(current),
+                      let label = steps.currentId.flatMap({ text.labelsByStepID[$0] }) ?? text.legacyLabel(forPlaceholder: current)
+                else { return steps }
+                return .init(done: steps.done, total: steps.total, current: label, currentId: steps.currentId)
             }
             return InboxCardDigest(state: digest.state, outcome: digest.outcome, status: opened(digest.status),
                                    progress: digest.progress, steps: steps, updates: digest.updates,
-                                   startedAt: digest.startedAt, endedAt: digest.endedAt)
+                                   startedAt: digest.startedAt, endedAt: digest.endedAt,
+                                   work: digest.work.map { $0.withoutText.opening(text) })
         }
         return InboxItem(
             id: id, kind: kind, sourceName: sourceName, sourceImageUrl: sourceImageUrl, title: shownTitle,
@@ -201,7 +207,9 @@ extension InboxItem {
             createdAt: createdAt, destinationUrl: destinationUrl, privacy: privacy, liveActivity: liveActivity,
             activitySummary: activitySummary?.opening(title: realTitle, status: text.status, detail: text.detail),
             interaction: interaction, context: context, resources: resources,
-            activityEvent: activityEvent, activity: card, sealed: sealed
+            activityEvent: activityEvent, activity: card, sealed: sealed,
+            // The plan's titles and labels come only from this phone's envelope, matched by id.
+            work: ReloWork.opened(work, text: text)
         )
     }
 }
@@ -251,7 +259,39 @@ extension InboxItem {
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: nil, privacy: .private, liveActivity: liveActivity, activitySummary: activitySummary,
             interaction: interaction.map { $0.replacingPrompt(ReloSealedCards.promptPlaceholder) }, context: context,
-            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed
+            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed, work: work?.withoutText
         )
+    }
+}
+
+public extension InboxItem {
+    /// The card's steps for the detail timeline with the labels this phone opened: by step id, or by the
+    /// number a "Step n" placeholder carries. `presented` are the card's own steps when it has them;
+    /// otherwise they are rebuilt from the digest's counts. "Step n" stays only for a step whose text
+    /// never reached this phone.
+    func timelineSteps(presented: [LiveActivityDisplayPresentation.Step]) -> [LiveActivityDisplayPresentation.Step] {
+        typealias Step = LiveActivityDisplayPresentation.Step
+        if !presented.isEmpty {
+            return presented.map { step in
+                guard ReloSealedCards.isPlaceholderStep(step.label),
+                      let label = work?.label(forStepID: step.id, placeholder: step.label) else { return step }
+                return Step(id: step.id, label: label, state: step.state)
+            }
+        }
+        guard let steps = activity?.steps, steps.total > 0 else { return [] }
+        // Ids for the rebuilt steps: the card frame's when it lists them all, else the server's positional ones.
+        let frame = work?.currentStepIDs ?? []
+        let known = work?.steps ?? []
+        let ids: [String] = frame.count == steps.total ? frame
+            : known.count == steps.total ? known.map(\.id)
+            : (0..<steps.total).map { "step_\($0 + 1)" }
+        return ids.enumerated().map { index, id in
+            let state: Step.State = index < steps.done ? .complete : index == steps.done ? .current : .pending
+            let placeholder = "Step \(index + 1)"
+            let label = work?.label(forStepID: id, placeholder: placeholder)
+                ?? (state == .current ? steps.current.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 } : nil)
+                ?? placeholder
+            return Step(id: id, label: label, state: state)
+        }
     }
 }

@@ -100,12 +100,12 @@ relo activity end --status "Live on production"
 relo activity end --status "Failed: 3 tests" --symbol warning
 ```
 
-- `activity start` reuses this work's running card (updating it) instead of creating another; the
-  outside an agent session the line carries a `note` saying so. `--new` starts a card of this run's
-  own beside it (for a second process on the same topic).
+- Start once per goal. While this work's card is running, `activity start` changes nothing and
+  succeeds with `disposition: "continuing"`, the card and the commands that move it on: `activity update`
+  between phases, `activity end` when finished. It never changes a running card's title, topic or
+  steps. `--new` starts a card of this run's own beside it (for a second process on the same topic).
 - The owner can cap how many cards one login keeps running (Dashboard › Connections). At the cap a
-  start is refused with `card_limit_reached`; `relo ask` then puts the question in Relo's Needs you
-  instead of on a card (the line says so in `note`). `--notification-only` does that on purpose.
+  start is refused with `card_limit_reached`. `--notification-only` asks by notification on purpose.
 - Steps: `--steps "A,B,C"` (up to 8, 40 characters each; repeated `--step` works too). The first is
   current unless `--step-current` says otherwise. `--step-current` takes a number from 1 or a step
   name, `--next-step` advances one (it reads the card first; no steps or already last is an error).
@@ -148,8 +148,8 @@ relo ask "Which release goes out today?" --option "1.4" --option "1.5 beta" --op
   session**, because an agent's shell tool kills longer commands). If that passes first, it exits 4 with
   `{"error":{"message":"No answer yet; the question is still open.","hint":"relo interaction wait int_… --timeout 100s","details":{"state":"timeout","id":"int_…"}}}`:
   run the hint. Exit 8 (state `expired` or `canceled`) means closed without an answer: do not act.
-  No card running? `ask` starts one for the question and ends it after the answer (inside an agent
-  session it stays as the session's card).
+  No card running? A question never starts one: it goes out as a notification with the answer
+  buttons (`"fallback":"notification"`), and answering never ends a card.
 - Tappable answers only: `--approval` (Approve/Deny) or `--yes-no` (Yes/No);
   labels may be renamed (1-24 characters) while the canonical answer stays the same.
 - One question at a time per card. With a shorter `--timeout` the question stays answerable until

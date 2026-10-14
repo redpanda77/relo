@@ -217,9 +217,10 @@ test("notify inside an agent session inherits the session card's identity", asyn
   const { client, sent, calls } = notifyClient();
   const deps = cardDependencies(client, { env: session });
   await execute(["activity", "start", "--title", "T", "--status", "S", "--topic", "Release 0.7.57", "--computer", "Studio", "--account", "work"], deps);
+  const reads = calls.filter((call) => call.op === "get").length;
   const out = await cli(["notify", "Shipped"], deps);
   assert.equal(out.exitCode, EXIT.OK);
-  assert.equal(calls.filter((call) => call.op === "get").length, 1);
+  assert.equal(calls.filter((call) => call.op === "get").length - reads, 1, "notify reads the card once");
   assert.deepEqual({ ...sent[0].context, providerThreadId: undefed(sent[0].context.providerThreadId) },
     { providerName: "Claude Code", project: "relo", threadName: "Release 0.7.57", computer: "Studio", account: "work", providerThreadId: "set" });
   assert.equal(sent[0].sourceName, "Claude Code");
@@ -321,7 +322,7 @@ test("ask sends the question as one line and the explanation as --detail", async
   const detail = "**Why:** rewrites 2 tables.\n- Undo: relo rollback";
   const out = await cli(["ask", "Run the migration now?", "--approval", "--detail", detail, ...topic], deps);
   assert.equal(out.exitCode, EXIT.OK);
-  const asked = calls.find((call) => call.op === "ask");
+  const asked = calls.find((call) => ["ask", "question"].includes(call.op));
   assert.equal(asked.body.prompt, "Run the migration now?");
   assert.equal(asked.body.detail, detail);
 
@@ -334,7 +335,7 @@ test("ask sends the question as one line and the explanation as --detail", async
   piped.readStdinJson = async () => ({ prompt: "Ship 1.2?", detail: "Changelog:\n- one\n- two" });
   const fromStdin = await cli(["ask", "--approval", "--stdin", ...topic], piped);
   assert.equal(fromStdin.exitCode, EXIT.OK);
-  assert.equal(calls.filter((call) => call.op === "ask").at(-1).body.detail, "Changelog:\n- one\n- two");
+  assert.equal(calls.filter((call) => ["ask", "question"].includes(call.op)).at(-1).body.detail, "Changelog:\n- one\n- two");
 });
 
 test("ask --option offers 2-4 choices and reports the one picked", async () => {
@@ -343,7 +344,7 @@ test("ask --option offers 2-4 choices and reports the one picked", async () => {
   const out = await cli(["ask", "Which release?", "--option", "Ship", "--option", "v2=Version 2", "--option", "Roll back",
     "--detail", "Ship is 1.4; Version 2 needs the migration.", ...topic], deps);
   assert.equal(out.exitCode, EXIT.OK);
-  const asked = calls.find((call) => call.op === "ask").body;
+  const asked = calls.find((call) => ["ask", "question"].includes(call.op)).body;
   assert.equal(asked.type, "choice");
   assert.deepEqual(asked.options, [{ id: "ship", label: "Ship" }, { id: "v2", label: "Version 2" }, { id: "roll-back", label: "Roll back" }]);
   assert.equal(asked.primaryLabel, undefined);
@@ -367,5 +368,5 @@ test("ask --option offers 2-4 choices and reports the one picked", async () => {
   const piped = cardDependencies(client);
   piped.readStdinJson = async () => ({ prompt: "Which?", options: ["Ship", { id: "wait", label: "Hold" }] });
   assert.equal((await cli(["ask", "--stdin", ...topic], piped)).exitCode, EXIT.OK);
-  assert.deepEqual(calls.filter((call) => call.op === "ask").at(-1).body.options, [{ id: "ship", label: "Ship" }, { id: "wait", label: "Hold" }]);
+  assert.deepEqual(calls.filter((call) => ["ask", "question"].includes(call.op)).at(-1).body.options, [{ id: "ship", label: "Ship" }, { id: "wait", label: "Hold" }]);
 });

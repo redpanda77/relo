@@ -11,16 +11,14 @@ import type {
   AgentSessionState,
   AgentSessionSummary,
 } from "@relo/notification-contracts";
-import { recordTerminalOperation } from "./activity-commands/runtime.js";
-import type { ApnsMode } from "./activity-commands/schemas.js";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
-import { terminalPresentationColumnsFromRow } from "./presentation-runtime.js";
 
 /**
  * Agent sessions are facts reported by harness hooks on their own channel; they never carry card
- * content. This module owns the table, its read model and the one reconciler that applies the
- * session rules to cards (docs/internal/product/CLI-AGENT-INTEGRATION-PLAN.md, Phase 4).
+ * content. This module owns the table, its read model and the reconciler that marks silent sessions
+ * lost. Presence is a lease that never owns work (docs/adr/0007-presence-messages-work-separation.md):
+ * it reads which card a session's work shows, and never changes a card, question or work.
  */
 
 /** No event for this long in the middle of a turn and the session is lost (tool events arrive about once a minute). */
@@ -30,8 +28,6 @@ export const SESSION_LOST_AFTER_SECONDS = 15 * 60;
  * silence is normal: it is lost only after this long, the longest a card can live.
  */
 export const SESSION_IDLE_LOST_AFTER_SECONDS = 8 * 60 * 60;
-/** A lost session's card ends this long after the session became lost. */
-export const SESSION_LOST_CARD_GRACE_SECONDS = 10 * 60;
 /** The lists show sessions with an event in this window. */
 export const SESSION_LIST_WINDOW_HOURS = 24;
 export const SESSION_LIST_MAX = 20;
@@ -39,12 +35,6 @@ export const SESSION_LIST_MAX = 20;
 export const SESSION_RETENTION_DAYS = 7;
 /** A client clock ahead of the server by more than this is clamped to the server's time. */
 export const SESSION_FUTURE_SKEW_SECONDS = 300;
-/** Cards ended per reconciler pass; the next pass continues. */
-const RECONCILE_BATCH = 50;
-
-export const SESSION_CARD_STATUS_ENDED = "Session ended";
-export const SESSION_CARD_STATUS_LOST = "Session lost";
-
 /**
  * SQL condition: the session in `alias` is between turns, so silence is normal: it stopped, waits on
  * a prompt, or only started (a Desktop session opened and not prompted yet).
@@ -76,7 +66,7 @@ export function sessionPhaseSql(alias: string): string {
     ELSE 'idle' END`;
 }
 
-/** A wait (permission or input prompt) is stored like a stop: between turns, the card rules agree. */
+/** A wait (permission or input prompt) is stored like a stop: between turns. */
 const STATE_AFTER_EVENT: Record<AgentSessionEventName, AgentSessionState> = {
   start: "active", prompt: "active", tool: "active", stop: "idle", wait: "idle", end: "ended",
 };
@@ -234,24 +224,17 @@ export async function readAgentSessions(
   return { sessions: mapAgentSessionRows(result.rows[0]?.sessions ?? []),counts };
 }
 
-export type AgentSessionReconcileResult = { lost: number; cardsEnded: number; pruned: number };
+export type AgentSessionReconcileResult = { lost: number; pruned: number };
 
 /**
  * One idempotent pass over the session rules, safe to run from any number of workers:
  *  1. Mid-turn with no event for SESSION_LOST_AFTER_SECONDS, or between turns (stopped, waiting on a
  *     prompt, or only started) for SESSION_IDLE_LOST_AFTER_SECONDS, becomes lost.
- *  2. The active card of an ended session, or of a session lost for SESSION_LOST_CARD_GRACE_SECONDS,
- *     ends ("Session ended" / "Session lost") through the same terminal path as card expiry, unless
- *     a question on it is still open; the pass after the question settles ends it.
- *  3. Settled sessions older than SESSION_RETENTION_DAYS are removed.
- * A live session never ends its card: a card past its stale window only reads as quiet. While the
- * session is mid-turn the card is kept (see expireDueActivities); once the turn is over the
- * ordinary card expiry rules are in charge of it.
+ *  2. Settled sessions older than SESSION_RETENTION_DAYS are removed.
+ * Presence never owns work (ADR 0007): no session state creates, changes or ends a card, a question
+ * or a work. Cards dim at their stale time and end by their work's own rules.
  */
-export async function reconcileAgentSessions(
-  db: Database,
-  apnsMode: ApnsMode,
-): Promise<AgentSessionReconcileResult> {
+export async function reconcileAgentSessions(db: Pick<Database,"query">): Promise<AgentSessionReconcileResult> {
   const lost = await db.query(
     `UPDATE agent_sessions s SET state='lost',
        ended_at=s.last_event_at+make_interval(secs=>CASE WHEN ${betweenTurnsSql("s")} THEN $2::double precision ELSE $1::double precision END),
@@ -259,62 +242,10 @@ export async function reconcileAgentSessions(
      WHERE ${sessionSilentSql("s")}`,
     [SESSION_LOST_AFTER_SECONDS,SESSION_IDLE_LOST_AFTER_SECONDS],
   );
-  const cardsEnded = await endCardsOfFinishedSessions(db,apnsMode);
   const pruned = await db.query(
     `DELETE FROM agent_sessions WHERE state IN ('ended','lost')
        AND last_event_at<now()-make_interval(days=>$1::int)`,
     [SESSION_RETENTION_DAYS],
   );
-  return { lost: lost.rowCount ?? 0,cardsEnded,pruned: pruned.rowCount ?? 0 };
-}
-
-async function endCardsOfFinishedSessions(db: Database,apnsMode: ApnsMode): Promise<number> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    const due = await client.query<any>(
-      `SELECT a.*,s.state AS session_state FROM agent_sessions s
-       JOIN live_activities a ON a.principal_id=s.principal_id AND a.activity_key=s.card_key
-         AND a.state='active' AND a.presentation IS NOT NULL
-       WHERE s.card_key IS NOT NULL
-         AND (s.state='ended'
-           OR (s.state='lost' AND s.ended_at<=now()-make_interval(secs=>$2::double precision)))
-         AND a.resume_presentation IS NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM interaction_requests r JOIN notification_events e ON e.id=r.notification_event_id
-           WHERE r.state='pending' AND r.expires_at>now() AND e.principal_id=a.principal_id
-             AND e.payload#>>'{liveActivity,activityId}'='act_'||a.id::text)
-       ORDER BY a.updated_at,a.id FOR UPDATE OF a SKIP LOCKED LIMIT $1`,
-      [RECONCILE_BATCH,SESSION_LOST_CARD_GRACE_SECONDS],
-    );
-    let ended = 0;
-    for (const current of due.rows) {
-      const lostSession = current.session_state === "lost";
-      const stored = terminalPresentationColumnsFromRow(
-        current,lostSession ? SESSION_CARD_STATUS_LOST : SESSION_CARD_STATUS_ENDED,"warning");
-      const row = (await client.query(
-        `UPDATE live_activities SET state='ended',title=$2,status=$3,detail=$4,progress=$5,
-           symbol=$6,privacy=$7,accent_color=$8,style=$9,presentation=$10,presentation_sha256=$11,
-           terminal_reason=$12,terminal_actor='session',terminal_policy='session_reconciler',
-           terminal_transition_at=statement_timestamp(),
-           sequence=sequence+1,ended_at=statement_timestamp(),updated_at=statement_timestamp()
-         WHERE id=$1 AND state='active' RETURNING *`,
-        [current.id,stored.title,stored.status,stored.detail,stored.progress,stored.symbol,
-          stored.privacy,stored.accentColor,stored.style,stored.presentation,stored.presentationHash,
-          lostSession ? "session_lost" : "session_ended"],
-      )).rows[0];
-      if (!row) continue;
-      await recordTerminalOperation(client,{
-        principalId: row.principal_id,sourceName: "Relo Sessions",activity: row,state: "ended",apnsMode,
-      });
-      ended += 1;
-    }
-    await client.query("COMMIT");
-    return ended;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+  return { lost: lost.rowCount ?? 0,pruned: pruned.rowCount ?? 0 };
 }

@@ -44,6 +44,7 @@
 		1C5EFEE41B126823CB485061 /* ReloSealedContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0E9E468EEE34F65487FDFE /* ReloSealedContent.swift */; };
 		1C8A39A6C0CB44E361AA5270 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
 		1CDBF94660B4D4A988AEFFDF /* ReloKeyRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB48CE5BE80886D9F9ACF35C /* ReloKeyRing.swift */; };
+		1D0EF1BDC84B8354BD1C5EE9 /* WorkModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 358F31D23F4EEE3A86FE6950 /* WorkModelTests.swift */; };
 		1DAD14BE38E5F7EC6E4BA6AF /* ReloDeviceApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5448D49A39B47C6B294BDF /* ReloDeviceApproval.swift */; };
 		1E78E3D5B262E4EE66013688 /* ReloWireJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBAE29D817CE665C90348296 /* ReloWireJSON.swift */; };
 		1E923E685DB764962BD2C7A2 /* ReloConnectionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17154AF6D83D220015B4162D /* ReloConnectionStatus.swift */; };
@@ -102,6 +103,7 @@
 		3CB8F85BA3DBF58A49147260 /* InboxHistoryRefreshPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05A8AE21E08396B076CB339 /* InboxHistoryRefreshPolicy.swift */; };
 		3CCD6C5770E56ADF5B56F761 /* ReloActivityVisual.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA3A705FC46FB6921A8B8620 /* ReloActivityVisual.swift */; };
 		3D155986F8BDFB82267858C3 /* ReloHoloHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3E4BF3DF2FE09C26E17519 /* ReloHoloHUD.swift */; };
+		3D9FE317DD1533B4EBCA64D3 /* ReloWork.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB41371CB7A1EE09F3C238C3 /* ReloWork.swift */; };
 		3E148189349940CB21A106AC /* ReloSecureEnclaveKeyFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55BC2E6C34C1493DB4576E29 /* ReloSecureEnclaveKeyFactory.swift */; };
 		3E2A3182F9E90A3333F5363C /* CurrentStateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84C89A43FF6A577BBAE5532C /* CurrentStateController.swift */; };
 		4019313A9F39EED8D869E1D0 /* ReloPersistence.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E3447BFDEB55CDEF3138218A /* ReloPersistence.framework */; };
@@ -852,6 +854,7 @@
 		32652B179CB0BAB9DD18929A /* OfflineCurrentSourceFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineCurrentSourceFixture.swift; sourceTree = "<group>"; };
 		34C74879E5A9ECF321EEAE4D /* InboxSealedNotice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSealedNotice.swift; sourceTree = "<group>"; };
 		34DF8B2C83A5C035DA038240 /* InboxSourceProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSourceProjectionTests.swift; sourceTree = "<group>"; };
+		358F31D23F4EEE3A86FE6950 /* WorkModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkModelTests.swift; sourceTree = "<group>"; };
 		36DDC3546A57FF82AFDF9C1C /* InboxCacheContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxCacheContractTests.swift; sourceTree = "<group>"; };
 		36F4FDAEB3523781EED720DD /* PendingDecisionCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingDecisionCacheTests.swift; sourceTree = "<group>"; };
 		37C8E556D8433E419A17539C /* KeychainSignOutProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainSignOutProgressStore.swift; sourceTree = "<group>"; };
@@ -1074,6 +1077,7 @@
 		E74CAE6099BF7C806025DF50 /* BrowserSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSignIn.swift; sourceTree = "<group>"; };
 		E7672F8AD660B6BE9E2DFABA /* ReloLiveActivityPreviews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloLiveActivityPreviews.swift; sourceTree = "<group>"; };
 		EA0E9E468EEE34F65487FDFE /* ReloSealedContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloSealedContent.swift; sourceTree = "<group>"; };
+		EB41371CB7A1EE09F3C238C3 /* ReloWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloWork.swift; sourceTree = "<group>"; };
 		EB846100F0C58B02BCB10844 /* ReloThemeContrastTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloThemeContrastTests.swift; sourceTree = "<group>"; };
 		EC75117F9650DBCFF9A54A93 /* E2EECurrentRowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EECurrentRowTests.swift; sourceTree = "<group>"; };
 		ED5A4613CFDA2C0AFE2AADD5 /* ReadPorts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadPorts.swift; sourceTree = "<group>"; };
@@ -1266,6 +1270,14 @@
 			);
 			name = SharedActivity;
 			path = Sources/SharedActivity;
+			sourceTree = "<group>";
+		};
+		0FEC3B65C8CEE15D0FBE869E /* Work */ = {
+			isa = PBXGroup;
+			children = (
+				EB41371CB7A1EE09F3C238C3 /* ReloWork.swift */,
+			);
+			path = Work;
 			sourceTree = "<group>";
 		};
 		19116E2453EB8904F3A91B9E /* NotificationService */ = {
@@ -1470,6 +1482,7 @@
 				0F1C000355A6725EB63D2BAC /* TodayActivityTests.swift */,
 				01C8C854C74E942973AD7BA0 /* TodayLegendTests.swift */,
 				8E908234F263AFD5F045D27C /* TokenRetryCancellationTests.swift */,
+				358F31D23F4EEE3A86FE6950 /* WorkModelTests.swift */,
 				ADF741BA53F1A842B19CA391 /* Fixtures */,
 			);
 			name = ReloCoreTests;
@@ -1664,6 +1677,7 @@
 				27A5FBF311D93289C48CCBD5 /* E2EE */,
 				2B051B745650D39473BDB8CC /* Policies */,
 				CDF6130A3412675299EE391E /* Ports */,
+				0FEC3B65C8CEE15D0FBE869E /* Work */,
 			);
 			name = ReloCore;
 			path = Sources/ReloCore;
@@ -2362,6 +2376,7 @@
 				E33C0C9457973C8769647D22 /* TodayActivityTests.swift in Sources */,
 				31BD88A47D821AB9A7D87E5F /* TodayLegendTests.swift in Sources */,
 				0CEAA2DEAFFC546A7E4F715C /* TokenRetryCancellationTests.swift in Sources */,
+				1D0EF1BDC84B8354BD1C5EE9 /* WorkModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2523,6 +2538,7 @@
 				DA5749D01E640E09F6760919 /* ReloSealedCards.swift in Sources */,
 				FC3F8F2BF4B4669E98C6EB45 /* ReloTrustedClients.swift in Sources */,
 				1E78E3D5B262E4EE66013688 /* ReloWireJSON.swift in Sources */,
+				3D9FE317DD1533B4EBCA64D3 /* ReloWork.swift in Sources */,
 				DE8C0BC9194DB807F53E3D3F /* ResponseConfirmation.swift in Sources */,
 				B960C888DCD98FCBB41D90CF /* ResponseOutboxModels.swift in Sources */,
 				21E4E9546B253ABAFE8F9559 /* ServerEndpointPolicy.swift in Sources */,
@@ -3172,7 +3188,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 60;
+				CURRENT_PROJECT_VERSION = 61;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3186,7 +3202,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.9.48;
+				MARKETING_VERSION = 0.9.49;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3345,7 +3361,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 60;
+				CURRENT_PROJECT_VERSION = 61;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -3365,7 +3381,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.9.48;
+				MARKETING_VERSION = 0.9.49;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

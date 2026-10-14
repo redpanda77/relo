@@ -1,5 +1,4 @@
 import { sealedAlertFor,storedSealedCard,type SealedNotice } from "../sealed-content.js";
-import { SESSION_LOST_AFTER_SECONDS } from "../agent-sessions.js";
 import { createHash,randomUUID } from "node:crypto";
 import { isQuestionBehavior } from "../choice-questions.js";
 import { persistNotificationContent,type NotificationContentCipher,type PreparedNotificationContent } from "../notification-content.js";
@@ -500,18 +499,10 @@ export async function expireDueActivities(
     const due = await client.query<any>(
       `SELECT * FROM live_activities
        WHERE state='active'
-         AND (expires_at<=now() OR (
-           (lifecycle_provider IS NOT NULL AND stale_at<=now())
-           -- No zombie cards: work that stopped updating ends ten minutes after it went stale,
-           -- unless a question on it is still waiting for the owner.
-           OR (stale_at<=now()-interval '10 minutes' AND resume_presentation IS NULL
-             AND (requester_credential_id IS NOT NULL OR requester_service_id IS NOT NULL)))
-           -- A card of an agent session in the middle of a turn stays (shown quiet); the session
-           -- rules end it later. Once the turn is over (idle) the agent is not working on it.
-           AND NOT EXISTS (SELECT 1 FROM agent_sessions s
-             WHERE s.principal_id=live_activities.principal_id AND s.card_key=live_activities.activity_key
-               AND s.state='active'
-               AND s.last_event_at>now()-make_interval(secs=>${SESSION_LOST_AFTER_SECONDS})))
+         -- A card past its stale time only dims on the phone (ADR 0007): nothing about presence or
+         -- silence ends it here. A provider lease ends at its stale time; every card at its hard
+         -- expiry. Work cards roll to a successor or are abandoned by the work reconciler.
+         AND (expires_at<=now() OR (lifecycle_provider IS NOT NULL AND stale_at<=now()))
          AND presentation IS NOT NULL
        ORDER BY LEAST(expires_at,stale_at) FOR UPDATE SKIP LOCKED LIMIT $1`,
       [limit],

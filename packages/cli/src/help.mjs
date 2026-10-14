@@ -58,10 +58,12 @@ Cards (Live Activities): the default for anything in progress or waiting on the 
                       [--progress 0.4|40%|2/5 [--progress-label TEXT]] [--steps "A,B,C"|--step A --step B ...] [--step-current N|NAME]
       Steps vs progress: judgment work -> --steps (3-6 named phases, --next-step); script or counted job ->
       --progress DONE/TOTAL (label "DONE of TOTAL" is automatic). Never both on one card; never guess from time.
+      Step names say what happens ("Run migrations"): "Step 2", "todo", "misc", "next" and repeats are refused.
                       [--symbol terminal|code|build|success|warning] [--style standard|ring|hero|terminal|steps]
                       [--privacy standard|private] [--expires-in 8h] [--stale-after 20m] [--replace]
                       [--name NAME] [--device ID...] [--idempotency-key KEY] [--stdin]
-      Starts this work's card, or updates it when it is already running. --step-current defaults to 1.
+      Starts this work's card, once per goal. While it runs, a start changes nothing and continues it,
+      printing the card and the commands that move it on. --step-current defaults to 1.
   relo activity update [CARD] [--title T] [--status T] [--detail T|--clear-detail] [--progress 0.4|40%|2/5|--clear-progress]
                        [--progress-label T] [--steps ...] [--step-current N|NAME | --next-step]
                        [--symbol ...] [--style ...] [--stale-after 20m] [--if-sequence N] [--idempotency-key KEY]
@@ -86,7 +88,8 @@ Questions: on this work's card, with answer buttons
       The question waits 5m by default; --expires-in asks for longer, up to the server's limit (7 days
       unless the admin changed it). Past 8h the card ends and the question keeps waiting in Relo. The
       command waits up to 5m, or 100s inside an agent session (your shell tool would kill it sooner). Exit 0 approved/yes/chosen, 5 denied/no, 4 still open: run
-      relo interaction wait ID, 8 closed without an answer (expired, canceled): do not act. No card yet? ask starts one.
+      relo interaction wait ID, 8 closed without an answer (expired, canceled): do not act. A question never starts
+      a card: with none running it goes out as a notification with the answer buttons, and answering never ends one.
       QUESTION is the decision in one line of at most 120 characters: the card and its buttons show it.
       --detail carries the rest (why, risk, what changes): markdown up to 4,000 characters, read in Relo.
       --option offers 2-4 answers instead of Approve/Deny (LABEL or ID=LABEL, up to 24 characters each). The
@@ -158,13 +161,12 @@ Sign-in and phones
   relo setup --mcp --agent claude-code|claude-desktop|cursor|codex|gemini|vscode (--global|--project) [--move] [--dry-run] · relo setup --mcp --remove
       Owner's choice: Relo's MCP server (relo mcp) in ONE harness config; same one-place rule, idempotent, --remove deletes only that entry.
   relo setup (--project | --global --agent claude-code|gemini) --hooks [--move] [--dry-run] · relo setup --hooks --remove
-      Optional. Without hooks Relo works fully: cards go stale and end on their own. With hooks, the server also knows
-      when a session is alive, shows quiet agents as quiet instead of ending their card, and ends a forgotten card as
-      soon as the session ends. Nothing installs them but this command; doctor never suggests them. One marked entry per event in ONE settings file
+      Optional. Without hooks Relo works fully. With hooks, the server also knows when a session is working, waiting
+      or gone (presence only: hooks never start, change or end a card, work or question). Nothing installs them but this command; doctor never suggests them. One marked entry per event in ONE settings file
       (Claude Code: SessionStart, UserPromptSubmit, PostToolUse, Stop, Notification (permission/input prompts only), SessionEnd in ~/.claude/settings.json or
       <repo>/.claude/settings.json; Gemini CLI: ~/.gemini/settings.json or <repo>/.gemini/settings.json), each running
       "relo hook EVENT" (timeout 5). Entries are recognised by that command, so setup is idempotent and --remove deletes
-      only Relo's. "relo hook" sends the session id hash, event, project, computer, account and card key; never prompts,
+      only Relo's. "relo hook" sends the session id hash, event, project, computer and account; never prompts,
       tool input/output or transcript paths. It prints nothing, exits 0 always, and RELO_DEBUG=1 logs its errors to a file.
       Result: {"ok":true,"file","action":"created|updated|unchanged|moved|removed","hooks":["SessionStart",…]}.
   relo sessions [--live]  {"ok":true,"sessions":[{harness,computer,account,project,phase,state,presence,lastEventAt,card}],"counts":{working,waiting,idle,ended,lost}}

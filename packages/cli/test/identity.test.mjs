@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { noRunningCards } from "./fake-cards.mjs";
 import { detectIdentityDefaults, execute, run, EXIT } from "../src/cli.mjs";
 
 const identity = ["--source", "Codex", "--project", "Relo", "--topic", "Release"];
 const context = { providerName: "Codex", project: "Relo", threadName: "Release" };
 function dependencies(client, stdin) {
   return { prepareNotificationCommand: async ({ body }) => body,captureActivityCommand: async ({ body }) => ({ target: null,ifSequence: body.ifSequence }), loadConfig: async () => ({ apiUrl: "https://relo.example",token: "x".repeat(44) }),
-    clientFactory: () => client,readStdinJson: async () => stdin,identityDefaults: () => ({}) };
+    clientFactory: () => noRunningCards(client),readStdinJson: async () => stdin,identityDefaults: () => ({}) };
 }
 const creates = [
   ["notify", "send", "Ready"], ["ask", "Continue?", "--approval"],

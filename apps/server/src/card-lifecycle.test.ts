@@ -77,16 +77,19 @@ suite("Card lifecycle: fallback, idle cleanup and the per-phone cap",() => {
     expect(await fallbacks()).toBe(1);
   });
 
-  test("a card that stopped updating ends ten minutes after going stale, unless a question is waiting",async () => {
+  test("a card that stopped updating only dims (ADR 0007); it ends at its hard expiry, never for silence",async () => {
     await phone(true);
     const idle = await start("work-idle");
     const asking = await start("work-asking");
     await post(`/api/live-activities/${asking.body.activity.id}/wait`,{ type: "yes_no",prompt: "Continue?" });
-    await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '11 minutes'");
-    await expireDueActivities(db,"disabled");
-    const states = Object.fromEntries((await db.query("SELECT activity_key,state FROM live_activities")).rows
+    await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '3 hours'");
+    expect(await expireDueActivities(db,"disabled")).toBe(0);
+    const states = async () => Object.fromEntries((await db.query("SELECT activity_key,state FROM live_activities")).rows
       .map((row: any) => [row.activity_key,row.state]));
-    expect(states).toEqual({ "work-idle": "expired","work-asking": "active" });
+    expect(await states()).toEqual({ "work-idle": "active","work-asking": "active" });
+    await db.query("UPDATE live_activities SET expires_at=clock_timestamp()-interval '1 second' WHERE activity_key='work-idle'");
+    expect(await expireDueActivities(db,"disabled")).toBe(1);
+    expect(await states()).toEqual({ "work-idle": "expired","work-asking": "active" });
     expect(idle.status).toBe(201);
   });
 

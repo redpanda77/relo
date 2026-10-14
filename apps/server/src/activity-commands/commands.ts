@@ -84,10 +84,12 @@ export async function executeActivityCommandInTransaction(tx: SubjectTransaction
     if(command.operation==="update"&&current.resume_presentation&&actor.kind!=="owner") {
       const underneath=commandPresentation(authorized,{...current,presentation:current.resume_presentation,presentation_sha256:null},command);
       await assertAccountPresentationAssets(tx,actor.principalId,underneath.presentation);
+      // Its sealed text is stored with it (A3), so the card returns with matching envelopes.
       const held=(await tx.query<ActivityRow>(`UPDATE live_activities SET resume_presentation=$3::jsonb,
-          context=COALESCE($4::jsonb,context),updated_at=statement_timestamp()
+          context=COALESCE($4::jsonb,context),sealed=COALESCE($5::jsonb,sealed),updated_at=statement_timestamp()
         WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
-      [current.id,actor.principalId,underneath.presentation,command.input.context??null])).rows[0];
+      [current.id,actor.principalId,underneath.presentation,command.input.context??null,
+        command.operation==="update"?command.input.sealed??null:null])).rows[0];
       if(!held) return await finish({kind:"not_found"});
       const result={kind:"applied" as const,activity:serializeTaskActivity(held),
         delivery:{eligibleDevices:held.target_device_ids?.length??0,durableCommands:0,apnsJobs:0},dismissAfterSeconds:null};

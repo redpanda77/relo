@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { noRunningCards } from "./fake-cards.mjs";
 import { execute, integrationProject } from "../src/cli.mjs";
 
 function notifyHarness({ config, identity }) {
@@ -43,7 +44,7 @@ function startHarness({ disposition = "created", env = {} } = {}) {
   const overrides = {
     env,
     loadConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44) }),
-    clientFactory: () => ({ startActivity: async (body) => { bodies.push(body);
+    clientFactory: () => noRunningCards({ startActivity: async (body) => { bodies.push(body);
       return { activity: { id: "act_11111111-1111-4111-8111-111111111111", state: "active", sequence: 0 },
         delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 }, queued: 1, disposition }; } }),
     identityDefaults: () => ({ providerName: "nightly-export", project: "warehouse" }),

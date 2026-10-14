@@ -1,6 +1,8 @@
-import { cardStepLabelsFor,forgetCardText,saveCardText,sealCardRequest,sealedCardDirectory } from "../seal-card.mjs";
+import { cachedStepLabels,forgetCardText,saveCardText,sealCardRequest,sealedCardDirectory,withCardTextLock } from "../seal-card.mjs";
 import { parseDuration, numberOption, progressCountLabel, progressFraction, requireText } from "../args.mjs";
-import { ApiError, UsageError } from "../errors.mjs";
+import { ApiError, EXIT, ReloError, UsageError } from "../errors.mjs";
+import { stepPosition } from "../output.mjs";
+import { checkStepNames } from "../step-names.mjs";
 import { resolveTargetDevices } from "./admin.mjs";
 import { privacyOption } from "./notify.mjs";
 import { randomUUID } from "node:crypto";
@@ -89,7 +91,8 @@ function currentStepNumber(value, labels) {
 }
 
 export function semanticStepsOption(options,stdin,storedLabels,{ defaultCurrent } = {}) {
-  const labels = stepLabelsOption(options, stdin) ?? storedLabels;
+  const sent = stepLabelsOption(options, stdin);
+  const labels = sent ?? storedLabels;
   const currentValue = options["step-current"] ?? stdin.stepCurrent;
   if (labels === undefined && currentValue === undefined) return undefined;
   if (!labels?.length) {
@@ -99,6 +102,8 @@ export function semanticStepsOption(options,stdin,storedLabels,{ defaultCurrent 
   }
   const normalized = labels.map((label) => requireText(label,"step",40));
   if (normalized.length > 8) throw new UsageError("At most 8 steps are supported");
+  // Names this command sends must say what happens; the card's own (read back for --next-step) are left as they are.
+  if (sent !== undefined) checkStepNames(normalized);
   const current = currentValue === undefined ? defaultCurrent : currentStepNumber(currentValue, normalized);
   if (current === undefined) throw new UsageError("--step-current is required with --steps");
   return { labels: normalized,current };
@@ -174,6 +179,20 @@ export async function activeCard(client, target) {
     if (error?.status === 404 || error?.code === "NOT_FOUND" || error?.code === "ACTIVITY_NOT_FOUND") return null;
     throw error;
   }
+}
+
+export const CONTINUE_HINT = 'relo activity update --status "…" --next-step (next phase) · relo activity end --status "…" (finished)';
+
+/**
+ * A second start for work whose card is already running continues it: nothing is sent and the card
+ * is unchanged, and the reply is a success that names the card and the commands that move it on.
+ * An agent that forgot it started gets its own card back instead of an error to work around.
+ */
+export function continuingResult(card, notes) {
+  const step = stepPosition(card);
+  return result("activity.start", { activity: card, disposition: "continuing", card: definedFields({ id: card?.id, state: card?.state, step }),
+    next: CONTINUE_HINT },
+  { message: "Continuing this work's running card; nothing was changed. Move it on with update, finish it with end.", notes });
 }
 
 const PROGRESS_FOLLOWS_STEPS = "progress follows this card's steps; use --next-step or --step-current";
@@ -357,10 +376,18 @@ export async function runActivityCommand(command) {
     }
     const captured = await preparedActivityCommand({ config,client,operation: "start",key,body,
       selector: manualKey,originalOccurrence: stdin.occurredAt },dependencies);
+    // A running card is never restarted: its title, topic and steps change only through update (ADR 0007).
+    // A retry with its own --idempotency-key is the server's to replay, so it is not refused here.
+    if (!options.new && !body.replace && options["idempotency-key"] === undefined) {
+      const running = await activeCard(client,manualKey);
+      if (running) return continuingResult(running,notes);
+    }
     // Sealed end to end for this computer's verified phones (E5); the server sees placeholders.
     const sealed = await sealCardRequest({ body: captured.body,cardId: null,key,client,config,dependencies,notes,
       deviceIds: captured.body.deviceIds });
     const started = await client.startActivity(sealed.body,key);
+    // Started by someone else between the check and the start: the server left it unchanged, and so does the cache.
+    if (started?.disposition === "existing") return continuingResult(started.activity,notes);
     if (sealed.text && started?.activity?.id) await saveCardText(sealedCardDirectory(dependencies.env),started.activity.id,sealed.text);
     noteProgressOnSteps(progress,started,notes);
     if (started?.disposition === "reused" && !options.new && named === undefined && !agentSession(dependencies.env)) {
@@ -479,7 +506,11 @@ export async function runActivityCommand(command) {
       throw new ApiError("activity_terminal",{ status: 409,code: "ACTIVITY_TERMINAL" });
     }
     // A sealed card's real step labels live only in this computer's cache; the server holds "Step n".
-    const storedLabels = needsCard ? await cardStepLabelsFor(stepCard?.id,cardStepLabels(stepCard),dependencies) : undefined;
+    // Without a matching cache the labels are the server's, marked so they are never sealed as text.
+    const serverLabels = needsCard ? cardStepLabels(stepCard) : undefined;
+    const cachedLabels = needsCard ? await cachedStepLabels(stepCard?.id,serverLabels?.length,dependencies) : undefined;
+    const storedLabels = cachedLabels ?? serverLabels;
+    const fromServer = (steps) => (steps && cachedLabels === undefined && !sendsSteps ? { ...steps,labelsFromServer: true } : steps);
     let nextStep;
     if (wantsNext && !dryRun) {
       const progress = cardStepProgress(stepCard);
@@ -515,9 +546,9 @@ export async function runActivityCommand(command) {
         "progress-label",32,notes,
       ),
       steps: dryRun && needsCard ? undefined
-        : nextStep === undefined
+        : fromServer(nextStep === undefined
           ? semanticStepsOption(options,stdin,storedLabels)
-          : { labels: storedLabels,current: nextStep },
+          : { labels: storedLabels,current: nextStep }),
       symbol: activitySymbol(options.symbol ?? stdin.symbol),
       accentColor: accentColor(options["accent-color"] ?? stdin.accentColor),
       style:
@@ -546,9 +577,13 @@ export async function runActivityCommand(command) {
     }
     const captured = await preparedActivityCommand({ config,client,operation: "update",key,body,target,
       selector: target,originalOccurrence: stdin.occurredAt },dependencies);
-    const sealed = await sealCardRequest({ body: captured.body,cardId: captured.target,key,client,config,dependencies,notes });
-    const updated = await client.updateActivity(captured.target,sealed.body,key);
-    if (sealed.text) await saveCardText(sealedCardDirectory(dependencies.env),captured.target,sealed.text);
+    const directory = sealedCardDirectory(dependencies.env);
+    const updated = await withCardTextLock(directory,captured.target,async () => {
+      const sealed = await sealCardRequest({ body: captured.body,cardId: captured.target,key,client,config,dependencies,notes });
+      const reply = await client.updateActivity(captured.target,sealed.body,key);
+      if (sealed.text) await saveCardText(directory,captured.target,sealed.text);
+      return reply;
+    });
     noteProgressOnSteps(body.progress,updated,notes);
     return cardResult("activity.update",updated,notes);
   }
@@ -598,9 +633,13 @@ export async function runActivityCommand(command) {
     if (dependencies.dryRun) return dryRunResult("activity end", { target, ...body }, notes);
     const captured = await preparedActivityCommand({ config,client,operation: "end",key,body,target,
       selector: target,originalOccurrence: stdin.occurredAt },dependencies);
-    const sealed = await sealCardRequest({ body: captured.body,cardId: captured.target,key,client,config,dependencies,notes });
-    const ended = deliveryGuard(await client.endActivity(captured.target,sealed.body,key));
-    if (sealed.text) await forgetCardText(sealedCardDirectory(dependencies.env),captured.target);
+    const directory = sealedCardDirectory(dependencies.env);
+    const ended = await withCardTextLock(directory,captured.target,async () => {
+      const sealed = await sealCardRequest({ body: captured.body,cardId: captured.target,key,client,config,dependencies,notes });
+      const reply = deliveryGuard(await client.endActivity(captured.target,sealed.body,key));
+      if (sealed.text) await forgetCardText(directory,captured.target);
+      return reply;
+    });
     return result("activity.end",ended,{ notes });
   }
 

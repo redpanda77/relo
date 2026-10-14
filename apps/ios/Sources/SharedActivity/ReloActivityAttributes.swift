@@ -32,6 +32,8 @@ struct ReloActivityAttributes: Codable {
         var startedAt: Date?
         /// This phone's sealed card or question text (E5), opened while decoding.
         var sealed: ReloEnvelope?
+        /// The work this card shows (ADR 0007): its id scopes the last known step labels; absent before works.
+        var work: ReloWork?
 
         init(
             generation: Int,
@@ -42,7 +44,8 @@ struct ReloActivityAttributes: Codable {
             interaction: Interaction?,
             presentation: LiveActivityPresentation,
             startedAt: Date? = nil,
-            sealed: ReloEnvelope? = nil
+            sealed: ReloEnvelope? = nil,
+            work: ReloWork? = nil
         ) {
             precondition(generation > 0, "Live Activity generation must be positive")
             self.generation = generation
@@ -52,17 +55,20 @@ struct ReloActivityAttributes: Codable {
             self.staleAt = staleAt
             // The app applies the same command a push carries: open its sealed text the same way, so
             // a card the app starts or updates never falls back to the server's placeholders.
-            let opened = Self.opening(presentation, sealed: sealed)
+            let opened = Self.opening(presentation, sealed: sealed, work: work)
             self.interaction = opened.permitsLiveActivityActions ? interaction : nil
             self.presentation = opened
             self.startedAt = startedAt
             self.sealed = sealed
+            self.work = work
         }
 
-        /// The presentation with this phone's sealed text applied and handles named.
-        static func opening(_ presentation: LiveActivityPresentation, sealed: ReloEnvelope?) -> LiveActivityPresentation {
+        /// The presentation with this phone's sealed text applied (step labels by id) and handles named.
+        static func opening(_ presentation: LiveActivityPresentation, sealed: ReloEnvelope?,
+                            work: ReloWork? = nil) -> LiveActivityPresentation {
             let text = sealed.flatMap(ReloSealedCards.open)
-            var opened = text.map(presentation.applying) ?? presentation
+            let scope = work?.id ?? text?.phases.map { $0.map(\.id).joined(separator: "|") }
+            var opened = text.map { presentation.applying($0, memoryScope: scope) } ?? presentation
             // A card that stays encrypted says why, in one plain line, instead of showing raw handles.
             if text == nil, presentation.title == ReloSealedCards.titlePlaceholder {
                 opened = opened.replacingSubtitle(ReloSealedCards.failureLine(sealed: sealed != nil))
@@ -76,7 +82,7 @@ struct ReloActivityAttributes: Codable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed
+            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed, work
         }
 
         init(from decoder: Decoder) throws {
@@ -91,8 +97,9 @@ struct ReloActivityAttributes: Codable {
             }
             let decodedPresentation = try LiveActivityPresentation(from: decoder)
             sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
+            work = (try? values.decodeIfPresent(ReloWork.self, forKey: .work)).flatMap { $0.isEmpty ? nil : $0 }
             // Opened on this phone: every surface shows the real text instead of the placeholders.
-            presentation = Self.opening(decodedPresentation, sealed: sealed)
+            presentation = Self.opening(decodedPresentation, sealed: sealed, work: work)
             updatedAt = try Self.decodeDate(.updatedAt, from: values)
             sequence = try values.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
             expiresAt = try Self.decodeDateIfPresent(.expiresAt, from: values)
@@ -114,6 +121,7 @@ struct ReloActivityAttributes: Codable {
             try values.encodeIfPresent(startedAt, forKey: .startedAt)
             try values.encodeIfPresent(interaction, forKey: .interaction)
             try values.encodeIfPresent(sealed, forKey: .sealed)
+            try values.encodeIfPresent(work, forKey: .work)
         }
 
         private static func decodeDateIfPresent(

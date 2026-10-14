@@ -4,13 +4,14 @@
 // phone; the widget opens it on the phone. An update may change one field, but the phone needs the
 // whole card each time, so the CLI keeps each card's text in a private local cache (0600, removed
 // when the card ends) and seals the merged text. Counts and progress numbers stay readable.
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { identityKeys } from "./keystore.mjs";
 import { opaqueIdentity, sealablePhones, sealingUnavailable, sealNotice, skippedNote, trustFor } from "./seal-notice.mjs";
 import { loadKnownNames } from "./opaque-names.mjs";
+import { ReloError } from "./errors.mjs";
 
 export const SEALED_CARD_TITLE = "Encrypted card";
 export const SEALED_CARD_STATUS = "Updating…";
@@ -48,7 +49,60 @@ export async function forgetCardText(directory, cardId) {
   if (CARD_ID.test(cardId ?? "")) await rm(join(directory, `${cardId}.json`), { force: true });
 }
 
-/** The card text after this command: the previous text with this command's fields applied. */
+const LOCK_WAIT_MS = 15_000;
+const LOCK_STALE_MS = 60_000;
+
+/**
+ * Runs `action` holding this card's text lock (an exclusive lock file next to the cache), so two
+ * commands on one card never both read the old text and the later save drops the earlier change.
+ * The lock spans read, seal, send and save. Without a writable cache folder it runs unlocked.
+ */
+export async function withCardTextLock(directory, cardId, action, { sleep = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
+  if (!CARD_ID.test(cardId ?? "")) return action();
+  const path = join(directory, `${cardId}.lock`);
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+  } catch {
+    return action();
+  }
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let handle;
+  for (;;) {
+    try {
+      handle = await open(path, "wx", 0o600);
+      break;
+    } catch (error) {
+      if (error?.code !== "EEXIST") return action();
+      const info = await stat(path).catch(() => null);
+      // A lock left by a crashed command: no request holds it this long.
+      if (info && Date.now() - info.mtimeMs > LOCK_STALE_MS) { await rm(path, { force: true }); continue; }
+      if (Date.now() > deadline) {
+        throw new ReloError("Another relo command is still updating this card.", { code: "CARD_TEXT_LOCKED",
+          details: { hint: "Retry in a few seconds with the same command" } });
+      }
+      await sleep(25);
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    await handle.close().catch(() => {});
+    await rm(path, { force: true }).catch(() => {});
+  }
+}
+
+/** The request body without the CLI's own bookkeeping fields. */
+export function serverCardBody(body) {
+  if (!body?.steps?.labelsFromServer) return body;
+  const { labelsFromServer: _local, ...steps } = body.steps;
+  return { ...body, steps };
+}
+
+/**
+ * The card text after this command: the previous text with this command's fields applied.
+ * Step labels the CLI only read back from the server (placeholders on a sealed card) are never
+ * sealed as the card's text: the phone keeps the labels it has and moves only the current step.
+ */
 export function mergedCardText(previous, body, reserved = 0) {
   const { names: _names, ...earlier } = previous ?? {};
   const text = { ...earlier };
@@ -56,7 +110,10 @@ export function mergedCardText(previous, body, reserved = 0) {
     if (body[field] === null) delete text[field];
     else if (typeof body[field] === "string") text[field] = body[field];
   }
-  if (Array.isArray(body.steps?.labels)) text.steps = [...body.steps.labels];
+  if (Array.isArray(body.steps?.labels)) {
+    if (!body.steps.labelsFromServer) text.steps = [...body.steps.labels];
+    else if (text.steps?.length !== body.steps.labels.length) delete text.steps;
+  }
   return fitCardText(text, MAX_CARD_TEXT_BYTES - reserved);
 }
 
@@ -92,12 +149,12 @@ export function placeholderCardBody(body) {
  */
 export async function sealCardRequest({ body, cardId, key, client, config, dependencies, notes, deviceIds }) {
   const trust = await trustFor({ client, config, dependencies, notes });
-  if (!trust) return { body, text: null };
+  if (!trust) return { body: serverCardBody(body), text: null };
   const { store, devices } = trust;
   const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
   if (eligible.length === 0) {
     if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
-    return { body, text: null };
+    return { body: serverCardBody(body), text: null };
   }
   // Like notify and ask: a phone that cannot open the card is named, with why, never dropped silently.
   if (skipped.length) notes?.push(skippedNote("card", eligible, skipped));
@@ -110,15 +167,18 @@ export async function sealCardRequest({ body, cardId, key, client, config, depen
   const text = { ...mergedCardText(previous, body, Buffer.byteLength(JSON.stringify(names))), ...(Object.keys(names).length ? { names } : {}) };
   const sealed = sealNotice({ kind: "card", sender: identityKeys(store), idempotencyKey: key, phones: eligible, readers,
     content: text, alert: text });
-  const placeholder = placeholderCardBody(body);
+  const placeholder = placeholderCardBody(serverCardBody(body));
   if (identity.context) placeholder.context = identity.context;
   return { body: { ...placeholder, sealed }, text };
 }
 
-/** The card's real step labels when this computer sealed it, else the server's. */
-export async function cardStepLabelsFor(cardId, serverLabels, dependencies) {
+/**
+ * The card's real step labels when this computer sealed it and its cache matches the card, else
+ * undefined: a missing or mismatched cache never stands in for labels (the server's may be placeholders).
+ */
+export async function cachedStepLabels(cardId, count, dependencies) {
   const cached = await loadCardText(sealedCardDirectory(dependencies.env), cardId);
-  return Array.isArray(cached?.steps) && cached.steps.length === serverLabels?.length ? cached.steps : serverLabels;
+  return Array.isArray(cached?.steps) && cached.steps.length === count ? cached.steps : undefined;
 }
 
 /** Names this computer knows for the handles in a card's context (a card sealed before names travelled). */

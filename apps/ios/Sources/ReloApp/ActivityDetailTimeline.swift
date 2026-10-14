@@ -387,14 +387,9 @@ private struct ActivityStepPulse: View {
 }
 
 extension LiveActivityDisplayPresentation {
-    /// The card's steps: named ones when the sender supplied them, else rebuilt from the digest's counts.
+    /// The card's steps with the labels this phone opened (ReloCore `InboxItem.timelineSteps`).
     func timelineSteps(for item: InboxItem) -> [Step] {
-        if case let .steps(items) = visual, !items.isEmpty { return items }
-        guard let steps = item.activity?.steps, steps.total > 0 else { return [] }
-        return (0..<steps.total).map { index in
-            let state: Step.State = index < steps.done ? .complete : index == steps.done ? .current : .pending
-            let label = state == .current ? (steps.current ?? "Step \(index + 1)") : "Step \(index + 1)"
-            return Step(id: "step-\(index)", label: label, state: state)
-        }
+        if case let .steps(items) = visual { return item.timelineSteps(presented: items) }
+        return item.timelineSteps(presented: [])
     }
 }

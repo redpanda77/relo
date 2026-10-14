@@ -5,7 +5,8 @@ import { publicId } from "../ids.js";
 import { originGenerationMetadata } from "../origin-slots.js";
 import { terminalPresentationColumnsFromRow } from "../presentation-runtime.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
-import { cancelPendingActivityInteractions,createActivityCommands,serializeTaskActivity,taskActivityRequestHash } from "./runtime.js";
+import type { SealedNotice } from "../sealed-content.js";
+import { cancelPendingActivityInteractions,createActivityCommands,serializeTaskActivity,storeSealedCard,taskActivityRequestHash } from "./runtime.js";
 import type { ActivityDeliverySummary,ApnsMode } from "./schemas.js";
 import { activityDeliverySummarySchema } from "./schemas.js";
 import { lockActivityActor } from "./store.js";
@@ -116,10 +117,12 @@ export async function completeActiveCardReuse(client:Queryable,input:{
   activityId:string;updated:ActivityStartRow;idempotencyKey:string|undefined;requestHash:string;
   apnsMode:ApnsMode;occurredAt:string|undefined;
   correlation:Pick<CorrelationDecision,"actor"|"matchedBy"|"reason">;
+  /** The start's sealed card text: stored with the presentation it describes (ADR 0007, A3). */
+  sealed?:SealedNotice|undefined;
 }):Promise<{snapshot:ActivitySnapshot;delivery:ActivityDeliverySummary}>{
   await cancelPendingActivityInteractions(client,input.principalId,input.activityId);
   const delivery=await createActivityCommands(client,{occurredAt:input.occurredAt,principalId:input.principalId,
-    sourceName:input.sourceName,activity:input.updated,operation:"update",apnsMode:input.apnsMode});
+    sourceName:input.sourceName,activity:await storeSealedCard(client,input.updated,input.sealed),operation:"update",apnsMode:input.apnsMode});
   if(input.requester.kind==="service"){
     await associateServiceActivityEvents(client,input.principalId,input.requester.id,input.activityId);
   }

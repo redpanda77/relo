@@ -178,7 +178,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         }
         if (current.resume_presentation) {
           // A question is waiting on this card: keep it in front and hold this content for after the answer.
-          const held = await holdUnderQuestion(client,current,preserveActivePresentationPolicy(current,rawInput,storedPresentation),input);
+          const held = await holdUnderQuestion(client,current,preserveActivePresentationPolicy(current,rawInput,storedPresentation),{...input,sealed: rawInput.sealed});
           await transaction.commit();
           return startAccepted({activity: serializeTaskActivity(held),delivery: {eligibleDevices: held.target_device_ids?.length ?? 0,durableCommands: 0,apnsJobs: 0},queued: 0,disposition: "reused",replayed: false,reused: true,resumed: false},false);
         }
@@ -204,7 +204,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         const {snapshot,delivery} = await completeActiveCardReuse(client,{
           principalId: auth.principalId,requester: {kind: "credential",id: auth.credentialId},
           sourceName: auth.clientName ?? "Relo CLI",activityId: current.id,updated: updated.rows[0]!,
-          idempotencyKey: key,requestHash: hash,apnsMode,occurredAt: input.occurredAt,
+          idempotencyKey: key,requestHash: hash,apnsMode,occurredAt: input.occurredAt,sealed: rawInput.sealed,
           correlation: {actor: "cli",matchedBy: originHash ? "origin" : "current",reason: originHash ? "manual_activity_adopted_by_origin" : "single_current_activity"},
         });
         await transaction.commit();
@@ -253,7 +253,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         }
         if (current.resume_presentation) {
           // A question is waiting on this card: keep it in front and hold this content for after the answer.
-          const held = await holdUnderQuestion(client,current,preserveActivePresentationPolicy(current,rawInput,storedPresentation),input);
+          const held = await holdUnderQuestion(client,current,preserveActivePresentationPolicy(current,rawInput,storedPresentation),{...input,sealed: rawInput.sealed});
           await transaction.commit();
           return startAccepted({activity: serializeTaskActivity(held),delivery: {eligibleDevices: held.target_device_ids?.length ?? 0,durableCommands: 0,apnsJobs: 0},queued: 0,disposition: "reused",replayed: false,reused: true,resumed: false},false);
         }
@@ -276,7 +276,7 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         const {snapshot,delivery} = await completeActiveCardReuse(client,{
           principalId: auth.principalId,requester: {kind: "credential",id: auth.credentialId},
           sourceName: auth.clientName ?? "Relo CLI",activityId: current.id,updated: updated.rows[0]!,
-          idempotencyKey: key,requestHash: hash,apnsMode,occurredAt: input.occurredAt,
+          idempotencyKey: key,requestHash: hash,apnsMode,occurredAt: input.occurredAt,sealed: rawInput.sealed,
           correlation: {actor: "cli",matchedBy: input.lifecycle ? "lifecycle" : "origin",reason: input.lifecycle ? "active_lifecycle_match" : "active_origin_match"},
         });
         await transaction.commit();
@@ -312,35 +312,14 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
             await transaction.commit();
             return replayedOperation(concurrentReplay.snapshot,concurrentReplay.delivery,{disposition:true,resumed:false});
           }
-          if (current.resume_presentation) {
-            // A question is waiting on this card: keep it in front and hold this content for after the answer.
-            const held = await holdUnderQuestion(client,current,preserveActivePresentationPolicy(current,rawInput,storedPresentation),input);
-            await transaction.commit();
-            return startAccepted({activity: serializeTaskActivity(held),delivery: {eligibleDevices: held.target_device_ids?.length ?? 0,durableCommands: 0,apnsJobs: 0},queued: 0,disposition: "reused",replayed: false,reused: true,resumed: false},false);
-          }
-          const activePresentation = preserveActivePresentationPolicy(
-            current,rawInput,storedPresentation,
-          );
-          const updated = await client.query<ActivityStartRow>(
-            `UPDATE live_activities SET title=$3,status=$4,detail=$5,progress=$6,symbol=$7,style=$8,
-               privacy=$9,accent_color=$10,presentation=$11,presentation_sha256=$12,
-               context=COALESCE($13::jsonb,context),stale_after_seconds=$14::integer,stale_at=LEAST(LEAST(statement_timestamp(),COALESCE($18::timestamptz,statement_timestamp()))+($14::integer*interval '1 second'),expires_at),
-               presentation_policy_source=COALESCE(presentation_policy_source,$15),
-               presentation_preset_id=COALESCE(presentation_preset_id,$16),
-               presentation_preset_revision=COALESCE(presentation_preset_revision,$17),
-               sequence=sequence+1,updated_at=statement_timestamp()
-             WHERE id=$1 AND principal_id=$2 AND state='active'
-               AND lifecycle_provider IS NULL AND lifecycle_run_id IS NULL RETURNING *`,
-            [current.id,auth.principalId,activePresentation.title,activePresentation.status,activePresentation.detail,activePresentation.progress,activePresentation.symbol,activePresentation.style,activePresentation.privacy,activePresentation.accentColor,activePresentation.presentation,activePresentation.presentationHash,input.context ?? null,input.staleAfterSeconds,current.presentation_policy_source,current.presentation_preset_id,current.presentation_preset_revision,input.occurredAt ?? null],
-          );
-          const {snapshot,delivery} = await completeActiveCardReuse(client,{
-            principalId: auth.principalId,requester: {kind: "credential",id: auth.credentialId},
-            sourceName: auth.clientName ?? "Relo CLI",activityId: current.id,updated: updated.rows[0]!,
-            idempotencyKey: key,requestHash: hash,apnsMode,occurredAt: input.occurredAt,
-            correlation: {actor: "cli",matchedBy: "activity_key",reason: "active_activity_key_match"},
+          // ADR 0007: starting what is already running never changes it. The card is returned as it
+          // is (title, topic, steps, sealed text untouched); changing it takes an explicit update.
+          await recordActivityCorrelationDecision(client,{
+            principalId: auth.principalId,activityId: current.id,outcome: "reused",
+            matchedBy: "activity_key",actor: "cli",reason: "active_activity_key_existing",
           });
           await transaction.commit();
-          return startAccepted({activity: snapshot,delivery,queued: delivery.apnsJobs,disposition: "reused",replayed: false,reused: true,resumed: false},false);
+          return startAccepted({activity: serializeTaskActivity(current),delivery: {eligibleDevices: current.target_device_ids?.length ?? 0,durableCommands: 0,apnsJobs: 0},queued: 0,disposition: "existing",replayed: false,reused: true,resumed: false},false);
         }
       }
       const blockingRows = originHash
@@ -484,11 +463,12 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
 
 /** Stores a start's content under a waiting question; the card shows it once the question settles. */
 async function holdUnderQuestion(client:Queryable,current:ActivityStartRow,
-  held:ReturnType<typeof preserveActivePresentationPolicy>,input:{context?:unknown;staleAfterSeconds?:number}):Promise<ActivityStartRow>{
+  held:ReturnType<typeof preserveActivePresentationPolicy>,input:{context?:unknown;staleAfterSeconds?:number;sealed?:unknown}):Promise<ActivityStartRow>{
+  // The held text's sealed envelopes are stored with it: the card shows them once the question settles.
   const row=(await client.query<ActivityStartRow>(
     `UPDATE live_activities SET resume_presentation=$3::jsonb,context=COALESCE($4::jsonb,context),
-       stale_after_seconds=COALESCE($5::integer,stale_after_seconds),updated_at=statement_timestamp()
+       stale_after_seconds=COALESCE($5::integer,stale_after_seconds),sealed=COALESCE($6::jsonb,sealed),updated_at=statement_timestamp()
      WHERE id=$1 AND principal_id=$2 AND state='active' RETURNING *`,
-    [current.id,current.principal_id,held.presentation,input.context ?? null,input.staleAfterSeconds ?? null])).rows[0];
+    [current.id,current.principal_id,held.presentation,input.context ?? null,input.staleAfterSeconds ?? null,input.sealed ?? null])).rows[0];
   return row ?? current;
 }

@@ -8,6 +8,7 @@ import test from "node:test";
 import { execute as executeRaw, EXIT, run as runRaw } from "../src/cli.mjs";
 import { ApiError, AuthError, NetworkError } from "../src/errors.mjs";
 import { compactData } from "../src/output.mjs";
+import { noRunningCards } from "./fake-cards.mjs";
 
 // Existing behavioral tests use an explicitly grouped fixture; identity omissions have dedicated
 // tests against the raw entry point below.
@@ -63,7 +64,7 @@ function overrides(client) {
     prepareNotificationCommand: async ({ body }) => body,
     configPath: () => CONFIG.path,
     loadConfig: async () => CONFIG,
-    clientFactory: () => client,
+    clientFactory: () => noRunningCards(client),
   };
 }
 
@@ -579,7 +580,7 @@ test("normalizes yes-no to the API enum and validates activity styles", async ()
   const { fakeCards, cardDependencies } = await import("./fake-cards.mjs");
   const fake = fakeCards({ answer: "yes" });
   await execute(["ask", "Continue?", "--type", "yes-no", "--topic", "Release"], cardDependencies(fake.client));
-  assert.equal(fake.calls.find((call) => call.op === "ask").body.type, "yes_no");
+  assert.equal(fake.calls.find((call) => ["ask", "question"].includes(call.op)).body.type, "yes_no");
   await assert.rejects(
     execute(
       ["activity", "start", "--name", "build-1", "--title", "Build", "--status", "Starting", "--style", "unknown"],
@@ -1739,10 +1740,10 @@ test("a question waits 5 minutes by default and longer when asked, while the CLI
   const { fakeCards, cardDependencies } = await import("./fake-cards.mjs");
   const fake = fakeCards({ answer: "approved" });
   await execute(["ask", "Continue?", "--approval", "--topic", "Release"], cardDependencies(fake.client));
-  assert.equal(fake.calls.find((call) => call.op === "ask").body.expiresInSeconds, 300);
+  assert.equal(fake.calls.find((call) => ["ask", "question"].includes(call.op)).body.expiresInSeconds, 300);
   const long = fakeCards({ answer: "approved" });
   await execute(["ask", "Continue?", "--approval", "--expires-in", "2d", "--topic", "Release"], cardDependencies(long.client));
-  assert.equal(long.calls.find((call) => call.op === "ask").body.expiresInSeconds, 172_800);
+  assert.equal(long.calls.find((call) => ["ask", "question"].includes(call.op)).body.expiresInSeconds, 172_800);
   for (const flags of [["--expires-in", "31d"], ["--timeout", "10m"], ["--expires-in", "1h", "--timeout", "2h"]]) {
     await assert.rejects(
       execute(["ask", "Continue?", "--approval", ...flags, "--topic", "Release"], cardDependencies(fakeCards().client)),

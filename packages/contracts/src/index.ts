@@ -1,12 +1,14 @@
 import { choiceOptionSchema } from "./presentation.js";
 import { z } from "zod";
 import { agentSessionListSchema } from "./agent-sessions.js";
+import { safeContextSchema } from "./context.js";
 
 export * from "./presentation.js";
 export * from "./delivery-evidence.js";
 export * from "./relevance.js";
 export * from "./current-inbox.js";
 export * from "./agent-sessions.js";
+export * from "./context.js";
 
 export function isPublicHttpsUrl(value: string): boolean {
   try {
@@ -89,21 +91,6 @@ export const isoTimestampSchema = z.iso.datetime({ offset: true });
 
 export const notificationPrivacySchema = z.literal("standard");
 export const idempotencyKeySchema = z.string().trim().min(1).max(200);
-export const safeContextSchema = z
-  .object({
-    providerName: z.string().trim().min(1).max(80).optional(),
-    producerKind: z.enum(["agent", "service", "webhook", "manual"]).optional(),
-    computer: z.string().trim().min(1).max(120).optional(),
-    account: z.string().trim().min(1).max(40).optional(),
-    project: z.string().trim().min(1).max(120).optional(),
-    providerThreadId: z.string().trim().min(1).max(200).optional(),
-    providerWorkItemId: z.string().trim().min(1).max(200).optional(),
-    threadName: z.string().trim().min(1).max(160).optional(),
-    taskTitle: z.string().trim().min(1).max(160).optional(),
-    threadNameSource: z.enum(["provider", "explicit", "fallback"]).optional(),
-    taskTitleSource: z.enum(["provider", "prompt_summary", "explicit", "fallback"]).optional(),
-  })
-  .strict();
 export const originDescriptorSchema = z
   .object({
     sourceInstance: z.string().trim().min(1).max(160),
@@ -578,7 +565,7 @@ export const taskLiveActivityMutationResponseSchema = z.object({
   replayed: z.boolean(),
   reused: z.boolean().default(false),
   resumed: z.boolean().default(false),
-  disposition: z.enum(["created","reused","replayed","replaced","blocked"]).optional(),
+  disposition: z.enum(["created","reused","existing","replayed","replaced","blocked"]).optional(),
   replaced: z.number().int().min(0).optional(),
   dismissAfterSeconds: z.number().int().min(0).max(14_400).nullable().optional(),
 }).strict();

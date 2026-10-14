@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { b64u, fromB64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
 import { ensureIdentity, saveKeyStore, trustKey } from "../src/keystore.mjs";
 import {
-  cardStepLabelsFor, fitCardText, forgetCardText, loadCardText, mergedCardText, placeholderCardBody, saveCardText,
-  SEALED_CARD_STATUS, SEALED_CARD_TITLE, sealCardRequest,
+  cachedStepLabels, fitCardText, forgetCardText, loadCardText, mergedCardText, placeholderCardBody, saveCardText,
+  SEALED_CARD_STATUS, SEALED_CARD_TITLE, sealCardRequest, withCardTextLock,
 } from "../src/seal-card.mjs";
 
 const apiUrl = "https://relo.example";
@@ -44,8 +44,9 @@ test("the card cache is private, per card, and forgotten when the card ends", as
     assert.equal(statSync(directory).mode & 0o777, 0o700);
     assert.deepEqual(await loadCardText(directory, cardId), { title: "x", steps: ["Build", "Test"] });
     const dependencies = { env: { RELO_SEALED_CARD_DIR: directory } };
-    assert.deepEqual(await cardStepLabelsFor(cardId, ["Step 1", "Step 2"], dependencies), ["Build", "Test"]);
-    assert.deepEqual(await cardStepLabelsFor(cardId, ["Step 1"], dependencies), ["Step 1"], "a changed step count trusts the server");
+    assert.deepEqual(await cachedStepLabels(cardId, 2, dependencies), ["Build", "Test"]);
+    assert.equal(await cachedStepLabels(cardId, 1, dependencies), undefined, "a mismatched cache never stands in for labels");
+    assert.equal(await cachedStepLabels("act_00000000-0000-4000-8000-000000000009", 2, dependencies), undefined, "nor does a missing one");
     await forgetCardText(directory, cardId);
     assert.equal(await loadCardText(directory, cardId), null);
     assert.equal(await loadCardText(directory, "../escape"), null);
@@ -68,15 +69,55 @@ test("the account's phone opens the whole card text from its own envelope", asyn
     await sealCardRequest({ body, cardId: null, key: "k0", client, config: { apiUrl }, dependencies, notes: [] });
     const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
     await saveCardText(env.RELO_SEALED_CARD_DIR, cardId, { title: "Deploy 0.12", status: "Building", steps: ["Build", "Ship"] });
-    const sealed = await sealCardRequest({ body: { status: "Shipping", steps: { labels: ["Step 1", "Step 2"], current: 2 } },
+    // The server's "Step n" labels (read back for --next-step) are never sealed as the card's text.
+    const sealed = await sealCardRequest({ body: { status: "Shipping", steps: { labels: ["Step 1", "Step 2"], current: 2, labelsFromServer: true } },
       cardId, key: "k2", client, config: { apiUrl }, dependencies, notes: [] });
     assert.equal(sealed.body.status, SEALED_CARD_STATUS);
     assert.ok(!JSON.stringify(sealed.body).includes("Shipping"));
+    assert.ok(!JSON.stringify(sealed.body).includes("labelsFromServer"));
     const opened = openEnvelope(sealed.body.sealed.alerts[0], { deviceId: device.resource.deviceId,
       prekeyPrivateKey: () => device.prekey.privateKey, trustedSenders: { [store.identity.keyId]: fromB64u(store.identity.publicKey) },
       expectedKind: "card" });
-    assert.deepEqual(opened.content, { title: "Deploy 0.12", status: "Shipping", steps: ["Step 1", "Step 2"] });
+    assert.deepEqual(opened.content, { title: "Deploy 0.12", status: "Shipping", steps: ["Build", "Ship"] });
+    // Without a matching cache the text carries no labels at all: the phone keeps the ones it has.
+    await saveCardText(env.RELO_SEALED_CARD_DIR, cardId, { title: "Deploy 0.12", steps: ["Build", "Test", "Ship"] });
+    const mismatched = await sealCardRequest({ body: { status: "Shipping", steps: { labels: ["Step 1", "Step 2"], current: 2, labelsFromServer: true } },
+      cardId, key: "k3", client, config: { apiUrl }, dependencies, notes: [] });
+    const reopened = openEnvelope(mismatched.body.sealed.alerts[0], { deviceId: device.resource.deviceId,
+      prekeyPrivateKey: () => device.prekey.privateKey, trustedSenders: { [store.identity.keyId]: fromB64u(store.identity.publicKey) },
+      expectedKind: "card" });
+    assert.deepEqual(reopened.content, { title: "Deploy 0.12", status: "Shipping" });
+    assert.deepEqual(mismatched.body.steps, { labels: ["Step 1", "Step 2"], current: 2 }, "the server still gets the current step");
   } finally {
     rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("the card text lock serializes read, merge and save across commands, and outlives no crash", async () => {
+  const directory = join(mkdtempSync(join(tmpdir(), "relo-card-lock-")), "sealed-cards");
+  try {
+    const order = [];
+    let release;
+    const first = withCardTextLock(directory, cardId, async () => {
+      order.push("first:read");
+      await new Promise((resolve) => { release = resolve; });
+      order.push("first:save");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const second = withCardTextLock(directory, cardId, async () => { order.push("second:read"); });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.deepEqual(order, ["first:read"], "the second command waits for the first to save");
+    release();
+    await Promise.all([first, second]);
+    assert.deepEqual(order, ["first:read", "first:save", "second:read"]);
+    // A lock left behind by a crashed command is broken once it is clearly stale.
+    const lock = join(directory, `${cardId}.lock`);
+    writeFileSync(lock, "");
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    assert.equal(await withCardTextLock(directory, cardId, async () => "ran"), "ran");
+    // Without a writable cache folder there is nothing to protect: the command runs unlocked.
+    assert.equal(await withCardTextLock("/nonexistent/relo-lock-test", cardId, async () => "unlocked"), "unlocked");
+  } finally {
+    rmSync(join(directory, ".."), { recursive: true, force: true });
   }
 });

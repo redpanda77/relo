@@ -17,8 +17,10 @@ flags; [security.md](security.md) covers what may appear on the card.
 ## What the card is for
 
 The card answers one question for the owner at a glance: *what is the agent doing right now, and
-does it need me?* It replaces a stream of notifications. One card per agent session (or per
-source › project › topic outside a session): starting again, updating, and asking all reuse it.
+does it need me?* It replaces a stream of notifications. One card per goal: start it once, update it
+between phases, end it once at the end. A second start while it runs is refused and names the
+commands that continue it; a new phase or topic is an update (`--steps` extends the plan), never a
+new card. Asking uses the running card and never starts one. Subagents run no relo commands.
 
 Skip the card only for work that finishes in under a minute or two with nothing to report.
 
@@ -42,7 +44,10 @@ job with a known count uses `--progress DONE/TOTAL`.** Never both on one card.
 
 - **Judgment work** (refactor a module, investigate a bug, ship a release): 3-6 named phases the owner would
   recognize, `--steps "Plan,Build,Verify,Ship"`, advanced with `--next-step` as each begins. The card shows where
-  you are in the work, not a number you cannot know.
+  you are in the work, not a number you cannot know. Name steps concretely ("Run migrations", "Install on
+  iPhone"): generic names ("Step 2", "Phase 1", "todo", "tbd", "misc", "next", a word under 3 letters) and a
+  name repeated on one card are refused (exit 2) before anything is sent. Extend the steps with
+  `relo activity update --steps …` instead of starting again.
 - **A known count** (generate 10 images, polish 20 chapters, migrate 400 rows): `--progress 3/20`, updated as each
   unit finishes (real units done / total, or completed outer phases / total outer phases). With `N/TOTAL` and no `--progress-label` the label is "3 of 20" automatically; add a label
   such as `--progress-label "Chapters"` only when it reads better. Percent (`40%`) and fractions (`0.4`) also work.
@@ -74,8 +79,7 @@ Update on real milestones only. Updates are silent on the phone; only the start 
   never permission: anything risky still needs an `--approval` question answered `approved`.
 - In an agent session `ask` waits about 100s. Exit `4` means the question is still open: run
   `relo interaction wait ID` again. Exit `8` means it closed without an answer (expired, canceled):
-  do not act. The card has ended; if you continue working, `relo activity start` opens a
-  new one. Do not re-ask just to extend the wait.
+  do not act. The card stays as it was; keep updating it. Do not re-ask just to extend the wait.
 
 ## Ending
 

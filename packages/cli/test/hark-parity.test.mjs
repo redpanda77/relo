@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { noRunningCards } from "./fake-cards.mjs";
 import { execute, run, EXIT } from "../src/cli.mjs";
 
 const token = "t".repeat(44);
@@ -9,7 +10,7 @@ function capture(overrides = {}) {
   const record = (name) => async (body) => { bodies.push({ name,body }); return { delivery: { eligibleDevices: 1,durableCommands: 1,apnsJobs: 1 } }; };
   const client = { sendNotification: record("send"),createInteraction: record("ask"),startActivity: record("start") };
   return { bodies,deps: {
-    loadConfig: async () => ({ apiUrl: "https://relo.example",token }),clientFactory: () => client,identityDefaults: identity,
+    loadConfig: async () => ({ apiUrl: "https://relo.example",token }),clientFactory: () => noRunningCards(client),identityDefaults: identity,
     readStdinJson: async () => ({}),prepareNotificationCommand: async ({ body }) => body,
     captureActivityCommand: async ({ body }) => ({ target: null,ifSequence: body.ifSequence }),...overrides,
   } };
@@ -61,7 +62,7 @@ test("questions carry a callback read from a token file and a correlation ID", a
   await execute(["ask","Ship?","--approval","--no-wait","--topic","Release","--correlation-id","deploy-184",
     "--callback-url","https://ci.example.com/relo","--callback-token-file","/secure/token"],deps);
   assert.deepEqual(files,["/secure/token"]);
-  const asked = fake.calls.find((call) => call.op === "ask").body;
+  const asked = fake.calls.find((call) => ["ask", "question"].includes(call.op)).body;
   assert.deepEqual(asked.callback,{ url: "https://ci.example.com/relo",token: "cb-token-0123456789abcdef" });
   assert.equal(asked.correlationId,"deploy-184");
   await assert.rejects(execute(["ask","Ship?","--approval","--topic","Release","--callback-url","https://ci.example.com/relo"],deps),
@@ -71,7 +72,7 @@ test("questions carry a callback read from a token file and a correlation ID", a
   // A private-network receiver is the server admin's call, not the CLI's.
   await execute(["ask","Ship?","--approval","--no-wait","--topic","Release","--callback-url","http://ci.internal:8080/relo",
     "--callback-token-file","/secure/token"],deps);
-  assert.equal(fake.calls.filter((call) => call.op === "ask").at(-1).body.callback.url,"http://ci.internal:8080/relo");
+  assert.equal(fake.calls.filter((call) => ["ask", "question"].includes(call.op)).at(-1).body.callback.url,"http://ci.internal:8080/relo");
 });
 
 test("activities accept the ring style and private mode", async () => {

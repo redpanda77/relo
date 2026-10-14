@@ -113,7 +113,8 @@ test("accounts work for any harness: RELO_ACCOUNT, and a nickname keyed by the h
 // ---- steps vs progress -------------------------------------------------------------------------
 
 test("--progress N/TOTAL labels itself 'N of TOTAL' unless a label is given", async () => {
-  const { client, calls } = fakeCards();
+  const { client, calls: all } = fakeCards();
+  const calls = new Proxy(all, { get: (target, name) => target.filter((call) => call.op !== "get")[name] });
   const deps = cardDependencies(client, { env: { RELO_SESSION: "p" } });
   await cli(["activity", "start", "--title", "T", "--status", "S", "--progress", "3/20", ...topic], deps);
   assert.equal(calls[0].body.progressLabel, "3 of 20");
@@ -248,7 +249,7 @@ test("relo test: yes verifies the phone once and records it; later runs ask noth
   const out = await cli(["test"], box.deps);
   assert.equal(out.exitCode, EXIT.OK);
   assert.deepEqual(out.line, { ok: true, verified: true });
-  const ask = box.calls.find((call) => call.op === "ask");
+  const ask = box.calls.find((call) => ["ask", "question"].includes(call.op));
   assert.equal(ask.body.type, "yes_no");
   assert.equal(ask.body.prompt, "Can you see this card on your iPhone?");
   assert.match(box.calls.find((call) => call.op === "start").body.title, /Relo test/u);
@@ -296,7 +297,7 @@ test("relo test: no answer in an agent context waits 100s, exits 4 and resumes t
   assert.equal(box.clock.polls[0], 100);
   const pending = box.memory.state.config.pendingTest;
   assert.match(pending.interactionId, /^int_/u);
-  const asks = () => box.calls.filter((call) => call.op === "ask").length;
+  const asks = () => box.calls.filter((call) => ["ask", "question"].includes(call.op)).length;
   assert.equal(asks(), 1);
   const second = await cli(["test"], box.deps);
   assert.equal(second.exitCode, EXIT.TERMINAL, "still unanswered after another poll");
@@ -316,7 +317,7 @@ test("relo test: a stale remembered question is replaced by a fresh one", async 
   };
   const out = await cli(["test"], box.deps);
   assert.equal(out.exitCode, EXIT.OK);
-  assert.equal(box.calls.filter((call) => call.op === "ask").length, 1);
+  assert.equal(box.calls.filter((call) => ["ask", "question"].includes(call.op)).length, 1);
 });
 
 test("relo test: no phone with Live Activities fails before sending anything", async () => {

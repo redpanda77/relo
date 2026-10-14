@@ -10,9 +10,8 @@ import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
 import { expireDueActivities } from "./activities.js";
-import { expireDueInteractiveActivities } from "./interactive-activity-lifecycle.js";
 import {
-  SESSION_IDLE_LOST_AFTER_SECONDS,SESSION_LIST_MAX,SESSION_LOST_AFTER_SECONDS,SESSION_LOST_CARD_GRACE_SECONDS,
+  SESSION_IDLE_LOST_AFTER_SECONDS,SESSION_LIST_MAX,SESSION_LOST_AFTER_SECONDS,
   listAgentSessions,readAgentSessions,reconcileAgentSessions,
 } from "./agent-sessions.js";
 
@@ -67,8 +66,7 @@ suite("Agent sessions: events, read model and the reconciler",() => {
   const cardRow = async (key: string) => (await db.query("SELECT * FROM live_activities WHERE activity_key=$1",[key])).rows[0];
   const ago = (hash: string,seconds: number) => db.query(
     "UPDATE agent_sessions SET last_event_at=now()-make_interval(secs=>$2::double precision) WHERE session_hash=$1",[hash,seconds]);
-  const SESSION_SILENCE_FOR_CARD_END = SESSION_LOST_AFTER_SECONDS+SESSION_LOST_CARD_GRACE_SECONDS+60;
-  const reconcile = () => reconcileAgentSessions(db,"sandbox");
+  const reconcile = () => reconcileAgentSessions(db);
 
   describe("POST /api/agent-sessions/events",() => {
     test("stores a session and answers compactly",async () => {
@@ -192,7 +190,7 @@ suite("Agent sessions: events, read model and the reconciler",() => {
     });
   });
 
-  describe("reconciler",() => {
+  describe("reconciler: presence never owns work (ADR 0007)",() => {
     async function sessionWithCard(hash = S1) {
       await phone();
       const key = cardKeyFor(hash);
@@ -201,74 +199,71 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       await event({ session: hash,event: "prompt" });
       return { key,id };
     }
-    const operations = async (activityId: string) => (await db.query(
-      "SELECT operation FROM live_activity_operations WHERE live_activity_id=$1 AND operation='end'",[activityId.slice(4)])).rowCount;
-
-    test("ended session with an active card and no question ends the card",async () => {
-      const { key,id } = await sessionWithCard();
-      await event({ event: "end" });
-      expect(await reconcile()).toMatchObject({ cardsEnded: 1 });
-      expect(await cardRow(key)).toMatchObject({ state: "ended",status: "Session ended",terminal_reason: "session_ended",
-        terminal_actor: "session",terminal_policy: "session_reconciler" });
-      expect(await operations(id)).toBe(1);
-      // End pushes were queued for the phone through the normal path.
-      expect((await db.query("SELECT count(*)::int AS n FROM notification_events WHERE payload#>>'{liveActivity,operation}'='end'"))
-        .rows[0].n).toBeGreaterThan(0);
-      // Idempotent.
-      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
-      expect(await operations(id)).toBe(1);
+    /** Everything a session rule could touch: the card row and its questions. */
+    const snapshotOf = async (key: string) => ({
+      card: await db.query("SELECT id,state,sequence,title,status,detail,presentation,sealed,ended_at,terminal_reason FROM live_activities WHERE activity_key=$1",[key])
+        .then(result => result.rows[0]),
+      questions: (await db.query("SELECT id,state,responded_at FROM interaction_requests ORDER BY id")).rows,
+      events: (await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n,
     });
 
-    test("ended session with an open question leaves the card; the pass after the question settles ends it",async () => {
+    test("invariant: a session end, loss or idle leaves every card and question untouched",async () => {
       const { key,id } = await sessionWithCard();
-      const asked = await request("POST",`/api/live-activities/${id}/wait`,{ type: "yes_no",prompt: "Continue?" });
-      expect(asked.status).toBe(201);
-      await event({ event: "end" });
-      expect(await reconcile()).toMatchObject({ cardsEnded: 0 });
-      expect((await cardRow(key)).state).toBe("active");
-      // The owner's answer settles the request and clears the held card.
-      await db.query("UPDATE interaction_requests SET state='approved',responded_at=now()");
-      await db.query("UPDATE live_activities SET resume_presentation=NULL WHERE activity_key=$1",[key]);
-      expect(await reconcile()).toMatchObject({ cardsEnded: 1 });
-      expect(await cardRow(key)).toMatchObject({ state: "ended",status: "Session ended" });
+      expect((await request("POST",`/api/live-activities/${id}/wait`,{ type: "yes_no",prompt: "Continue?" })).status).toBe(201);
+      const before = await snapshotOf(key);
+      for (const step of [
+        () => event({ event: "stop" }),
+        () => event({ event: "wait" }),
+        () => ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60),
+        () => event({ event: "end" }),
+        () => ago(S1,SESSION_LOST_AFTER_SECONDS+3_600),
+      ]) {
+        await step();
+        await reconcile(); await reconcile();
+        expect(await snapshotOf(key)).toEqual(before);
+      }
+      expect(before.card.state).toBe("active");
+      expect(before.questions.map((question: any) => question.state)).toEqual(["pending"]);
     });
 
-    test("an unanswered question that expires ends the card through the existing path first",async () => {
-      const { key,id } = await sessionWithCard();
-      await request("POST",`/api/live-activities/${id}/wait`,{ type: "yes_no",prompt: "Continue?" });
-      await event({ event: "end" });
-      await db.query("UPDATE interaction_requests SET expires_at=clock_timestamp()-interval '1 second'");
-      await expireDueInteractiveActivities(db,"sandbox");
-      expect((await cardRow(key)).state).toBe("expired");
-      expect(await reconcile()).toMatchObject({ cardsEnded: 0 });
-      expect((await cardRow(key)).state).toBe("expired");
-    });
-
-    test("silence for the lost threshold marks the session lost; its card ends after the grace period",async () => {
+    test("invariant: a lost mid-turn session leaves its card (no question) untouched",async () => {
       const { key } = await sessionWithCard();
+      const before = await snapshotOf(key);
+      await ago(S1,SESSION_LOST_AFTER_SECONDS+3_600);
+      expect(await reconcile()).toEqual({ lost: 1,pruned: 0 });
+      expect(await row()).toMatchObject({ state: "lost",ended_reason: "lost" });
+      await reconcile();
+      expect(await expireDueActivities(db,"sandbox")).toBe(0);
+      expect(await snapshotOf(key)).toEqual(before);
+    });
+
+    test("invariant: an ended session never ends a later card with the same key",async () => {
+      await phone();
+      const key = cardKeyFor(S1);
+      await event({ event: "start",cardKey: key });
+      await event({ event: "end" });
+      await startCard(key);
+      const before = await snapshotOf(key);
+      await reconcile();
+      expect(await snapshotOf(key)).toEqual(before);
+      expect(before.card.state).toBe("active");
+    });
+
+    test("silence for the lost threshold marks the session lost; nothing else changes",async () => {
+      await sessionWithCard();
       await ago(S1,SESSION_LOST_AFTER_SECONDS-60);
-      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
+      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
       expect((await row()).state).toBe("active");
       await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
-      expect(await reconcile()).toEqual({ lost: 1,cardsEnded: 0,pruned: 0 });
+      expect(await reconcile()).toEqual({ lost: 1,pruned: 0 });
       expect(await row()).toMatchObject({ state: "lost",ended_reason: "lost" });
-      expect((await cardRow(key)).state).toBe("active");
-      // Still inside the grace period.
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+SESSION_LOST_CARD_GRACE_SECONDS-60);
-      await db.query("UPDATE agent_sessions SET ended_at=last_event_at+make_interval(secs=>$1::double precision)",[SESSION_LOST_AFTER_SECONDS]);
-      expect(await reconcile()).toMatchObject({ cardsEnded: 0 });
-      expect((await cardRow(key)).state).toBe("active");
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+SESSION_LOST_CARD_GRACE_SECONDS+60);
-      await db.query("UPDATE agent_sessions SET ended_at=last_event_at+make_interval(secs=>$1::double precision)",[SESSION_LOST_AFTER_SECONDS]);
-      expect(await reconcile()).toMatchObject({ cardsEnded: 1 });
-      expect(await cardRow(key)).toMatchObject({ state: "ended",status: "Session lost",terminal_reason: "session_lost" });
     });
 
     test("an idle session waiting for the owner is not lost after the turn threshold, only after the idle one",async () => {
       await sessionWithCard();
       await event({ event: "stop" });
       await ago(S1,SESSION_LOST_AFTER_SECONDS+600);
-      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
+      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
       expect((await row()).state).toBe("idle");
       expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ state: "idle" });
       await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
@@ -276,14 +271,21 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       expect(await reconcile()).toMatchObject({ lost: 1 });
       const stored = await row();
       expect(stored.state).toBe("lost");
-      // Lost when the idle threshold passed, so the card's grace period counts from then.
       expect(new Date(stored.ended_at).getTime()-new Date(stored.last_event_at).getTime()).toBe(SESSION_IDLE_LOST_AFTER_SECONDS*1000);
     });
 
-    test("an idle session does not hold its stale card: the ordinary expiry ends it",async () => {
+    test("a stale card only dims, whatever its session does; it ends at its hard expiry",async () => {
       const { key } = await sessionWithCard();
       await event({ event: "stop" });
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '11 minutes' WHERE activity_key=$1",[key]);
+      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '3 hours' WHERE activity_key=$1",[key]);
+      const staleAt = (await cardRow(key)).stale_at;
+      expect(await expireDueActivities(db,"sandbox")).toBe(0);
+      expect(await cardRow(key)).toMatchObject({ state: "active",stale_at: staleAt });
+      await ago(S1,SESSION_IDLE_LOST_AFTER_SECONDS+60);
+      await reconcile();
+      expect(await expireDueActivities(db,"sandbox")).toBe(0);
+      expect((await cardRow(key)).state).toBe("active");
+      await db.query("UPDATE live_activities SET expires_at=clock_timestamp()-interval '1 second' WHERE activity_key=$1",[key]);
       expect(await expireDueActivities(db,"sandbox")).toBe(1);
       expect((await cardRow(key)).state).toBe("expired");
     });
@@ -307,64 +309,26 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       }
     });
 
-    test("a lost session with an open question keeps its card",async () => {
-      const { key,id } = await sessionWithCard();
-      await request("POST",`/api/live-activities/${id}/wait`,{ type: "yes_no",prompt: "Continue?" });
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+SESSION_LOST_CARD_GRACE_SECONDS+600);
-      await reconcile(); await reconcile();
-      expect(await row()).toMatchObject({ state: "lost" });
-      expect((await cardRow(key)).state).toBe("active");
-    });
-
-    test("a lost session that speaks again is active and keeps its card",async () => {
+    test("a lost session that speaks again is active",async () => {
       const { key } = await sessionWithCard();
       await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
       await reconcile();
       expect((await row()).state).toBe("lost");
       await event({ event: "tool" });
       expect(await row()).toMatchObject({ state: "active",ended_at: null });
-      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
+      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
       expect((await cardRow(key)).state).toBe("active");
     });
 
-    test("an active session whose card went stale is quiet and its card is not ended by the session rules",async () => {
+    test("an active session whose card went stale is quiet",async () => {
       const { key,id } = await sessionWithCard();
       await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '3 minutes',updated_at=clock_timestamp()-interval '14 minutes' WHERE activity_key=$1",[key]);
-      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
+      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
       expect((await cardRow(key)).state).toBe("active");
       const [session] = await listAgentSessions(db,principalId);
       expect(session).toMatchObject({ state: "active",presence: "quiet",card: { id,state: "active" } });
       expect(session!.card!.quietForSeconds).toBeGreaterThanOrEqual(14*60);
       expect(session!.card!.quietForSeconds).toBeLessThan(15*60);
-    });
-
-    test("a live session keeps its stale card past the ten-minute expiry; stale_at is untouched",async () => {
-      const { key } = await sessionWithCard();
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '30 minutes' WHERE activity_key=$1",[key]);
-      const staleAt = (await cardRow(key)).stale_at;
-      expect(await expireDueActivities(db,"sandbox")).toBe(0);
-      expect(await cardRow(key)).toMatchObject({ state: "active",stale_at: staleAt });
-      expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ presence: "quiet" });
-      // The session goes silent: lost, then the card ends after the grace period.
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
-      await reconcile();
-      expect(await expireDueActivities(db,"sandbox")).toBe(1);
-      expect((await cardRow(key)).state).toBe("expired");
-    });
-
-    test("a lost session's stale card ends through the session rules after the grace period",async () => {
-      const { key } = await sessionWithCard();
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '30 minutes' WHERE activity_key=$1",[key]);
-      await ago(S1,SESSION_SILENCE_FOR_CARD_END);
-      await reconcile();
-      expect(await cardRow(key)).toMatchObject({ state: "ended",status: "Session lost" });
-    });
-
-    test("the hard expiry still ends a live session's card",async () => {
-      const { key } = await sessionWithCard();
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '30 minutes',expires_at=clock_timestamp()-interval '1 second' WHERE activity_key=$1",[key]);
-      expect(await expireDueActivities(db,"sandbox")).toBe(1);
-      expect((await cardRow(key)).state).toBe("expired");
     });
 
     test("an active session with a fresh card is working",async () => {
@@ -379,32 +343,19 @@ suite("Agent sessions: events, read model and the reconciler",() => {
       await event({ event: "start",cardKey: cardKeyFor(S1) });
       await event({ session: sessionHash("nokey"),event: "start" });
       const before = (await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n;
-      expect(await reconcile()).toEqual({ lost: 0,cardsEnded: 0,pruned: 0 });
+      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
       expect((await listAgentSessions(db,principalId)).map(session => [session.presence,session.card])).toEqual([["no_card",null],["no_card",null]]);
       expect((await db.query("SELECT count(*)::int AS n FROM notification_events")).rows[0].n).toBe(before);
     });
 
-    test("a card that already ended or expired is not ended again",async () => {
-      const { key,id } = await sessionWithCard();
-      await ago(S1,SESSION_LOST_AFTER_SECONDS+60);
-      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '11 minutes' WHERE activity_key=$1",[key]);
+    test("an ended session lists without the card that expired",async () => {
+      const { key } = await sessionWithCard();
+      await db.query("UPDATE live_activities SET stale_at=clock_timestamp()-interval '1 minute',expires_at=clock_timestamp()-interval '1 second' WHERE activity_key=$1",[key]);
       await expireDueActivities(db,"sandbox");
       expect((await cardRow(key)).state).toBe("expired");
-      const sequence = (await cardRow(key)).sequence;
       await event({ event: "end" });
-      expect(await reconcile()).toMatchObject({ cardsEnded: 0 });
-      expect(await cardRow(key)).toMatchObject({ state: "expired",sequence });
-      expect(await operations(id)).toBe(1);
+      expect(await reconcile()).toEqual({ lost: 0,pruned: 0 });
       expect((await listAgentSessions(db,principalId))[0]).toMatchObject({ presence: "ended",card: null });
-    });
-
-    test("only the account's own card is ended, never one that shares a key with another account",async () => {
-      const { key } = await sessionWithCard();
-      const other = (await db.query("INSERT INTO owner_principals(handle) VALUES ('other') RETURNING id")).rows[0].id;
-      await db.query("INSERT INTO agent_sessions(principal_id,session_hash,harness,state,started_at,last_event_at,last_event,card_key) VALUES ($1,$2,'claude-code','ended',now(),now(),'end',$3)",
-        [other,sessionHash("foreign"),key]);
-      expect(await reconcile()).toMatchObject({ cardsEnded: 0 });
-      expect((await cardRow(key)).state).toBe("active");
     });
 
     test("settled sessions are removed after the retention period",async () => {
