@@ -166,6 +166,8 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
     public let liveActivityAuthorization: AuthorizationState
     public let liveActivityPushToStartToken: String?
     public let capabilities: [String]
+    /// Optional: older servers ignore it. Lets the Devices screen say "Simulator".
+    public let isSimulator: Bool?
 
     public init(
         stableDeviceId: UUID,
@@ -181,8 +183,10 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
         notificationAuthorization: AuthorizationState,
         liveActivityAuthorization: AuthorizationState,
         liveActivityPushToStartToken: String? = nil,
-        capabilities: [String] = DeviceCapability.supported
+        capabilities: [String] = DeviceCapability.supported,
+        isSimulator: Bool? = nil
     ) {
+        self.isSimulator = isSimulator
         self.stableDeviceId = stableDeviceId
         self.installationId = installationId
         self.name = name
@@ -202,7 +206,7 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case stableDeviceId, installationId, name, bundleIdentifier, appVersion, appBuild, osVersion, model
         case apnsEnvironment, apnsToken, notificationAuthorization, liveActivityAuthorization
-        case liveActivityPushToStartToken, capabilities
+        case liveActivityPushToStartToken, capabilities, isSimulator
     }
 
     /// A request saved by an older build has no capabilities; it declared none.
@@ -222,6 +226,7 @@ public struct DeviceRegistrationRequest: Codable, Equatable, Sendable {
         liveActivityAuthorization = try values.decode(AuthorizationState.self, forKey: .liveActivityAuthorization)
         liveActivityPushToStartToken = try values.decodeIfPresent(String.self, forKey: .liveActivityPushToStartToken)
         capabilities = try values.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        isSimulator = try values.decodeIfPresent(Bool.self, forKey: .isSimulator)
     }
 }
 
@@ -297,6 +302,10 @@ public struct DeviceHeartbeat: Codable, Equatable, Sendable {
     public let liveActivityAuthorization: AuthorizationState
     public let liveActivityPushToStartToken: String?
     public let capabilities: [String]
+    /// The server's heartbeat field names (`deviceModel` is not one): keeps an older install's model
+    /// current without re-registering. Optional; omitted when nil.
+    public let model: String?
+    public let isSimulator: Bool?
 
     public init(
         deviceId: String,
@@ -312,8 +321,12 @@ public struct DeviceHeartbeat: Codable, Equatable, Sendable {
         notificationAuthorization: AuthorizationState,
         liveActivityAuthorization: AuthorizationState,
         liveActivityPushToStartToken: String? = nil,
-        capabilities: [String] = DeviceCapability.supported
+        capabilities: [String] = DeviceCapability.supported,
+        model: String? = nil,
+        isSimulator: Bool? = nil
     ) {
+        self.model = model
+        self.isSimulator = isSimulator
         self.deviceId = deviceId
         self.installationId = installationId
         self.deviceName = deviceName

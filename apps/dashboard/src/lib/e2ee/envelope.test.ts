@@ -4,7 +4,7 @@ import * as cli from "@relo/cli-e2ee"
 import fixtureText from "../../../../../packages/contracts/fixtures/e2ee-v1.json?raw"
 
 import { b64u, fromB64u, type Bytes } from "./bytes"
-import { keyId, openEnvelope, type RecipientPrekey } from "./envelope"
+import { approveDeviceSigningInput, keyId, openEnvelope, type RecipientPrekey } from "./envelope"
 import { ensureBrowserKeys, memoryStore, PREKEY_KEEP_RETIRED_MS, PREKEY_ROTATE_MS, prekeyLookup, signPrekey } from "./keys"
 
 type Fixture = {
@@ -132,5 +132,13 @@ describe("relo.e2e.v1 open side on WebCrypto", () => {
     expect(prekeyLookup(later)(first.prekeys[0]!.prekeyId)).toBeNull()
     // Another account on the same browser gets its own keys.
     expect((await ensureBrowserKeys(store, "acct_2")).identity.publicKey).not.toBe(first.identity.publicKey)
+  })
+})
+
+describe("approving a device from a linked browser", () => {
+  it("signs exactly the bytes the CLI (and the iPhone) sign, with the browser as the approver", () => {
+    const input = { deviceId: "dev_00000000-0000-4000-8000-000000000001", identityKey: "B".repeat(87),
+      approverDeviceId: "brw_00000000-0000-4000-8000-000000000002", signedAt: "2026-10-14T08:00:00.000Z" }
+    expect(Array.from(approveDeviceSigningInput(input))).toEqual(Array.from(cli.approveDeviceSigningInput(input)))
   })
 })

@@ -20,6 +20,7 @@ struct ReloApp: App {
         appDelegate.tokenRegistrar = dependencies.tokenRegistrar
         BackgroundRefreshCoordinator.shared.install(model: model)
         BackgroundNotificationActionCoordinator.shared.install(model: model)
+        DeviceAccessActionCoordinator.shared.install(model: model)
     }
 
     var body: some Scene {
@@ -49,8 +50,14 @@ struct ReloApp: App {
                     notificationNavigation.consumeSecuritySettings()
                     model.openSecuritySettings()
                 }
+                .onReceive(notificationNavigation.$accessRequestID.compactMap { $0 }) { id in
+                    notificationNavigation.consumeAccessRequest()
+                    model.openAccessRequest(id: id)
+                }
                 .onOpenURL { url in
-                    if ReloDeepLink.isSecuritySettings(url) {
+                    if let id = ReloDeepLink.accessRequestID(from: url) {
+                        model.openAccessRequest(id: id)
+                    } else if ReloDeepLink.isSecuritySettings(url) {
                         model.openSecuritySettings()
                     } else if let identity = ReloDeepLink.activityIdentity(from: url) {
                         Task { await model.openActivity(identity: identity) }
@@ -125,7 +132,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) async {
         // Copy native callback input before crossing to the UI-owned coordinators.
         // The async delegate bridge completes exactly when handling finishes.
-        // "New device wants access" opens Settings → Security, where the device is approved.
+        // "New device wants access": Approve right here (iOS already asked for Face ID or the
+        // passcode), or open the request sheet.
+        if response.actionIdentifier != UNNotificationDismissActionIdentifier,
+           let relo = response.notification.request.content.userInfo["relo"] as? [String: Any],
+           let id = ReloDeepLink.accessRequestID(relo: relo) {
+            if response.actionIdentifier == ReloAccessRequestNotification.approveAction {
+                await DeviceAccessActionCoordinator.shared.approve(id)
+            } else {
+                await NotificationNavigationCoordinator.shared.openAccessRequest(id)
+            }
+            return
+        }
+        // A notice without a request id opens Settings → Devices, where the device is approved.
         if response.actionIdentifier != UNNotificationDismissActionIdentifier,
            let relo = response.notification.request.content.userInfo["relo"] as? [String: Any],
            ReloDeepLink.opensSecuritySettings(relo: relo) {
@@ -190,8 +209,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         let deny = UNNotificationAction(identifier: "RELO_DENY", title: "Deny", options: [.authenticationRequired, .destructive])
         let yes = UNNotificationAction(identifier: "RELO_YES", title: "Yes", options: [.authenticationRequired])
         let no = UNNotificationAction(identifier: "RELO_NO", title: "No", options: [.authenticationRequired, .destructive])
+        let accessApprove = UNNotificationAction(identifier: ReloAccessRequestNotification.approveAction, title: "Approve",
+                                                 options: [.authenticationRequired])
+        let accessReview = UNNotificationAction(identifier: ReloAccessRequestNotification.reviewAction, title: "Review",
+                                                options: [.foreground])
         let fixed: Set<UNNotificationCategory> = [
             UNNotificationCategory(identifier: "RELO_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
+            UNNotificationCategory(identifier: ReloAccessRequestNotification.categoryIdentifier,
+                                   actions: [accessApprove, accessReview], intentIdentifiers: []),
             UNNotificationCategory(identifier: "RELO_YES_NO", actions: [yes, no], intentIdentifiers: []),
             // A choice's buttons live in its per-question category; this one only opens Relo.
             UNNotificationCategory(
@@ -266,6 +291,17 @@ final class NotificationNavigationCoordinator: ObservableObject {
 
     func consumeSecuritySettings() {
         securitySettingsPending = false
+    }
+
+    /// A tapped access-request notification (held until the app consumes it, like the above).
+    @Published private(set) var accessRequestID: String?
+
+    func openAccessRequest(_ id: String) {
+        accessRequestID = id
+    }
+
+    func consumeAccessRequest() {
+        accessRequestID = nil
     }
 
 

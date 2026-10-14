@@ -25,8 +25,8 @@ import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
 import { ServerAdminCard } from "@/features/account/server-admin"
 import { EncryptionPolicyCard } from "@/features/encryption-policy/encryption-policy-card"
-import { LinkBrowserSection } from "@/features/linked-browser/link-browser-card"
-import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
+import { TwoFactorCard } from "@/features/two-factor/two-factor-card"
+import { DevicesSection } from "@/features/devices/devices-section"
 import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
 import {
   createHttpAccountService,
@@ -213,11 +213,17 @@ export function AccountPage({
         </section>
 
         <AccountGroup title="Security">
-          <PendingDevicesNotice variant="card" />
+          <section id="devices" aria-labelledby="account-devices" className="grid gap-3">
+            <div className="px-1">
+              <h3 id="account-devices" className="text-base font-semibold">Devices</h3>
+              <p className="text-sm text-muted-foreground">Everything signed in to your account, and what each one can read.</p>
+            </div>
+            <DevicesSection accountId={initial.shell.account.id} />
+          </section>
 
           <EncryptionPolicyCard />
 
-          <LinkBrowserSection accountId={initial.shell.account.id} />
+          <TwoFactorCard />
         </AccountGroup>
 
         <AccountGroup title="Command line">

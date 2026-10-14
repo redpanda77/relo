@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { identityKeys } from "./keystore.mjs";
-import { opaqueIdentity, sealablePhones, sealingUnavailable, sealNotice, trustFor } from "./seal-notice.mjs";
+import { opaqueIdentity, sealablePhones, sealingUnavailable, sealNotice, skippedNote, trustFor } from "./seal-notice.mjs";
 import { loadKnownNames } from "./opaque-names.mjs";
 
 export const SEALED_CARD_TITLE = "Encrypted card";
@@ -94,11 +94,13 @@ export async function sealCardRequest({ body, cardId, key, client, config, depen
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return { body, text: null };
   const { store, devices } = trust;
-  const { eligible, readers } = sealablePhones(store, config.apiUrl, devices, deviceIds);
+  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
   if (eligible.length === 0) {
     if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
     return { body, text: null };
   }
+  // Like notify and ask: a phone that cannot open the card is named, with why, never dropped silently.
+  if (skipped.length) notes?.push(skippedNote("card", eligible, skipped));
   const previous = cardId ? await loadCardText(sealedCardDirectory(dependencies.env), cardId) : null;
   // The card's project, topic and task go to the server as handles; the phone gets the names (E2.5).
   // Every update carries them (from this command or the card's cache), so the phone always can name them.

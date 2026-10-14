@@ -8,7 +8,8 @@
 import { createHash, createHmac } from "node:crypto";
 import { b64u, fromB64u, sealEnvelope, verifyPrekey } from "./e2ee.mjs";
 import { identityKeys, subkey, trustKey } from "./keystore.mjs";
-import { ensureTrust, trustNotices, trustedPhones } from "./trust.mjs";
+import { approveCommand, ensureTrust, trustNotices, trustedPhones } from "./trust.mjs";
+import { phoneLabel } from "./device-names.mjs";
 import { keyStorePath, loadKeyStore } from "./keystore.mjs";
 import { EXIT, ReloError } from "./errors.mjs";
 import { groupingKey, loadKnownNames, opaqueContext, rememberNames } from "./opaque-names.mjs";
@@ -41,7 +42,7 @@ export async function trustFor({ client, config, dependencies, notes }) {
   const committed = known?.identity && (known.committed?.[config.apiUrl] === true || trustedPhones(known, config.apiUrl).length > 0);
   try {
     const trust = await ensureTrust({ client, config, dependencies });
-    notes?.push(...trustNotices(trust.store, config.apiUrl, dependencies.now?.() ?? Date.now()));
+    notes?.push(...trustNotices(trust.store, config.apiUrl, dependencies.now?.() ?? Date.now(), trust.devices));
     return { ...trust, committed: committed || trust.store.committed?.[config.apiUrl] === true
       || trustedPhones(trust.store, config.apiUrl).length > 0 };
   } catch (error) {
@@ -89,6 +90,7 @@ function derive(seed, label, length) {
 /**
  * Phones trusted on this computer whose current prekey is signed by the pinned identity key, and the
  * linked browsers (`readers`) that get the content envelope too. Targeting phones never drops readers.
+ * `skipped` lists every other phone with { deviceId, label, reason } so no command drops one silently.
  */
 export function sealablePhones(store, apiUrl, devices, requestedDeviceIds) {
   const eligible = [];
@@ -99,14 +101,32 @@ export function sealablePhones(store, apiUrl, devices, requestedDeviceIds) {
     if (!browser && requestedDeviceIds && !requestedDeviceIds.includes(device.deviceId)) continue;
     const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
     const fresh = device.prekey && Date.now() - Date.parse(device.prekey.createdAt) < MAX_PREKEY_AGE_MS;
-    const usable = pinned && pinned.level !== "pending" && pinned.publicKey === device.identityKey.publicKey && fresh
-      && verifyPrekey({ identityPublicKey: fromB64u(pinned.publicKey, { length: 65 }), prekey: { ...device.prekey, deviceId: device.deviceId } });
-    const recipient = usable && { deviceId: device.deviceId, prekeyId: device.prekey.prekeyId, publicKey: fromB64u(device.prekey.publicKey, { length: 65 }) };
+    const sameKey = pinned && device.identityKey?.publicKey && pinned.publicKey === device.identityKey.publicKey;
+    let prekeyOk = false;
+    try {
+      prekeyOk = Boolean(sameKey && pinned.level !== "pending" && fresh
+        && verifyPrekey({ identityPublicKey: fromB64u(pinned.publicKey, { length: 65 }), prekey: { ...device.prekey, deviceId: device.deviceId } }));
+    } catch {
+      prekeyOk = false;
+    }
+    const recipient = prekeyOk && { deviceId: device.deviceId, prekeyId: device.prekey.prekeyId, publicKey: fromB64u(device.prekey.publicKey, { length: 65 }) };
     if (recipient && browser) readers.push(recipient);
     else if (recipient) eligible.push(recipient);
-    else if (!browser) skipped.push(device.deviceId);
+    else if (!browser) {
+      const reason = !pinned || !device.identityKey?.publicKey ? "no keys yet: open Relo on it"
+        : pinned.level === "pending" ? `waiting for approval: ${approveCommand(store, apiUrl, pinned)}`
+        : !sameKey ? `security code changed and not accepted: ${approveCommand(store, apiUrl, pinned)}`
+        : "no fresh key: open Relo on it";
+      skipped.push({ deviceId: device.deviceId, label: phoneLabel({ ...pinned, ...device, name: device.name ?? pinned?.name }), reason });
+    }
   }
   return { eligible, readers: readers.slice(0, Math.max(0, 16 - eligible.length)), skipped };
+}
+
+/** "encrypted for 1 phone; not sent to iPhone Air (Simulator) (waiting for approval: relo keys approve iphone-air)". */
+export function skippedNote(what, eligible, skipped) {
+  const names = skipped.map((phone) => `${phone.label} (${phone.reason})`).join("; ");
+  return `${what} end-to-end encrypted for ${eligible.length} phone${eligible.length === 1 ? "" : "s"}; not readable on ${names}`;
 }
 
 /** Shortens the summary until the alert fits in one push alongside the rest of the payload. */
@@ -172,7 +192,7 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
       imageUrl: body.imageUrl, destinationUrl: body.destinationUrl,
     }).filter(([, value]) => value !== undefined)),
   });
-  if (skipped.length) notes.push(`end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys skipped`);
+  if (skipped.length) notes.push(skippedNote("notice", eligible, skipped));
   const { title, summary, body: _text, bodyFormat, imageUrl, destinationUrl, deviceIds, ...metadata } = body;
   return { ...metadata, ...(identity.context ? { context: identity.context } : {}), sealed };
 }
@@ -191,7 +211,7 @@ export async function sealQuestion({ title, prompt, detail, key, client, config,
     if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
     return null;
   }
-  if (skipped.length) notes.push(`question end-to-end encrypted for ${eligible.length} phone(s); ${skipped.length} phone(s) without keys see a placeholder`);
+  if (skipped.length) notes.push(skippedNote("question", eligible, skipped));
   const identity = await opaqueIdentity(store, context, dependencies);
   const sealed = sealNotice({ kind: "question", sender: identityKeys(store), idempotencyKey: key, phones: eligible, readers,
     // The detail travels inside the seal, never as plaintext beside it.

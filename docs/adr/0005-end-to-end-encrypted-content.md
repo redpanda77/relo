@@ -56,3 +56,16 @@ it by hand.
   its recipients.
 - The server still learns metadata, and can delay or drop messages. Those risks are accepted and
   documented.
+
+## Addendum (14 October 2026): approving from a linked browser, and simulators
+
+- **A linked browser may approve a new phone.** It signs the same `approve-device` input a phone
+  signs, with its `brw_…` id as the approver, from Account → Security → Devices. Only a browser a
+  trusted (non-simulator) phone linked in the last 14 days qualifies, with the owner's session and a
+  fresh two-step code when that is on. This widens the "server delivers the Dashboard's code" cost
+  already accepted for reading: served code could approve a server-added phone. Computers announce
+  such approvals, and strict mode refuses them.
+- **Simulators never vouch.** A phone in the iOS Simulator is labelled "Simulator", gets no approval
+  notices, never approves a real phone, and is never trusted automatically by the CLI.
+- **The Dashboard shows who can read.** One Devices list with a plain encryption status per phone,
+  computer and browser, and Remove, which deletes what only that device could open.

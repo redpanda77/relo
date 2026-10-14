@@ -44,6 +44,43 @@ describe("AuthPage", () => {
     expect(onAuthenticated).toHaveBeenCalledWith("/dashboard/testing")
   })
 
+  test("asks for the authenticator code after the password when the account has two-step sign-in", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ twoFactorRedirect: true, twoFactorMethods: ["totp"] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 401 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }))
+    const onAuthenticated = vi.fn()
+    render(
+      <AuthPage
+        bootstrap={{
+          version: 1, kind: "auth", route: { path: "/", nextPath: "/dashboard" }, mode: "sign-in",
+          registration: "closed", title: "Sign in to Relo", description: "Sign in.",
+        }}
+        onAuthenticated={onAuthenticated}
+      />
+    )
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "owner@example.test" } })
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "correct-horse" } })
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }))
+    expect(await screen.findByText("Two-step sign-in")).toBeTruthy()
+    expect(onAuthenticated).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText("Code"), { target: { value: "123 456" } })
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }))
+    expect(await screen.findByText(/did not work/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole("button", { name: "Use a backup code instead" }))
+    fireEvent.change(screen.getByLabelText("Backup code"), { target: { value: "abcde-fghij" } })
+    fireEvent.click(screen.getByLabelText(/Don't ask again/))
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }))
+    await waitFor(() => expect(onAuthenticated).toHaveBeenCalledWith("/dashboard"))
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/auth/two-factor/verify-totp")
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ code: "123456", trustDevice: false })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/auth/two-factor/verify-backup-code")
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ code: "abcde-fghij", trustDevice: true })
+  })
+
   test("shows the owner name field only for first-account creation", () => {
     render(
       <AuthPage

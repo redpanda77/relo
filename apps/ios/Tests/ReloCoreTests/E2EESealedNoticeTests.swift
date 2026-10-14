@@ -154,4 +154,22 @@ final class E2EESealedNoticeTests: XCTestCase {
         XCTAssertNil(entries["c0"])
         XCTAssertFalse(ReloReplayRules.admit(&entries, context: "c5", itemID: "other", now: start))
     }
+
+    /// The activity detail screen reads the card summary, not the row title: it must open too.
+    func testCardDetailSummaryShowsTheOpenedTitleAndStatus() throws {
+        let (sealed, trust, prekey) = try phone()
+        let mac = try computer(trust, verified: true)
+        let envelope = try ReloE2EE.seal(kind: "card", context: "ntf:card", sender: mac,
+                                         recipients: [(deviceID, prekey.id, prekey.key.publicKey)],
+                                         content: try JSONSerialization.data(withJSONObject: ["title": "Device trust release", "status": "Shipping"]))
+        let item = InboxItem(id: "ntf_2", kind: .liveActivity, sourceName: "Claude Code", title: "Encrypted card",
+                             detail: nil, createdAt: Date(), privacy: .standard,
+                             activitySummary: InboxActivitySummary(id: "act_1", generation: 1, sequence: 2, state: "active",
+                                                                   title: "Encrypted card", status: "Approved · Updating…"),
+                             sealed: InboxSealedNotice(alert: nil, content: envelope))
+        let opened = item.openingSealed(sealed.opener)
+        XCTAssertEqual(opened.title, "Device trust release")
+        XCTAssertEqual(opened.activitySummary?.title, "Device trust release")
+        XCTAssertEqual(opened.activitySummary?.status, "Approved · Shipping", "the server's own words stay")
+    }
 }

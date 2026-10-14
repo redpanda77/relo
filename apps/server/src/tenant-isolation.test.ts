@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { resetAuthAttempts } from "./auth-throttle.js";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
 import { generateToken, hashToken } from "./auth.js";
@@ -55,6 +55,8 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/auth/*": "Better Auth",
   "GET /api/auth/get-session": "own session",
   "POST /api/auth/sign-in/email": "sign-in",
+  "POST /api/auth/two-factor/verify-totp": "second sign-in step, bound to the challenge cookie",
+  "POST /api/auth/two-factor/verify-backup-code": "second sign-in step, bound to the challenge cookie",
   "POST /api/auth/sign-up/email": "sign-up",
   "POST /api/dashboard/browser": "registers the calling browser's own keys for the signed-in account",
   "DELETE /api/dashboard/browser/:browserId": "the signed-in account revokes one of its own browsers; unlinkBrowser matches it by account",
@@ -337,6 +339,9 @@ suite("tenant isolation (ADR 0004)", () => {
     if (route.endsWith("/token")) return { generation: 1,nativeActivityId: "native",environment: "sandbox",token: "c".repeat(64) };
     if (route.endsWith("/live-activity-policy")) return {};
     if (route.includes("/services/")) return { title: "A rename" };
+    if (route.endsWith("/devices/:deviceId/approve")) return { browserId: `brw_${randomUUID()}`,
+      identityKey: Buffer.concat([Buffer.from([4]),randomBytes(64)]).toString("base64url"),signedAt: new Date().toISOString(),
+      signature: randomBytes(64).toString("base64url") };
     if (route.includes("/devices/:deviceId")) return { name: "A rename" };
     if (route.endsWith("/end")) return { status: "Ended by A" };
     if (route.includes("live-activities")) return { status: "Changed by A" };

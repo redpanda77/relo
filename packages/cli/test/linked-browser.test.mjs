@@ -151,7 +151,7 @@ test("strict mode holds a phone set up again until a person verifies it", async 
     await ensureTrust({ client: h.client([fresh.device]), config: { apiUrl }, dependencies: h.dependencies });
     let store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
     assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].level, "pending");
-    assert.match(trustNotices(store, apiUrl).join("\n"), /strict mode holds it until you run relo keys verify/);
+    assert.match(trustNotices(store, apiUrl).join("\n"), /strict mode holds it until you run `relo keys approve /);
     await ensureTrust({ client: h.client([fresh.device]), config: { apiUrl }, dependencies: h.dependencies });
     store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
     assert.equal(store.trusted[trustKey(apiUrl, fresh.device.deviceId)].level, "pending");

@@ -5,7 +5,7 @@ import { BrandLockup } from "@/components/brand"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { authenticateOwner } from "@/features/auth/auth-service"
+import { authenticateOwner, verifySecondStep } from "@/features/auth/auth-service"
 import type { DashboardAuth } from "@/features/auth/types"
 
 function friendlyAuthError(cause: unknown): string {
@@ -47,6 +47,7 @@ export function AuthPage({
   const [error, setError] = React.useState("")
   const [mode, setMode] = React.useState(bootstrap.mode)
   const [awaitingApproval, setAwaitingApproval] = React.useState(false)
+  const [secondStep, setSecondStep] = React.useState<null | "totp" | "backup">(null)
   // The first account claims the server; afterwards registration follows the admin's setting.
   const claimed = bootstrap.mode === "sign-in"
   const canRegister = claimed && bootstrap.registration !== "closed"
@@ -77,9 +78,33 @@ export function AuthPage({
         setPending(false)
         return
       }
+      if (outcome === "two-factor") {
+        setSecondStep("totp")
+        setPending(false)
+        return
+      }
       onAuthenticated(bootstrap.route.nextPath)
     } catch (cause) {
       setError(friendlyAuthError(cause))
+      setPending(false)
+    }
+  }
+
+  async function submitCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!secondStep) return
+    const values = new FormData(event.currentTarget)
+    setPending(true)
+    setError("")
+    try {
+      await verifySecondStep({
+        code: String(values.get("code") ?? ""),
+        method: secondStep,
+        trustDevice: values.get("trustDevice") === "on",
+      })
+      onAuthenticated(bootstrap.route.nextPath)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "That code did not work.")
       setPending(false)
     }
   }
@@ -136,12 +161,16 @@ export function AuthPage({
           className="glass rise-in rise-in-1 w-full justify-self-center rounded-[28px] p-6 sm:max-w-[25rem] sm:p-8"
         >
           <h2 id="auth-title" className="text-2xl font-bold tracking-tight">
-            {awaitingApproval ? "Waiting for approval" : title}
+            {awaitingApproval ? "Waiting for approval" : secondStep ? "Two-step sign-in" : title}
           </h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
             {awaitingApproval
               ? "Your account is created. You can sign in once the server admin approves it."
-              : description}
+              : secondStep === "totp"
+                ? "Enter the 6-digit code from your authenticator app."
+                : secondStep === "backup"
+                  ? "Enter one of the backup codes you saved when you turned on two-step sign-in."
+                  : description}
           </p>
           <div className="mt-5 flex items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-black/25 px-4 py-3">
             <div className="min-w-0">
@@ -166,6 +195,40 @@ export function AuthPage({
               >
                 Back to sign in
               </Button>
+            ) : secondStep ? (
+            <form id="two-factor-form" className="space-y-4" onSubmit={(event) => void submitCode(event)}>
+              <div className="space-y-2">
+                <Label htmlFor="code">{secondStep === "totp" ? "Code" : "Backup code"}</Label>
+                <Input
+                  key={secondStep}
+                  id="code"
+                  name="code"
+                  autoComplete="one-time-code"
+                  inputMode={secondStep === "totp" ? "numeric" : "text"}
+                  autoFocus
+                  required
+                  disabled={pending}
+                  className={inputClass}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <input type="checkbox" name="trustDevice" className="size-4" disabled={pending} />
+                Don't ask again on this browser for 30 days
+              </label>
+              <p role="alert" className="min-h-5 text-sm text-destructive">{error}</p>
+              <button type="submit" disabled={pending} className="capsule-cta w-full disabled:opacity-60">
+                {pending ? "Checking…" : "Continue"}
+              </button>
+              <Button
+                type="button"
+                variant="link"
+                className="min-h-11 w-full"
+                disabled={pending}
+                onClick={() => { setSecondStep(secondStep === "totp" ? "backup" : "totp"); setError("") }}
+              >
+                {secondStep === "totp" ? "Use a backup code instead" : "Use the authenticator app instead"}
+              </Button>
+            </form>
             ) : (
             <form
               id="auth-form"

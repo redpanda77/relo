@@ -3,8 +3,8 @@
  * keys, registers them, learns whether a trusted phone linked it, trusts the account's computers on
  * first use, and fetches the envelopes sealed to it. Plaintext never leaves this module's callers.
  */
-import { fromB64u, type Bytes } from "./bytes"
-import { keyId, openEnvelope } from "./envelope"
+import { b64u, copy, fromB64u, type Bytes } from "./bytes"
+import { approveDeviceSigningInput, keyId, openEnvelope } from "./envelope"
 import {
   ensureBrowserKeys,
   indexedDbStore,
@@ -188,6 +188,20 @@ export class BrowserLink {
 
   isLinked() {
     return this.state.status === "linked"
+  }
+
+  /**
+   * Approves a new phone the way a trusted phone does (docs/END-TO-END-ENCRYPTION.md, "Approving
+   * from a linked browser"): this browser's non-extractable identity key signs the phone's id and
+   * identity key, with this browser's id as the approver. Only a linked browser signs.
+   */
+  async signApproval(target: { deviceId: string; identityKey: string }, now = this.now()) {
+    await this.start()
+    if (!this.keys || !this.isLinked()) throw new Error("Link this browser from your iPhone first.")
+    const signedAt = new Date(now).toISOString()
+    const message = approveDeviceSigningInput({ ...target, approverDeviceId: this.keys.browserId, signedAt })
+    const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, this.keys.identity.privateKey, message)
+    return { browserId: this.keys.browserId, identityKey: target.identityKey, signedAt, signature: b64u(copy(signature)) }
   }
 
   /** Content envelopes by id; a 403 means this browser is no longer linked. */

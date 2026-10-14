@@ -103,13 +103,17 @@ export function trustKey(apiUrl, deviceId) {
   return `${apiUrl}|${deviceId}`;
 }
 
-/** "verified" or "auto" when the pinned key matches; "pending" for a phone added later that a person has not accepted; "changed" only while strict mode holds a change; "new" before first use. */
+/**
+ * "verified" (security codes compared), "approved" (a person ran `relo keys approve`) or "auto" when the
+ * pinned key matches; "pending" for a phone added later that nobody has accepted; "changed" while strict
+ * mode (or a simulator) holds a key change; "new" before first use.
+ */
 export function trustState(store, apiUrl, device) {
   const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
   if (!pinned) return "new";
   if (pinned.level === "pending") return "pending";
   if (pinned.publicKey !== device.identityKey.publicKey) return "changed";
-  return pinned.level === "auto" ? "auto" : "verified";
+  return pinned.level === "auto" || pinned.level === "approved" ? pinned.level : "verified";
 }
 
 /**

@@ -1,3 +1,4 @@
+import { friendlyModelName } from "../device-models.js";
 import type { Handler } from "hono";
 import type { LiveActivityPresentationPolicy } from "@relo/notification-contracts";
 import type { Database } from "../db.js";
@@ -247,7 +248,7 @@ async function loadServices(db: Database, principalId: string, accountPolicy: un
 
 async function loadPhones(db: Database, principalId: string, limit: number) {
   const result = await db.query<any>(
-    `SELECT id,name,model,app_version,os_version,notification_authorization,
+    `SELECT id,name,model,is_simulator,app_version,os_version,notification_authorization,
       live_activity_authorization,last_seen_at
     FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
     ORDER BY last_seen_at DESC,id DESC LIMIT $2`,
@@ -256,7 +257,7 @@ async function loadPhones(db: Database, principalId: string, limit: number) {
   return result.rows.map((row): ConnectionsPhonesBootstrap["phones"][number] => ({
     id: publicId("dev", String(row.id)),
     name: String(row.name),
-    model: String(row.model ?? "Unknown model"),
+    model: friendlyModelName(row.model,Boolean(row.is_simulator)) ?? "Unknown model",
     appVersion: String(row.app_version ?? "Unknown"),
     osVersion: String(row.os_version ?? "Unknown"),
     notificationAuthorization: String(row.notification_authorization ?? "unknown"),

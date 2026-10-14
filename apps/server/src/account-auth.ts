@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { bearer } from "better-auth/plugins";
+import { bearer, twoFactor } from "better-auth/plugins";
 import type { Database } from "./db.js";
 
 export function createAccountAuth(authDb: Database, baseURL: string, secret: string, clientIpHeader?: string) {
@@ -61,7 +61,23 @@ export function createAccountAuth(authDb: Database, baseURL: string, secret: str
       // Session records keep the proxy's client address, not a client-supplied X-Forwarded-For.
       ...(clientIpHeader ? { ipAddress: { ipAddressHeaders: [clientIpHeader.toLowerCase()] } } : {}),
     },
-    plugins: [bearer()],
+    plugins: [
+      bearer(),
+      // Two-step sign-in (docs/HARDENING.md, gap 1): authenticator-app codes and one-time backup codes.
+      twoFactor({
+        issuer: "Relo",
+        schema: {
+          user: { fields: { twoFactorEnabled: "two_factor_enabled" } },
+          twoFactor: {
+            modelName: "two_factors",
+            fields: {
+              backupCodes: "backup_codes", userId: "user_id",
+              failedVerificationCount: "failed_verification_count", lockedUntil: "locked_until",
+            },
+          },
+        },
+      }),
+    ],
   });
 }
 

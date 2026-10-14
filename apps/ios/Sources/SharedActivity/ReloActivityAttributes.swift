@@ -63,6 +63,10 @@ struct ReloActivityAttributes: Codable {
         static func opening(_ presentation: LiveActivityPresentation, sealed: ReloEnvelope?) -> LiveActivityPresentation {
             let text = sealed.flatMap(ReloSealedCards.open)
             var opened = text.map(presentation.applying) ?? presentation
+            // A card that stays encrypted says why, in one plain line, instead of showing raw handles.
+            if text == nil, presentation.title == ReloSealedCards.titlePlaceholder {
+                opened = opened.replacingSubtitle(ReloSealedCards.failureLine(sealed: sealed != nil))
+            }
             // A sealed question shows only the prompt this phone opened, never text the server wrote.
             if sealed?.kind == "question" {
                 opened = opened.replacingSubtitle(text?.summary ?? ReloSealedCards.promptPlaceholder)

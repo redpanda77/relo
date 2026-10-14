@@ -45,7 +45,7 @@ test("H2: the first phone is trusted automatically; a phone the server adds late
     assert.equal(after.trusted[trustKey(apiUrl, ghost.deviceId)].level, "pending");
     assert.deepEqual(sealed.sealed.alerts.map((alert) => alert.recipients[0].device), [owner.deviceId], "nothing is sealed to the ghost");
     assert.ok(sealed.sealed.content.recipients.every((recipient) => recipient.device !== ghost.deviceId));
-    assert.ok(notes.some((note) => note.includes("new phone")), "every command says a phone is waiting");
+    assert.ok(notes.some((note) => note.includes("is waiting for approval: run `relo keys approve")), "every command says a phone is waiting");
   } finally { c.cleanup(); }
 });
 

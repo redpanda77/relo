@@ -48,7 +48,7 @@ function PhoneRow({
         <DestructiveAction
           label="Remove"
           title={`Remove ${phone.name}?`}
-          description="It stops receiving notifications and Live Activities. Sign in on the phone again to reconnect it."
+          description="It is signed out and can no longer read anything. Cards only it could open are deleted. Sign in on the phone again to reconnect it."
           pending={pending}
           onConfirm={() => {
             setPending(true)
@@ -81,7 +81,8 @@ export function PhonesSection({
       title="Phones"
       action={
         <p className="text-xs text-muted-foreground">
-          To add an iPhone, open Relo on it and tap Sign in.
+          To add an iPhone, open Relo on it and tap Sign in. Approvals and encryption:{" "}
+          <a href="/dashboard/account#devices" className="text-primary underline-offset-4 hover:underline">Devices</a>.
         </p>
       }
     >

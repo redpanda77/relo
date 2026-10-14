@@ -120,16 +120,35 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
       if (email && response.status === 401) recordSignInFailure(email);
       return response;
     }
-    const payload = await response.clone().json().catch(() => null) as { user?: { id?: string } } | null;
-    const refusal = payload?.user?.id ? await signInRefusal(db,payload.user.id) : "account_disabled";
+    const payload = await response.clone().json().catch(() => null) as { user?: { id?: string }; twoFactorRedirect?: boolean } | null;
+    // The password was right and the account has two-step sign-in: no session yet, the code comes next.
+    if (payload?.twoFactorRedirect === true) return response;
+    return finishSignIn(response,payload?.user?.id,email);
+  });
+
+  /** A signed-in response for an account the server still allows; otherwise its sessions are removed. */
+  async function finishSignIn(response: Response,userId: string | undefined,email: string): Promise<Response> {
+    const refusal = userId ? await signInRefusal(db,userId) : "account_disabled";
     if (!refusal) {
       const signedIn = new Response(response.body,response);
-      signedIn.headers.append("set-cookie",recordSignInSuccess(email,shared.appUrl.startsWith("https://")));
+      if (email) signedIn.headers.append("set-cookie",recordSignInSuccess(email,shared.appUrl.startsWith("https://")));
       return signedIn;
     }
-    if (payload?.user?.id) await db.query("DELETE FROM auth.sessions WHERE user_id=$1",[payload.user.id]);
-    return context.json({ error: refusal },403);
-  });
+    if (userId) await db.query("DELETE FROM auth.sessions WHERE user_id=$1",[userId]);
+    return Response.json({ error: refusal },{ status: 403 });
+  }
+
+  // The second step of a two-step sign-in (docs/HARDENING.md, gap 1): the same limits and account checks.
+  for (const step of ["verify-totp","verify-backup-code"]) {
+    app.post(`/api/auth/two-factor/${step}`, async (context) => {
+      const throttled = authAttemptLimited(context,"sign-in");
+      if (throttled) return throttled;
+      const response = await accountAuth.handler(context.req.raw);
+      if (!response.ok) return response;
+      const payload = await response.clone().json().catch(() => null) as { user?: { id?: string; email?: string } } | null;
+      return finishSignIn(response,payload?.user?.id,payload?.user?.email ?? "");
+    });
+  }
 
   app.get("/api/auth/get-session", async (context) => {
     const response = await accountAuth.handler(context.req.raw);

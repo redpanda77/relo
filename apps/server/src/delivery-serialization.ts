@@ -300,10 +300,16 @@ function interactionCategory(kind: ApnsRuntimeJob["interactionKind"]): string | 
         : kind === "text" ? "RELO_TEXT" : undefined;
 }
 
+/** "New device/computer wants access" notices (device-approvals.ts): the phone shows Approve / Decline. */
+function deviceAccessCategory(payload: Record<string, unknown> | null | undefined): string | undefined {
+  return plainObject(payload?.deviceApproval) || plainObject(payload?.computerApproval) ? "RELO_DEVICE_ACCESS" : undefined;
+}
+
 function ordinaryDeliveryProjection(input: OrdinaryDeliveryIntent): AlertProjection {
   // Questions answered in Relo (the phone could not show a card) carry no answer buttons.
   const answerInApp = Boolean((input.payload as Record<string,unknown> | null | undefined)?.answerInApp);
-  const categoryName = answerInApp ? undefined : interactionCategory(input.interactionKind ?? null);
+  const categoryName = answerInApp ? undefined
+    : interactionCategory(input.interactionKind ?? null) ?? deviceAccessCategory(input.payload);
   return {
     kind: "alert",
     alert: ordinaryAlert(input),

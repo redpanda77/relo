@@ -98,4 +98,81 @@ final class E2EESealedCardTests: XCTestCase {
         let forged = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(forged.presentation.title, "Encrypted card")
     }
+
+    // The Live Activity widget has no Keychain (errSecNotAvailable): it opens cards from the mirror.
+
+    func testWidgetMirrorKeepsOnlySoftwarePrekeysAndRoundTrips() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mirror = ReloWidgetKeyMirror(url: directory.appendingPathComponent("e2ee-widget-v1.json"))
+        let state = try ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory()).maintain()
+        let enclave = ReloStoredPrekey(id: "pk_enclave", createdAt: "", retiredAt: nil,
+                                       key: ReloStoredKey(kind: .secureEnclave, data: Data([1]), publicKey: Data([2])))
+        let trusted = ReloTrustedClient(clientId: "key_1", name: "Mac", keyId: "k_1", publicKey: "p", verifiedAt: Date(timeIntervalSince1970: 0), level: "auto")
+        mirror.refresh(ring: ReloKeyRingState(identity: state.identity, prekeys: state.prekeys + [enclave]),
+                       trusted: [trusted], names: ["p-1": "relo"])
+        let snapshot = try XCTUnwrap(mirror.load())
+        XCTAssertEqual(snapshot.prekeys.map(\.id), state.prekeys.map(\.id), "Secure Enclave prekeys never leave the app")
+        XCTAssertEqual(snapshot.trusted, [trusted])
+        XCTAssertEqual(snapshot.names, ["p-1": "relo"])
+        XCTAssertFalse(String(decoding: try Data(contentsOf: mirror.url), as: UTF8.self).contains(state.identity.data.base64EncodedString()),
+                       "the identity key is never mirrored")
+        XCTAssertEqual(try mirror.url.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+
+        mirror.update { $0.trusted = [] }
+        XCTAssertEqual(mirror.load()?.trusted, [])
+        XCTAssertEqual(mirror.load()?.prekeys.map(\.id), state.prekeys.map(\.id))
+    }
+
+    func testWidgetOpensACardFromMirroredKeys() throws {
+        let ring = ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory())
+        let state = try ring.maintain()
+        let mac = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
+        let macKey = ReloClientKey(clientId: "key_1", name: "Mac", keyId: ReloE2EE.keyID(publicKeyX963: mac.publicKeyX963),
+                                   publicKey: ReloE2EE.base64URL(mac.publicKeyX963), changedAt: "")
+        let trustStore = TrustStore()
+        try ReloTrustedClients(store: trustStore).markVerified(macKey)
+
+        // What the widget sees: a ring with no identity, only the mirrored prekeys.
+        let widgetRing = RingStore()
+        try widgetRing.save(ReloKeyRingState(identity: ReloWidgetKeyMirror.noIdentity, prekeys: ReloWidgetKeyMirror.openable(state.prekeys)))
+        let widget = ReloSealedContent(ring: ReloKeyRing(store: widgetRing, factory: ReloSoftwareKeyFactory()),
+                                       trust: ReloTrustedClients(store: trustStore))
+        let envelope = try ReloE2EE.seal(kind: "card", context: "ntf:mirror", sender: mac,
+                                         recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)],
+                                         content: try JSONSerialization.data(withJSONObject: ["title": "Deploy 0.12"]))
+        let attempt = widget.openCard(envelope)
+        XCTAssertEqual(attempt.outcome, .opened)
+        XCTAssertNotNil(attempt.data)
+    }
+
+    func testAnUnopenedCardSaysWhyInPlainWords() throws {
+        let ring = ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory())
+        let state = try ring.maintain()
+        let mac = ReloSoftwareIdentity(privateKey: P256.Signing.PrivateKey())
+        let envelope = try ReloE2EE.seal(kind: "card", context: "ntf:why", sender: mac,
+                                         recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)],
+                                         content: try JSONSerialization.data(withJSONObject: ["title": "Deploy"]))
+        let trust = ReloTrustedClients(store: TrustStore())
+        let content = ReloSealedContent(ring: ring, trust: trust)
+        XCTAssertEqual(content.openCard(envelope).outcome, .computerUnknown)
+        let oldMac = P256.Signing.PrivateKey().publicKey.x963Representation
+        _ = try trust.autoTrust([ReloClientKey(clientId: "key_0", name: "Old Mac", keyId: ReloE2EE.keyID(publicKeyX963: oldMac),
+                                               publicKey: ReloE2EE.base64URL(oldMac), changedAt: "")])
+        let macKey = ReloClientKey(clientId: "key_1", name: "Mac", keyId: ReloE2EE.keyID(publicKeyX963: mac.publicKeyX963),
+                                   publicKey: ReloE2EE.base64URL(mac.publicKeyX963), changedAt: "")
+        _ = try trust.autoTrust([macKey])
+        XCTAssertEqual(content.openCard(envelope).outcome, .computerPending)
+
+        let elsewhere = try ReloE2EE.seal(kind: "card", context: "ntf:other", sender: mac,
+                                          recipients: [("dev_2", "pk_other", P256.KeyAgreement.PrivateKey().publicKey.x963Representation)],
+                                          content: Data("{}".utf8))
+        XCTAssertEqual(content.openCard(elsewhere).outcome, .notForThisPhone)
+
+        ReloSealedCards.install { _ in nil }
+        ReloSealedCards.noteFailure("computer_pending")
+        XCTAssertTrue(ReloSealedCards.failureLine(sealed: true).contains("waiting for your approval"))
+        XCTAssertTrue(ReloSealedCards.failureLine(sealed: false).contains("Not encrypted for this iPhone"))
+        ReloSealedCards.noteFailure(nil)
+    }
 }

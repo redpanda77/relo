@@ -7,7 +7,8 @@ import { PENDING_DEVICES_PATH, PENDING_DEVICES_POLL_MS } from "@/features/pendin
 const device = {
   deviceId: "dev_new",
   name: "Test iPad",
-  model: "iPad",
+  model: "iPad16,3",
+  modelName: "iPad Pro 11-inch (M4)",
   registeredAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   keyId: "k_new",
 }
@@ -30,14 +31,14 @@ afterEach(() => {
 })
 
 describe("PendingDevicesNotice", () => {
-  it("shows each pending device with where to approve it, and no approve button", async () => {
+  it("shows each pending device with where to approve it", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ devices: [device] }))
     render(<PendingDevicesNotice />)
 
     const notice = await screen.findByRole("status", { name: "New devices waiting for approval" })
-    expect(notice).toHaveTextContent("New device wants access: Test iPad, signed in 5 minutes ago.")
-    expect(notice).toHaveTextContent("Approve or decline it in Relo on your iPhone → Settings → Security.")
-    expect(screen.queryByRole("button")).toBeNull()
+    expect(notice).toHaveTextContent("Test iPad (iPad Pro 11-inch (M4)) wants to read your Relo cards, signed in 5 minutes ago.")
+    expect(notice).toHaveTextContent("Approve or decline it in Devices or in Relo on your iPhone → Settings → Security.")
+    expect(screen.getByRole("link", { name: "Approve or decline it in Devices" })).toHaveAttribute("href", "/dashboard/account#devices")
     expect(fetchMock).toHaveBeenCalledWith(PENDING_DEVICES_PATH, expect.objectContaining({ credentials: "same-origin" }))
   })
 

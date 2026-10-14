@@ -32,6 +32,7 @@ const BOOLEAN_OPTIONS = new Set([
   "rollback",
   "hooks",
   "mcp",
+  "yes",
 ]);
 const VALUE_OPTIONS = new Set([
   "client-name",

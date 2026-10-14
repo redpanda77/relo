@@ -44,11 +44,29 @@ extension HTTPMobileAPIClient: DeviceApproving {
         }
     }
 
-    private static func approvalFailure(_ status: Int) -> MobileAPIError {
+    static func approvalFailure(_ status: Int) -> MobileAPIError {
         switch status {
         case 401: .reauthenticationRequired
         case 403: .forbidden
         default: .unavailable
         }
+    }
+}
+
+/// The account's phones for the Devices screen, authenticated as this device.
+extension HTTPMobileAPIClient: AccountDeviceListing {
+    private struct AccountPhonesResponse: Decodable { let devices: [ReloAccountPhone] }
+
+    public func accountPhones(credential: DeviceCredential) async throws -> [ReloAccountPhone]? {
+        var request = request(path: "api/devices/self/devices")
+        request.authorize(bearer: credential.accessToken)
+        let (data, response) = try await data(for: request)
+        // A server from before the Devices screen has no such route: the screen shows what it knows.
+        if response.statusCode == 404 { return nil }
+        guard response.statusCode == 200 else { throw Self.approvalFailure(response.statusCode) }
+        guard let decoded = try? JSONDecoder().decode(AccountPhonesResponse.self, from: data) else {
+            throw MobileAPIError.invalidResponse
+        }
+        return decoded.devices
     }
 }

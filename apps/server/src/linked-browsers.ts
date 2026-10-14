@@ -130,6 +130,7 @@ export async function browserKeys(db: Pick<Database,"query">,principalId: string
   return result.rows.map((row) => ({
     deviceId: publicId("brw",row.id),
     kind: "browser" as const,
+    simulator: false,
     name: row.name,
     identityKey: { keyId: row.key_id,publicKey: row.identity_key,changedAt: new Date(row.created_at).toISOString() },
     prekey: { prekeyId: row.prekey_id,publicKey: row.prekey_public_key,createdAt: row.prekey_created_at,signature: row.prekey_signature,

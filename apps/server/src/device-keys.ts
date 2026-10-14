@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "./db.js";
+import { simulatorSql } from "./device-models.js";
 import { publicId } from "./ids.js";
 
 /**
@@ -150,6 +151,8 @@ export type DeviceKeyResource = {
   link?: { deviceId: string; signedAt: string; signature: string } | null;
   /** A phone's approval: another phone's signature over its id and current identity key. */
   approval?: { deviceId: string; signedAt: string; signature: string } | null;
+  /** True for a phone running in the iOS Simulator (never for a browser). */
+  simulator?: boolean;
 };
 
 /** Every active phone of the account that has published keys, newest prekey first. */
@@ -161,7 +164,8 @@ export async function listDeviceKeys(
   const result = await db.query<any>(
     `SELECT d.id,d.name,k.key_id,k.public_key AS identity_key,k.changed_at,
        p.prekey_id,p.public_key AS prekey_public_key,p.signature,p.signed_created_at,p.received_at,
-       approval.approved_by_device,approval.signed_at AS approval_signed_at,approval.signature AS approval_signature
+       ${simulatorSql("d")} AS simulator,
+       approval.approved_by_device,approval.approved_by_browser,approval.signed_at AS approval_signed_at,approval.signature AS approval_signature
      FROM devices d
      JOIN device_identity_keys k ON k.device_id=d.id AND k.principal_id=d.principal_id
      LEFT JOIN device_approvals approval ON approval.device_id=d.id AND approval.identity_key=k.public_key
@@ -183,10 +187,12 @@ export async function listDeviceKeys(
       prekeyId: row.prekey_id,publicKey: row.prekey_public_key,createdAt: row.signed_created_at,signature: row.signature,
       stale: now.getTime() - new Date(row.received_at).getTime() > PREKEY_STALE_AFTER_MS,
     } : null,
-    // A trusted phone's signature approving this phone's current key; computers verify it.
-    approval: row.approved_by_device && row.approval_signature ? {
-      deviceId: publicId("dev",row.approved_by_device),signedAt: row.approval_signed_at,signature: row.approval_signature,
+    // A trusted phone's (or linked browser's) signature approving this phone's current key; computers verify it.
+    approval: (row.approved_by_device || row.approved_by_browser) && row.approval_signature ? {
+      deviceId: row.approved_by_device ? publicId("dev",row.approved_by_device) : publicId("brw",row.approved_by_browser),
+      signedAt: row.approval_signed_at,signature: row.approval_signature,
     } : null,
+    simulator: Boolean(row.simulator),
   }));
 }
 

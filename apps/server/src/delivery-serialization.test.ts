@@ -53,6 +53,15 @@ describe("current delivery serialization", () => {
     expect(JSON.stringify(binary)).not.toContain("interactionOptions");
   });
 
+  test("new device and computer notices name the RELO_DEVICE_ACCESS category", () => {
+    for (const payload of [{ deviceApproval: { deviceId: "dev_11111111-1111-4111-8111-111111111111" } },
+      { computerApproval: { clientId: "key_11111111-1111-4111-8111-111111111111" } }]) {
+      expect(deliveryProjection(job({ deepLink: "relo://security/request/dev_1",payload: { privacy: "standard",...payload } })))
+        .toMatchObject({ category: "RELO_DEVICE_ACCESS",customData: { relo: { deepLink: "relo://security/request/dev_1" } } });
+    }
+    expect(deliveryProjection(job())).not.toHaveProperty("category");
+  });
+
   test("standard alerts carry the account label in safe context", () => {
     const projection = deliveryProjection(job({
       payload: { privacy: "standard",context: { computer: "Mac",account: "work" } },

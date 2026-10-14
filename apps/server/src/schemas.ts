@@ -66,6 +66,8 @@ export const registerDeviceSchema = z.object({
   appBuild: z.string().min(1).max(40),
   osVersion: z.string().min(1).max(40),
   model: z.string().max(120).optional(),
+  /** Sent by builds that know they run in the iOS Simulator; older builds omit it. */
+  isSimulator: z.boolean().optional(),
   apnsEnvironment: z.enum(["sandbox", "production"]),
   apnsToken: z.string().min(16).max(512).optional(),
   notificationAuthorization: z.enum(["unknown", "denied", "provisional", "authorized"]).default("unknown"),
@@ -78,6 +80,7 @@ export const heartbeatSchema = z.object({
   appBuild: z.string().min(1).max(40).optional(),
   osVersion: z.string().min(1).max(40).optional(),
   model: z.string().max(120).optional(),
+  isSimulator: z.boolean().optional(),
   apnsEnvironment: z.enum(["sandbox", "production"]).optional(),
   apnsToken: z.string().min(16).max(512).optional(),
   notificationAuthorization: z.enum(["unknown", "denied", "provisional", "authorized"]).optional(),

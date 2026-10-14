@@ -131,6 +131,24 @@ export function prekeySigningInput({
   return utf8([`${E2EE_VERSION} prekey`, deviceId, prekeyId, b64u(assertPublicKey(publicKey)), createdAt].join("\n"))
 }
 
+/**
+ * Bytes a trusted phone, or a linked browser, signs to approve a new device: the same input as the
+ * CLI's and the iPhone's `approveDeviceSigningInput`, with the approver's id (`dev_…` or `brw_…`).
+ */
+export function approveDeviceSigningInput({
+  deviceId,
+  identityKey,
+  approverDeviceId,
+  signedAt,
+}: {
+  deviceId: string
+  identityKey: string
+  approverDeviceId: string
+  signedAt: string
+}): Bytes {
+  return utf8([`${E2EE_VERSION} approve-device`, deviceId, identityKey, approverDeviceId, signedAt].join("\n"))
+}
+
 /** ECDSA P-256 / SHA-256 over raw r||s, as CryptoKit and the CLI produce. */
 export async function verifyBytes(publicKey: Bytes, message: Bytes, signature: Bytes): Promise<boolean> {
   if (signature.length !== 64) return false

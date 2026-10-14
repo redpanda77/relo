@@ -19,7 +19,7 @@ struct LiveActivityTokenContext: Sendable {
                     appBuild: heartbeat.appBuild, iosVersion: heartbeat.iosVersion, deviceModel: heartbeat.deviceModel,
                     apnsToken: heartbeat.apnsToken, apnsEnvironment: heartbeat.apnsEnvironment,
                     notificationAuthorization: heartbeat.notificationAuthorization, liveActivityAuthorization: heartbeat.liveActivityAuthorization,
-                    liveActivityPushToStartToken: token)
+                    liveActivityPushToStartToken: token, model: heartbeat.model, isSimulator: heartbeat.isSimulator)
                 return await Self.attempt { try await client.heartbeat(credential: credential, heartbeat: request) }
             }
         } else { uploadPush = nil }

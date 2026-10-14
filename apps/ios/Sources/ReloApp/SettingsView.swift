@@ -31,8 +31,15 @@ struct SettingsView: View {
                 // A button rather than a link, so relo://settings/security can open it too.
                 Button { showsSecurity = true } label: {
                     HStack {
-                        ReloSettingLabel(title: "Security", symbol: "lock.shield.fill", color: .reloIndigo)
+                        ReloSettingLabel(title: "Devices", symbol: "lock.shield.fill", color: .reloIndigo)
                         Spacer()
+                        if !model.devices.waitingRequests.isEmpty {
+                            Text("\(model.devices.waitingRequests.count)")
+                                .font(.footnote.weight(.bold)).foregroundStyle(.white)
+                                .padding(.horizontal, 7).frame(minHeight: 20)
+                                .background(ReloHoloTheme.orange, in: Capsule())
+                                .accessibilityLabel("\(model.devices.waitingRequests.count) waiting for approval")
+                        }
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                             .accessibilityHidden(true)
                     }

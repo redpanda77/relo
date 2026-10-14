@@ -1462,6 +1462,43 @@ final class AppModel {
         securitySettingsNavigationPending = true
     }
 
+    // MARK: Devices (Settings → Devices, the request sheet, Now's "Needs you" row)
+
+    /// Phones and computers of this account, and what waits for the owner's approval here.
+    @ObservationIgnored let devices = EncryptionSecurityModel()
+    /// The request sheet on screen: a `dev_…` phone or `key_…` computer id.
+    var presentedAccessRequestID: String?
+
+    func refreshDevices() async {
+        await devices.refresh(credential: credential, client: apiClient)
+    }
+
+    /// relo://security/request/<id>, the notification's Review, or a tap on Now's "Needs you" row.
+    func openAccessRequest(id: String) {
+        presentedAccessRequestID = id
+        if devices.request(id: id) == nil { Task { await refreshDevices() } }
+    }
+
+    /// The notification's Approve, answered without opening Relo (iOS asked for Face ID or the
+    /// passcode first: the action is `.authenticationRequired`). False when it could not be done; the
+    /// caller then tells the owner to open Relo.
+    func approveAccessRequestInBackground(id: String) async -> (approved: Bool, name: String?) {
+        // A launch for this action alone has not restored the session; read the stored credential.
+        var stored = credential
+        if stored == nil {
+            do {
+                guard try signOutProgressStore.load() == nil else { return (false, nil) }
+                stored = try credentialStore.load()
+            } catch { return (false, nil) }
+        }
+        guard let stored else { return (false, nil) }
+        await devices.refresh(credential: stored, client: apiClient)
+        guard let request = devices.request(id: id) else { return (false, nil) }
+        let approved = await devices.approve(request, credential: stored, approver: apiClient as? any DeviceApproving,
+                                             signer: answerSigner?())
+        return (approved, request.name)
+    }
+
     func openActivity(identity: LiveActivityIdentity) async {
         guard identity.isValid else { return }
         dismissNotification()
@@ -2478,38 +2515,43 @@ final class AppModel {
     }
 
     private func makeRegistrationRequest() throws -> DeviceRegistrationRequest {
-        DeviceRegistrationRequest(
+        let hardware = ReloDeviceModelName.current()
+        return DeviceRegistrationRequest(
             stableDeviceId: try stableDeviceIDStore.loadOrCreate(),
             installationId: try installationIDStore.loadOrCreate(),
-            name: UIDevice.current.name,
+            name: ReloDeviceModelName.deviceName(systemName: UIDevice.current.name, identifier: hardware.identifier),
             bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.example.relo.notifications",
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
             osVersion: UIDevice.current.systemVersion,
-            model: Self.modelIdentifier,
+            model: hardware.identifier,
             apnsEnvironment: Self.apnsEnvironment,
             apnsToken: try pushTokenStore.load(),
             notificationAuthorization: notificationAuthorization,
             liveActivityAuthorization: ActivityAuthorizationInfo().areActivitiesEnabled ? .authorized : .denied,
-            liveActivityPushToStartToken: try liveActivityPushToStartTokenStore.load()
+            liveActivityPushToStartToken: try liveActivityPushToStartTokenStore.load(),
+            isSimulator: hardware.isSimulator
         )
     }
 
     private func makeHeartbeat(credential: DeviceCredential, apnsToken: String) throws -> DeviceHeartbeat {
-        DeviceHeartbeat(
+        let hardware = ReloDeviceModelName.current()
+        return DeviceHeartbeat(
             deviceId: credential.deviceId,
             installationId: try installationIDStore.loadOrCreate(),
-            deviceName: UIDevice.current.name,
+            deviceName: ReloDeviceModelName.deviceName(systemName: UIDevice.current.name, identifier: hardware.identifier),
             bundleId: Bundle.main.bundleIdentifier ?? "com.example.relo.notifications",
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
             appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
             iosVersion: UIDevice.current.systemVersion,
-            deviceModel: Self.modelIdentifier,
+            deviceModel: hardware.identifier,
             apnsToken: apnsToken,
             apnsEnvironment: Self.apnsEnvironment,
             notificationAuthorization: permission == .allowed ? .authorized : .denied,
             liveActivityAuthorization: ActivityAuthorizationInfo().areActivitiesEnabled ? .authorized : .denied,
-            liveActivityPushToStartToken: try liveActivityPushToStartTokenStore.load()
+            liveActivityPushToStartToken: try liveActivityPushToStartTokenStore.load(),
+            model: hardware.identifier,
+            isSimulator: hardware.isSimulator
         )
     }
 
@@ -2670,14 +2712,6 @@ final class AppModel {
         default:
             // Not the network: storing the session on this iPhone (keychain) or reading the reply failed.
             "Sign-in could not finish on this iPhone. Tap Sign in to try again."
-        }
-    }
-
-    private static var modelIdentifier: String {
-        var systemInfo = utsname()
-        uname(&systemInfo)
-        return withUnsafePointer(to: &systemInfo.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
         }
     }
 

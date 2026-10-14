@@ -437,8 +437,12 @@ private struct ReloPullTitle: View {
         Text(text)
             .font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(3)
             .foregroundStyle(text == "RELO · NOW" ? Color.reloSecondaryText : accent)
+            .lineLimit(1)
             .contentTransition(.opacity)
             .animation(.smooth(duration: 0.25), value: text)
+            // A fixed box: the words change while the page is being pulled, and a title that
+            // changed width re-laid out the scrolled content mid-bounce.
+            .frame(maxWidth: .infinity)
             .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: pull?.armings ?? 0)
     }
 }

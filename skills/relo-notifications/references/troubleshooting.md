@@ -120,3 +120,11 @@ A mutation success with `delivery.durableCommands > 0` proves durable server enq
 not prove APNs accepted, iOS displayed, or the user saw the content. Report these states separately.
 When APNs is disabled, history and durable commands may still be testable, but physical push and
 Live Activity behavior remain unverified.
+
+## A note says a phone is waiting for approval
+
+End-to-end encryption notes name the phone and what to do, e.g. "iPhone Air (Simulator) is waiting
+for approval: run `relo keys approve iphone-air`, approve it on your iPhone 17 Pro …". Your command
+still worked for the trusted phones. Relay the note to the owner once; never run `relo keys approve`
+(or add `--yes`) yourself: accepting a phone is the owner's decision. A "security code changed" note
+that says nothing is needed is informational.

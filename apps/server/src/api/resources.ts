@@ -1,3 +1,4 @@
+import { friendlyModelName,isSimulatorModel } from "../device-models.js";
 import { sealedForDevice } from "../sealed-content.js";
 import { decodeCursor,encodeCursor } from "../cursor.js";
 import { createHash } from "node:crypto";
@@ -401,7 +402,10 @@ export function deviceInventoryResource(row: any) {
   return {
     deviceId: publicId("dev",row.id), name: row.name, installationId: row.installation_id,
     bundleIdentifier: row.bundle_identifier, appVersion: row.app_version, appBuild: row.app_build,
-    osVersion: row.os_version, model: row.model, apnsEnvironment: row.apns_environment,
+    osVersion: row.os_version, model: row.model,
+    modelName: friendlyModelName(row.model,Boolean(row.is_simulator)),
+    isSimulator: Boolean(row.is_simulator) || isSimulatorModel(row.model),
+    apnsEnvironment: row.apns_environment,
     notificationAuthorization: row.notification_authorization,
     liveActivityAuthorization: row.live_activity_authorization,
     lastSeenAt: row.last_seen_at, registeredAt: row.registered_at,

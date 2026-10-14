@@ -6,7 +6,10 @@ import type { Hono } from "hono";
 import { z } from "zod";
 
 
+import { approveDeviceFromBrowser,browserApprovalSchema } from "../device-approvals.js";
+import { dashboardDevices,twoFactorEnabled } from "../device-overview.js";
 import { internalId,publicId } from "../ids.js";
+import { purgeUnreadableContent } from "../unreadable-content.js";
 
 import {
 
@@ -17,11 +20,29 @@ import { createWebhookService,rotateWebhookService } from "../services.js";
 import { destinationUrlSchema,publicHttpsUrlSchema } from "../url-policy.js";
 import { createAccountUser,resetAccountUserPassword } from "../user-admin.js";
 
+import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
+
+/** Approving from the Dashboard: at most this many attempts per account per window (any outcome). */
+const APPROVAL_ATTEMPTS = 10;
+const APPROVAL_WINDOW_MS = 15 * 60_000;
+const approvalAttempts = new Map<string,number[]>();
+
+function approvalLimited(principalId: string,now = Date.now()): boolean {
+  const recent = (approvalAttempts.get(principalId) ?? []).filter((at) => now - at < APPROVAL_WINDOW_MS);
+  if (recent.length >= APPROVAL_ATTEMPTS) { approvalAttempts.set(principalId,recent); return true; }
+  recent.push(now);
+  approvalAttempts.set(principalId,recent);
+  if (approvalAttempts.size > 10_000) approvalAttempts.delete(approvalAttempts.keys().next().value!);
+  return false;
+}
+
+/** Tests only. */
+export function resetApprovalAttempts(): void { approvalAttempts.clear(); }
 
 /** Owner administration: presentation policies, users, services, phones and CLI clients. */
 export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
-  const { db,appUrl,dashboardMutationAccount,ownerAdminAccount } = shared;
+  const { db,appUrl,accountAuth,apnsMode,dashboardMutationAccount,ownerAdminAccount } = shared;
   app.put("/api/dashboard/account/live-activity-policy", async (context) => {
     const account = await dashboardMutationAccount(context);
     if (account instanceof Response) return account;
@@ -234,9 +255,46 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
       await client.query("UPDATE device_credentials SET revoked_at=COALESCE(revoked_at,now()) WHERE device_id=$1", [deviceId]);
       await client.query("UPDATE delivery_jobs SET state='canceled',updated_at=now() WHERE device_id=$1 AND state IN ('pending','retry')", [deviceId]);
       await client.query("COMMIT");
-      return context.json({ revoked: true });
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
+    // Like signing out on the phone: what only this phone could open is deleted.
+    await purgeUnreadableContent(db,account.principalId,apnsMode);
+    return context.json({ revoked: true });
+  });
+
+  // Account → Security → Devices: phones, computers and browsers with their encryption status.
+  app.get("/api/dashboard/devices", async (context) => {
+    const account = await getOwnerAccount(db,accountAuth,context.req.raw.headers);
+    if (!account) return context.json({ error: "unauthorized" },401);
+    context.header("cache-control","private, no-store");
+    const [devices,twoFactor] = await Promise.all([dashboardDevices(db,account.principalId),twoFactorEnabled(db,account.user.id)]);
+    return context.json({ devices,twoFactorEnabled: twoFactor });
+  });
+
+  // A linked browser approves a pending phone (docs/END-TO-END-ENCRYPTION.md, "Approving from a linked browser").
+  app.post("/api/dashboard/devices/:deviceId/approve", async (context) => {
+    const account = await ownerAdminAccount(context);
+    if (account instanceof Response) return account;
+    if (approvalLimited(account.principalId)) {
+      return context.json({ error: "rate_limited",message: "Too many attempts. Wait a few minutes and try again." },429,
+        { "retry-after": String(APPROVAL_WINDOW_MS / 1000) });
+    }
+    const parsed = browserApprovalSchema.safeParse(await context.req.json().catch(() => null));
+    if (!parsed.success) return context.json({ error: "invalid_approval" },400);
+    if (await twoFactorEnabled(db,account.user.id)) {
+      if (!parsed.data.code) return context.json({ error: "two_factor_code_required" },403);
+      const verified = await accountAuth.api.verifyTOTP({ headers: context.req.raw.headers,body: { code: parsed.data.code } })
+        .then(() => true,() => false);
+      if (!verified) return context.json({ error: "invalid_two_factor_code" },403);
+    }
+    const deviceId = context.req.param("deviceId");
+    const result = await approveDeviceFromBrowser(db,account.principalId,deviceId,parsed.data);
+    if (!result.ok) {
+      const status = result.error === "device_not_found" ? 404 : result.error === "browser_not_linked" ? 403
+        : result.error === "invalid_signature" ? 400 : 409;
+      return context.json({ error: result.error },status);
+    }
+    return context.json({ deviceId,approved: true });
   });
 
   app.post("/api/dashboard/credentials/:credentialId/revoke", async (context) => {

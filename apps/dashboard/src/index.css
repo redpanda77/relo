@@ -129,13 +129,8 @@
   }
   body {
     @apply text-foreground;
-    /* The app's backdrop: magenta high right, indigo high left, coral low. */
-    background:
-      radial-gradient(72rem 48rem at 92% -14%, rgb(214 92 240 / 0.30), transparent 68%),
-      radial-gradient(62rem 44rem at -10% 6%, rgb(124 107 255 / 0.26), transparent 68%),
-      radial-gradient(58rem 40rem at 64% 120%, rgb(255 107 87 / 0.18), transparent 68%),
-      var(--background);
-    background-attachment: fixed;
+    /* Transparent: html holds the ink, and an opaque body would paint over the field below. */
+    background: transparent;
     margin: 0;
     min-width: 320px;
     overflow-x: clip;
@@ -158,6 +153,22 @@
   }
 }
 
+/* The app's backdrop: magenta high right, indigo high left, coral low. A fixed layer behind
+   everything rather than a fixed body background: iOS Safari ignores background-attachment:
+   fixed, so the field scrolled away with the top of the page and every card below it sat on
+   flat ink, with nothing for its frost to blur. */
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background:
+    radial-gradient(72rem 48rem at 92% -14%, rgb(214 92 240 / 0.30), transparent 68%),
+    radial-gradient(62rem 44rem at -10% 6%, rgb(124 107 255 / 0.26), transparent 68%),
+    radial-gradient(58rem 40rem at 64% 120%, rgb(255 107 87 / 0.18), transparent 68%);
+  content: "";
+  pointer-events: none;
+}
+
 /* Pages sit directly on the body's gradient field. */
 .canvas {
   background: transparent;
@@ -171,23 +182,23 @@
     rgb(255 255 255 / 0.04);
   border: 1px solid rgb(255 255 255 / 0.08);
   box-shadow: var(--glass-highlight), var(--glass-shadow);
-  backdrop-filter: blur(24px) saturate(140%);
   -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
 }
 @media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
   .glass {
     background: var(--surface);
     border-color: rgb(255 255 255 / 0.24);
-    backdrop-filter: none;
     -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
 [data-slot="sidebar-inner"],
 [data-slot="sidebar"][data-mobile="true"] {
   border-right: 1px solid var(--sidebar-border);
-  backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
 }
 
 /* Overlays sit above content, so they need a denser frost to keep text legible. */
@@ -198,8 +209,8 @@
   background: rgb(17 17 25 / 0.96);
   border-color: var(--border);
   box-shadow: var(--glass-highlight), 0 24px 64px -16px rgb(0 0 0 / 0.7);
-  backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
 }
 
 .brand-gradient {
@@ -263,20 +274,27 @@
   isolation: isolate;
   overflow: hidden;
   border-color: color-mix(in srgb, var(--status-color) 38%, var(--border));
-  background: linear-gradient(
-    110deg,
-    color-mix(in srgb, var(--status-color) 7%, var(--card)) 0%,
-    var(--card) 32%,
-    color-mix(in srgb, var(--status-color) 3%, var(--card)) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.035),
-    0 16px 42px rgb(4 2 6 / 0.2);
+  /* The same glass as every other card (.glass), tinted by the status from the left. */
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--status-color) 9%, transparent) 0%, transparent 38%,
+      color-mix(in srgb, var(--status-color) 4%, transparent) 100%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 50%),
+    rgb(255 255 255 / 0.04);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
   transition:
     border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
     background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
     transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .status-card {
+    background: color-mix(in srgb, var(--status-color) 6%, var(--surface));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 .status-card[data-tone="success"],
 .status-chip[data-tone="success"] {
@@ -391,11 +409,9 @@
   }
 }
 @media (max-width: 767px) {
-  [data-mobile-shell-header] {
-    height: calc(4rem + env(safe-area-inset-top));
+  /* No brand bar on a phone: the page itself clears the status bar (home-screen app). */
+  [data-dashboard-main] {
     padding-top: env(safe-area-inset-top);
-    padding-right: max(1rem, env(safe-area-inset-right));
-    padding-left: max(1rem, env(safe-area-inset-left));
   }
   [data-slot="sidebar"][data-mobile="true"] {
     padding-top: env(safe-area-inset-top);
@@ -453,10 +469,23 @@
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--tone) 22%, var(--hairline));
   border-radius: 20px;
+  /* Glass like every other card (.glass), its tone glowing in from the far corner. It was an
+     opaque ink fill, which hid the gradient field and read as a flat black box. */
   background:
-    linear-gradient(135deg, #05060b 0%, #05060b 38%, color-mix(in srgb, var(--tone) 24%, #05060b) 100%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 18px 44px -26px color-mix(in srgb, var(--tone) 40%, black);
+    linear-gradient(135deg, transparent 0%, transparent 38%, color-mix(in srgb, var(--tone) 16%, transparent) 100%),
+    linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 50%),
+    rgb(255 255 255 / 0.04);
+  box-shadow: var(--glass-highlight), 0 18px 44px -26px color-mix(in srgb, var(--tone) 40%, black);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
   transition: border-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
+}
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .holo-card {
+    background: color-mix(in srgb, var(--tone) 6%, var(--surface));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }
 .holo-card::before {
   content: "";
@@ -709,8 +738,8 @@ select.pill option { background: var(--surface); color: var(--foreground); }
   padding: 6px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
   border-top: 1px solid rgb(255 255 255 / 0.08);
   background: rgb(8 8 13 / 0.82);
-  backdrop-filter: blur(20px) saturate(160%);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
 }
 .tab-bar a,
 .tab-bar button {

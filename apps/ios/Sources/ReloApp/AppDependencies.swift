@@ -50,7 +50,8 @@ struct AppDependencies {
 
     static func live() -> AppDependencies {
         let sealedContent = ReloSealedContent.live()
-        ReloSealedCards.install(sealedContent.cardOpener)
+        sealedContent.refreshWidgetMirror()
+        ReloSealedCards.install(sealedContent.cardOpener(log: ReloSealedOpenLog.live()))
         if let book = sealedContent.nameBook { ReloSealedCards.installNames { book.names() } }
         let tokenRegistrar = BackgroundLiveActivityTokenRegistrar()
         var system = AppSystemServices.live

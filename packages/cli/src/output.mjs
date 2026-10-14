@@ -8,8 +8,9 @@ const present = (fields) => Object.fromEntries(
 
 /** "2/5": the step a card is on, from the steps component the server returns. */
 /** Short words for `relo keys status` notices. */
-const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "waiting for approval in Relo on your trusted iPhone → Settings → Security",
-  new_phone_approved: "approved on your phone", browser_linked: "linked from your phone", phone_replaced: "phone set up again" };
+const NOTICE_LABELS = { security_code_changed: "security code changed", new_phone: "waiting for approval: relo keys approve, or approve it in Relo on your trusted iPhone → Settings → Security",
+  new_phone_approved: "approved on your phone", approved_from_browser: "approved from a linked browser", browser_linked: "linked from your phone",
+  phone_replaced: "phone set up again" };
 
 export function stepPosition(activity) {
   const steps = activity?.presentation?.components?.find((component) => component?.type === "steps");
@@ -159,9 +160,14 @@ export function compactData(command, data) {
         required: data?.required === true ? true : undefined,
         strict: data?.strict === true ? true : undefined,
         devices: (Array.isArray(data?.devices) ? data.devices : []).map((device) =>
-          present({ id: device.deviceId, name: device.name, trust: device.trust, prekey: device.prekey,
+          present({ id: device.deviceId, name: device.name, model: device.model, simulator: device.simulator, handle: device.handle,
+            trust: device.trust, prekey: device.prekey, lastSeenAt: device.lastSeenAt,
             notice: device.notice ? NOTICE_LABELS[device.notice.kind] ?? "security code changed" : undefined })),
       });
+    case "keys.approve":
+      return present({ id: data?.deviceId, name: data?.name, trust: data?.trust, approved: data?.approved });
+    case "keys.remove":
+      return present({ id: data?.deviceId, name: data?.name, removed: data?.removed, where: data?.where });
     case "keys.verify":
       return present({ id: data?.deviceId, trust: data?.trust, safetyNumber: data?.safetyNumber });
     case "keys.require":

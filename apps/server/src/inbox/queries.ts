@@ -132,7 +132,14 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     if (!inboxHistorySummarySchema.shape.activityEvent.safeParse(value.activityEvent).success) value.activityEvent = null;
     const context = safeContextSchema.safeParse(value.context);
     value.context = context.success ? context.data : null;
+    if (!inboxHistorySummarySchema.shape.destinationUrl.safeParse(value.destinationUrl).success) value.destinationUrl = null;
     return value;
+  }).filter(value => {
+    // One unreadable row must never fail the whole snapshot: the phone would keep an old History
+    // and session list (and their long-ended cards) until someone noticed.
+    const parsed = inboxHistorySummarySchema.safeParse(value);
+    if (!parsed.success) console.warn("inbox snapshot: skipped an unreadable item", value.id, parsed.error.issues.map(issue => issue.path.join(".")).join(","));
+    return parsed.success;
   });
   return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions,{ withSealedNames: true }),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
     readWatermark:row.latest_at && row.latest_id ? Buffer.from(JSON.stringify([row.latest_at,row.latest_id])).toString("base64url") : null});

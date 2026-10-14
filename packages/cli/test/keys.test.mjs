@@ -60,7 +60,7 @@ test("status creates a private identity, publishes it once and trusts the accoun
     assert.deepEqual(h.published, [{ identityKey: store.identity.publicKey }]);
     assert.equal(output.data.identity.keyId, store.identity.keyId);
     assert.equal(output.data.required, true);
-    assert.deepEqual(output.data.devices, [{ deviceId: device.resource.deviceId, name: "Owner iPhone",
+    assert.deepEqual(output.data.devices, [{ deviceId: device.resource.deviceId, name: "Owner iPhone", handle: "owner-iphone",
       keyId: device.resource.identityKey.keyId, trust: "auto", prekey: "fresh" }]);
     await h.run("status");
     assert.equal(h.published.length, 1, "the identity is published once per server");

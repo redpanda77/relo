@@ -49,13 +49,14 @@ export function registerBrowserRoutes(app: Hono, shared: WebRouteContext): void 
     return removed ? context.body(null,204) : context.json({ error: "browser_not_found" },404);
   });
 
-  // Read-only: phones waiting for approval; only a trusted phone can approve them.
+  // Phones waiting for approval (a trusted phone or a linked browser approves them: admin-routes.ts).
   app.get("/api/dashboard/pending-devices", async (context) => {
     const account = await getOwnerAccount(db,accountAuth,context.req.raw.headers);
     if (!account) return context.json({ error: "unauthorized" },401);
     context.header("cache-control","private, no-store");
     return context.json({ devices: (await pendingDevices(db,account.principalId))
-      .map(({ deviceId,name,model,registeredAt,keyId }) => ({ deviceId,name,model,registeredAt,keyId })) });
+      .map(({ deviceId,name,model,modelName,isSimulator,registeredAt,keyId }) =>
+        ({ deviceId,name,model,modelName,isSimulator,registeredAt,keyId })) });
   });
 
   // The owner, signed in, may set the end-to-end requirement to on, auto or off (gap 5).

@@ -414,8 +414,8 @@ suite("Relo API persistence boundaries", () => {
     expect(complete.devices.map((device: any) => device.deviceId)).toEqual(expectedIds);
     expect(complete.devices.some((device: any) => device.deviceId === foreign.deviceId)).toBe(false);
     expect(Object.keys(complete.devices[0]).sort()).toEqual([
-      "apnsEnvironment","appBuild","appVersion","bundleIdentifier","deviceId","installationId",
-      "lastSeenAt","liveActivityAuthorization","model","name","notificationAuthorization",
+      "apnsEnvironment","appBuild","appVersion","bundleIdentifier","deviceId","installationId","isSimulator",
+      "lastSeenAt","liveActivityAuthorization","model","modelName","name","notificationAuthorization",
       "osVersion","registeredAt",
     ].sort());
     const serialized = JSON.stringify(complete);

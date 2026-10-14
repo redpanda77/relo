@@ -55,6 +55,14 @@ suite("Bounded authoritative history repair", () => {
     } finally { await a.query("ROLLBACK");a.release(); }
   });
 
+  test("a server notice linking a screen in the app, or a stored link the contract rejects, never fails the snapshot",async () => {
+    await db.query(`INSERT INTO notification_events(principal_id,source,title,body,idempotency_key,deep_link)
+      VALUES ($1,'Relo','A new phone wants your encrypted messages','Approve it',gen_random_uuid()::text,'relo://settings/security'),
+             ($1,'Fixture','Old link','Body',gen_random_uuid()::text,'http://example.com/plain')`,[principal]);
+    const result=await snapshot();
+    expect(result.items.map(item=>item.destinationUrl).sort()).toEqual([null,"relo://settings/security"]);
+  });
+
   test("251 rows repair to exactly 250 summaries and preserve whole-scope unread totals",async () => {
     await seed(251,"x".repeat(65_536));
     const result=await snapshot();

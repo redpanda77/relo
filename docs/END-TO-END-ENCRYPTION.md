@@ -253,20 +253,64 @@ relo.e2e.v1 approve-device
 - `POST /api/devices/self/approvals/:deviceId/decline` revokes that device (signs it out).
 - `GET /api/devices/keys` adds `approval: { deviceId, signedAt, signature } | null` to each phone.
 - When a phone first publishes keys and the account already has another phone with keys, the server
-  sends the other phones a plain notification "New device wants access" (device name and time only),
-  deep-linking to `relo://settings/security`.
-- `GET /api/dashboard/pending-devices` (Dashboard session) lists the same, read-only.
+  sends the other phones a plain notification "<model> wants to read your Relo cards" (for example
+  "iPhone 17 Pro wants to read your Relo cards"; device name and time only, "Approve or decline it in
+  Devices"), deep-linking to `relo://security/request/<dev_…>` with the APNs category
+  `RELO_DEVICE_ACCESS`. The "New computer wants access" notice does the same with
+  `relo://security/request/<key_…>`.
+- `GET /api/devices/self/devices` (phone credential) → `{ devices: [{ deviceId, name, model,
+  isSimulator, registeredAt, lastSeenAt, isCurrent, trusted }] }`: the account's active phones, where
+  `trusted` means the account's first real phone with keys, or a phone approved (by a phone or a
+  linked browser) for its current identity key. It reports what the server stores; computers still
+  decide trust from the signatures.
+- `GET /api/dashboard/pending-devices` (Dashboard session) lists the same, with `modelName` and
+  `isSimulator`.
+- The approver may also be a linked browser (`approval.deviceId` is then `brw_…`); see "Approving from
+  a linked browser" below.
 
 **CLI.** A pending phone becomes trusted ("auto", notice `new_phone_approved`) when its `approval`
 verifies against a phone this computer trusts and covers its current identity key. No question is
-sent any more. `relo keys status` and every command's note say: "approve it in Relo on your trusted
-iPhone → Settings → Security".
+sent any more. A browser approval (`brw_…` approver) counts only outside strict mode, and only while
+that browser's link from a phone this computer trusts is valid (signed 14 days ago or less); the
+notice then says the phone was approved from that browser.
+
+- Notes name the waiting phone, the trusted phone(s) that can approve it and the exact command;
+  `notify`, `ask` and cards name every phone they skipped and why.
+- `relo keys approve <dev_…|handle>` approves a waiting phone on this computer by hand: it shows the
+  name, model, when it signed in, its key id and the first group of its security code, and asks
+  `[y/N]` at a terminal. Without a terminal it refuses unless `--yes` is given. The phone gets the
+  trust level `approved`: sealed to like a verified phone, and strict mode still holds any later key
+  change.
+- `relo keys status` prints a table at a terminal (name, friendly model, plain status, last seen) with
+  a short handle per phone (for example `iphone-air`); `--json` keeps `model`, `handle` and
+  `lastSeenAt`.
+- `relo keys remove <phone>` does not revoke (there is no CLI revoke route); it points to Dashboard →
+  Account → Security → Devices → Remove.
 
 **iPhone.** Settings → Security shows "New device wants access" with each pending device (name,
 when it signed in, key id) and Approve / Decline. Approve signs as above; Decline signs the device
 out. The list refreshes on foreground and when the notification is opened.
 
-**Dashboard.** The Account page lists pending devices read-only: "Approve it in Relo on your iPhone".
+**Dashboard.** Account → Security → Devices lists every phone, computer and browser with one plain
+line each: "Can read your encrypted cards", "Waiting for approval", "Not linked — can't read encrypted
+content", "Simulator", "Sends encrypted cards" or "Not set up yet". `GET /api/dashboard/devices`
+(Dashboard session) returns `{ devices: [{ id, kind: "phone" | "computer" | "browser", name, model,
+status, addedAt, lastSeenAt, approvedBy?, linkedBy?, identityKey? }], twoFactorEnabled }`; `model` is
+the friendly name ("iPhone 18 Pro Max", "Simulator") and a pending phone carries the identity key an
+approval signs. Each row has Remove, with confirm copy that says it is signed out and can no longer
+read anything; a pending phone has Approve and Decline instead. Remove and Decline both call
+`POST /api/dashboard/devices/:id/revoke` (computers: `/api/dashboard/credentials/:id/revoke`;
+browsers: `DELETE /api/dashboard/browser/:id`), and removing a phone or browser deletes what only it
+could open, like signing out on the phone. The Now page notice links to Devices.
+
+**Simulators.** A phone running in the iOS Simulator sends `isSimulator: true` on registration and in
+its heartbeat (older builds omit it), and a model of `arm64`, `x86_64` or `i386` counts too
+(`devices.is_simulator`, migration 0096). A simulator is shown as "Simulator", never receives an
+approval notice, and never counts as the older device that makes a real phone pending: a real phone is
+pending only behind an older real phone, a simulator never approves or declines a real phone, and a
+browser linked from a simulator never approves one either. `GET /api/devices` adds `modelName` and
+`isSimulator`; `GET /api/devices/keys` adds `simulator: boolean`. The CLI never trusts a simulator
+automatically and never lets one block a real phone's automatic re-trust.
 
 ### Linked browsers (like WhatsApp Web)
 
@@ -318,6 +362,46 @@ computers on first use from `GET /api/dashboard/client-keys`, opens each envelop
 prekey, replaces the placeholder fields with the opened text, and resolves handles with the names
 the envelopes carry.
 
+### Approving from a linked browser
+
+A linked browser can approve a pending phone, like a trusted phone, from Account → Security →
+Devices. Its own non-extractable identity key signs exactly the phone's approval input with the
+browser as the approver:
+
+```
+relo.e2e.v1 approve-device
+<deviceId of the new phone>
+<its identity public key, b64u X9.63>
+<brw_… id of the approving browser>
+<signedAt, ISO 8601>
+```
+
+`POST /api/dashboard/devices/:id/approve { browserId, identityKey, signedAt, signature, code? }` is
+accepted only:
+
+- from the account owner's Dashboard session, at most 10 attempts per account per 15 minutes;
+- with a fresh code from the authenticator app when two-step sign-in is on;
+- for a phone of the same account that is pending, whose current identity key matches;
+- from a browser of the account that is linked now: a phone that is still on the account signed its
+  link 14 days ago or less, and that phone is not a simulator (unless the target is one);
+- when `signature` verifies against that browser's published identity key, with `signedAt` within 10
+  minutes of the server's clock.
+
+The server stores it with `approved_by_browser` (migration 0096; `approved_by_device` stays null) and
+lists it like a phone's approval: `approval: { deviceId: "brw_…", signedAt, signature }`. A phone
+that is not pending answers 404, one already approved 409 `already_approved`, an unlinked or expired
+browser 403 `browser_not_linked`, a bad signature 400 `invalid_signature`. Decline in the Dashboard
+removes the phone. An unlinked browser shows "Link this browser from your iPhone first" in place of
+Approve, with the QR code below.
+
+**The trade-off.** The server delivers the Dashboard's code (see "Linked browsers"). A malicious
+server could serve code that makes a linked browser approve a phone the server added itself, which a
+phone's approval cannot be tricked into. The mitigations: only a browser a trusted phone linked (in
+the last 14 days) can approve; the owner's session and, with two-step sign-in, a fresh code are
+needed; the CLI announces "approved from <browser>" so an unexpected approval is visible; and strict
+mode (`relo keys strict on`) refuses browser approvals entirely, so a phone then needs a phone's
+approval or `relo keys verify`/`approve`.
+
 ## Current state (13 October 2026)
 
 Built and tested in source, **not yet in a release**:
@@ -348,6 +432,7 @@ Built and tested in source, **not yet in a release**:
 | Names on stored rows | Fixed in source (P0): rows the app stored before a name arrived kept showing handles; handles are now swapped for names when a row is shown, and only the handle is stored. |
 | Agent session names | Fixed in source (P0): agent sessions come from hooks, which carried only handles, so the Agents section showed `p-…`/`c-…`. The hook now sends the names once per session sealed for the phones (envelope kind `names`, migration `0085`); the server stores it as is and gives it only to phones in the snapshot, never to the Dashboard or the CLI list. |
 | Linked browsers | Done in source (13 October 2026), verified end to end against a local server: the Dashboard made its own WebCrypto keys, a phone with real keys signed its QR link, a fresh `relo` trusted the browser only through that signature, and the Dashboard opened the sealed notice, card and agent-session names itself. Items sealed before linking stay locked. Signing out deletes the browser's keys. |
+| Device trust in the Dashboard | Done in source (14 October 2026): Account → Security → Devices lists phones, computers and browsers with a plain encryption status, friendly model names and Remove (which deletes what only that device could open); a linked browser approves a pending phone (with a two-step code when it is on); simulators are labelled and never vouch for a real phone. Server tests: `web/dashboard-devices.test.ts`, `device-approvals.test.ts`, `device-models.test.ts`. |
 | Everything else | Open, in the order below. |
 
 ## Delivery plan

@@ -26,20 +26,26 @@ server and the gaps that are still open, in priority order. Each gap names the c
 - **Containers** run read-only, non-root, with all capabilities dropped; the API and worker use a
   restricted database role.
 - **New phones wait for a trusted phone.** A phone added after the first is *pending* until a
-  trusted phone signs an approval; computers seal nothing to it until then
-  ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md#new-devices-are-approved-on-a-trusted-phone)).
+  trusted phone, or a browser a trusted phone linked, signs an approval; computers seal nothing to it
+  until then ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md#new-devices-are-approved-on-a-trusted-phone)).
+  A simulator never counts as that trusted phone and never receives approval notices.
 - **End-to-end encryption** keeps notice, question and card text unreadable to the server and to a
   TLS-terminating proxy ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md)).
 
-## Open gaps
+## Gaps found and how each was handled
 
-### 1. No second factor on accounts
+### 1. No second factor on accounts (closed)
 
-An account is one email and password (minimum 8 characters, `account-auth.ts`). Anyone who learns
-the password can sign in from anywhere. From the Dashboard they can also sign the owner's phone out
-and sign in their own: computers trust it again with a "phone set up again" notice (gap 4), unless
-strict mode is on. Sign-in also backs off per account (gap 2). Plan: passkeys or TOTP for Dashboard sign-in, required for
-the admin on a public origin, and a check against known-breached passwords.
+Closed on 14 October 2026: Account → Security → Two-step sign-in turns on codes from an
+authenticator app (for example the Passwords app on iPhone), with ten one-time backup codes
+(`account-auth.ts`, better-auth's two-factor plugin; migration 0095). After that, the password alone
+signs in nowhere: the Dashboard, and the iPhone's sign-in that goes through it, ask for the code, and
+the session comes only from `/api/auth/two-factor/verify-totp` or `verify-backup-code`, which keep the
+sign-in limits (gap 2) and the disabled-account checks. "Don't ask again on this browser" lasts 30
+days. The secret and backup codes are stored encrypted. Someone who loses both the authenticator and
+the backup codes gets back in when the admin resets their password, which also clears two-step
+sign-in. It is a per-account choice: turn it on for every account on a public address (checklist
+below). Still possible later: passkeys, and a check against known-breached passwords.
 
 ### 2. Sign-in limits can be used to lock people out (closed)
 
@@ -60,7 +66,7 @@ the phones a plain "New computer wants access" notification when a second or lat
 publishes its key (`device-approvals.ts`, `announceNewComputer`). A trusted computer's changed key is
 still trusted again with a notice (gap 4).
 
-### 4. The CLI re-trusts a changed or replaced phone
+### 4. The CLI re-trusts a changed or replaced phone (accepted trade-off)
 
 By default the CLI follows WhatsApp: a changed identity key behind a pinned phone, and the account's
 new phone once every phone it trusted has left the account, are trusted again with a visible notice
@@ -69,6 +75,19 @@ or anyone with the account password (gap 1), can therefore swap in its own phone
 content and accept approvals signed by it. `relo keys strict on` holds both as pending until a
 person runs `relo keys verify`. This is the owner's accepted trade-off (ADR 0005: Signal/WhatsApp-style
 automatic trust, encryption always on); strict mode is the option for anyone who wants verification.
+
+### 4a. A linked browser can approve a new phone (accepted trade-off)
+
+Since 14 October 2026 the Dashboard's Account → Security → Devices can approve a pending phone from a
+linked browser (`POST /api/dashboard/devices/:id/approve`, `device-approvals.ts`,
+`approveDeviceFromBrowser`). The browser's non-extractable key signs the approval, but the server
+serves the Dashboard's code, so a compromised server could make a linked browser approve a phone it
+added itself. Mitigations: only a browser linked from a trusted, non-simulator phone in the last 14
+days; the owner's session; a fresh authenticator code when two-step sign-in is on; 10 attempts per
+account per 15 minutes; the CLI says "approved from <browser>"; and strict mode
+(`relo keys strict on`) refuses browser approvals, leaving a phone's approval or `relo keys verify`.
+Removing a phone from the Dashboard now also deletes what only that phone could open, like signing
+out on it.
 
 ### 5. Any CLI key can turn off the encryption requirement (closed)
 
@@ -92,7 +111,8 @@ existing integrations; prefer the header for new ones.
 
 ## Operator checklist for a public address
 
-1. Use a long, unique password for every account until gap 1 is closed.
+1. Use a long, unique password for every account, and turn on Two-step sign-in in Account →
+   Security for each of them, the admin first.
 2. Keep registration Closed or Approval (a public origin no longer allows Open).
 3. Set `RELO_CLIENT_IP_HEADER` to the header your proxy overwrites, never `x-forwarded-for`.
 4. Run `relo keys strict on` on every computer. After that, a changed key or a phone set up again

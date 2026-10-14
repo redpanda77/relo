@@ -69,7 +69,7 @@ describe("Dashboard shell mobile contracts", () => {
     rerender(<DashboardShell shell={{ ...shell, title: "Inbox", active: "inbox", counts: { pending: 0, notifications: 0, deliveries: 0 } }}><main id="main-content">Inbox</main></DashboardShell>)
     expect(within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page")
     expect(within(screen.getByRole("navigation", { name: "Tabs" })).getByRole("link", { name: "Now" })).toHaveAttribute("aria-current", "page")
-    expect(screen.getAllByText("relo", { selector: "header span" }).length).toBeGreaterThan(0)
+    expect(container.querySelector("[data-dashboard-main] > header")).toBeNull()
   })
 
   it("keeps the 320px content path shrink-safe without viewport-width utility overflow", () => {

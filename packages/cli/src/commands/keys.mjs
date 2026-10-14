@@ -1,17 +1,19 @@
 import { ReloError, UsageError } from "../errors.mjs";
 import { fromB64u, safetyNumber, verifyPrekey } from "../e2ee.mjs";
 import { ensureIdentity, keyStorePath, saveKeyStore, trustKey, trustState } from "../keystore.mjs";
-import { ensureTrust, trustedPhones } from "../trust.mjs";
+import { ensureTrust, trustedPhones, trustedPhonesLabel, trustNotices } from "../trust.mjs";
+import { isSimulator, matchPhones, modelName, phoneHandle, phoneLabel } from "../device-names.mjs";
 import { assertAllowedOptions, assertNoExtra, result, validateDeviceId } from "../support.mjs";
 
-const USAGE = "Usage: relo keys status | relo keys verify DEVICE_ID | relo keys forget DEVICE_ID | relo keys rotate"
-  + " | relo keys require on|auto|off | relo keys strict on|off";
+const USAGE = "Usage: relo keys status | relo keys approve PHONE [--yes] | relo keys remove PHONE | relo keys verify DEVICE_ID"
+  + " | relo keys forget DEVICE_ID | relo keys rotate | relo keys require on|auto|off | relo keys strict on|off";
 const PHONE_SCREEN = "Settings → Security → Verify security code on the iPhone";
+const DASHBOARD_REMOVE = "Dashboard → Account → Security → Devices → Remove";
 
-function needsPerson(action) {
+function needsPerson(action, hint) {
   return new ReloError(
     `relo keys ${action} needs a person at a terminal.`,
-    { code: "PERSON_REQUIRED", exitCode: 2 },
+    { code: "PERSON_REQUIRED", exitCode: 2, ...(hint ? { details: { hint } } : {}) },
   );
 }
 
@@ -24,57 +26,193 @@ function storePath(dependencies) {
   return keyStorePath(dependencies.configPath(), dependencies.env);
 }
 
-function describeDevice(store, apiUrl, device) {
+/** Phones in the key listing, named the way the owner knows them (the pinned name when the listing has none). */
+function listedPhones(store, apiUrl, devices) {
+  return devices.filter((device) => device?.identityKey && device.kind !== "browser" && device.deviceId?.startsWith("dev_"))
+    .map((device) => ({ ...device, name: device.name ?? store.trusted[trustKey(apiUrl, device.deviceId)]?.name }));
+}
+
+/** The one phone `query` (a dev_ id, or a name/model like iphone-air) names, or a usage error saying which exist. */
+function findPhone(query, phones) {
+  const matches = matchPhones(query, phones);
+  const known = phones.map((device) => `${phoneHandle(device, phones)} (${phoneLabel(device)})`).join(", ");
+  if (matches.length === 0) {
+    throw new UsageError(`No phone with published keys matches "${query}".`, { hint: known ? `Phones: ${known}` : "Open Relo on the phone, then run relo keys status" });
+  }
+  if (matches.length > 1) {
+    throw new UsageError(`"${query}" matches ${matches.length} phones.`, { hint: `Use the id: ${matches.map((device) => `${device.deviceId} (${phoneLabel(device)})`).join(", ")}` });
+  }
+  return matches[0];
+}
+
+/** "5 min ago", "3 days ago": for the table and the approve prompt. */
+function ago(iso, now) {
+  const at = Date.parse(iso ?? "");
+  if (!Number.isFinite(at)) return undefined;
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 90) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+const PLAIN = { auto: "trusted", verified: "trusted, verified", approved: "trusted, approved here", pending: "waiting for approval",
+  changed: "security code changed, not encrypted for", new: "not trusted yet", linked: "linked browser", "not linked": "browser, not linked" };
+
+function describeDevice(store, apiUrl, device, phones) {
   const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
-  const prekeyOk = device.prekey && verifyPrekey({
-    identityPublicKey: fromB64u(device.identityKey.publicKey, { length: 65 }),
-    prekey: { ...device.prekey, deviceId: device.deviceId },
-  });
-  return {
+  let prekeyOk = false;
+  try {
+    prekeyOk = Boolean(device.prekey && verifyPrekey({
+      identityPublicKey: fromB64u(device.identityKey.publicKey, { length: 65 }),
+      prekey: { ...device.prekey, deviceId: device.deviceId },
+    }));
+  } catch {
+    prekeyOk = false;
+  }
+  const browser = device.kind === "browser";
+  const model = browser ? undefined : isSimulator(device) ? "Simulator" : modelName(device.model);
+  return Object.fromEntries(Object.entries({
     deviceId: device.deviceId,
-    ...(device.kind === "browser" ? { kind: "browser" } : {}),
+    ...(browser ? { kind: "browser" } : {}),
     name: device.name,
+    ...(model ? { model } : {}),
+    ...(!browser && isSimulator(device) ? { simulator: true } : {}),
+    ...(browser ? {} : { handle: phoneHandle(device, phones) }),
     keyId: device.identityKey.keyId,
     // A browser is never verified here: it reads only while a trusted phone's link signature holds.
-    trust: device.kind === "browser" ? (pinned ? "linked" : "not linked") : trustState(store, apiUrl, device),
+    trust: browser ? (pinned ? "linked" : "not linked") : trustState(store, apiUrl, device),
     prekey: !device.prekey ? "missing" : !prekeyOk ? "invalid" : device.prekey.stale ? "stale" : "fresh",
+    ...(device.lastSeenAt ? { lastSeenAt: device.lastSeenAt } : {}),
     ...(pinned?.notice ? { notice: pinned.notice } : {}),
-  };
+  }).filter(([, value]) => value !== undefined));
+}
+
+/** The human table for `relo keys status` at a terminal (--json, or piped output, gets the JSON line). */
+function statusTable({ identity, strict, required, devices, notes }, now) {
+  const rows = devices.map((device) => [
+    device.name ?? device.deviceId,
+    device.kind === "browser" ? "Browser" : device.model ?? "",
+    `${PLAIN[device.trust] ?? device.trust}${device.prekey === "fresh" || device.kind === "browser" ? "" : device.prekey === "stale" ? " (key not renewed lately)" : ` (no usable key: open Relo on it)`}`,
+    ago(device.lastSeenAt, now) ?? "",
+  ]);
+  const header = ["Name", "Model", "Status", "Last seen"];
+  const widths = header.map((title, column) => Math.max(title.length, ...rows.map((row) => row[column].length)));
+  const line = (row) => row.map((cell, column) => cell.padEnd(widths[column])).join("  ").trimEnd();
+  const lines = [
+    `This computer: key ${identity.keyId}${strict ? " · strict mode on" : ""}${required ? " · encryption required" : ""}`,
+    "",
+    ...(rows.length ? [line(header), ...rows.map(line)] : ["No phone has published keys yet: open Relo on the iPhone."]),
+  ];
+  if (notes.length) lines.push("", ...notes.map((note) => `• ${note}`));
+  return lines.join("\n");
 }
 
 /** `relo keys`: this computer's encryption identity and the phones it seals for (trusted automatically). */
 export async function runKeysCommand(command) {
   const { options, group, action, rest, dependencies, client, config } = command;
   if (group !== "keys") return undefined;
-  assertAllowedOptions(options, []);
+  assertAllowedOptions(options, action === "approve" ? ["yes"] : []);
   const apiUrl = config.apiUrl;
 
   if (action === "status") {
     assertNoExtra(rest, 0, USAGE);
-    const { store, devices } = await ensureTrust({ client, config, dependencies });
+    const { store, devices } = await ensureTrust({ client, config, dependencies, details: true });
     // An older server has no policy route; status still reports the keys.
     let policy = null;
     try {
       policy = await client.endToEndPolicy();
     } catch {}
-    return result("keys.status", {
+    const now = dependencies.now?.() ?? Date.now();
+    const phones = listedPhones(store, apiUrl, devices);
+    const data = {
       identity: { keyId: store.identity.keyId, createdAt: store.identity.createdAt },
       required: policy?.required === true,
       strict: store.strict === true,
-      devices: devices.filter((device) => device?.identityKey).map((device) => describeDevice(store, apiUrl, device)),
-    });
+      devices: devices.filter((device) => device?.identityKey).map((device) => describeDevice(store, apiUrl,
+        { ...device, name: device.name ?? store.trusted[trustKey(apiUrl, device.deviceId)]?.name }, phones)),
+    };
+    const notes = trustNotices(store, apiUrl, now, devices);
+    return { ...result("keys.status", data, { notes }), text: statusTable({ ...data, identity: data.identity, notes }, now) };
+  }
+
+  if (action === "approve") {
+    // A person accepts a phone that waits for approval (or whose changed key strict mode holds) here,
+    // instead of on a trusted iPhone. The phone becomes "approved": trusted like "verified" for sealing.
+    assertNoExtra(rest, 1, USAGE);
+    const { store, devices } = await ensureTrust({ client, config, dependencies, details: true });
+    const phones = listedPhones(store, apiUrl, devices);
+    const device = findPhone(rest[0], phones);
+    const label = phoneLabel(device);
+    const state = trustState(store, apiUrl, device);
+    if (["auto", "verified", "approved"].includes(state)) {
+      return result("keys.approve", { deviceId: device.deviceId, name: device.name, trust: state, approved: false },
+        { message: `${label} is already trusted.` });
+    }
+    const number = safetyNumber(fromB64u(store.identity.publicKey, { length: 65 }), fromB64u(device.identityKey.publicKey, { length: 65 }));
+    const yes = options.yes === true;
+    if (!yes && (!dependencies.stdinIsTTY || !dependencies.confirm)) {
+      throw needsPerson("approve", `Only the owner approves a phone: ask them to run relo keys approve ${phoneHandle(device, phones)} in their terminal`);
+    }
+    if (!yes) {
+      const now = dependencies.now?.() ?? Date.now();
+      const model = isSimulator(device) ? "Simulator (not a real iPhone)" : modelName(device.model);
+      const when = (iso) => (iso ? `${new Date(iso).toISOString().slice(0, 16).replace("T", " ")} UTC (${ago(iso, now)})` : undefined);
+      const lines = [
+        state === "changed" ? `${label} has a new security code (it was reinstalled or reset).` : `${label} is waiting for approval.`,
+        "",
+        `  Name:        ${device.name ?? device.deviceId}`,
+        ...(model ? [`  Model:       ${model}`] : []),
+        ...(device.registeredAt ? [`  Signed in:   ${when(device.registeredAt)}`] : []),
+        ...(device.lastSeenAt ? [`  Last seen:   ${when(device.lastSeenAt)}`] : []),
+        `  Key id:      ${device.identityKey.keyId}   (shown under it in Relo → Settings → Security on ${trustedPhonesLabel(store, apiUrl)})`,
+        `  Code starts: ${number.split(" ")[0]}   (${PHONE_SCREEN.replace("the iPhone", "that phone")})`,
+        `  Id:          ${device.deviceId}`,
+        "",
+        "Approve only a phone you signed in yourself. Once approved, this computer encrypts everything for it too.",
+      ];
+      dependencies.stderr?.(lines.join("\n"));
+      if (!(await dependencies.confirm(`Approve ${label}? [y/N] `))) {
+        return result("keys.approve", { deviceId: device.deviceId, name: device.name, trust: state, approved: false }, { message: "Not approved." });
+      }
+    }
+    const pinned = store.trusted[trustKey(apiUrl, device.deviceId)];
+    store.trusted[trustKey(apiUrl, device.deviceId)] = {
+      deviceId: device.deviceId, name: device.name ?? pinned?.name, ...(device.model ? { model: device.model } : {}),
+      ...(device.isSimulator === true ? { isSimulator: true } : {}),
+      keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
+      level: "approved", trustedAt: new Date(dependencies.now()).toISOString(),
+    };
+    // Approving a phone here also commits this computer: the next phone waits for approval too.
+    store.committed = { ...(store.committed ?? {}), [apiUrl]: true };
+    await saveKeyStore(storePath(dependencies), store);
+    return result("keys.approve", { deviceId: device.deviceId, name: device.name, trust: "approved", approved: true },
+      { message: `${label} approved: this computer now encrypts for it.` });
+  }
+
+  if (action === "remove") {
+    // Signing a phone out is the owner's, in the Dashboard: no CLI credential can revoke a phone
+    // (DELETE /api/devices/:id is the phone's own sign-out), so this says exactly where to do it.
+    assertNoExtra(rest, 1, USAGE);
+    const { store, devices } = await ensureTrust({ client, config, dependencies, details: true });
+    const phones = listedPhones(store, apiUrl, devices);
+    const device = findPhone(rest[0], phones);
+    const label = phoneLabel(device);
+    return result("keys.remove", { deviceId: device.deviceId, name: device.name, removed: false, where: DASHBOARD_REMOVE },
+      { message: `A computer cannot sign a phone out. Remove ${label} in the Relo ${DASHBOARD_REMOVE} (or Decline it in Relo → Settings → Security on ${trustedPhonesLabel(store, apiUrl)}).` });
   }
 
   if (action === "verify") {
     // Optional: comparing safety numbers upgrades an automatically trusted phone to "verified".
     assertNoExtra(rest, 1, USAGE);
-    const deviceId = deviceArgument(rest[0]);
     const { store, devices } = await ensureTrust({ client, config, dependencies });
-    const device = devices.find((entry) => entry.deviceId === deviceId);
-    if (device?.kind === "browser") {
+    if (devices.some((entry) => entry?.deviceId === rest[0] && entry.kind === "browser")) {
       throw new UsageError("A browser is linked from Relo on the iPhone (Settings → Security → Link a browser), not verified here.");
     }
-    if (!device) throw new UsageError(`No phone ${deviceId} has published encryption keys.`, { hint: "Open Relo on the iPhone, then run relo keys status" });
+    const device = findPhone(rest[0], listedPhones(store, apiUrl, devices));
+    const deviceId = device.deviceId;
     const number = safetyNumber(fromB64u(store.identity.publicKey, { length: 65 }), fromB64u(device.identityKey.publicKey, { length: 65 }));
     const state = trustState(store, apiUrl, device);
     if (state === "verified") return result("keys.verify", { deviceId, trust: "verified", safetyNumber: number });
@@ -83,7 +221,8 @@ export async function runKeysCommand(command) {
     const same = await dependencies.confirm(`Does ${PHONE_SCREEN} show exactly this number? [y/N] `);
     if (!same) return result("keys.verify", { deviceId, trust: state, safetyNumber: number }, { message: "Not marked verified." });
     store.trusted[trustKey(apiUrl, deviceId)] = {
-      deviceId, name: device.name, keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
+      deviceId, name: device.name, ...(device.model ? { model: device.model } : {}),
+      keyId: device.identityKey.keyId, publicKey: device.identityKey.publicKey,
       level: "verified", trustedAt: new Date(dependencies.now()).toISOString(),
     };
     await saveKeyStore(storePath(dependencies), store);

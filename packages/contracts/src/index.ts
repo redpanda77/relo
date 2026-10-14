@@ -64,6 +64,10 @@ export const publicHttpsUrlSchema = z
   .refine(isPublicHttpsUrl, "Must be a public HTTPS URL");
 
 export const httpsUrlSchema = z.url().max(2_048).startsWith("https://");
+/** A screen in the app itself (relo://settings/security), which the server's own notices link to. */
+export const appDestinationUrlSchema = z.string().max(2_048).regex(/^relo:\/\/[a-z][a-z0-9\/_-]*$/);
+/** Where an inbox item opens: a web page, or a screen in the app. */
+export const inboxDestinationUrlSchema = z.union([httpsUrlSchema, appDestinationUrlSchema]);
 
 export const API_TOKEN_SCOPES = [
   "notifications:send",
@@ -314,7 +318,7 @@ export const inboxItemSchema = z
     receivedAt: isoTimestampSchema.nullable(),
     openedAt: isoTimestampSchema.nullable(),
     createdAt: isoTimestampSchema,
-    destinationUrl: httpsUrlSchema.nullable().default(null),
+    destinationUrl: inboxDestinationUrlSchema.nullable().default(null),
     privacy: notificationPrivacySchema.default("standard"),
     interaction: inboxInteractionSchema.nullable(),
     context: inboxContextSchema.nullable(),

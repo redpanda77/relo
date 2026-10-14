@@ -49,7 +49,8 @@ public extension InboxItem {
             destinationUrl: notice.destinationUrl.flatMap(URL.init(string:)),
             // Opened on this phone, so it shows like any other item; `sealed` still marks it end-to-end.
             privacy: .standard,
-            liveActivity: liveActivity, activitySummary: activitySummary,
+            liveActivity: liveActivity,
+            activitySummary: activitySummary?.opening(title: notice.title, status: nil, detail: nil),
             // A sealed question shows its real prompt once opened (E4.1).
             interaction: interaction.map { $0.replacingPrompt(notice.summary ?? notice.body ?? $0.prompt) }, context: context,
             resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed
@@ -198,8 +199,25 @@ extension InboxItem {
             detail: opened(detail) ?? text.status, content: content, readAt: readAt, withdrawnAt: withdrawnAt, result: result,
             deliveryState: deliveryState, apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt,
             createdAt: createdAt, destinationUrl: destinationUrl, privacy: privacy, liveActivity: liveActivity,
-            activitySummary: activitySummary, interaction: interaction, context: context, resources: resources,
+            activitySummary: activitySummary?.opening(title: realTitle, status: text.status, detail: text.detail),
+            interaction: interaction, context: context, resources: resources,
             activityEvent: activityEvent, activity: card, sealed: sealed
+        )
+    }
+}
+
+extension InboxActivitySummary {
+    /// The card summary the detail screen shows, with the server's placeholders replaced by the
+    /// opened text. Words the server wrote itself ("Approved", "Expired") stay.
+    func opening(title openedTitle: String?, status openedStatus: String?, detail openedDetail: String?) -> InboxActivitySummary {
+        let placeholders: Set<String> = ["Encrypted card", "Encrypted question"]
+        return InboxActivitySummary(
+            id: id, originThreadId: originThreadId, conversationId: conversationId, workItemId: workItemId,
+            generation: generation, sequence: sequence, state: state,
+            title: placeholders.contains(title) ? (openedTitle ?? title) : title,
+            status: openedStatus.map { status.replacingOccurrences(of: "Updating…", with: $0) } ?? status,
+            detail: detail ?? openedDetail, progress: progress, terminalReason: terminalReason, context: context,
+            createdAt: createdAt, updatedAt: updatedAt, staleAt: staleAt, expiresAt: expiresAt, endedAt: endedAt
         )
     }
 }

@@ -126,6 +126,42 @@ final class E2EEDeviceApprovalTests: XCTestCase {
         do { try await client.declineDevice(credential: credential, deviceID: "../keys"); XCTFail("expected rejection") }
         catch { XCTAssertEqual(error as? MobileAPIError, .invalidRequest) }
     }
+
+    func testListsTheAccountsPhonesAndToleratesAnOlderServer() async throws {
+        let deviceID = deviceID, phoneID = phoneID
+        ApprovalStubURLProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/devices/self/devices")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer device-token")
+            return (200, #"{"devices":[{"deviceId":"\#(phoneID)","name":"iPhone","model":"iPhone18,4","isSimulator":false,"registeredAt":"2026-10-01T00:00:00.000Z","lastSeenAt":"2026-10-14T00:00:00.000Z","isCurrent":true,"trusted":true},{"deviceId":"\#(deviceID)","name":"iPhone","model":"iPhone18,4","isSimulator":true,"registeredAt":"2026-10-14T00:00:00.000Z","lastSeenAt":null,"isCurrent":false,"trusted":false}]}"#)
+        }
+        let listed = try await client.accountPhones(credential: credential)
+        let phones = try XCTUnwrap(listed)
+        XCTAssertEqual(phones.map(\.deviceId), [phoneID, deviceID])
+        XCTAssertEqual(phones[1].modelLine, "iPhone Air · Simulator")
+        XCTAssertNil(phones[1].lastSeenDate)
+        XCTAssertNotNil(phones[0].lastSeenDate)
+        XCTAssertTrue(phones[0].isCurrent && phones[0].trusted)
+
+        ApprovalStubURLProtocol.handler = { _ in (404, "{}") }
+        let none = try await client.accountPhones(credential: credential)
+        XCTAssertNil(none)
+        ApprovalStubURLProtocol.handler = { _ in (401, "{}") }
+        do { _ = try await client.accountPhones(credential: credential); XCTFail("expected 401") }
+        catch { XCTAssertEqual(error as? MobileAPIError, .reauthenticationRequired) }
+    }
+
+    func testPendingDeviceDecodesTheOptionalSimulatorFlag() throws {
+        let json = #"{"deviceId":"dev_x","name":"iPhone","model":"iPhone18,4","isSimulator":true,"registeredAt":"2026-10-14T00:00:00.000Z","keyId":"k_1","identityKey":"BAAA"}"#
+        let device = try JSONDecoder().decode(ReloPendingDevice.self, from: Data(json.utf8))
+        XCTAssertEqual(device.displayName, "iPhone Air")
+        XCTAssertEqual(device.modelLine, "iPhone Air · Simulator")
+        let older = #"{"deviceId":"dev_x","name":"iPhone","model":"arm64","registeredAt":"2026-10-14T00:00:00.000Z","keyId":"k_1","identityKey":"BAAA"}"#
+        let simulator = try JSONDecoder().decode(ReloPendingDevice.self, from: Data(older.utf8))
+        XCTAssertNil(simulator.isSimulator)
+        XCTAssertEqual(simulator.displayName, "iPhone")
+        XCTAssertEqual(simulator.modelLine, "Simulator")
+    }
 }
 
 private final class ApprovalStubURLProtocol: URLProtocol, @unchecked Sendable {

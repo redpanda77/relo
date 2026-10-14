@@ -55,13 +55,15 @@ final class BackgroundLiveActivityTokenRegistrar {
                 case .denied: .denied
                 default: .pending
                 }
+                let hardware = ReloDeviceModelName.current()
                 let heartbeat = DeviceHeartbeat(deviceId: credential.deviceId, installationId: installation,
-                    deviceName: UIDevice.current.name, bundleId: Bundle.main.bundleIdentifier ?? "com.example.relo.notifications",
+                    deviceName: ReloDeviceModelName.deviceName(systemName: UIDevice.current.name, identifier: hardware.identifier), bundleId: Bundle.main.bundleIdentifier ?? "com.example.relo.notifications",
                     appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0",
                     appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
-                    iosVersion: UIDevice.current.systemVersion, deviceModel: Self.modelIdentifier,
+                    iosVersion: UIDevice.current.systemVersion, deviceModel: hardware.identifier,
                     apnsToken: apnsToken, apnsEnvironment: Self.environment, notificationAuthorization: authorization,
-                    liveActivityAuthorization: ActivityAuthorizationInfo().areActivitiesEnabled ? .authorized : .denied)
+                    liveActivityAuthorization: ActivityAuthorizationInfo().areActivitiesEnabled ? .authorized : .denied,
+                    model: hardware.identifier, isSimulator: hardware.isSimulator)
                 self.runtime.configure(.init(origin: origin, credential: credential, client: client, environment: Self.environment, heartbeat: heartbeat))
                 self.bootstrapTask = nil
             }
@@ -187,12 +189,5 @@ final class BackgroundLiveActivityTokenRegistrar {
         #else
         "production"
         #endif
-    }
-
-    private static var modelIdentifier: String {
-        var info = utsname(); uname(&info)
-        return withUnsafePointer(to: &info.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
-        }
     }
 }

@@ -33,6 +33,7 @@ public enum ReloSealedCards {
         let lock = NSLock()
         var opener: (@Sendable (ReloEnvelope) -> Data?)?
         var names: (@Sendable () -> [String: String])?
+        var lastFailure: String?
     }
 
     private static let box = Box()
@@ -44,6 +45,24 @@ public enum ReloSealedCards {
     /// The handle → name book for opaque project and topic names (E2.5).
     public static func installNames(_ names: @escaping @Sendable () -> [String: String]) {
         box.lock.withLock { box.names = names }
+    }
+
+    /// Why the last open in this process failed (a `ReloSealedOpenRecord.Outcome` raw value).
+    public static func noteFailure(_ outcome: String?) {
+        box.lock.withLock { box.lastFailure = outcome }
+    }
+
+    /// One plain line for a card that stays encrypted, instead of a silent placeholder.
+    public static func failureLine(sealed: Bool) -> String {
+        guard sealed else { return "Not encrypted for this iPhone. Check Relo → Settings → Security." }
+        switch box.lock.withLock({ box.opener == nil ? "no_opener" : box.lastFailure }) {
+        case "not_for_this_phone": return "Encrypted for another device or an older key of this iPhone."
+        case "computer_pending": return "From a computer waiting for your approval in Relo → Settings → Security."
+        case "computer_declined": return "From a computer you declined."
+        case "computer_unknown": return "From a computer this iPhone doesn't know yet. Open Relo to refresh."
+        case "no_keys", "keys_unreadable", "trust_unreadable", "no_opener": return "Open Relo once to read encrypted cards here."
+        default: return "Couldn't open this card. Open Relo to read it."
+        }
     }
 
     public static func knownNames() -> [String: String] {

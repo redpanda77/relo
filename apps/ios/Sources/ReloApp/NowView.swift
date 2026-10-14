@@ -106,6 +106,10 @@ struct NowView: View {
         .onChange(of: model.deckDirector.ceremonyFinishes) { _, _ in model.finishLinkCeremony() }
         .reloScreenBackground()
         .navigationTitle("Now")
+        // Inline, though the bar is hidden: a large title keeps its navigation bar tracking this
+        // scroll view, and pulling down expanded the hidden title's area, changed the content
+        // inset and snapped the page back up mid-pull.
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $sheet) { destination in
             NavigationStack {
@@ -142,10 +146,13 @@ struct NowView: View {
             .scrollClipDisabled()
             .containerRelativeFrame(.horizontal) { width, _ in width * 0.5 }
             ScrollView {
-                CurrentAttentionView(model: model, cards: derived.cards, sessions: derived.sessions,
-                                     viewHistory: { tab = .history })
-                    .padding(.horizontal, ReloLayout.screenInset)
-                    .padding(.top, 20).padding(.bottom, 24)
+                VStack(alignment: .leading, spacing: 20) {
+                    DeviceAccessNeedsYouRow(model: model)
+                    CurrentAttentionView(model: model, cards: derived.cards, sessions: derived.sessions,
+                                         viewHistory: { tab = .history })
+                }
+                .padding(.horizontal, ReloLayout.screenInset)
+                .padding(.top, 20).padding(.bottom, 24)
             }
             .refreshable { _ = await model.refresh() }
         }
@@ -173,11 +180,14 @@ struct NowView: View {
                         let visible = bottom > 80
                         if visible != deckVisible { deckVisible = visible }
                     }
-                    // Pulling past the top: only the pull tracker changes per frame, never this screen.
+                    // iOS 17 only: pulling past the top read from the deck's frame. iOS 18 and later
+                    // read it from the scroll view itself (below), outside layout.
                     .onPreferenceChange(ReloDeckTopKey.self) { top in
-                        if pull.track(overscroll: top), !refreshing { syncFromPull() }
+                        guard !Self.readsScrollGeometry else { return }
+                        trackPull(top)
                     }
                     .environment(\.reloMotionPaused, !deckVisible)
+                DeviceAccessNeedsYouRow(model: model)
                 CurrentAttentionView(model: model, cards: derived.cards, sessions: derived.sessions,
                                      viewHistory: { tab = .history })
             }
@@ -185,11 +195,22 @@ struct NowView: View {
             .padding(.bottom, 24)
         }
         // The deck is the header: no navigation bar band over it; it runs under the status bar.
+        .modifier(ReloOverscrollReader { trackPull($0) })
         .ignoresSafeArea(.container, edges: .top)
         .background { GeometryReader { proxy in Color.clear
             .onAppear { topInset = proxy.safeAreaInsets.top }
             .onChange(of: proxy.safeAreaInsets.top) { _, new in topInset = new } } }
         .scrollBounceBehavior(.always)
+    }
+
+    private static var readsScrollGeometry: Bool {
+        if #available(iOS 18, *) { true } else { false }
+    }
+
+    /// Only the pull tracker changes per frame, never this screen; the sync starts once the page
+    /// has sprung back.
+    private func trackPull(_ overscroll: CGFloat) {
+        if pull.track(overscroll: overscroll), !refreshing { syncFromPull() }
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -292,6 +313,23 @@ struct NowView: View {
                 "Last updated \($0.formatted(date: .abbreviated, time: .shortened))."
             } ?? "Relo is connected. New activity will appear in Now.",
                        symbol: "checkmark.icloud", actionTitle: "Refresh") { Task { _ = await model.refresh() } }
+        }
+    }
+}
+
+/// How far the page is pulled past its top, from the scroll view's own geometry (iOS 18 and
+/// later): read after scrolling, never as a layout pass inside the scrolled content.
+private struct ReloOverscrollReader: ViewModifier {
+    let changed: (CGFloat) -> Void
+    func body(content: Content) -> some View {
+        if #available(iOS 18, *) {
+            content.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                max(0, -(geometry.contentOffset.y + geometry.contentInsets.top))
+            } action: { _, overscroll in
+                changed(overscroll)
+            }
+        } else {
+            content
         }
     }
 }

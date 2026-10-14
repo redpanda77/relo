@@ -13,7 +13,7 @@ The iPhone app is the reference. The web dashboard and the pages the server rend
 | Filled actions (white text, at least 4.5:1) | `#c8432f`, hover `#d4513b` | `reloActionFill` |
 | Errors | `#f87171` | `reloErrorText` |
 
-- **Backdrop.** Three static glows over the canvas:
+- **Backdrop.** Three static glows over the canvas, painted on a fixed `body::before` layer because iOS Safari ignores `background-attachment: fixed`:
   - magenta 30% at the top right
   - indigo 26% at the top left
   - coral 18% at the bottom
@@ -28,6 +28,7 @@ The iPhone app is the reference. The web dashboard and the pages the server rend
   - radius 20px
   - increased contrast or reduced transparency falls back to solid `#111119` with a white-24% border
 - **Lists.** Frosted lists use `List` / `Row`: one glass container with hairline dividers. Never put cards inside cards.
+- **Blur order.** Write `-webkit-backdrop-filter` before `backdrop-filter` in every rule. Lightning CSS keeps only the last declaration, so the reverse order loses the frost in Chrome.
 - **Holo cards** (`.holo-card`) are reserved for activity: ink→tone gradient, a lit top line, radius 20.
 - **Radii:**
   - 20 cards
@@ -58,7 +59,7 @@ The iPhone app is the reference. The web dashboard and the pages the server rend
 ## Navigation
 
 - **Desktop:** a sidebar with Now, History, Projects, Connections and Test Lab, then a "Settings" group with Account and Documentation, then the profile menu.
-- **Phones:** a top bar with the brand lockup only, and a bottom tab bar (`.tab-bar`) with Now, History, Projects, Connections and More. More opens the sidebar sheet.
+- **Phones:** no top bar; the page title sits under the safe area, as on iOS. A bottom tab bar (`.tab-bar`) holds Now, History, Projects, Connections and More, and More opens the sidebar sheet.
 - The needs-you count is an orange badge on Now.
 
 ## Motion

@@ -28,6 +28,20 @@ struct ReloRootView: View {
             model.updateAttentionClock()
         }
         .onChange(of: model.securitySettingsRequests) { _, _ in navigation.tab = .settings }
+        // A phone or computer waiting for approval: the sheet opens over any tab.
+        .sheet(item: Binding(
+            get: { model.presentedAccessRequestID.map(AccessRequestRoute.init) },
+            set: { model.presentedAccessRequestID = $0?.id }
+        )) { route in AccessRequestSheet(model: model, id: route.id) }
+        // Keeps Now's "Needs you" row current: on foreground and when a push lands.
+        .task(id: scenePhase) {
+            guard scenePhase == .active, model.credential != nil else { return }
+            await model.refreshDevices()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .reloPushReceived)) { _ in
+            guard model.credential != nil else { return }
+            Task { await model.refreshDevices() }
+        }
         .onChange(of: model.presentationScopeIdentity) { _, scope in
             navigation.transition(to: scope)
             if let id = model.selectedNotificationID { navigation.open(id) }

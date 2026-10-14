@@ -13,6 +13,12 @@ declare module "@relo/cli-e2ee" {
     identityPublicKey: Uint8Array
     prekey: { deviceId: string; prekeyId: string; publicKey: string; createdAt: string; signature: string }
   }): boolean
+  export function approveDeviceSigningInput(input: {
+    deviceId: string
+    identityKey: string
+    approverDeviceId: string
+    signedAt: string
+  }): Bytes
   export function sealEnvelope(input: {
     kind: string
     context: string

@@ -51,4 +51,30 @@ public enum ReloDeepLink {
             (relo[key] as? String).flatMap { URL(string: $0) }.map(isSecuritySettings) ?? false
         }
     }
+
+    /// `relo://security/request/<id>`: one phone (`dev_…`) or computer (`key_…`) waiting for approval.
+    public static func accessRequestURL(id: String) -> URL? {
+        guard isAccessRequestID(id) else { return nil }
+        return URL(string: "relo://security/request/\(id)")
+    }
+
+    public static func accessRequestID(from url: URL) -> String? {
+        guard url.scheme?.lowercased() == "relo", url.host?.lowercased() == "security",
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
+        let parts = url.pathComponents.filter { $0 != "/" }
+        guard parts.count == 2, parts[0].lowercased() == "request", isAccessRequestID(parts[1]) else { return nil }
+        return parts[1]
+    }
+
+    /// A notification's `relo.deepLink` (or `relo.destination`) naming one access request.
+    public static func accessRequestID(relo: [String: Any]) -> String? {
+        for key in ["deepLink", "destination"] {
+            if let id = (relo[key] as? String).flatMap({ URL(string: $0) }).flatMap(accessRequestID(from:)) { return id }
+        }
+        return nil
+    }
+
+    static func isAccessRequestID(_ id: String) -> Bool {
+        id.range(of: #"^(dev|key)_[A-Za-z0-9-]{8,64}$"#, options: .regularExpression) != nil
+    }
 }

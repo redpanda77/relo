@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash,createPublicKey,verify } from "node:crypto";
 import { z } from "zod";
 import type { ApnsMode } from "./activities.js";
 import type { Database } from "./db.js";
+import { friendlyModelName,simulatorSql } from "./device-models.js";
 import { internalId,publicId } from "./ids.js";
 import { createNotification } from "./notifications/commands.js";
 import { prepareNotificationContent } from "./notification-content.js";
@@ -27,31 +28,56 @@ export const approveDeviceSchema = z.object({
 }).strict();
 export type ApproveDevice = z.infer<typeof approveDeviceSchema>;
 
-export type PendingDevice = { deviceId: string; name: string; model: string | null; registeredAt: string; keyId: string; identityKey: string };
+export type PendingDevice = {
+  deviceId: string; name: string; model: string | null; modelName: string | null; isSimulator: boolean;
+  registeredAt: string; keyId: string; identityKey: string;
+};
 
 /**
  * The account's phones registered after `callerDeviceId` (or all of them, for the Dashboard) that have
  * published keys and have no approval for their current identity key. A phone never sees itself or an
  * older phone: a new device cannot "decline" the phone that is already trusted.
+ *
+ * Simulators never vouch for a real phone: a real phone is pending only behind an older real phone,
+ * and a simulator caller sees only simulators.
  */
 export async function pendingDevices(db: Pick<Database,"query">,principalId: string,callerDeviceId?: string): Promise<PendingDevice[]> {
   const result = await db.query<any>(
-    `SELECT d.id,d.name,d.model,d.registered_at,k.key_id,k.public_key
+    `SELECT d.id,d.name,d.model,d.registered_at,k.key_id,k.public_key,${simulatorSql("d")} AS simulator
      FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
      LEFT JOIN devices caller ON caller.id=$2::uuid
      WHERE d.principal_id=$1 AND d.revoked_at IS NULL
-       AND ($2::uuid IS NULL OR (d.id<>$2::uuid AND d.registered_at>caller.registered_at))
+       AND ($2::uuid IS NULL OR (d.id<>$2::uuid AND d.registered_at>caller.registered_at
+         AND (NOT ${simulatorSql("caller")} OR ${simulatorSql("d")})))
        AND NOT EXISTS (SELECT 1 FROM device_approvals a WHERE a.device_id=d.id AND a.identity_key=k.public_key)
        AND EXISTS (SELECT 1 FROM devices other JOIN device_identity_keys ok ON ok.device_id=other.id
          WHERE other.principal_id=d.principal_id AND other.revoked_at IS NULL AND other.id<>d.id
-           AND other.registered_at<d.registered_at)
+           AND other.registered_at<d.registered_at AND (NOT ${simulatorSql("other")} OR ${simulatorSql("d")}))
      ORDER BY d.registered_at DESC LIMIT 16`,
     [principalId,callerDeviceId ?? null],
   );
   return result.rows.map((row) => ({
     deviceId: publicId("dev",row.id),name: row.name,model: row.model ?? null,
+    modelName: friendlyModelName(row.model,row.simulator),isSimulator: Boolean(row.simulator),
     registeredAt: new Date(row.registered_at).toISOString(),keyId: row.key_id,identityKey: row.public_key,
   }));
+}
+
+/** The signing input a phone or linked browser signs to approve a device (packages/cli/src/e2ee.mjs). */
+export function approveDeviceSigningInput(input: { deviceId: string; identityKey: string; approverDeviceId: string; signedAt: string }): Buffer {
+  return Buffer.from(["relo.e2e.v1 approve-device",input.deviceId,input.identityKey,input.approverDeviceId,input.signedAt].join("\n"));
+}
+
+function verifyP256(identityKey: string,message: Buffer,signature: string): boolean {
+  const raw = Buffer.from(identityKey,"base64url");
+  if (raw.length !== 65 || raw[0] !== 0x04) return false;
+  try {
+    const key = createPublicKey({ format: "jwk",key: { kty: "EC",crv: "P-256",
+      x: raw.subarray(1,33).toString("base64url"),y: raw.subarray(33).toString("base64url") } });
+    return verify("sha256",message,{ key,dsaEncoding: "ieee-p1363" },Buffer.from(signature,"base64url"));
+  } catch {
+    return false;
+  }
 }
 
 export async function approveDevice(
@@ -59,17 +85,82 @@ export async function approveDevice(
 ): Promise<{ ok: true } | { ok: false; error: "device_not_found" | "identity_mismatch" }> {
   const target = internalId("dev",input.deviceId);
   if (!target || target === callerDeviceId) return { ok: false,error: "device_not_found" };
-  const current = await db.query<{ public_key: string }>(
-    `SELECT k.public_key FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
-     WHERE d.id=$1 AND d.principal_id=$2 AND d.revoked_at IS NULL`,[target,principalId]);
-  if (!current.rows[0]) return { ok: false,error: "device_not_found" };
+  const current = await db.query<{ public_key: string; refused: boolean }>(
+    `SELECT k.public_key,(${simulatorSql("caller")} AND NOT ${simulatorSql("d")}) AS refused
+     FROM devices d JOIN device_identity_keys k ON k.device_id=d.id JOIN devices caller ON caller.id=$3
+     WHERE d.id=$1 AND d.principal_id=$2 AND d.revoked_at IS NULL`,[target,principalId,callerDeviceId]);
+  // A simulator never approves a real phone.
+  if (!current.rows[0] || current.rows[0].refused) return { ok: false,error: "device_not_found" };
   if (current.rows[0].public_key !== input.identityKey) return { ok: false,error: "identity_mismatch" };
   await db.query(
     `INSERT INTO device_approvals(device_id,principal_id,identity_key,approved_by_device,signed_at,signature)
      VALUES ($1,$2,$3,$4,$5,$6)
      ON CONFLICT (device_id) DO UPDATE SET identity_key=EXCLUDED.identity_key,approved_by_device=EXCLUDED.approved_by_device,
-       signed_at=EXCLUDED.signed_at,signature=EXCLUDED.signature,approved_at=now()`,
+       approved_by_browser=NULL,signed_at=EXCLUDED.signed_at,signature=EXCLUDED.signature,approved_at=now()`,
     [target,principalId,input.identityKey,callerDeviceId,input.signedAt,input.signature],
+  );
+  return { ok: true };
+}
+
+export const browserApprovalSchema = z.object({
+  browserId: z.string().regex(/^brw_[0-9a-f-]{36}$/),
+  identityKey: b64u(65),
+  signedAt: z.iso.datetime(),
+  signature: b64u(64),
+  /** A fresh code from the authenticator app, when the account has two-step sign-in. */
+  code: z.string().trim().regex(/^\d{6}$/).optional(),
+}).strict();
+export type BrowserApproval = z.infer<typeof browserApprovalSchema>;
+
+/** A browser's link counts this long after the phone signed it (packages/cli/src/trust.mjs, LINK_DAYS). */
+export const BROWSER_LINK_DAYS = 14;
+const SIGNED_AT_SKEW_MS = 10 * 60_000;
+
+export type BrowserApprovalError =
+  | "device_not_found" | "identity_mismatch" | "already_approved" | "browser_not_linked" | "invalid_signature";
+
+/**
+ * A linked browser approves a pending phone (docs/END-TO-END-ENCRYPTION.md, "Approving from a linked
+ * browser"). The browser's own non-extractable identity key signs the same input a phone signs, with
+ * the browser's id as the approver; the server checks the signature against the browser's published
+ * key so only that browser can approve, and computers check it again against the browser they trust.
+ */
+export async function approveDeviceFromBrowser(
+  db: Pick<Database,"query">,principalId: string,deviceId: string,input: BrowserApproval,now = new Date(),
+): Promise<{ ok: true } | { ok: false; error: BrowserApprovalError }> {
+  // The phone first: another account's device answers like a missing one.
+  const pending = (await pendingDevices(db,principalId)).find((device) => device.deviceId === deviceId);
+  if (!pending) {
+    const target = internalId("dev",deviceId);
+    const known = target ? await db.query<{ approved: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM device_approvals a WHERE a.device_id=d.id AND a.identity_key=k.public_key) AS approved
+       FROM devices d JOIN device_identity_keys k ON k.device_id=d.id WHERE d.id=$1 AND d.principal_id=$2 AND d.revoked_at IS NULL`,
+      [target,principalId]) : null;
+    return { ok: false,error: known?.rows[0]?.approved ? "already_approved" : "device_not_found" };
+  }
+  const browser = internalId("brw",input.browserId);
+  if (!browser) return { ok: false,error: "browser_not_linked" };
+  const linked = await db.query<{ identity_key: string; link_signed_at: string; linker_simulator: boolean }>(
+    `SELECT b.identity_key,b.link_signed_at,${simulatorSql("phone")} AS linker_simulator
+     FROM linked_browsers b JOIN devices phone ON phone.id=b.linked_by_device AND phone.revoked_at IS NULL
+     WHERE b.id=$1 AND b.principal_id=$2 AND b.revoked_at IS NULL AND b.linked_at IS NOT NULL AND b.link_signature IS NOT NULL`,
+    [browser,principalId]);
+  const link = linked.rows[0];
+  const linkAge = link ? now.getTime() - Date.parse(link.link_signed_at) : Number.NaN;
+  if (!link || !(linkAge < BROWSER_LINK_DAYS * 86_400_000)) return { ok: false,error: "browser_not_linked" };
+  // A browser linked from a simulator is no better than the simulator: it never approves a real phone.
+  if (link.linker_simulator && !pending.isSimulator) return { ok: false,error: "browser_not_linked" };
+  if (pending.identityKey !== input.identityKey) return { ok: false,error: "identity_mismatch" };
+  const signedAt = Date.parse(input.signedAt);
+  if (Math.abs(now.getTime() - signedAt) > SIGNED_AT_SKEW_MS) return { ok: false,error: "invalid_signature" };
+  const message = approveDeviceSigningInput({ deviceId,identityKey: input.identityKey,approverDeviceId: input.browserId,signedAt: input.signedAt });
+  if (!verifyP256(link.identity_key,message,input.signature)) return { ok: false,error: "invalid_signature" };
+  await db.query(
+    `INSERT INTO device_approvals(device_id,principal_id,identity_key,approved_by_device,approved_by_browser,signed_at,signature)
+     VALUES ($1,$2,$3,NULL,$4,$5,$6)
+     ON CONFLICT (device_id) DO UPDATE SET identity_key=EXCLUDED.identity_key,approved_by_device=NULL,
+       approved_by_browser=EXCLUDED.approved_by_browser,signed_at=EXCLUDED.signed_at,signature=EXCLUDED.signature,approved_at=now()`,
+    [internalId("dev",deviceId),principalId,input.identityKey,browser,input.signedAt,input.signature],
   );
   return { ok: true };
 }
@@ -116,7 +207,8 @@ export async function requestDeviceApproval(
   if (!claimed.rowCount) return false;
   const others = await db.query<{ id: string }>(
     `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
-     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND d.id<>$2 AND d.registered_at<(SELECT registered_at FROM devices WHERE id=$2)`,
+     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND d.id<>$2 AND d.registered_at<(SELECT registered_at FROM devices WHERE id=$2)
+       AND NOT ${simulatorSql("d")}`,
     [principalId,deviceId]);
   if (!others.rowCount) return false;
   const idempotencyKey = `device-approval:${deviceId}:${device.keyId}`;
@@ -138,9 +230,9 @@ async function sendApprovalNotice(
     idempotencyKey,
     requestHash: createHash("sha256").update(idempotencyKey).digest("hex"),
     sourceName: "Relo",
-    title: "New device wants access",
-    content: prepareNotificationContent({ body: `“${device.name}” signed in to your Relo account. Approve or decline it in Settings → Security.` }),
-    imageUrl: null,deepLink: "relo://settings/security",
+    title: `${device.modelName ?? "A new device"} wants to read your Relo cards`,
+    content: prepareNotificationContent({ body: `“${device.name}” signed in to your Relo account. Approve or decline it in Devices.` }),
+    imageUrl: null,deepLink: `relo://security/request/${device.deviceId}`,
     payload: { deviceApproval: { deviceId: device.deviceId } },
     deviceIds: targets,
     originHash: null,
@@ -162,7 +254,7 @@ export async function announceNewComputer(
   if (!computer.rows[0]?.others) return false;
   const phones = await db.query<{ id: string }>(
     `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
-     WHERE d.principal_id=$1 AND d.revoked_at IS NULL`,[principalId]);
+     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND NOT ${simulatorSql("d")}`,[principalId]);
   if (!phones.rowCount) return false;
   const idempotencyKey = `computer-approval:${apiKeyId}:${keyId}`;
   await createNotification(db,{ kind: "owner",principalId },{
@@ -170,8 +262,8 @@ export async function announceNewComputer(
     requestHash: createHash("sha256").update(idempotencyKey).digest("hex"),
     sourceName: "Relo",
     title: "New computer wants access",
-    content: prepareNotificationContent({ body: `“${computer.rows[0].label}” signed in to your Relo account. Approve or decline it in Settings → Security.` }),
-    imageUrl: null,deepLink: "relo://settings/security",
+    content: prepareNotificationContent({ body: `“${computer.rows[0].label}” signed in to your Relo account. Approve or decline it in Devices.` }),
+    imageUrl: null,deepLink: `relo://security/request/${publicId("key",apiKeyId)}`,
     payload: { computerApproval: { clientId: publicId("key",apiKeyId) } },
     deviceIds: phones.rows.map((row) => row.id),
     originHash: null,

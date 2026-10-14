@@ -10,10 +10,16 @@ public struct KeychainKeyRingStore: ReloKeyRingStore {
     public static let account = "e2ee-key-ring-v1"
     private let service: String
     private let accessGroup: String?
+    private let mirror: ReloWidgetKeyMirror?
+    private let readsMirror: Bool
 
-    public init(service: String, accessGroup: String?) {
+    /// `readsMirror`: the Live Activity widget, which has no Keychain, opens with the mirror's
+    /// prekeys instead (read-only: a state loaded from it is never saved back).
+    public init(service: String, accessGroup: String?, mirror: ReloWidgetKeyMirror? = .shared, readsMirror: Bool = false) {
         self.service = service
         self.accessGroup = accessGroup
+        self.mirror = mirror
+        self.readsMirror = readsMirror
     }
 
     public func load() throws -> ReloKeyRingState? {
@@ -23,12 +29,17 @@ public struct KeychainKeyRingStore: ReloKeyRingStore {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
+        if status == errSecNotAvailable, readsMirror, let snapshot = mirror?.load() {
+            return ReloKeyRingState(identity: ReloWidgetKeyMirror.noIdentity, prekeys: snapshot.prekeys)
+        }
         guard status == errSecSuccess else { throw CredentialStoreError.keychain(status) }
         guard let data = result as? Data else { throw CredentialStoreError.invalidData }
         return try JSONDecoder().decode(ReloKeyRingState.self, from: data)
     }
 
     public func save(_ state: ReloKeyRingState) throws {
+        guard state.identity != ReloWidgetKeyMirror.noIdentity else { throw CredentialStoreError.invalidData }
+        defer { mirror?.update { $0.prekeys = ReloWidgetKeyMirror.openable(state.prekeys) } }
         let attributes: [String: Any] = [
             kSecValueData as String: try JSONEncoder().encode(state),
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
@@ -69,10 +80,11 @@ public extension ReloKeyRing {
             .flatMap { $0.range(of: #"^[A-Z0-9]{10}\.[A-Za-z0-9.-]+$"#, options: .regularExpression) == nil ? nil : $0 }
     }
 
-    static func live(bundle: Bundle = .main, policy: ReloKeyRingPolicy = .init()) -> ReloKeyRing {
+    static func live(bundle: Bundle = .main, policy: ReloKeyRingPolicy = .init(), readsMirror: Bool = false) -> ReloKeyRing {
         let group = sharedAccessGroup(bundle: bundle)
         let factory: any ReloKeyFactory = ReloSecureEnclaveKeyFactory.isAvailable ? ReloSecureEnclaveKeyFactory() : ReloSoftwareKeyFactory()
-        return ReloKeyRing(store: KeychainKeyRingStore(service: "relo.e2ee", accessGroup: group), factory: factory, policy: policy)
+        return ReloKeyRing(store: KeychainKeyRingStore(service: "relo.e2ee", accessGroup: group, readsMirror: readsMirror),
+                           factory: factory, policy: policy)
     }
 }
 
@@ -82,10 +94,15 @@ public struct KeychainTrustedClientStore: ReloTrustedClientStore {
     public static let account = "e2ee-trusted-clients-v1"
     private let service: String
     private let accessGroup: String?
+    private let mirror: ReloWidgetKeyMirror?
+    private let readsMirror: Bool
 
-    public init(service: String = "relo.e2ee", accessGroup: String?) {
+    public init(service: String = "relo.e2ee", accessGroup: String?, mirror: ReloWidgetKeyMirror? = .shared,
+                readsMirror: Bool = false) {
         self.service = service
         self.accessGroup = accessGroup
+        self.mirror = mirror
+        self.readsMirror = readsMirror
     }
 
     public func load() throws -> [ReloTrustedClient] {
@@ -95,6 +112,7 @@ public struct KeychainTrustedClientStore: ReloTrustedClientStore {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return [] }
+        if status == errSecNotAvailable, readsMirror, let snapshot = mirror?.load() { return snapshot.trusted }
         guard status == errSecSuccess else { throw CredentialStoreError.keychain(status) }
         guard let data = result as? Data else { throw CredentialStoreError.invalidData }
         let decoder = JSONDecoder()
@@ -103,6 +121,7 @@ public struct KeychainTrustedClientStore: ReloTrustedClientStore {
     }
 
     public func save(_ clients: [ReloTrustedClient]) throws {
+        defer { mirror?.update { $0.trusted = clients } }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let attributes: [String: Any] = [
@@ -132,8 +151,9 @@ public struct KeychainTrustedClientStore: ReloTrustedClientStore {
 }
 
 public extension ReloTrustedClients {
-    static func live(bundle: Bundle = .main) -> ReloTrustedClients {
-        ReloTrustedClients(store: KeychainTrustedClientStore(accessGroup: ReloKeyRing.sharedAccessGroup(bundle: bundle)))
+    static func live(bundle: Bundle = .main, readsMirror: Bool = false) -> ReloTrustedClients {
+        ReloTrustedClients(store: KeychainTrustedClientStore(accessGroup: ReloKeyRing.sharedAccessGroup(bundle: bundle),
+                                                             readsMirror: readsMirror))
     }
 }
 
@@ -201,11 +221,16 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
     public static let account = "e2ee-name-book-v1"
     private let service: String
     private let accessGroup: String?
+    private let mirror: ReloWidgetKeyMirror?
+    private let readsMirror: Bool
     private let lock = NSLock()
 
-    public init(service: String = "relo.e2ee", accessGroup: String?) {
+    public init(service: String = "relo.e2ee", accessGroup: String?, mirror: ReloWidgetKeyMirror? = .shared,
+                readsMirror: Bool = false) {
         self.service = service
         self.accessGroup = accessGroup
+        self.mirror = mirror
+        self.readsMirror = readsMirror
     }
 
     private typealias Entry = ReloNames.Entry
@@ -235,12 +260,18 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return [:] }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecNotAvailable, readsMirror, let snapshot = mirror?.load() {
+            return snapshot.names.mapValues { ReloNames.Entry(name: $0, sender: "") }
+        }
+        guard status == errSecSuccess, let data = result as? Data else { return [:] }
         // A book saved before senders were recorded holds plain names; it is replaced from envelopes.
         return (try? JSONDecoder().decode([String: Entry].self, from: data)) ?? [:]
     }
 
     private func save(_ names: [String: Entry]) {
+        guard !readsMirror else { return }
+        mirror?.update { $0.names = names.mapValues(\.name) }
         guard let data = try? JSONEncoder().encode(names) else { return }
         let attributes: [String: Any] = [
             kSecValueData as String: data,
@@ -282,5 +313,87 @@ public enum ReloEncryptionState {
             if let group { query[kSecAttrAccessGroup as String] = group }
             SecItemDelete(query as CFDictionary)
         }
+        ReloWidgetKeyMirror.shared?.update {
+            $0.trusted = []
+            $0.names = [:]
+        }
+    }
+}
+
+/// What the Live Activity widget needs to open sealed cards, kept where it can read it.
+///
+/// The widget process that draws Live Activities has no Keychain at all (`errSecNotAvailable`), so
+/// the Keychain items the app and the Notification Service Extension use can never open a card
+/// there. The app and the extension write this copy whenever they save: the software prekeys'
+/// private halves, the trusted computers and the project names. Never the identity key, which stays
+/// in the Secure Enclave. Like the Keychain items it is readable only after the first unlock since
+/// boot (complete-until-first-authentication), only by Relo and its extensions (the App Group), and
+/// never leaves this iPhone (excluded from backups). Retired prekeys leave it with the key ring.
+public struct ReloWidgetKeyMirror: Sendable {
+    public struct Snapshot: Codable, Equatable, Sendable {
+        public var prekeys: [ReloStoredPrekey] = []
+        public var trusted: [ReloTrustedClient] = []
+        public var names: [String: String] = [:]
+    }
+
+    /// Stands in for the identity in a key ring loaded from the mirror; such a ring is never saved.
+    public static let noIdentity = ReloStoredKey(kind: .software, data: Data(), publicKey: Data())
+
+    public let url: URL
+
+    public init(url: URL) { self.url = url }
+
+    public static let shared: ReloWidgetKeyMirror? = {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "RELOAppGroup") as? String,
+              let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+        return ReloWidgetKeyMirror(url: root.appendingPathComponent("Library/Application Support/Relo/e2ee-widget-v1.json"))
+    }()
+
+    /// Only software prekeys open outside the process that made them.
+    static func openable(_ prekeys: [ReloStoredPrekey]) -> [ReloStoredPrekey] {
+        prekeys.filter { $0.key.kind == .software }
+    }
+
+    public func load() -> Snapshot? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(Snapshot.self, from: data)
+    }
+
+    public func update(_ change: (inout Snapshot) -> Void) {
+        var snapshot = load() ?? Snapshot()
+        let before = snapshot
+        change(&snapshot)
+        guard snapshot != before || !FileManager.default.fileExists(atPath: url.path) else { return }
+        write(snapshot)
+    }
+
+    /// Copies the Keychain's current state; the app calls it at launch so an existing install fills it.
+    public func refresh(ring: ReloKeyRingState?, trusted: [ReloTrustedClient], names: [String: String]) {
+        update {
+            $0.prekeys = Self.openable(ring?.prekeys ?? [])
+            $0.trusted = trusted
+            $0.names = names
+        }
+    }
+
+    private func write(_ snapshot: Snapshot) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(snapshot) else { return }
+        let directory = url.deletingLastPathComponent()
+        #if os(iOS)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                 attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        guard (try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil else { return }
+        #else
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+        #endif
+        var excluded = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? excluded.setResourceValues(values)
     }
 }

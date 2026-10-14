@@ -21,7 +21,7 @@ const offline = {
 const positionals = {
   "notify send": ["Ready"],"notify withdraw": ["ntf_x"],"interaction get": ["int_x"],
   "interaction wait": ["int_x"],"interaction cancel": ["int_x"],"activity update": ["deploy"],"activity end": ["deploy"],
-  "activity get": ["deploy"],"auth switch": ["work"],"activity diagnose": ["deploy"],"keys verify": ["dev_0123456789abcdef"],"keys require": ["on"],"keys strict": ["on"],"keys forget": ["dev_0123456789abcdef"],"delivery reconcile": ["job","retry"],
+  "activity get": ["deploy"],"auth switch": ["work"],"activity diagnose": ["deploy"],"keys verify": ["dev_0123456789abcdef"],"keys approve": ["dev_0123456789abcdef"],"keys remove": ["dev_0123456789abcdef"],"keys require": ["on"],"keys strict": ["on"],"keys forget": ["dev_0123456789abcdef"],"delivery reconcile": ["job","retry"],
 };
 const allOptions = Object.keys(OPTIONS);
 const scratchFile = join(tmpdir(),`relo-schema-test-${process.pid}`);

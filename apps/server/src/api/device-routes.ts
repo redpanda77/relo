@@ -1,5 +1,6 @@
 import { registerActivityUpdateToken } from "../activity-token-registration.js";
 import { announceNewComputer,approveDevice,approveDeviceSchema,declineDevice,pendingDevices,requestDeviceApproval } from "../device-approvals.js";
+import { accountPhones } from "../device-overview.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
 import { browserKeys,linkBrowser,linkBrowserSchema,listLinkedBrowsers,unlinkBrowser } from "../linked-browsers.js";
 import { Hono } from "hono";
@@ -37,7 +38,7 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
     const result = await db.query<any>(
       `WITH scoped AS MATERIALIZED (
          SELECT id,name,installation_id,bundle_identifier,app_version,app_build,
-           os_version,model,apns_environment,notification_authorization,
+           os_version,model,is_simulator,apns_environment,notification_authorization,
            live_activity_authorization,last_seen_at,registered_at,
            to_char(registered_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS registered_at_cursor
          FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
@@ -85,6 +86,14 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
     context.header("cache-control","private, no-store");
     return context.json({ devices: (await pendingDevices(db,auth.principalId,auth.deviceId))
       .map(({ identityKey,...device }) => ({ ...device,identityKey })) });
+  });
+
+  // The account's phones for the iPhone's Devices screen: which ones the server holds as trusted.
+  app.get("/api/devices/self/devices", requireScope("device:self"), async (context) => {
+    const auth = context.get("auth");
+    if (!auth.deviceId) return context.json({ error: "device_credential_required" }, 403);
+    context.header("cache-control","private, no-store");
+    return context.json({ devices: await accountPhones(db,auth.principalId,auth.deviceId) });
   });
 
   app.post("/api/devices/self/approvals", requireScope("device:self"), async (context) => {
@@ -223,6 +232,7 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       notificationAuthorization: "notification_authorization",
       liveActivityAuthorization: "live_activity_authorization",
       liveActivityPushToStartToken: "live_activity_push_to_start_token",
+      isSimulator: "is_simulator",
     };
     for (const [key, column] of Object.entries(mapping)) {
       let value = (input as Record<string, unknown>)[key];

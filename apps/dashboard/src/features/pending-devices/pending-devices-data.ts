@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react"
 
-/** One row of `GET /api/dashboard/pending-devices`: a phone waiting for approval on a trusted phone. */
+/** One row of `GET /api/dashboard/pending-devices`: a phone waiting for approval. */
 export type PendingDevice = {
   deviceId: string
   name: string
   model?: string | null
+  /** "iPhone 17 Pro", or "Simulator". */
+  modelName?: string | null
+  isSimulator?: boolean
   registeredAt: string
   keyId: string
 }

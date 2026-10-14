@@ -31,7 +31,7 @@ import { errorLine, errorText, successLine } from "./output.mjs";
 import { selectSchemaCommands, unknownCommandHint } from "./suggest.mjs";
 import { assertAllowedOptions, assertNoExtra, getAuthenticated, readStdinJson, result } from "./support.mjs";
 
-const VERSION = "0.15.3";
+const VERSION = "0.15.4";
 
 async function executeCommand(parsed, dependencies) {
   const { positionals, options } = parsed;
@@ -297,7 +297,11 @@ export async function run(argv, io = {}, overrides = {}) {
     });
     if (output.command === "help" && !wantsJson) stdout(output.data.help);
     else if (output.command === "version" && !wantsJson) stdout(output.data.version);
-    else {
+    else if (output.text && !structured && !full) {
+      // A person at a terminal gets a readable view (relo keys status); --json keeps the JSON line.
+      stdout(output.text);
+      if (output.message) stderr(output.message);
+    } else {
       // A compact line carries its notices itself when nobody is reading stderr.
       const notice = [output.message, ...(output.notes ?? [])].filter(Boolean).join("; ");
       // Doctor's compact line already says what is wrong in `next.why`; don't repeat it.

@@ -1,25 +1,14 @@
 import { KeyRound, Lock, QrCode as QrIcon } from "lucide-react"
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { browserLinkFor, type BrowserLink, type BrowserLinkState } from "@/lib/e2ee/browser-link"
+import { type BrowserLink, type BrowserLinkState } from "@/lib/e2ee/browser-link"
+import { useBrowserLink } from "@/features/linked-browser/use-browser-link"
 import { LINK_STEPS, LINK_TITLE, linkPayload } from "@/features/linked-browser/link-text"
 import { QrCode } from "@/features/linked-browser/qr-code"
 
 const POLL_MS = 3_000
-const UNAVAILABLE: BrowserLinkState = { status: "unavailable" }
-const noop = () => () => undefined
-
-function useBrowserLink(accountId: string, link?: BrowserLink | null) {
-  const resolved = useMemo(() => (link === undefined ? browserLinkFor(accountId) : link), [accountId, link])
-  const state = useSyncExternalStore(resolved?.subscribe ?? noop, resolved?.getState ?? (() => UNAVAILABLE))
-  useEffect(() => {
-    void resolved?.start()
-  }, [resolved])
-  return { link: resolved, state }
-}
-
 /** Polls the server while the QR code is on screen; reloads the page's data once a phone links it. */
 function useLinkPolling(link: BrowserLink | null, active: boolean, onLinked: () => void) {
   useEffect(() => {

@@ -5,8 +5,8 @@ roadmap describes the current product contract and the next adopter-facing outco
 release evidence and environment-specific operations are intentionally not part of this document.
 
 <!-- current-truth:start -->
-Current baseline: server, worker, and Dashboard `0.16.2`, CLI/notifier/skill `0.15.2`, and iOS
-`0.9.44` build `56` source-only.
+Current baseline: server, worker, and Dashboard `0.16.6`, CLI/notifier/skill `0.15.3`, and iOS
+`0.9.45` build `57` source-only.
 <!-- current-truth:end -->
 
 ## Product contract

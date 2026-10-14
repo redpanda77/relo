@@ -287,15 +287,8 @@ export function DashboardShell({
         </aside>
       </Sidebar>
 
+      {/* On a phone the tab bar is the navigation and each page titles itself: no brand bar on top. */}
       <div data-dashboard-main className="max-w-full min-w-0 flex-1">
-        <header
-          data-mobile-shell-header
-          className="sticky top-0 z-30 flex h-14 items-center justify-center border-b border-white/[0.06] bg-[rgb(8_8_13/0.78)] px-4 backdrop-blur-xl md:hidden"
-        >
-          <a href="/dashboard" aria-label="Relo, Now">
-            <BrandLockup orbClassName="size-6" />
-          </a>
-        </header>
         {children}
       </div>
       <MobileTabBar active={shell.active} needsYou={needsYou} />

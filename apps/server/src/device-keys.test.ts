@@ -91,6 +91,7 @@ suite("device key directory (E2.2)",() => {
       identityKey: { keyId: published.body.keyId,publicKey: device.identity.publicKey,changedAt: expect.any(String) },
       prekey: { ...prekey,stale: false },
       approval: null,
+      simulator: false,
     }]);
     expect(JSON.stringify(listed.body)).not.toMatch(/privateKey|"d":/);
   });

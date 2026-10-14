@@ -48,6 +48,11 @@ public struct ReloKeyRingState: Codable, Equatable, Sendable {
     public var identity: ReloStoredKey
     /// Newest first; the first entry without `retiredAt` is current.
     public var prekeys: [ReloStoredPrekey]
+
+    public init(identity: ReloStoredKey, prekeys: [ReloStoredPrekey]) {
+        self.identity = identity
+        self.prekeys = prekeys
+    }
 }
 
 public protocol ReloKeyRingStore: Sendable {

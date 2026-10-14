@@ -56,6 +56,9 @@ export async function resetAccountUserPassword(input: {
     );
     if (!updated.rowCount) throw new Error("user_not_found");
     await client.query("DELETE FROM auth.sessions WHERE user_id=$1",[input.subject]);
+    // A reset is also the way back for someone who lost their authenticator: they set it up again.
+    await client.query("DELETE FROM auth.two_factors WHERE user_id=$1",[input.subject]);
+    await client.query("UPDATE auth.users SET two_factor_enabled=false WHERE id=$1",[input.subject]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }

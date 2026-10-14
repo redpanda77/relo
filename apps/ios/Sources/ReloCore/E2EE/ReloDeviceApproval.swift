@@ -37,11 +37,17 @@ public struct ReloPendingDevice: Codable, Equatable, Sendable, Identifiable {
     public let keyId: String
     /// Identity public key, base64url X9.63, exactly as the server lists it (it is what gets signed).
     public let identityKey: String
+    /// Optional: servers that know it say whether the device is a simulator.
+    public let isSimulator: Bool?
 
     public var id: String { deviceId }
+    /// "iPhone Air · Simulator", or nil.
+    public var modelLine: String? { ReloDeviceModelName.displayModel(model, isSimulator: isSimulator) }
     public var registeredDate: Date? { ReloKeyRing.date(registeredAt) ?? ISO8601DateFormatter().date(from: registeredAt) }
 
-    public init(deviceId: String, name: String, model: String? = nil, registeredAt: String, keyId: String, identityKey: String) {
+    public init(deviceId: String, name: String, model: String? = nil, registeredAt: String, keyId: String, identityKey: String,
+                isSimulator: Bool? = nil) {
+        self.isSimulator = isSimulator
         self.deviceId = deviceId
         self.name = name
         self.model = model
@@ -50,12 +56,14 @@ public struct ReloPendingDevice: Codable, Equatable, Sendable, Identifiable {
         self.identityKey = identityKey
     }
 
-    /// The name to show: the device's name, else its model, else "A new device".
+    /// The name to show: the device's name (the marketing name when it is just "iPhone"), else its
+    /// model, else "A new device".
     public var displayName: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let friendlyModel = ReloDeviceModelName.displayModel(model).map { $0.replacingOccurrences(of: " · Simulator", with: "") }
+        if ["iphone", "ipad"].contains(trimmed.lowercased()), let friendlyModel, friendlyModel != "Simulator" { return friendlyModel }
         if !trimmed.isEmpty { return trimmed }
-        let model = (model ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return model.isEmpty ? "A new device" : model
+        return friendlyModel.flatMap { $0 == "Simulator" ? nil : $0 } ?? "A new device"
     }
 
     /// A short key id for display: "k_AbCdEfGh…".
