@@ -1,9 +1,13 @@
 // Content filter (plan 2.6): card text is real words, one line, short, and never a path or a secret.
 // One primitive for every producer type; it runs before any request and in --dry-run.
 // A refusal names the rule so the agent rewrites once, and never echoes a matched secret.
-import { UsageError } from "../errors.mjs";
+import { UsageError } from "../shared/errors.mjs";
+import { FACTS } from "../shared/facts.generated.mjs";
 
-export const LIMITS = { goal: 120, label: 80, status: 120, outcome: 200, waiting: 60, detail: 240 };
+const LIMITS = {
+  goal: FACTS.work.goalMax, label: FACTS.work.stepLabelMax, status: FACTS.work.statusMax,
+  outcome: FACTS.work.outcomeMax, waiting: FACTS.work.waitingMax, detail: 240, stepDetail: FACTS.work.detailMax,
+};
 
 const EXAMPLES = '"Run migrations", "Review the diff"';
 
@@ -79,13 +83,15 @@ export function checkText(field, value, { flag = `--${field}`, goal, words = tru
 const OWNER_ACTOR = new RegExp([
   String.raw`^(?:the\s+)?(?:owner|you)(?:'s)?\b`,
   String.raw`^(?:the\s+)?user\s+(?:installs?|verif(?:y|ies)|tests?|approves?|confirms?|reviews?|checks?|tries|try|signs?|opens?|runs?|decides?|merges?|deploys?|restarts?|accepts?|clicks?|taps?)\b`,
-  String.raw`\bwait(?:s|ing)? (?:for|on) (?:the )?(?:owner|user|you|your|approval|sign-?off|review by)\b`,
+  // A step that is itself the wait ("Wait for approval", "then wait on you"); "waiting on you" named as a
+  // state inside a step ("Fix the false waiting on you") is the agent's own work.
+  String.raw`(?:^|\b(?:and|then)\s+)wait(?:s|ing)? (?:for|on) (?:the )?(?:owner|user|you|your|approval|sign-?off|review by)\b`,
   String.raw`\b(?:ask|ping|tell|remind) (?:the )?(?:owner|user)\b`,
   String.raw`\b(?:verify|verifies|test|tests|check|checks|try|tries|confirm|confirms)\b.*\bon (?:my|the|your) (?:i?phone|ipad|watch)\b(?!\s+simulator)`,
   String.raw`\binstall(?:s|ed)?\b.*\bon (?:my|your) (?:i?phone|ipad|watch|device|mac)\b`,
 ].join("|"), "iu");
 
-export const namesOwnerAction = (text) => OWNER_ACTOR.test(String(text ?? "").trim());
+const namesOwnerAction = (text) => OWNER_ACTOR.test(String(text ?? "").trim());
 
 /** Each label through checkText, and no two equal (case-insensitive). */
 export function checkLabels(labels, existing = []) {

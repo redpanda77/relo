@@ -18,7 +18,7 @@ service, idempotency, or callback field:
 
 - raw commands, command arguments, tool names plus inputs, or shell fragments;
 - raw prompts, user messages, full assistant output, transcripts, patches, diffs, or file contents;
-- secrets, access tokens, webhook URLs, authorization headers, environment variables, or config;
+- secrets, access tokens, service secrets, authorization headers, environment variables, or config;
 - absolute paths, hostnames, usernames, or device identifiers not explicitly selected through the
   CLI's device targeting (the CLI attaches the computer name and account nickname itself; never
   repeat them, or any hostname, in card text);
@@ -38,7 +38,7 @@ to make it sendable. Keep wording limited to the status or decision the owner ne
   credential came from the environment.
 - A callback token (`--callback-token-file`) is the receiver's secret for verifying Relo. Read it
   only from a file the user prepared, never inline it, and never print it.
-- Service webhook URLs are bearer secrets. Do not invoke service creation where stdout is captured
+- Service secrets (`hook_…`) are bearer secrets. Do not invoke service creation where stdout is captured
   into a shared transcript. Prefer the authenticated dashboard for secure copy-once handoff.
 - Accept only expected destination URLs: `https:` pages, an app's own scheme, or `shortcuts://`
   (the CLI and server refuse `http:`, `javascript:`, `data:`, `file:`, `blob:`, `about:`). A

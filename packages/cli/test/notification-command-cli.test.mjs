@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execute } from "../src/cli.mjs";
-import { NetworkError } from "../src/errors.mjs";
+import { NetworkError } from "../src/shared/errors.mjs";
 const config={apiUrl:"https://fixture.invalid",token:"notification-capture-fixture"};
 const identity=["--source","Fixture","--project","Fixture","--topic","Fixture"];
 const delivery={eligibleDevices:1,durableCommands:1,apnsJobs:0};

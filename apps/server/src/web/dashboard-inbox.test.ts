@@ -27,6 +27,8 @@ function testDatabase(
     liveActivity?: boolean;
     ordinaryNotification?: boolean;
     requesterKind?: "cli" | "webhook" | "dashboard";
+    /** Collects History's count and list queries, so a test can read the filters it sent. */
+    historyQueries?: Array<{ sql: string; params: unknown[] }>;
   } = {},
 ) {
   return {
@@ -51,14 +53,15 @@ function testDatabase(
           },
         ]);
       }
-      if (
-        sql.includes("AS total FROM notification_events")
-      ) {
-        expect(params.slice(0, 3)).toEqual(
-          options.liveActivity
-            ? [principalId, "live_activity", "ended"]
-            : [principalId, "question", "active"],
-        );
+      if (sql.includes("AS history_source")) {
+        return rows([
+          { history_source: "Test Lab", history_computer: "studio-mac" },
+          { history_source: "Codex", history_computer: "studio-mac" },
+          { history_source: "Codex", history_computer: null },
+        ]);
+      }
+      if (sql.includes("AS total FROM (")) {
+        options.historyQueries?.push({ sql, params });
         return rows([{ total: 32 }]);
       }
       if (sql.includes("SELECT DISTINCT") && sql.includes("AS project")) {
@@ -100,6 +103,7 @@ function testDatabase(
         sql.includes("targets.device_names")
       ) {
         expect(sql).toContain("WHERE logical_rank=1");
+        if (sql.includes("LIMIT $8 OFFSET $9")) options.historyQueries?.push({ sql, params });
         return rows([
           {
             id: eventId,
@@ -395,6 +399,7 @@ function app(
     eventPrincipalId?: string;
     liveActivity?: boolean;
     ordinaryNotification?: boolean;
+    historyQueries?: Array<{ sql: string; params: unknown[] }>;
   } = {},
 ) {
   const application = new Hono();
@@ -502,20 +507,24 @@ describe("dashboard Inbox handlers", () => {
   test("preserves notification filters and clamps pagination", async () => {
     const result = await bootstrap(
       await app().request(
-        "/dashboard/inbox/notifications?project=Kuatzi&kind=question&state=active&page=9",
+        "/dashboard/inbox/notifications?project=Kuatzi&kind=decision&state=answered&page=9",
       ),
     );
     expect(result.kind).toBe("notification-history");
     if (result.kind !== "notification-history") return;
     expect(result.route.filters).toEqual({
-      kind: "question",
-      state: "active",
+      kind: "decision",
+      state: "answered",
       project: "Kuatzi",
+      source: null,
+      computer: null,
+      q: null,
     });
-    expect(result.filterOptions.projects).toEqual([
-      "Relo notifications",
-      "Kuatzi",
-    ]);
+    expect(result.filterOptions).toEqual({
+      projects: ["Relo notifications", "Kuatzi"],
+      sources: ["Codex", "Test Lab"],
+      computers: ["studio-mac"],
+    });
     expect(result.pagination).toMatchObject({
       page: 2,
       pageCount: 2,
@@ -523,8 +532,48 @@ describe("dashboard Inbox handlers", () => {
       nextHref: null,
     });
     expect(result.pagination.previousHref).toBe(
-      "/dashboard/inbox/notifications?kind=question&state=active&project=Kuatzi&page=1",
+      "/dashboard/inbox/notifications?kind=decision&state=answered&project=Kuatzi&page=1",
     );
+  });
+
+  test("filters History by kind, state, source, computer and a literal search on every page", async () => {
+    const historyQueries: Array<{ sql: string; params: unknown[] }> = [];
+    const result = await bootstrap(
+      await app({ historyQueries }).request(
+        "/dashboard/inbox/notifications?kind=live_activity&state=failed&source=Codex&computer=studio-mac&q=50%25_off&page=2",
+      ),
+    );
+    expect(result.kind).toBe("notification-history");
+    if (result.kind !== "notification-history") return;
+    expect(result.route.filters).toEqual({
+      kind: "live_activity", state: "failed", project: null, source: "Codex", computer: "studio-mac", q: "50%_off",
+    });
+    // The count and the page read the same filters, so "n matches" and the pages agree.
+    expect(historyQueries).toHaveLength(2);
+    for (const { sql, params } of historyQueries) {
+      expect(params.slice(0, 7)).toEqual([principalId, "live_activity", "failed", null, "Codex", "studio-mac", "%50\\%\\_off%"]);
+      expect(sql).toContain("kind='live_activity'");
+      expect(sql).toContain("activity_outcome='failed'");
+      // A sealed row matches the search by its source alone: its readable text is a placeholder.
+      expect(sql).toMatch(/source ILIKE \$7 OR \(NOT COALESCE\(event_encrypted,false\)\s+AND NOT COALESCE\(activity_encrypted,false\)/);
+    }
+    expect(historyQueries[1]!.params.slice(7)).toEqual([25, 25]);
+    expect(result.pagination.previousHref).toBe(
+      "/dashboard/inbox/notifications?kind=live_activity&state=failed&source=Codex&computer=studio-mac&q=50%25_off&page=1",
+    );
+  });
+
+  test("ignores unknown filters instead of trusting them", async () => {
+    const historyQueries: Array<{ sql: string; params: unknown[] }> = [];
+    const result = await bootstrap(
+      await app({ historyQueries }).request(
+        "/dashboard/inbox/notifications?kind=question&state=active&source=Elsewhere&computer=other-mac&q=%20%20",
+      ),
+    );
+    if (result.kind !== "notification-history") throw new Error(result.kind);
+    expect(result.route.filters).toEqual({ kind: null, state: null, project: null, source: null, computer: null, q: null });
+    expect(historyQueries[0]!.params).toEqual([principalId, null, null, null, null, null, null]);
+    expect(historyQueries[0]!.sql).toContain("$2::text IS NULL");
   });
 
   test("maps detail response semantics and exposes only validated destinations", async () => {
@@ -546,7 +595,7 @@ describe("dashboard Inbox handlers", () => {
   test("projects canonical Live Activity truth and origin context into history and detail", async () => {
     const history = await bootstrap(
       await app({ liveActivity: true }).request(
-        "/dashboard/inbox/notifications?kind=live_activity&state=ended",
+        "/dashboard/inbox/notifications?kind=live_activity&state=stopped",
       ),
     );
     expect(history.kind).toBe("notification-history");
@@ -629,7 +678,7 @@ describe("dashboard Inbox handlers", () => {
   ])("does not expose unsafe destination %s", async (deepLink) => {
     const history = await bootstrap(
       await app({ deepLink }).request(
-        "/dashboard/inbox/notifications?kind=question&state=active",
+        "/dashboard/inbox/notifications?kind=decision",
       ),
     );
     expect(history.kind).toBe("notification-history");

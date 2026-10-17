@@ -1,6 +1,6 @@
 import Foundation
 
-/// The browsers this phone vouches for (docs/END-TO-END-ENCRYPTION.md, "Linked browsers").
+/// The browsers this phone vouches for (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers").
 /// Computers accept a link signature only while it is less than 14 days old, so the phone re-signs
 /// the links it keeps; unlinking here means the phone stops renewing, whatever the server does.
 /// Only this local list is ever re-signed: the server's list is not trusted for that.

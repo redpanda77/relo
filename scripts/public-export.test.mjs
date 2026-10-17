@@ -5,6 +5,7 @@ import {
   isLicenseOnlyCandidate,
   parseTargetArgument,
   selectPublicPaths,
+  trackedPaths,
 } from "./public-export.mjs";
 
 const manifest = {
@@ -97,4 +98,14 @@ test("target parsing accepts pnpm's optional separator and rejects ambiguity", (
   assert.equal(parseTargetArgument(["--", "/tmp/relo"]), "/tmp/relo");
   assert.equal(parseTargetArgument([]), undefined);
   assert.equal(parseTargetArgument(["one", "two"]), undefined);
+});
+
+test("trackedPaths reads a NUL-separated list in a tree without .git", () => {
+  const read = [];
+  const paths = trackedPaths("/no/git/here", {
+    filesFrom: "/tmp/files",
+    readList: (path) => { read.push(path); return "README.md\0apps/server/src/app.ts\0"; },
+  });
+  assert.deepEqual(paths, ["README.md", "apps/server/src/app.ts"]);
+  assert.deepEqual(read, ["/tmp/files"]);
 });

@@ -161,7 +161,6 @@ struct CurrentStateCacheTests {
         try snapshot.apply(response([item]))
         snapshot.expire(at: time.addingTimeInterval(2)) // deliverUntil was +1, action expiry remains +60.
         #expect(snapshot.subjects[item.id] != nil)
-        #expect(snapshot.freshness(of: item, at: time.addingTimeInterval(31)) == .stale)
     }
 
     @Test func originAccountAndDeviceAreIndependentAndCanonical() async throws {

@@ -1,0 +1,1101 @@
+[
+  {
+    "name": "flat plan, third step current",
+    "plan": {
+      "v": 1,
+      "next": 6,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Reproduce the crash",
+          "startedAt": "2026-10-16T10:01:00.000Z",
+          "doneAt": "2026-10-16T10:02:00.000Z"
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Find the cause",
+          "startedAt": "2026-10-16T10:02:00.000Z",
+          "doneAt": "2026-10-16T10:03:00.000Z"
+        },
+        {
+          "id": "s3",
+          "state": "current",
+          "addedIn": 2,
+          "label": "Patch token refresh",
+          "startedAt": "2026-10-16T10:03:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Run the tests"
+        },
+        {
+          "id": "s5",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Ship"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 2,
+      "total": 5,
+      "currentId": "s3",
+      "current": 3,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 3 of 5 · Patch token refresh",
+    "variants": [
+      {
+        "options": {
+          "paused": true
+        },
+        "text": "Paused at 2 of 5"
+      },
+      {
+        "options": {
+          "ended": "dropped"
+        },
+        "text": "Stopped at 2 of 5"
+      }
+    ]
+  },
+  {
+    "name": "nested, substep in progress",
+    "plan": {
+      "v": 1,
+      "next": 8,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Audit the plan model",
+          "startedAt": "2026-10-16T10:04:00.000Z",
+          "doneAt": "2026-10-16T10:05:00.000Z"
+        },
+        {
+          "id": "s2",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Patch token refresh"
+        },
+        {
+          "id": "s3",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Write the failing test",
+          "parent": "s2",
+          "startedAt": "2026-10-16T10:05:00.000Z",
+          "doneAt": "2026-10-16T10:06:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "current",
+          "addedIn": 2,
+          "label": "Fix the refresh race",
+          "parent": "s2",
+          "startedAt": "2026-10-16T10:06:00.000Z"
+        },
+        {
+          "id": "s5",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Cover the offline case",
+          "parent": "s2"
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Run the tests"
+        },
+        {
+          "id": "s7",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Ship"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 1,
+      "total": 4,
+      "currentId": "s2",
+      "current": 2,
+      "sub": {
+        "done": 1,
+        "total": 3
+      },
+      "state": "moving"
+    },
+    "text": "Step 2 of 4 · Patch token refresh · 1/3"
+  },
+  {
+    "name": "round 2 delivered",
+    "plan": {
+      "v": 1,
+      "next": 5,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Fix the login crash",
+          "startedAt": "2026-10-16T10:07:00.000Z",
+          "doneAt": "2026-10-16T10:08:00.000Z",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Verify",
+          "startedAt": "2026-10-16T10:08:00.000Z",
+          "doneAt": "2026-10-16T10:09:00.000Z",
+          "round": 1
+        },
+        {
+          "id": "s3",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Port the refresh",
+          "round": 2,
+          "startedAt": "2026-10-16T10:11:00.000Z",
+          "doneAt": "2026-10-16T10:12:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Test on device",
+          "round": 2,
+          "startedAt": "2026-10-16T10:12:00.000Z",
+          "doneAt": "2026-10-16T10:13:00.000Z"
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "outcome": "Login fixed",
+          "closedAt": "2026-10-16T10:10:00.000Z"
+        },
+        {
+          "n": 2,
+          "state": "closed",
+          "title": "Expand to iOS",
+          "openedAt": "2026-10-16T10:11:00.000Z",
+          "outcome": "iOS login works",
+          "closedAt": "2026-10-16T10:14:00.000Z"
+        }
+      ]
+    },
+    "expected": {
+      "round": 2,
+      "rounds": 2,
+      "delivered": true,
+      "done": 2,
+      "total": 2,
+      "currentId": null,
+      "current": null,
+      "sub": null,
+      "state": "delivered"
+    },
+    "text": "Round 2 delivered",
+    "variants": [
+      {
+        "options": {
+          "ended": "finished"
+        },
+        "text": "2 of 2 done"
+      }
+    ]
+  },
+  {
+    "name": "round 3 open with nested current",
+    "plan": {
+      "v": 1,
+      "next": 10,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Fix the login crash",
+          "startedAt": "2026-10-16T10:07:00.000Z",
+          "doneAt": "2026-10-16T10:08:00.000Z",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Verify",
+          "startedAt": "2026-10-16T10:08:00.000Z",
+          "doneAt": "2026-10-16T10:09:00.000Z",
+          "round": 1
+        },
+        {
+          "id": "s3",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Port the refresh",
+          "round": 2,
+          "startedAt": "2026-10-16T10:11:00.000Z",
+          "doneAt": "2026-10-16T10:12:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Test on device",
+          "round": 2,
+          "startedAt": "2026-10-16T10:12:00.000Z",
+          "doneAt": "2026-10-16T10:13:00.000Z"
+        },
+        {
+          "id": "s5",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Map the offline paths",
+          "round": 3,
+          "startedAt": "2026-10-16T10:15:00.000Z",
+          "doneAt": "2026-10-16T10:16:00.000Z"
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Queue refreshes while offline",
+          "round": 3
+        },
+        {
+          "id": "s7",
+          "state": "current",
+          "addedIn": 2,
+          "label": "Store the pending refresh",
+          "parent": "s6",
+          "round": 3,
+          "startedAt": "2026-10-16T10:16:00.000Z"
+        },
+        {
+          "id": "s8",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Replay on reconnect",
+          "parent": "s6",
+          "round": 3
+        },
+        {
+          "id": "s9",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Ship",
+          "round": 3
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "outcome": "Login fixed",
+          "closedAt": "2026-10-16T10:10:00.000Z"
+        },
+        {
+          "n": 2,
+          "state": "closed",
+          "title": "Expand to iOS",
+          "openedAt": "2026-10-16T10:11:00.000Z",
+          "outcome": "iOS login works",
+          "closedAt": "2026-10-16T10:14:00.000Z"
+        },
+        {
+          "n": 3,
+          "state": "open",
+          "title": "Cover offline mode",
+          "openedAt": "2026-10-16T10:15:00.000Z"
+        }
+      ]
+    },
+    "expected": {
+      "round": 3,
+      "rounds": 3,
+      "delivered": false,
+      "done": 1,
+      "total": 3,
+      "currentId": "s6",
+      "current": 2,
+      "sub": {
+        "done": 0,
+        "total": 2
+      },
+      "state": "moving"
+    },
+    "text": "Step 2 of 3 · Queue refreshes while offline · 0/2"
+  },
+  {
+    "name": "revised plan, a skipped step is not counted",
+    "plan": {
+      "v": 1,
+      "next": 8,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "A",
+          "startedAt": "2026-10-16T10:17:00.000Z",
+          "doneAt": "2026-10-16T10:18:00.000Z"
+        },
+        {
+          "id": "s5",
+          "state": "current",
+          "addedIn": 2,
+          "label": "B",
+          "startedAt": "2026-10-16T10:19:00.000Z"
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 2,
+          "label": "D"
+        },
+        {
+          "id": "s7",
+          "state": "open",
+          "addedIn": 2,
+          "label": "E"
+        },
+        {
+          "id": "s2",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B",
+          "startedAt": "2026-10-16T10:18:00.000Z",
+          "doneAt": "2026-10-16T10:19:00.000Z"
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "C",
+          "doneAt": "2026-10-16T10:19:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "D",
+          "doneAt": "2026-10-16T10:19:00.000Z"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 1,
+      "total": 4,
+      "currentId": "s5",
+      "current": 2,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 2 of 4 · B"
+  },
+  {
+    "name": "all steps done, not yet delivered",
+    "plan": {
+      "v": 1,
+      "next": 3,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "One",
+          "startedAt": "2026-10-16T10:20:00.000Z",
+          "doneAt": "2026-10-16T10:21:00.000Z"
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Two",
+          "startedAt": "2026-10-16T10:21:00.000Z",
+          "doneAt": "2026-10-16T10:22:00.000Z"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 2,
+      "total": 2,
+      "currentId": null,
+      "current": null,
+      "sub": null,
+      "state": "complete"
+    },
+    "text": "2 of 2 done",
+    "variants": [
+      {
+        "options": {
+          "ended": "finished"
+        },
+        "text": "2 of 2 done"
+      }
+    ]
+  },
+  {
+    "name": "failed work counts the steps it never reached",
+    "plan": {
+      "v": 1,
+      "next": 6,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "One",
+          "startedAt": "2026-10-16T10:23:00.000Z",
+          "doneAt": "2026-10-16T10:24:00.000Z"
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Two",
+          "startedAt": "2026-10-16T10:24:00.000Z",
+          "doneAt": "2026-10-16T10:25:00.000Z"
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "Three",
+          "startedAt": "2026-10-16T10:25:00.000Z",
+          "doneAt": "2026-10-16T11:00:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "Four",
+          "doneAt": "2026-10-16T11:00:00.000Z"
+        },
+        {
+          "id": "s5",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "Five",
+          "doneAt": "2026-10-16T11:00:00.000Z"
+        }
+      ]
+    },
+    "progressOptions": {
+      "stopped": true
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 2,
+      "total": 5,
+      "currentId": null,
+      "current": null,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "2 of 5",
+    "variants": [
+      {
+        "options": {
+          "ended": "failed"
+        },
+        "text": "Stopped at 2 of 5"
+      }
+    ]
+  },
+  {
+    "name": "same failed plan without the stopped option",
+    "plan": {
+      "v": 1,
+      "next": 6,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "One",
+          "startedAt": "2026-10-16T10:23:00.000Z",
+          "doneAt": "2026-10-16T10:24:00.000Z"
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Two",
+          "startedAt": "2026-10-16T10:24:00.000Z",
+          "doneAt": "2026-10-16T10:25:00.000Z"
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "Three",
+          "startedAt": "2026-10-16T10:25:00.000Z",
+          "doneAt": "2026-10-16T11:00:00.000Z"
+        },
+        {
+          "id": "s4",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "Four",
+          "doneAt": "2026-10-16T11:00:00.000Z"
+        },
+        {
+          "id": "s5",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "Five",
+          "doneAt": "2026-10-16T11:00:00.000Z"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 2,
+      "total": 2,
+      "currentId": null,
+      "current": null,
+      "sub": null,
+      "state": "complete"
+    },
+    "text": "2 of 2 done"
+  },
+  {
+    "name": "legacy plan without rounds or times",
+    "plan": {
+      "v": 1,
+      "next": 4,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "Plan"
+        },
+        {
+          "id": "s2",
+          "state": "current",
+          "addedIn": 2,
+          "label": "Build"
+        },
+        {
+          "id": "s3",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Check"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 1,
+      "total": 3,
+      "currentId": "s2",
+      "current": 2,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 2 of 3 · Build"
+  },
+  {
+    "name": "sealed work, labels this device cannot read",
+    "plan": {
+      "v": 1,
+      "next": 6,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2
+        },
+        {
+          "id": "s3",
+          "state": "current",
+          "addedIn": 2
+        },
+        {
+          "id": "s4",
+          "state": "open",
+          "addedIn": 2
+        },
+        {
+          "id": "s5",
+          "state": "open",
+          "addedIn": 2
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 2,
+      "total": 5,
+      "currentId": "s3",
+      "current": 3,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 3 of 5 · Not readable"
+  },
+  {
+    "name": "no plan",
+    "plan": {
+      "v": 1,
+      "next": 1,
+      "steps": []
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 0,
+      "total": 0,
+      "currentId": null,
+      "current": null,
+      "sub": null,
+      "state": "empty"
+    },
+    "text": ""
+  },
+  {
+    "name": "a substep's own progress rolls into its parent step",
+    "plan": {
+      "v": 1,
+      "next": 8,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "open",
+          "addedIn": 1,
+          "label": "Migrate the batches"
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 1,
+          "label": "Batch 1",
+          "parent": "s1",
+          "startedAt": "2026-10-17T10:01:00.000Z",
+          "doneAt": "2026-10-17T10:02:00.000Z"
+        },
+        {
+          "id": "s3",
+          "state": "current",
+          "addedIn": 1,
+          "label": "Batch 2",
+          "parent": "s1",
+          "startedAt": "2026-10-17T10:02:00.000Z",
+          "progress": {
+            "done": 3,
+            "total": 4
+          }
+        },
+        {
+          "id": "s4",
+          "state": "open",
+          "addedIn": 1,
+          "label": "Batch 3",
+          "parent": "s1"
+        },
+        {
+          "id": "s5",
+          "state": "open",
+          "addedIn": 1,
+          "label": "Verify"
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 1,
+          "label": "Switch"
+        },
+        {
+          "id": "s7",
+          "state": "open",
+          "addedIn": 1,
+          "label": "Clean up"
+        }
+      ]
+    },
+    "expected": {
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "done": 0,
+      "total": 4,
+      "currentId": "s1",
+      "current": 1,
+      "sub": {
+        "done": 1,
+        "total": 3
+      },
+      "state": "moving"
+    },
+    "text": "Step 1 of 4 · Migrate the batches · 1/3"
+  },
+  {
+    "name": "a carried round counts the goal: batches 1-2 done, 3-4 carried read Step 3 of 4",
+    "plan": {
+      "v": 1,
+      "next": 7,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "B1",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "addedIn": 2,
+          "label": "B2",
+          "round": 1
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B3",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s4",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B4",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s5",
+          "state": "current",
+          "addedIn": 2,
+          "label": "B3",
+          "round": 2,
+          "carriedFrom": 1
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 2,
+          "label": "B4",
+          "round": 2,
+          "carriedFrom": 1
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "outcome": "Batch 1"
+        },
+        {
+          "n": 2,
+          "state": "open",
+          "title": "Go on"
+        }
+      ]
+    },
+    "expected": {
+      "round": 2,
+      "rounds": 2,
+      "delivered": false,
+      "done": 2,
+      "total": 4,
+      "currentId": "s5",
+      "current": 3,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 3 of 4 · B3"
+  },
+  {
+    "name": "one batch finished and the rest carried reads Step 2 of 4",
+    "plan": {
+      "v": 1,
+      "next": 8,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "B1",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B2",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B3",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s4",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B4",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s5",
+          "state": "current",
+          "addedIn": 2,
+          "label": "B2",
+          "round": 2,
+          "carriedFrom": 1
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 2,
+          "label": "B3",
+          "round": 2,
+          "carriedFrom": 1
+        },
+        {
+          "id": "s7",
+          "state": "open",
+          "addedIn": 2,
+          "label": "B4",
+          "round": 2,
+          "carriedFrom": 1
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "outcome": "Batch 1"
+        },
+        {
+          "n": 2,
+          "state": "open"
+        }
+      ]
+    },
+    "expected": {
+      "round": 2,
+      "rounds": 2,
+      "delivered": false,
+      "done": 1,
+      "total": 4,
+      "currentId": "s5",
+      "current": 2,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 2 of 4 · B2"
+  },
+  {
+    "name": "a chain of carried rounds counts every finished step",
+    "plan": {
+      "v": 1,
+      "next": 7,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "A",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "C",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s4",
+          "state": "done",
+          "addedIn": 2,
+          "label": "B",
+          "round": 2,
+          "carriedFrom": 1
+        },
+        {
+          "id": "s5",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "C",
+          "round": 2,
+          "carriedFrom": 1,
+          "dropped": true
+        },
+        {
+          "id": "s6",
+          "state": "current",
+          "addedIn": 4,
+          "label": "C",
+          "round": 3,
+          "carriedFrom": 2
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "outcome": "A"
+        },
+        {
+          "n": 2,
+          "state": "closed",
+          "outcome": "B"
+        },
+        {
+          "n": 3,
+          "state": "open"
+        }
+      ]
+    },
+    "expected": {
+      "round": 3,
+      "rounds": 3,
+      "delivered": false,
+      "done": 2,
+      "total": 3,
+      "currentId": "s6",
+      "current": 3,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 3 of 3 · C"
+  },
+  {
+    "name": "a round with its own plan counts alone",
+    "plan": {
+      "v": 1,
+      "next": 7,
+      "steps": [
+        {
+          "id": "s1",
+          "state": "done",
+          "addedIn": 2,
+          "label": "A",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "B",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s3",
+          "state": "skipped",
+          "addedIn": 2,
+          "label": "C",
+          "dropped": true,
+          "round": 1
+        },
+        {
+          "id": "s4",
+          "state": "current",
+          "addedIn": 2,
+          "label": "X",
+          "round": 2
+        },
+        {
+          "id": "s5",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Y",
+          "round": 2
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "addedIn": 2,
+          "label": "Z",
+          "round": 2
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "outcome": "A"
+        },
+        {
+          "n": 2,
+          "state": "open"
+        }
+      ]
+    },
+    "expected": {
+      "round": 2,
+      "rounds": 2,
+      "delivered": false,
+      "done": 0,
+      "total": 3,
+      "currentId": "s4",
+      "current": 1,
+      "sub": null,
+      "state": "moving"
+    },
+    "text": "Step 1 of 3 · X"
+  }
+]

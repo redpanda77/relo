@@ -48,7 +48,7 @@ final class NowScreenModelTests: XCTestCase {
 
     func testBlocksFollowSpecOrder() {
         XCTAssertEqual(make(busy()).map(\.id),
-                       ["since", "needs", "fold-waitingOnYou", "running", "fold-quiet", "fold-paused", "sessions"])
+                       ["needs", "waiting", "running", "since", "fold-quiet", "fold-paused", "sessions"])
     }
 
     func testEmptyBlocksAreOmitted() {
@@ -62,7 +62,6 @@ final class NowScreenModelTests: XCTestCase {
             XCTAssertEqual(count, rows.count)
             XCTAssertFalse(open, "\(fold) is closed by default")
             switch fold {
-            case .waitingOnYou: XCTAssertEqual(count, 1)
             case .quiet: XCTAssertEqual(count, 3)
             case .paused: XCTAssertEqual(count, 1)
             case .idle: XCTFail("idle folds live in Sessions")
@@ -70,6 +69,23 @@ final class NowScreenModelTests: XCTestCase {
         }
         let opened = make(busy(), open: ["quiet"])
         XCTAssertTrue(opened.contains { if case .fold(.quiet, _, _, true) = $0 { true } else { false } })
+    }
+
+    /// The owner's turn is shown open, as full work cards: status, plan and where it runs, never a bare row.
+    func testWaitingOnYouIsOpenWorkCards() {
+        var waiting = item("w1", .waitingOnYou, status: "Left on for debugging")
+        waiting.steps = NowItem.Steps(done: 0, total: 10, current: "Reproduce the issue")
+        waiting.computer = "Studio"
+        waiting.topic = "App architecture audit"
+        let blocks = make(NowScreenInput(serverTime: serverTime, sinceYouLooked: nil, waitingOnYou: [waiting]))
+        guard case let .waitingOnYou(rows) = blocks.first else { return XCTFail("Waiting on you is a section, not a fold") }
+        let card = try! XCTUnwrap(rows.first?.card)
+        XCTAssertEqual(card.badge, "Your turn")
+        XCTAssertEqual(card.status, "Left on for debugging")
+        XCTAssertEqual(card.origin, ["Claude Code", "relo", "App architecture audit"])
+        XCTAssertEqual(card.computer, "Studio")
+        XCTAssertEqual(card.caption, "0 of 10 · Reproduce the issue", "the time is the header's, never repeated")
+        XCTAssertEqual(rows.first?.steps?.total, 10)
     }
 
     func testQuietNeverSaysRunningOrFailed() {
@@ -86,36 +102,53 @@ final class NowScreenModelTests: XCTestCase {
     func testSinceLineCopy() {
         func line(_ since: NowSinceInput) -> NowScreenModel.SinceLine {
             NowScreenModel.sinceLine(since, serverTime: serverTime, calendar: calendar, locale: locale)
+                ?? .init(text: "", spoken: "")
         }
         let today = serverTime.addingTimeInterval(-3_600)
         func clock(_ date: Date) -> String { date.formatted(Date.FormatStyle(time: .shortened).locale(locale)) }
         let five = clock(today)
         let all = line(NowSinceInput(since: today, finished: 3, failed: 1, waitingOnYou: 2, stoppedWithoutFinishing: 1))
         XCTAssertEqual(all.text, "Since \(five): 3 finished, 1 failed, 2 waiting on you, 1 stopped without finishing")
-        XCTAssertFalse(all.muted)
         XCTAssertFalse(all.spoken.contains(":  "))
         XCTAssertEqual(line(NowSinceInput(since: today, failed: 2)).text, "Since \(five): 2 failed", "zero parts omitted")
         let yesterday = line(NowSinceInput(since: serverTime.addingTimeInterval(-20 * 3_600), finished: 1))
         XCTAssertEqual(yesterday.text, "Since yesterday \(clock(serverTime.addingTimeInterval(-20 * 3_600))): 1 finished")
         let window = line(NowSinceInput(since: serverTime.addingTimeInterval(-NowScreenModel.defaultWindow), finished: 1))
         XCTAssertEqual(window.text, "In the last 8 hours: 1 finished")
-        let nothing = line(NowSinceInput(since: today))
-        XCTAssertEqual(nothing.text, "Nothing new since \(five).")
-        XCTAssertTrue(nothing.muted)
+        XCTAssertNil(NowScreenModel.sinceLine(NowSinceInput(since: today), serverTime: serverTime,
+                                              calendar: calendar, locale: locale),
+                     "a quiet stretch has no line: the deck's sync status already says it")
+        let quiet = make(NowScreenInput(serverTime: serverTime, sinceYouLooked: NowSinceInput(since: today)))
+        XCTAssertFalse(quiet.contains { $0.id == "since" }, "nothing new and nothing recent: no since section")
     }
 
     func testRecentShowsThreeThenMore() {
         var input = busy()
         input.recent = (1...7).map { item("r\($0)", .done) }
-        guard case let .sinceYouLooked(_, _, _, recent, more) = make(input).first else { return XCTFail("since first") }
+        guard case let .sinceYouLooked(_, _, recent, more) = make(input).first(where: { $0.id == "since" }) else { return XCTFail("since first") }
         XCTAssertEqual(recent.count, 3)
         XCTAssertEqual(more, 4)
-        guard case let .sinceYouLooked(_, _, _, all, none) = make(input, open: ["recent"]).first else { return XCTFail() }
+        guard case let .sinceYouLooked(_, _, all, none) = make(input, open: ["recent"]).first(where: { $0.id == "since" }) else { return XCTFail() }
         XCTAssertEqual(all.count, 7)
         XCTAssertEqual(none, 0)
         let left = NowScreenModel.recentRow(item("l", .leftUnfinished), locale: locale)
         XCTAssertEqual(left.chip, "STOPPED WITHOUT FINISHING")
         XCTAssertTrue(left.lines[0].hasPrefix("last update "))
+    }
+
+    func testPausedQuietAndSettledWorkUseTheSharedCard() {
+        var paused = item("p", .paused, status: "Waiting for the review")
+        paused.steps = NowItem.Steps(done: 2, total: 12, current: "Inspect the push payload")
+        let row = NowScreenModel.pausedRow(paused, locale: locale)
+        XCTAssertEqual(row.card?.badge, "Paused")
+        XCTAssertEqual(row.card?.ownerState, .paused)
+        XCTAssertEqual(row.card?.status, "Waiting for the review")
+        XCTAssertEqual(row.card?.caption, "2 of 12 · Inspect the push payload")
+        XCTAssertEqual(row.card?.at, paused.evidenceAt)
+        XCTAssertEqual(row.steps, paused.steps)
+        XCTAssertEqual(NowScreenModel.quietRow(item("q", .stale), now: serverTime, locale: locale).card?.badge, "Quiet")
+        XCTAssertEqual(NowScreenModel.recentRow(item("d", .done), locale: locale).card?.badge, "Done")
+        XCTAssertEqual(NowScreenModel.recentRow(item("l", .leftUnfinished), locale: locale).card?.badge, "Left unfinished")
     }
 
     func testMissedQuestionCarriesLateAnswerFootnote() {
@@ -149,8 +182,8 @@ final class NowScreenModelTests: XCTestCase {
         input.running.append(item("w1", .moving))
         let ids = make(input).flatMap { block -> [String] in
             switch block {
-            case let .needsYou(rows), let .running(_, rows), let .fold(_, _, rows, _): rows.map(\.id)
-            case let .sinceYouLooked(_, _, _, rows, _): rows.map(\.id)
+            case let .needsYou(rows), let .waitingOnYou(rows), let .running(_, rows), let .fold(_, _, rows, _): rows.map(\.id)
+            case let .sinceYouLooked(_, _, rows, _): rows.map(\.id)
             case .sessions: []
             }
         }
@@ -188,8 +221,8 @@ final class NowScreenModelTests: XCTestCase {
                                   session("d", computer: "S", phase: .idle),
                                   session("e", computer: "S", phase: .ended),
                                   session("f", computer: "S", phase: nil)]).groups[0].rows
-        XCTAssertEqual(Array(rows.map(\.chip).prefix(5)), ["working", "needs your input", "your turn", "idle", "ended"])
-        XCTAssertTrue(rows[5].chip.hasPrefix("last seen"), rows[5].chip)
+        XCTAssertEqual(Array(rows.map(\.chip).prefix(5)), ["Working", "Needs your input", "Your turn", "Idle", "Ended"])
+        XCTAssertTrue(rows[5].chip.hasPrefix("Last seen"), rows[5].chip)
     }
 
     func testSessionLinksToItsWork() {

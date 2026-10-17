@@ -53,7 +53,6 @@ struct CurrentPresentationTests {
         let state = try state([decision, progress])
         let screen = CurrentInboxPresentation(state: state, now: now)
         #expect(screen.needsMe.count == 1)
-        #expect(CurrentInboxPresentation.freshnessLabel(for: progress, now: now) == "Out of date")
         let identity = try #require(CurrentDecisionIdentity(subject: decision, scope: state.scope.storage))
         #expect(CurrentInboxPresentation.availability(for: identity, state: state, now: now) == .available)
     }

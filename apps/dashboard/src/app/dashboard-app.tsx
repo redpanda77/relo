@@ -1,3 +1,4 @@
+import { MotionConfig } from "motion/react"
 import { lazy, Suspense, type ReactNode } from "react"
 
 import type { DashboardBootstrap } from "@/app/bootstrap"
@@ -5,9 +6,7 @@ import {
   loadAccountPage,
   loadActivityHistoryPage,
   loadConnectionsFeature,
-  loadDocumentationPage,
   loadInboxFeature,
-  loadProjectsPage,
   loadTestLabPage,
 } from "@/app/dashboard-page-loaders"
 import { RouteLoadingFallback } from "@/app/route-loading-fallback"
@@ -18,25 +17,36 @@ import {
   createHttpTestLabService,
   type TestLabService,
 } from "@/services/test-lab-service"
+import { startHeartbeat } from "@/lib/heartbeat"
+
+// Every breathing loop on one phase-locked beat, from the first frame.
+startHeartbeat()
 
 const LandingPage = lazy(() =>
   import("@/features/landing/landing-page").then((module) => ({ default: module.LandingPage }))
 )
 const AccountPage = lazy(loadAccountPage)
 const ConnectionsFeature = lazy(loadConnectionsFeature)
-const DocumentationPage = lazy(loadDocumentationPage)
+const DocsSite = lazy(() => import("@/features/docs/docs-site").then((module) => ({ default: module.DocsSite })))
 const InboxFeature = lazy(loadInboxFeature)
-const ProjectsPage = lazy(loadProjectsPage)
 const ActivityHistoryPage = lazy(loadActivityHistoryPage)
 const TestLabPage = lazy(loadTestLabPage)
 
-export function DashboardApp({
-  bootstrap,
-  service,
-}: {
+type DashboardAppProps = {
   bootstrap: DashboardBootstrap
   service?: TestLabService
-}) {
+}
+
+/** The app under one motion config: every `motion` animation honours the system's reduced motion. */
+export function DashboardApp(props: DashboardAppProps) {
+  return (
+    <MotionConfig reducedMotion="user">
+      <DashboardRoutes {...props} />
+    </MotionConfig>
+  )
+}
+
+function DashboardRoutes({ bootstrap, service }: DashboardAppProps) {
   if (bootstrap.kind === "auth" && bootstrap.view === "landing")
     return (
       <LandingBoundary>
@@ -46,6 +56,13 @@ export function DashboardApp({
       </LandingBoundary>
     )
   if (bootstrap.kind === "auth") return <AuthPage bootstrap={bootstrap} />
+  // The public docs keep the server's article on screen until the layout is ready (no flash of a spinner).
+  if (bootstrap.kind === "docs")
+    return (
+      <Suspense fallback={null}>
+        <DocsSite bootstrap={bootstrap} />
+      </Suspense>
+    )
 
   let content: ReactNode
   switch (bootstrap.kind) {
@@ -66,17 +83,11 @@ export function DashboardApp({
     case "account":
       content = <AccountPage initial={bootstrap} />
       break
-    case "docs":
-      content = <DocumentationPage initial={bootstrap} />
-      break
     case "inbox-overview":
     case "notification-history":
     case "delivery-history":
     case "notification-detail":
       content = <InboxFeature bootstrap={bootstrap} />
-      break
-    case "projects":
-      content = <ProjectsPage bootstrap={bootstrap} />
       break
     default:
       content = bootstrap satisfies never

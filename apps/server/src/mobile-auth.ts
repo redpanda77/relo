@@ -4,7 +4,7 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import type { AccountAuth } from "./account-auth.js";
 import { getAccountSession } from "./account-auth.js";
-import { hashToken } from "./auth.js";
+import { issueDeviceCredential } from "./credentials/device.js";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
 import { registerDeviceSchema } from "./schemas.js";
@@ -155,8 +155,7 @@ export function registerMobileAccountRoutes(
       );
       const row = device.rows[0]!;
       const accessToken = registrationToken(credentialDerivationSecret, account.principalId, row.id, row.credential_version, idempotencyKey);
-      await client.query("UPDATE device_credentials SET revoked_at=now() WHERE device_id=$1 AND revoked_at IS NULL", [row.id]);
-      await client.query("INSERT INTO device_credentials(device_id,token_hash) VALUES ($1,$2)", [row.id, hashToken(accessToken)]);
+      await issueDeviceCredential(client,row.id,accessToken);
       await client.query(
         `INSERT INTO device_registration_idempotency(principal_id,idempotency_key,request_hash,device_id,credential_version,issued_at)
          VALUES ($1,$2,$3,$4,$5,$6)`,

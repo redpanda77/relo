@@ -58,6 +58,7 @@ PY
 fi
 
 node "$RELO_REPOSITORY_ROOT/scripts/check-ios-boundaries.mjs"
+node "$RELO_REPOSITORY_ROOT/scripts/check-ios-design-system.mjs"
 
 cd "$RELO_REPOSITORY_ROOT/apps/ios"
 xcodegen generate

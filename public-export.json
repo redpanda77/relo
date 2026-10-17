@@ -39,7 +39,8 @@
   ],
   "excludedPrefixes": [
     "docs/internal/",
-    "apps/dashboard/.impeccable/"
+    "apps/dashboard/.impeccable/",
+    "apps/notch/"
   ],
   "requiredFiles": [
     "LICENSE",

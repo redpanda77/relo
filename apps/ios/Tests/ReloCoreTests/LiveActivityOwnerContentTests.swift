@@ -67,19 +67,19 @@ struct LiveActivityOwnerContentTests {
         #expect(zero.needsYouCount == nil)
     }
 
-    @Test("DOGFOOD #9: with steps the island shows the step's own count, else step n/m, never a card percent")
+    @Test("DOGFOOD #9: with steps the island shows done/total of the plan, never a card percent")
     func oneNumberInTheIsland() {
         let card = LiveActivityPresentation.Component.progressBar(id: "progress", colorRole: .project, value: 0.67, label: "Build")
         for surface in [LiveActivityPresentation.Surface.compactTrailing, .minimal] {
             let position = LiveActivitySurfaceProjection.make(
                 presentation: presentation([steps(done: 1, total: 8), card]), surface: surface, now: now)
-            #expect(position.fact == .stages(2, 8), "step 2 of 8, not 67%")
+            #expect(position.fact == .stages(1, 8), "1 of 8 done, not 67%")
         }
         let counted = LiveActivityPresentation.Component.progressBar(id: "progress", colorRole: .project, value: 0.67,
                                                                      label: "Build slice 1 · 6 of 9")
         let own = LiveActivitySurfaceProjection.make(
             presentation: presentation([steps(done: 1, total: 8), counted]), surface: .compactTrailing, now: now)
-        #expect(own.fact == .stages(6, 9), "the current step's own count wins")
+        #expect(own.fact == .stages(1, 8), "the plan count, never the step's own count")
         let plain = LiveActivitySurfaceProjection.make(presentation: presentation([card]), surface: .compactTrailing, now: now)
         if case .percentage = plain.fact {} else { Issue.record("a card without steps keeps its measured percent") }
     }

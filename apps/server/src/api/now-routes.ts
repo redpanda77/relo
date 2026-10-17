@@ -1,6 +1,7 @@
 import { OWNER_STATE_TIMING,nowQuerySchema,type NowItem,type NowSummary } from "@relo/notification-contracts";
 import type { Hono } from "hono";
-import { agentSessionRowsSql,hooklessSessionRows,sessionsViewRows } from "../agent-sessions.js";
+import { agentSessionRowsSql } from "../agent-sessions.js";
+import { hooklessSessionRows,sessionsViewRows } from "../derive/sessions-view.js";
 import { requireScope } from "../auth.js";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
@@ -22,12 +23,17 @@ export function registerNowRoutes(app: Hono,shared: ApiRouteContext): void {
     const query = nowQuerySchema.safeParse(context.req.query());
     if (!query.success) return context.json({ error: "invalid_since" },400);
     context.header("Cache-Control","no-store");
-    return context.json(await loadNowSummary(db,auth.principalId,auth.deviceId,query.data.since));
+    return context.json(await loadNowSummary(db,auth.principalId,auth.deviceId,query.data.since,
+      { ownerOverview: auth.ownerOverview }));
   });
 }
 
+/**
+ * `deviceId` picks the reader's own envelopes; an `ownerOverview` device (owner-overview.ts) sees the
+ * whole account's Now, like the Dashboard, yet still gets only the envelopes it is a recipient of.
+ */
 export async function loadNowSummary(db: Pick<Database,"query">,principalId: string,deviceId: string | undefined,
-  sinceParam: string | undefined): Promise<NowSummary> {
+  sinceParam: string | undefined,options: { ownerOverview?: boolean | undefined } = {}): Promise<NowSummary> {
   const clock = await db.query<{ now: Date; sessions: any[] }>(
     `SELECT statement_timestamp() AS now,${agentSessionRowsSql("$1::uuid")} AS sessions`,[principalId]);
   const now = clock.rows[0]?.now ?? new Date();
@@ -36,15 +42,17 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
   const floor = now.valueOf() - OWNER_STATE_TIMING.historySeconds * 1000;
   const since = new Date(Math.min(now.valueOf(),Math.max(floor,sinceParam ? Date.parse(sinceParam) : floor)));
 
-  const works = await loadOwnerStateInputs(db,principalId,"visible",now,deviceId);
+  const works = await loadOwnerStateInputs(db,principalId,"visible",now,{ deviceId,ownerOverview: options.ownerOverview });
   const sessionIdByKey = new Map<string,string>(sessionRows.map((row) => [row.session_hash,publicId("ags",row.id)]));
   const items: NowItem[] = works.map((work) => ({
     id: work.id,
     title: work.title,
     status: work.status,
     sourceName: work.sourceName,
+    ...(work.computerIcon ? { computerIcon: work.computerIcon } : {}),
     project: work.project,
     steps: work.steps,
+    progress: work.planProgress,
     producer: work.producer,
     sessionId: work.sessionKey ? sessionIdByKey.get(work.sessionKey) ?? null : null,
     notificationId: work.notificationId,
@@ -61,7 +69,8 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
   // A hookless session gets a row only while it has a live work (never show trash).
   const hookless = hooklessSessionRows(works.flatMap((work) => work.producer === "agent_session" && work.sessionKey && work.workOpen
     ? [{ id: work.id.replace(/^act_/,""),sessionKey: work.sessionKey,declaredAt: work.declaredAt,active: work.active,
-      source: work.sourceName,project: work.project,computer: work.computer }] : []),reported,now);
+      source: work.sourceName,project: work.project,computer: work.computer,
+      ...(work.computerIcon ? { computerIcon: work.computerIcon } : {}) }] : []),reported,now);
   // Work items name their hookless session row too.
   for (const row of hookless) {
     const key = works.find((work) => work.id === row.id)?.sessionKey;
@@ -71,7 +80,7 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
 }
 
 /**
- * The phone's envelopes for one Now item (docs/END-TO-END-ENCRYPTION.md "Phone surfaces"): the card's
+ * The phone's envelopes for one Now item (docs/ENCRYPTION-PROTOCOL.md "Phone surfaces"): the card's
  * current content envelope and its pending or missed question's, each only when this phone is a
  * recipient. Phones only; `{}` when neither exists, so the field is absent.
  */

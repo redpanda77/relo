@@ -26,6 +26,25 @@ struct OwnerStateFixtureTests {
         #expect(try fixture() == Data(contentsOf: contracts))
     }
 
+    @Test func computerIconsDecodeOnItemsSessionsAndClientKeys() throws {
+        struct Fixture: Decodable { let nowSummary: NowSummary }
+        let summary = try ReloWireJSON.decoder().decode(Fixture.self, from: fixture()).nowSummary
+        #expect(summary.needsYou.first?.computerIcon == .laptop)
+        #expect(summary.sessions.sessions.compactMap(\.computerIcon) == [.laptop, .desktop])
+        #expect(summary.sessions.sessions.last?.computerIcon == nil)
+        // An icon this build does not know reads as a laptop; a server that sends none leaves it nil.
+        let future = try JSONDecoder().decode(ReloClientKey.self, from: Data(
+            #"{"clientId":"key_a","name":"Box","keyId":"k","publicKey":"p","changedAt":"x","icon":"spaceship"}"#.utf8))
+        #expect(future.icon == .laptop)
+        let older = try JSONDecoder().decode(ReloClientKey.self, from: Data(
+            #"{"clientId":"key_a","name":"Box","keyId":"k","publicKey":"p","changedAt":"x"}"#.utf8))
+        #expect(older.icon == nil)
+        let server = try JSONDecoder().decode(ReloClientKey.self, from: Data(
+            #"{"clientId":"key_a","name":"Box","keyId":"k","publicKey":"p","changedAt":"x","icon":"server"}"#.utf8))
+        #expect(server.icon == .server && server.icon?.systemImageName == "server.rack")
+        #expect(ComputerIcon.allCases.map(\.rawValue) == ["laptop", "desktop", "server", "cloud", "terminal", "build"])
+    }
+
     @Test func unknownStateDecodes() throws {
         let state = try JSONDecoder().decode(OwnerState.self, from: Data(#""future_state""#.utf8))
         #expect(state == .unknown("future_state"))

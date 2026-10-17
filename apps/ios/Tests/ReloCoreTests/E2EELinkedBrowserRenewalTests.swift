@@ -209,6 +209,8 @@ private actor StubLinker: BrowserLinking {
     }
 
     func unlinkBrowser(credential: DeviceCredential, browserID: String) async throws {}
+    func browserLinkRequests(credential: DeviceCredential) async throws -> [ReloPendingBrowser] { [] }
+    func declineBrowserLinkRequest(credential: DeviceCredential, browserID: String) async throws {}
 }
 
 private final class MemoryKeyRingStore: ReloKeyRingStore, @unchecked Sendable {

@@ -4,11 +4,12 @@ import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { runKeysCommand } from "../src/commands/keys.mjs";
-import { b64u, generateKeyPair, keyId, prekeySigningInput, safetyNumber, signBytes } from "../src/e2ee.mjs";
-import { ensureIdentity, keyStorePath, loadKeyStore } from "../src/keystore.mjs";
+import { runKeysCommand } from "../src/owner/keys.mjs";
+import { b64u, generateKeyPair, keyId, prekeySigningInput, safetyNumber, signBytes } from "../src/crypto/e2ee.mjs";
+import { ensureIdentity, keyStorePath, loadKeyStore } from "../src/crypto/keystore.mjs";
 
-const apiUrl = "https://relo.example";
+// A private server: strict mode is off unless a test turns it on (on a public address it defaults on).
+const apiUrl = "https://relo.internal";
 
 function phone(name = "Owner iPhone", deviceId = "dev_00000000-0000-4000-8000-000000000001") {
   const identity = generateKeyPair();
@@ -44,8 +45,8 @@ function harness({ devices, tty = false, answer = false }) {
     endToEndPolicy: async () => ({ required: true, mode: "auto" }),
     setEndToEndPolicy: async (required) => ({ required: required !== false, mode: required === null ? "auto" : required ? "on" : "off" }),
   };
-  const run = (action, rest = [], overrides = {}) => runKeysCommand({
-    group: "keys", action, rest, options: {}, dependencies: { ...dependencies, ...overrides }, client, config: { apiUrl },
+  const run = (action, rest = [], overrides = {}, config = { apiUrl }) => runKeysCommand({
+    group: "keys", action, rest, options: {}, dependencies: { ...dependencies, ...overrides }, client, config,
   });
   return { folder, published, printed, state, run, storePath: join(folder, "e2ee.json"),
     cleanup: () => rmSync(folder, { recursive: true, force: true }) };
@@ -70,6 +71,22 @@ test("status creates a private identity, publishes it once and trusts the accoun
   }
 });
 
+test("a new sign-in on the same server publishes the identity again (the server keeps it per credential)", async () => {
+  const device = phone();
+  const h = harness({ devices: [device.resource] });
+  try {
+    await h.run("status", [], {}, { apiUrl, token: "relo_first_credential_token_0123456789abcdef" });
+    await h.run("status", [], {}, { apiUrl, token: "relo_first_credential_token_0123456789abcdef" });
+    assert.equal(h.published.length, 1, "the same credential publishes once");
+    await h.run("status", [], {}, { apiUrl, token: "relo_second_credential_token_0123456789abcdef" });
+    assert.equal(h.published.length, 2, "a new credential publishes again");
+    const store = await loadKeyStore(h.storePath);
+    assert.ok(!JSON.stringify(store).includes("relo_second_credential_token"), "the store never holds the token");
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("a changed security code is trusted again with a notice, unless strict mode holds it", async () => {
   const device = phone();
   const h = harness({ devices: [device.resource], tty: true, answer: true });
@@ -82,7 +99,7 @@ test("a changed security code is trusted again with a notice, unless strict mode
     assert.equal(changed.notice.kind, "security_code_changed");
     assert.equal(changed.notice.previousKeyId, device.resource.identityKey.keyId);
 
-    assert.deepEqual((await h.run("strict", ["on"])).data, { strict: true, changed: true });
+    assert.deepEqual((await h.run("strict", ["on"])).data, { strict: true, source: "set", changed: true });
     h.state.devices = [phone("Owner iPhone", device.resource.deviceId).resource];
     assert.equal((await h.run("status")).data.devices[0].trust, "changed", "strict mode does not re-trust");
     await assert.rejects(h.run("strict", ["off"], { stdinIsTTY: false }), (error) => error.code === "PERSON_REQUIRED");

@@ -116,8 +116,9 @@ test("no prompt, tool name or IO, message or transcript path ever reaches the ou
   for (const request of box.requests) {
     assert.equal(request.route, "/api/agent-sessions/observed");
     for (const key of Object.keys(request.body)) {
-      assert.ok(["session", "harness", "phase", "phaseSince", "lastSeenAt", "openToolSince", "seq", "project", "computer", "account", "sealedNames"].includes(key), key);
+      assert.ok(["session", "harness", "phase", "phaseSince", "lastSeenAt", "openToolSince", "seq", "project", "computer", "account", "sealedNames", "endReason", "heartbeat"].includes(key), key);
     }
+    if ("endReason" in request.body) assert.ok(["hook", "gone", "mcp"].includes(request.body.endReason), request.body.endReason);
   }
 });
 
@@ -131,7 +132,11 @@ async function allFiles(directory) {
   return out;
 }
 
-test("a hook returns at once with the network down: p95 under 50 ms", async () => {
+// scripts/gates.sh runs the CLI suite beside other gates with this set, then runs this wall-clock test alone.
+const deferTiming = process.env.RELO_GATES_DEFER_TIMING === "1"
+  && "deferred: scripts/gates.sh runs this test alone after the parallel gates";
+
+test("a hook returns at once with the network down: p95 under 50 ms", { skip: deferTiming }, async () => {
   const down = () => { throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }); };
   const box = await hookBox({ respond: down });
   const cycle = [["UserPromptSubmit", "prompt", {}], ["PreToolUse", "tool-start", { tool_use_id: "t" }],

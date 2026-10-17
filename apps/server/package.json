@@ -1,6 +1,6 @@
 {
   "name": "@relo/server",
-  "version": "0.18.15",
+  "version": "0.18.79",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,7 +21,7 @@
     "start": "node dist/index.js",
     "worker": "node dist/worker.js",
     "migrate": "tsx src/migrate.ts",
-    "provision-key": "node dist/provision-key.js",
+    "register-login-hash": "node dist/credentials/register-hash.js",
     "recover-owner-password": "node dist/recover-owner-password.js",
     "apns-operations": "node dist/apns-operations-cli.js",
     "notification-retention": "node dist/notification-retention-cli.js",
@@ -30,7 +30,9 @@
     "pretypecheck": "pnpm --filter @relo/notification-contracts build && pnpm run build:dashboard",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @relo/notification-contracts build && pnpm run build:dashboard",
-    "test": "vitest run --no-file-parallelism"
+    "test": "vitest run --no-file-parallelism",
+    "docs:build": "node docs-build/write.mjs",
+    "docs:preview": "tsx docs-build/preview.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",
@@ -44,6 +46,7 @@
     "@relo/dashboard": "workspace:*",
     "@types/node": "^22.18.1",
     "@types/pg": "^8.15.5",
+    "markdown-it": "14.1.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

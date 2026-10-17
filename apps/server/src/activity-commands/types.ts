@@ -1,3 +1,4 @@
+import type { ComputerIcon } from "@relo/notification-contracts";
 import type { z } from "zod";
 import type { ActivityDeliverySummary,activityEndSchema,activityUpdateSchema,ApnsMode } from "../activities.js";
 import type { EffectivePresentationPolicy } from "../presentation-policy.js";
@@ -14,8 +15,11 @@ type CommandIdentity = {
   allowEmptyTargets?: true; activityId: string; idempotencyKey: string | undefined; requestHash: string; apnsMode: ApnsMode;
 };
 export type ActivityCommand = CommandIdentity & (
-  | { operation: "update"; input: z.infer<typeof activityUpdateSchema>; policy: EffectivePresentationPolicy; ownerLease?: {idleSeconds:number;hardSeconds:number;staleSeconds:number} }
-  | { operation: "end"; input: z.infer<typeof activityEndSchema> }
+  | { operation: "update"; input: z.infer<typeof activityUpdateSchema>; policy: EffectivePresentationPolicy; computerIcon?: ComputerIcon | undefined;
+      /** The owner changed how cards look, not the producer: the card is re-shown but not re-declared (freshness stays). */
+      appearanceOnly?: true; ownerLease?: {idleSeconds:number;hardSeconds:number;staleSeconds:number} }
+  /** stopped: the work was paused or dropped, not finished; its card keeps the step it reached. */
+  | { operation: "end"; input: z.infer<typeof activityEndSchema>; stopped?: true }
 );
 export type ActivityCommandResult =
   | { kind: "applied" | "replayed"; activity: ActivitySnapshot; delivery: ActivityDeliverySummary; dismissAfterSeconds: number | null; projection?: Awaited<ReturnType<typeof import("./dashboard-projection.js").createDashboardActivityEvent>> }

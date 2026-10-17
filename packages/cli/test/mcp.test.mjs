@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
-import { cardKey } from "../src/identity.mjs";
-import { SUPPORTED_PROTOCOLS, TOOLS, serveMcp, sourceFromClient, validateArguments } from "../src/mcp.mjs";
+import { cardKey } from "../src/messages/card-context.mjs";
+import { SUPPORTED_PROTOCOLS, TOOLS, TOOL_SPECS, serveMcp, sourceFromClient, toolArgv, validateArguments } from "../src/agent/mcp.mjs";
 import { cardDependencies, fakeCards } from "./fake-cards.mjs";
 
 const box = mkdtempSync(join(tmpdir(), "relo-mcp-"));
@@ -36,6 +36,14 @@ function connect({ client, env = {}, interval = 20 } = {}) {
     const state = () => ({ open: mine.find((w) => w.lifecycle === "open") ?? null, parked: mine.filter((w) => w.lifecycle === "paused") });
     if (method === "GET") return state();
     if (path === "/api/session/works") {
+      const delivered = mine.find((w) => w.lifecycle === "open" && w.plan.rounds?.at(-1)?.state === "closed");
+      if (delivered && body.round) {
+        const n = delivered.plan.rounds.length + 1;
+        const added = (body.plan?.steps ?? []).map((step, i) => ({ id: `s${delivered.plan.next + i}`, label: step.label, state: i === 0 ? "current" : "open", addedIn: 2, round: n }));
+        delivered.plan = { ...delivered.plan, next: delivered.plan.next + added.length, steps: [...delivered.plan.steps, ...added], rounds: [...delivered.plan.rounds, { n, state: "open", title: body.round.readable }] };
+        delivered.version += 1;
+        return { work: view(delivered), disposition: "round_opened", parked: [], replayed: false, ignored: [] };
+      }
       const steps = (body.plan?.steps ?? []).map((step, i) => ({ id: `s${i + 1}`, label: step.label, state: i === 0 ? "current" : "open", addedIn: 1 }));
       const work = { id: `wrk_${String(fake.works.length + 1).padStart(8, "0")}`, sessionKey, lifecycle: "open", version: 1, goal: body.goal.readable,
         status: body.status?.readable ?? null, plan: { version: 1, next: steps.length + 1, complete: false, steps }, progress: body.progress ?? null };
@@ -44,6 +52,11 @@ function connect({ client, env = {}, interval = 20 } = {}) {
     }
     const work = mine.find((w) => path.includes(w.id));
     if (!work) throw Object.assign(new Error("Work not found in this session."), { status: 404 });
+    if (path.endsWith("/deliver")) {
+      work.plan = { ...work.plan, steps: work.plan.steps.map((step) => ({ ...step, round: 1, state: step.state === "current" ? "done" : step.state === "open" ? "skipped" : step.state })), rounds: [{ n: 1, state: "closed", outcome: body.outcome.readable }] };
+      work.version += 1;
+      return { work: view(work), disposition: "delivered", parked: [], replayed: false, ignored: [] };
+    }
     if (path.endsWith("/finish")) Object.assign(work, { lifecycle: "finished", result: body.result, outcome: body.outcome.readable });
     else if (body?.plan?.op === "next") {
       const current = work.plan.steps.find((step) => step.state === "current");
@@ -121,11 +134,11 @@ test("initialize echoes a supported protocol version and otherwise offers the la
   await mcp.close();
 });
 
-test("tools/list names the eight tools, carries the rules and marks the annotations", async () => {
+test("tools/list names the ten tools, carries the rules and marks the annotations", async () => {
   const mcp = connect();
   await mcp.initialize();
   const { tools } = (await mcp.request("tools/list")).result;
-  assert.deepEqual(tools.map((tool) => tool.name), ["relo_work_start", "relo_work_update", "relo_work_finish", "relo_work_state", "relo_ask", "relo_interaction_wait", "relo_notify", "relo_doctor"]);
+  assert.deepEqual(tools.map((tool) => tool.name), ["relo_work_start", "relo_work_update", "relo_work_deliver", "relo_work_handoff", "relo_work_finish", "relo_work_state", "relo_ask", "relo_interaction_wait", "relo_notify", "relo_doctor"]);
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   assert.equal(byName.relo_doctor.annotations.readOnlyHint, true);
   for (const name of ["relo_work_finish", "relo_notify"]) assert.equal(byName[name].annotations.destructiveHint, false);
@@ -134,6 +147,21 @@ test("tools/list names the eight tools, carries the rules and marks the annotati
   assert.match(byName.relo_notify.description, /rarely/u);
   assert.match(byName.relo_work_start.description, /secrets/u);
   assert.deepEqual(byName.relo_ask.inputSchema.properties.kind.enum, ["approval", "yes_no"]);
+  // deliver closes a round, finish ends the goal; start takes a round; nesting is by indentation in plan entries
+  assert.match(byName.relo_work_deliver.description, /when the work is done and nothing is left, use relo_work_finish/u);
+  assert.match(byName.relo_work_finish.description, /relo_work_deliver instead/u);
+  assert.deepEqual(byName.relo_work_deliver.inputSchema.required, ["outcome"]);
+  assert.equal(byName.relo_work_deliver.inputSchema.properties.outcome.type, "string");
+  assert.equal(byName.relo_work_start.inputSchema.properties.round.type, "string");
+  assert.equal(byName.relo_work_start.inputSchema.required, undefined, "a round needs no goal");
+  // handoff: the note is required; start takes the handle of a waiting handoff in place of a goal
+  assert.deepEqual(byName.relo_work_handoff.inputSchema.required, ["next"]);
+  assert.equal(byName.relo_work_handoff.inputSchema.properties.next.type, "string");
+  assert.equal(byName.relo_work_start.inputSchema.properties.from.type, "string");
+  assert.match(byName.relo_work_handoff.description, /no longer owns the work/u);
+  assert.match(byName.relo_work_start.inputSchema.properties.plan.description, /indent/u);
+  assert.equal(byName.relo_work_update.inputSchema.properties.under.type, "string");
+  assert.equal(byName.relo_work_update.inputSchema.properties.detail.type, "string");
   assert.deepEqual(TOOLS.map((tool) => tool.name), tools.map((tool) => tool.name));
   await mcp.close();
 });
@@ -163,6 +191,40 @@ test("every tool round-trips against a fake Relo, as one session per connection"
   assert.equal(typeof doctor.json.ok, "boolean");
   assert.equal(mcp.fake.sessionKeys.size, 1, "one session for the connection");
   assert.equal(mcp.fake.sent.title, "Deployed");
+  await mcp.close();
+});
+
+test("deliver closes the round and the work stays open; start with a round opens the next one; plan lines nest by indentation", async () => {
+  const mcp = connect();
+  await mcp.initialize("claude-code");
+  const started = await mcp.call("relo_work_start", { goal: "Add dark mode", plan: ["Design the tokens", "Build the toggle", "  Wire it to settings"] });
+  assert.equal(started.isError, false, JSON.stringify(started.json));
+  const argv = toolArgv(TOOL_SPECS.find((spec) => spec.name === "relo_work_start"), { goal: "G", plan: ["A", "  B"] });
+  assert.ok(argv.includes("--plan=A\n  B"), "indented plan lines are a newline list, which relo work nests");
+  assert.ok(toolArgv(TOOL_SPECS.find((spec) => spec.name === "relo_work_start"), { goal: "G", plan: ["A", "B"] }).includes("--plan=A,B"), "plain ones stay comma-separated");
+  // Open top-level steps refuse a deliver (the plan belongs to the goal); drop_rest closes the round anyway.
+  const premature = await mcp.call("relo_work_deliver", { outcome: "Design tokens done" });
+  assert.equal(premature.isError, true, JSON.stringify(premature.json));
+  assert.match(JSON.stringify(premature.json), /REFUSED_OPEN_STEPS/u);
+  assert.match(JSON.stringify(premature.json), /open steps: s2 Build the toggle/u);
+  assert.match(JSON.stringify(premature.json), /relo ask/u);
+  assert.match(JSON.stringify(premature.json), /--drop-rest/u);
+  const deliverTool = TOOLS.find((tool) => tool.name === "relo_work_deliver");
+  assert.equal(deliverTool.inputSchema.properties.drop_rest.type, "boolean");
+  assert.deepEqual(toolArgv(TOOL_SPECS.find((spec) => spec.name === "relo_work_deliver"), { outcome: "x", drop_rest: true }).slice(-2), ["--outcome=x", "--drop-rest"]);
+  const delivered = await mcp.call("relo_work_deliver", { outcome: "Dark mode ships behind the toggle", drop_rest: true });
+  assert.equal(delivered.isError, false, JSON.stringify(delivered.json));
+  assert.match(delivered.json.echo, /Note: skipped 1 open step \(--drop-rest\): s2 Build the toggle/u);
+  assert.equal(delivered.json.disposition, "delivered");
+  assert.equal(delivered.json.work.lifecycle, "open");
+  assert.match(delivered.json.echo, /Owner sees: the round's final card and one quiet notification: "Dark mode ships behind the toggle"; then it's the owner's turn/u);
+  const refused = await mcp.call("relo_work_start", { goal: "Add dark mode" });
+  assert.equal(refused.isError, true, "a delivered work needs a round");
+  assert.match(JSON.stringify(refused.json), /--round/u);
+  const round = await mcp.call("relo_work_start", { round: "Follow the system theme", plan: ["Read the system setting"] });
+  assert.equal(round.isError, false, JSON.stringify(round.json));
+  assert.equal(round.json.disposition, "round_opened");
+  assert.match(round.json.echo, /Round 2 "Follow the system theme"/u);
   await mcp.close();
 });
 
@@ -332,4 +394,27 @@ test("a real `relo mcp` process writes only protocol messages to stdout", async 
   assert.equal(messages.find((message) => message.id === 3).result.isError, true);
   assert.match(messages.find((message) => message.id === 3).result.content[0].text, /not logged in|AUTH|login/iu);
   assert.equal(err, "", "no stderr output without RELO_DEBUG");
+});
+
+test("every MCP tool is a registry command, and every argument an option that command takes from an agent", async () => {
+  const { TOOL_SPECS, optionOf, toolArgv } = await import("../src/agent/mcp.mjs");
+  const { COMMANDS, handlerFor, optionsOf } = await import("../src/registry.mjs");
+  for (const spec of TOOL_SPECS) {
+    const entry = COMMANDS.find((candidate) => candidate.name === spec.command);
+    assert.ok(entry, `${spec.name}: no command ${spec.command}`);
+    const handler = handlerFor(entry, "agent");
+    assert.ok(handler?.load, `${spec.name}: ${spec.command} does not serve agent sessions`);
+    const accepted = new Set(handler.options ?? optionsOf(entry));
+    for (const [key, arg] of Object.entries(spec.args)) {
+      if (arg.positional) { assert.ok(entry.positionals, `${spec.name}.${key}: ${spec.command} takes no positional`); continue; }
+      const options = arg.choice ? Object.values(arg.choice) : [arg.seconds ?? optionOf(key)];
+      for (const option of options) assert.ok(accepted.has(option), `${spec.name}.${key}: ${spec.command} does not take --${option}`);
+    }
+  }
+  const start = TOOL_SPECS.find((spec) => spec.name === "relo_work_start");
+  assert.deepEqual(toolArgv(start, { goal: "Ship 0.18", plan: ["Build", "Ship"], new: true }),
+    ["work", "start", "--json", "--goal=Ship 0.18", "--plan=Build,Ship", "--new"]);
+  const ask = TOOL_SPECS.find((spec) => spec.name === "relo_ask");
+  assert.deepEqual(toolArgv(ask, { question: "--Deploy?", kind: "yes_no", topic: "Release" }),
+    ["ask", "–Deploy?", "--json", "--yes-no", "--timeout=300s", "--topic=Release"]);
 });

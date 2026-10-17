@@ -524,10 +524,12 @@ final class MobileAPIClientTests: XCTestCase {
         try await HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
             .reportLiveActivityDismissed(
                 credential: credential,
-                activityId: "act_abcdefghijkl"
+                activityId: "act_abcdefghijkl",
+                generation: 3
             )
 
         XCTAssertEqual(captured.value?.httpMethod, "POST")
+        XCTAssertEqual(captured.value?.url?.query, "generation=3")
         XCTAssertEqual(
             captured.value?.url?.path,
             "/api/devices/self/live-activities/act_abcdefghijkl/dismissed"
@@ -567,6 +569,40 @@ final class MobileAPIClientTests: XCTestCase {
             try await client.dismissMissedQuestion(credential: credential, questionId: "../ntf_x")
             XCTFail("Only a question id reaches the path")
         } catch { XCTAssertEqual(error as? MobileAPIError, .invalidRequest) }
+    }
+
+    func testEndWorkPostsEmptyJSONBodyToWorkEndpointWithDeviceBearer() async throws {
+        let captured = LockedTestValue<URLRequest?>(nil)
+        StubURLProtocol.handler = { request in
+            captured.value = request
+            return Self.response(request, status: 200, body: #"{"id":"wrk_1","state":"dropped"}"#)
+        }
+        let credential = DeviceCredential(
+            deviceId: "dev_0123456789ab",
+            installationId: UUID(uuidString: "6FCBFEF0-19CA-42C4-B931-EEBE1F520DF8")!,
+            accessToken: "device-secret",
+            issuedAt: .now,
+            accountId: "acc_0123456789ab",
+            credentialVersion: 1
+        )
+        let client = HTTPMobileAPIClient(baseURL: baseURL, session: makeSession())
+        try await client.endWork(credential: credential, workId: "wrk_00000000-0000-4000-8000-000000000009")
+
+        let request = try XCTUnwrap(captured.value)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/api/works/wrk_00000000-0000-4000-8000-000000000009/end")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer device-secret")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(Self.bodyData(request), Data("{}".utf8))
+
+        StubURLProtocol.handler = { Self.response($0, status: 409, body: #"{"error":"work_running"}"#) }
+        do { try await client.endWork(credential: credential, workId: "wrk_1"); XCTFail("A moving work must be refused") }
+        catch { XCTAssertEqual(error as? MobileAPIError, .workRunning) }
+        StubURLProtocol.handler = { Self.response($0, status: 404, body: #"{"error":"not_found"}"#) }
+        do { try await client.endWork(credential: credential, workId: "wrk_1"); XCTFail("A missing work must fail") }
+        catch { XCTAssertEqual(error as? MobileAPIError, .invalidRequest) }
+        do { try await client.endWork(credential: credential, workId: "../x"); XCTFail("Only a work id reaches the path") }
+        catch { XCTAssertEqual(error as? MobileAPIError, .invalidRequest) }
     }
 
     func testInteractionSubmissionUsesDeviceBearerAndIdempotencyBody() async throws {

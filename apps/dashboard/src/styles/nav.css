@@ -1,0 +1,823 @@
+/* nav: owned by one area; imported at the end of index.css so it can refine the base rules. */
+
+:root {
+  /* The phone tab bar: a floating capsule this tall, this far above the home indicator. The page clears
+     --tab-bar-space (the capsule, its lift and a breath of room). */
+  --tab-bar-h: 62px;
+  --tab-bar-lift: max(10px, env(safe-area-inset-bottom));
+  --tab-bar-space: calc(var(--tab-bar-h) + var(--tab-bar-lift) + 12px);
+  --nav-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* A tab's release: stiffness 600, damping 30 (a little overshoot, felt under the thumb). */
+  --spring-tab: linear(0, .075, .239, .442, .633, .796, .924, 1.009, 1.059, 1.083, 1.086, 1.076, 1.061, 1.044, 1.027, 1.014, 1.004, .998, .994, .993, .993, .994, .995, .997, 1);
+  --spring-tab-dur: 400ms;
+  /* How far the folding glass sweeps: the open container's width less the rail's. */
+  --fold-w: calc(var(--sidebar-width) - var(--sidebar-width-icon) - 1rem - 2px);
+}
+
+/* ---------- Focus: the ring draws in, tightening onto its control ---------- */
+
+/* In the base layer, so a component's own outline (or none) still wins. */
+@layer base {
+  :where(a, button, input, select, textarea, summary, [tabindex], [role="button"]) {
+    outline-color: transparent;
+    outline-offset: 4px;
+  }
+  :focus-visible {
+    outline-color: var(--ring);
+    outline-offset: 2px;
+    transition:
+      outline-offset var(--dur-micro) var(--ease-out),
+      outline-color var(--dur-micro) var(--ease-out);
+  }
+}
+
+/* ---------- Page frame ---------- */
+
+/* Programmatic focus lands on the title after a navigation: no ring for that. */
+.page-title:focus { outline: none; }
+
+/* Desktop's trail back from a detail page sits in the top inset, so the title never moves. */
+.page-breadcrumb {
+  display: flex;
+  height: calc(var(--page-top) - 8px);
+  margin-top: calc((var(--page-top) - 8px) * -1);
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.page-breadcrumb a {
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  transition: color 160ms ease;
+}
+.page-breadcrumb a:hover { color: var(--foreground); }
+.page-breadcrumb svg { width: 14px; height: 14px; opacity: 0.55; }
+.page-breadcrumb [aria-current="page"] { color: rgb(243 243 247 / 0.78); }
+
+.route-loading-progress { top: env(safe-area-inset-top); }
+
+/* ---------- Phones: the compact bar (a large title collapsing, as on iOS) ---------- */
+
+.compact-bar {
+  position: fixed;
+  z-index: 30;
+  inset: 0 0 auto;
+  height: calc(44px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  pointer-events: none;
+}
+/* Scroll-linked (compact-bar.tsx sets --bar-p, 0 to 1, on the page): the frost fades in, the blur
+   radius never changes. */
+.compact-bar::before {
+  position: absolute;
+  inset: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(8 8 13 / 0.72);
+  content: "";
+  opacity: var(--bar-p, 0);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+}
+.compact-bar[data-shown="true"] { pointer-events: auto; }
+.compact-bar-row {
+  position: relative;
+  display: flex;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 56px;
+}
+.compact-bar-title {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  opacity: var(--bar-p, 0);
+  text-overflow: ellipsis;
+  transform: translateY(calc((1 - var(--bar-p, 0)) * 6px));
+  white-space: nowrap;
+}
+.compact-bar-back {
+  position: absolute;
+  top: 0;
+  left: max(4px, env(safe-area-inset-left));
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--primary);
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Before the bar frosts in, the chevron wears its own small glass disc so it reads over content. */
+.compact-bar-back::before {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--control-fill);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  content: "";
+  opacity: calc(1 - var(--bar-p, 0));
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.compact-bar-back svg { position: relative; width: 26px; height: 26px; margin-left: -2px; }
+.compact-bar-back:active svg { opacity: 0.55; }
+
+@media (min-width: 768px) {
+  .compact-bar { display: none; }
+}
+@media (max-width: 767px) {
+  .page-breadcrumb { display: none; }
+  /* The large title hands over to the bar over the same 24px of scroll. */
+  [data-bar-title] { opacity: calc(1 - var(--bar-p, 0)); }
+  /* A detail page leaves the bar's row for its back chevron; the large title sits right under it. */
+  .page[data-has-back] { padding-top: 48px; }
+}
+
+/* ---------- Page entrance on a client navigation ---------- */
+
+/* The router sets <html data-page-enter="tab|push|pop|fade"> for 600ms (app/page-enter.ts); Back
+   and Forward set nothing, so a restored page appears at once. Each block of the page animates on
+   its own (no snapshot, no opacity on a wrapper): a frosted card keeps its blur all the way in.
+   tab: a quick crossfade, nothing travels, the title only crossfades. push: a detail page slides in
+   from the right. pop: the parent returns from the left. fade: the page replaces its skeleton. */
+@keyframes page-tab { from { opacity: 0.6; } }
+@keyframes page-push { from { opacity: 0.4; transform: translateX(24px); } }
+@keyframes page-pop { from { opacity: 0.7; transform: translateX(-16px); } }
+@keyframes page-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-page-enter="tab"] [data-page-enter] :is(.page-frame > .page-breadcrumb, .page-frame > header) {
+    animation: page-tab 140ms var(--ease-out) backwards;
+  }
+  :root[data-page-enter="tab"] [data-page-enter] :is(.page-frame > .page-stack > *, .split-page-aside, .split-page-body > *) {
+    animation: page-tab 160ms var(--ease-out) backwards;
+  }
+  :root[data-page-enter="push"] [data-page-enter] :is(.page-frame > .page-breadcrumb, .page-frame > header, .page-frame > .page-stack > *, .split-page-aside, .split-page-body > *) {
+    animation: page-push 280ms var(--ease-out) backwards;
+  }
+  :root[data-page-enter="pop"] [data-page-enter] :is(.page-frame > .page-breadcrumb, .page-frame > header, .page-frame > .page-stack > *, .split-page-aside, .split-page-body > *) {
+    animation: page-pop 220ms var(--ease-out) backwards;
+  }
+  :root[data-page-enter="fade"] [data-page-enter] :is(.page-frame > .page-breadcrumb, .page-frame > header, .page-frame > .page-stack > *, .split-page-aside, .split-page-body > *) {
+    animation: page-fade 200ms var(--ease-out) backwards;
+  }
+}
+/* Reduced motion: nothing travels; the page arrives in a near-instant fade. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-page-enter] [data-page-enter] :is(.page-frame > .page-breadcrumb, .page-frame > header, .page-frame > .page-stack > *, .split-page-aside, .split-page-body > *) {
+    animation: page-fade 90ms linear backwards;
+  }
+}
+
+/* ---------- Sidebar ---------- */
+
+/* The fold (sidebar.tsx sets data-fold for its 300ms): the glass never resizes mid-motion. Folding,
+   the container keeps its open width while a clip sweeps the glass's edge in; opening, the container
+   takes the open width at once and the clip sweeps out. The page's column snaps once and glides on
+   the same curve (hooks/use-fold-glide.ts). Nothing here reflows per frame. */
+[data-slot="sidebar-container"],
+[data-slot="sidebar-gap"] {
+  transition: none !important;
+}
+[data-slot="sidebar-container"][data-fold="collapsing"] { width: var(--sidebar-width) !important; }
+[data-fold="collapsing"] > [data-slot="sidebar-inner"] {
+  animation: sidebar-fold 300ms var(--ease-sheet) both;
+}
+[data-fold="expanding"] > [data-slot="sidebar-inner"] {
+  animation: sidebar-unfold 300ms var(--ease-sheet) both;
+}
+@keyframes sidebar-fold {
+  from { clip-path: inset(0 0 0 0 round 22px); }
+  to { clip-path: inset(0 var(--fold-w) 0 0 round 22px); }
+}
+@keyframes sidebar-unfold {
+  from { clip-path: inset(0 var(--fold-w) 0 0 round 22px); }
+  to { clip-path: inset(0 0 0 0 round 22px); }
+}
+
+/* Labels: out quickly and a touch to the left as the fold starts; back in from the left once the
+   glass has mostly opened. While folding, rows already have their rail size, so the words are let
+   out of their box to fade where they stood (icons never move: same insets folded and open). */
+.nav-label {
+  overflow: hidden;
+  white-space: nowrap;
+}
+[data-slot="sidebar"][data-state="collapsed"] .nav-label {
+  opacity: 0;
+  translate: -4px 0;
+  transition:
+    opacity 90ms var(--ease-in),
+    translate 90ms var(--ease-in);
+}
+[data-fold="collapsing"] :is(.nav-link, .nav-label, .profile-trigger) { overflow: visible !important; }
+[data-fold="expanding"] .nav-label {
+  animation: nav-label-in 160ms var(--ease-out) 140ms backwards;
+}
+@keyframes nav-label-in {
+  from { opacity: 0; translate: -6px 0; }
+}
+
+/* The page shown: one lit pill (dashboard-shell.tsx) glides between rows on the snappy spring; rows
+   keep no background of their own. The icon's coral crossfades. */
+.nav-link {
+  isolation: isolate;
+  overflow: visible;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color 120ms var(--ease-out);
+}
+.nav-link svg { transition: color 120ms var(--ease-out); }
+.nav-link[data-active="true"],
+.nav-link[data-active="true"]:hover {
+  background: transparent !important;
+  box-shadow: none;
+}
+.nav-link[data-active="true"] > svg { filter: none; }
+.nav-pill {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: var(--control-fill-active);
+  pointer-events: none;
+}
+
+/* "Settings" and the rail's hairline share one box, so folding never shifts the rows below; they
+   swap at the fold's midpoint. */
+.nav-section-label {
+  position: relative;
+  height: 20px;
+  margin-bottom: 8px;
+}
+.nav-section-label .micro { line-height: 20px; }
+.nav-section-rule {
+  position: absolute;
+  top: 50%;
+  /* The rail's centre line (a 40px row), so it lands right even while the glass is still wide. */
+  left: 20px;
+  width: 24px !important;
+  margin: 0 !important;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition: opacity 90ms var(--ease-in);
+}
+[data-slot="sidebar"][data-state="collapsed"] .nav-section-rule {
+  opacity: 1;
+  transition: opacity 120ms var(--ease-out) 150ms;
+}
+
+/* The profile: its avatar sits on the rail's centre line open or folded (3px inset, 44px row). */
+.profile-trigger,
+[data-collapsible="icon"] .profile-trigger {
+  min-height: 44px;
+  gap: 10px;
+  padding: 5px 10px 5px 3px;
+  border-radius: 22px;
+}
+[data-collapsible="icon"] .profile-trigger {
+  overflow: hidden;
+  justify-content: flex-start;
+}
+
+.sidebar-icon-button { width: 40px; height: 40px; }
+
+@media (pointer: coarse) {
+  .nav-link { min-height: 44px; }
+}
+
+/* Tablets (768–1099px): the rail holds its place and the open sidebar floats over the page. */
+[data-slot="sidebar-wrapper"][data-tablet="true"] [data-slot="sidebar-gap"] {
+  width: calc(var(--sidebar-width-icon) + 1rem) !important;
+}
+[data-slot="sidebar-wrapper"][data-tablet="true"] [data-slot="sidebar-container"] { z-index: 50; }
+.sidebar-scrim {
+  position: fixed;
+  z-index: 45;
+  inset: 0;
+  background: rgb(4 4 8 / 0.5);
+  animation: nav-fade-in 300ms var(--ease-sheet) both;
+}
+@keyframes nav-fade-in {
+  from { opacity: 0; }
+}
+@keyframes nav-fade-out {
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="sidebar"][data-state="collapsed"] .nav-label,
+  .nav-section-rule,
+  [data-slot="sidebar"][data-state="collapsed"] .nav-section-rule { transition: none; }
+  [data-slot="sidebar"][data-state="collapsed"] .nav-label { translate: none; }
+  .sidebar-scrim { animation: none; }
+}
+
+/* ---------- Needs-you badge ---------- */
+
+.needs-you-badge {
+  display: inline-grid;
+  place-items: center;
+  font-variant-numeric: tabular-nums;
+}
+.needs-you-badge[data-variant="dot"] {
+  width: 8px;
+  height: 8px;
+  min-width: 0;
+  padding: 0;
+}
+
+/* ---------- Phone tab bar (the whole of it lives here) ---------- */
+
+.tab-bar {
+  position: fixed;
+  z-index: 40;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: var(--tab-bar-lift);
+  left: max(12px, env(safe-area-inset-left));
+  display: grid;
+  max-width: 440px;
+  height: var(--tab-bar-h);
+  margin-inline: auto;
+  grid-template-columns: repeat(var(--tab-count, 4), minmax(0, 1fr));
+  padding: 4px;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 999px;
+  background: rgb(18 18 28 / 0.64);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 12px 32px -10px rgb(0 0 0 / 0.7),
+    0 2px 6px rgb(0 0 0 / 0.3);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+.tab-bar a,
+.tab-bar button {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  isolation: isolate;
+  transition: color 160ms var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+.tab-bar > :focus-visible { outline: none; }
+.tab-bar > :focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.tab-icon {
+  position: relative;
+  display: grid;
+  height: 24px;
+  place-items: center;
+}
+/* The selected tab's capsule fills its slot: one element that glides between tabs on the snappy spring. */
+.tab-pill {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: 999px;
+  background: rgb(255 107 87 / 0.15);
+  box-shadow: inset 0 0 0 1px rgb(255 107 87 / 0.18);
+  pointer-events: none;
+}
+/* A press sinks the icon alone (fast), and lets it go on a springy release. */
+.tab-bar svg {
+  width: 22px;
+  height: 22px;
+  transition: scale var(--spring-tab-dur) var(--spring-tab);
+}
+.tab-bar > :active svg {
+  scale: 0.88;
+  transition: scale 100ms var(--ease-out);
+}
+.tab-bar [aria-current="page"],
+.tab-bar [data-active="true"] { color: var(--primary); }
+/* The tab just chosen nods once (only on a navigation, not on load). */
+@keyframes tab-nod {
+  50% { transform: scale(1.08); }
+}
+:root[data-page-enter] .tab-bar :is([aria-current="page"], [data-active="true"]) svg {
+  animation: tab-nod 220ms var(--ease-out);
+}
+.tab-badge {
+  position: absolute;
+  top: -4px;
+  left: calc(50% + 5px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--neon-orange);
+  box-shadow: 0 0 0 2px rgb(18 18 28);
+  color: #1b0905;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (min-width: 768px) {
+  .tab-bar { display: none; }
+}
+@media (max-width: 767px) {
+  [data-dashboard-main] { padding-bottom: var(--tab-bar-space); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .tab-bar,
+  .compact-bar::before {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-bar svg,
+  .tab-bar > :active svg { scale: none; transition: none; }
+  :root[data-page-enter] .tab-bar :is([aria-current="page"], [data-active="true"]) svg { animation: none; }
+}
+
+/* ---------- Phone "More" sheet ---------- */
+
+/* Opacity only: vaul fades it in, and while the sheet is dragged it follows the drag. */
+.more-sheet-scrim {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  background: rgb(4 4 8 / 0.55);
+}
+/* Its contents arrive just behind the sheet: profile, then the pages, then sign out (40ms apart). */
+@keyframes more-sheet-rise {
+  from { opacity: 0; transform: translateY(12px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .more-sheet[data-state="open"] .more-sheet-body > * {
+    animation: more-sheet-rise 260ms var(--ease-out) 80ms backwards;
+  }
+  .more-sheet[data-state="open"] .more-sheet-body > :nth-child(2) { animation-delay: 120ms; }
+  .more-sheet[data-state="open"] .more-sheet-body > :nth-child(n + 3) { animation-delay: 160ms; }
+}
+.more-sheet {
+  position: fixed;
+  z-index: 51;
+  inset: auto 0 0;
+  display: flex;
+  max-height: calc(100dvh - env(safe-area-inset-top) - 24px);
+  flex-direction: column;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  border: 1px solid var(--raised-border);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
+  /* Solid, not frosted: a sheet that tracks the thumb never re-blurs what moves under it. */
+  background: rgb(17 17 25);
+  box-shadow: var(--glass-highlight), 0 -24px 64px -16px rgb(0 0 0 / 0.7);
+  outline: none;
+}
+.more-sheet-grabber {
+  width: 36px;
+  height: 5px;
+  flex-shrink: 0;
+  margin: 6px auto 0;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.22);
+}
+.more-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 2px 20px;
+}
+.more-sheet-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.more-sheet-close {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+}
+.more-sheet-close::before {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--control-fill);
+  content: "";
+}
+.more-sheet-close svg { position: relative; width: 16px; height: 16px; }
+.more-sheet-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  padding: 6px 16px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.more-sheet-profile,
+.more-sheet-group {
+  border: 1px solid var(--sheet-border);
+  border-radius: 20px;
+  background: var(--sheet-fill);
+  box-shadow: var(--glass-highlight);
+}
+.more-sheet-profile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 14px 14px 16px;
+}
+.more-sheet-group { overflow: hidden; }
+.more-sheet-group > li { position: relative; }
+.more-sheet-group > li + li::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 56px;
+  height: 1px;
+  background: var(--divider);
+  content: "";
+}
+.more-sheet-row {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  color: var(--foreground);
+  font-size: 16px;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+/* A press tints at once and sinks a hair; the release springs back. */
+.more-sheet-row,
+.more-sheet-profile {
+  transition:
+    background-color 80ms var(--ease-out),
+    scale var(--spring-press-dur) var(--spring-press);
+}
+.more-sheet-row:active:not(:disabled),
+.more-sheet-profile:active {
+  background: rgb(255 255 255 / 0.06);
+  scale: 0.98;
+  transition:
+    background-color 80ms var(--ease-out),
+    scale 80ms var(--ease-out);
+}
+.more-sheet-row[aria-current="page"] > span:not(.icon-tile) { color: var(--primary); }
+.more-sheet-chevron { width: 16px; height: 16px; flex-shrink: 0; color: rgb(164 164 182 / 0.6); }
+.more-sheet-sign-out {
+  justify-content: center;
+  gap: 8px;
+  color: var(--status-danger);
+  font-weight: 500;
+}
+.more-sheet-sign-out svg { width: 18px; height: 18px; }
+.more-sheet-sign-out:disabled { opacity: 0.5; }
+.more-sheet-version {
+  padding: 0 0 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .more-sheet { background: var(--surface); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .more-sheet-row:active:not(:disabled),
+  .more-sheet-profile:active { scale: none; }
+}
+
+/* ---------- Command menu and shortcuts ---------- */
+
+.command-palette { overflow: hidden; border-radius: 20px; }
+.command-palette-field {
+  display: flex;
+  height: 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+}
+.command-palette-field > svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--muted-foreground); }
+.command-palette-field input {
+  min-width: 0;
+  flex: 1;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 16px;
+  outline: none;
+}
+.command-palette-field input::placeholder { color: var(--muted-foreground); }
+.command-palette kbd,
+.shortcut-list kbd {
+  display: inline-grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0 6px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.05);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+.command-palette-list {
+  position: relative;
+  max-height: min(380px, 52dvh);
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.command-palette-group { padding: 10px 10px 6px; }
+.command-palette-item {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border-radius: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 14px;
+}
+.command-palette-item > svg { width: 18px; height: 18px; flex-shrink: 0; }
+.command-palette-item[aria-selected="true"] { color: var(--foreground); }
+/* One highlight that glides to the row under the keys or the pointer (command-palette.tsx). */
+.command-palette-selection {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.07);
+  pointer-events: none;
+}
+.command-palette-item[aria-selected="true"] > svg:first-child { color: var(--primary); }
+.command-palette-enter { width: 14px !important; height: 14px !important; color: var(--muted-foreground); }
+.command-palette-empty { padding: 28px 12px; color: var(--muted-foreground); font-size: 14px; text-align: center; }
+.shortcut-list > div {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.06);
+  font-size: 14px;
+}
+.shortcut-list > div:last-child { border-bottom: 0; }
+.shortcut-list dd { display: flex; gap: 4px; }
+
+/* ---------- Overlays: what opens, how it arrives and leaves ---------- */
+
+/* Own keyframes (transform and opacity only, never a filter), so the frosted surfaces keep their
+   blur throughout. These refine motion.css's timings for the surfaces navigation owns. */
+@keyframes nav-pop-in {
+  from { opacity: 0; transform: scale(var(--nav-pop-scale, 0.95)); }
+}
+@keyframes nav-pop-out {
+  to { opacity: 0; transform: scale(var(--nav-pop-scale, 0.95)); }
+}
+@keyframes nav-drop-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.96); }
+}
+@keyframes nav-drop-out {
+  to { opacity: 0; transform: translateY(-8px) scale(0.96); }
+}
+@keyframes nav-sheet-in {
+  from { transform: var(--nav-sheet-away); }
+}
+@keyframes nav-sheet-out {
+  to { transform: var(--nav-sheet-away); }
+}
+
+/* Menus grow from where they were opened (Radix's transform origin); no slide. */
+[data-slot="dropdown-menu-content"][data-state="open"],
+[data-slot="dropdown-menu-sub-content"][data-state="open"] {
+  animation: nav-pop-in 160ms var(--ease-out);
+}
+[data-slot="dropdown-menu-content"][data-state="closed"],
+[data-slot="dropdown-menu-sub-content"][data-state="closed"] {
+  animation: nav-pop-out 100ms var(--ease-in) forwards;
+}
+/* Tooltips: barely a scale, and quick both ways. */
+[data-slot="tooltip-content"] { --nav-pop-scale: 0.97; }
+[data-slot="tooltip-content"]:is([data-state="delayed-open"], [data-state="instant-open"]) {
+  animation: nav-pop-in 100ms var(--ease-out);
+}
+[data-slot="tooltip-content"][data-state="closed"] {
+  animation: nav-pop-out 100ms var(--ease-in) forwards;
+}
+
+/* The command menu and the shortcuts card drop in from just above, growing from their top edge. */
+[data-slot="dialog-content"].nav-drop-in { transform-origin: 50% 0; }
+[data-slot="dialog-content"].nav-drop-in[data-state="open"] {
+  animation: nav-drop-in 220ms var(--ease-out);
+}
+[data-slot="dialog-content"].nav-drop-in[data-state="closed"] {
+  animation: nav-drop-out 140ms var(--ease-in) forwards;
+}
+
+/* Sheets travel their full width (or height) in on the sheet curve and leave faster; the scrim
+   only fades (no blur behind a sheet). */
+[data-slot="sheet-content"][data-side="right"] { --nav-sheet-away: translate3d(100%, 0, 0); }
+[data-slot="sheet-content"][data-side="left"] { --nav-sheet-away: translate3d(-100%, 0, 0); }
+[data-slot="sheet-content"][data-side="top"] { --nav-sheet-away: translate3d(0, -100%, 0); }
+[data-slot="sheet-content"][data-side="bottom"] { --nav-sheet-away: translate3d(0, 100%, 0); }
+[data-slot="sheet-content"][data-state="open"] {
+  animation: nav-sheet-in 380ms var(--ease-sheet);
+}
+[data-slot="sheet-content"][data-state="closed"] {
+  animation: nav-sheet-out 240ms var(--ease-in) forwards;
+}
+[data-slot="sheet-overlay"][data-state="open"] {
+  animation: nav-fade-in 380ms var(--ease-out);
+}
+[data-slot="sheet-overlay"][data-state="closed"] {
+  animation: nav-fade-out 240ms var(--ease-in) forwards;
+}
+
+/* A notification's side sheet: its body shows its shape while loading, then the content rises in. */
+.detail-panel-body { min-height: 100%; }
+@keyframes detail-panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+.detail-panel-body:is([data-state="ready"], [data-state="failed"]) {
+  animation: detail-panel-in 200ms var(--ease-out) backwards;
+}
+
+/* Reduced motion: overlays only fade, near-instantly; nothing scales or travels. */
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    [data-slot="sheet-content"],
+    [data-slot="sheet-overlay"],
+    [data-slot="dialog-content"],
+    [data-slot="dialog-overlay"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="alert-dialog-overlay"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="tooltip-content"]
+  ):is([data-state="open"], [data-state="delayed-open"], [data-state="instant-open"]) {
+    animation: nav-fade-in 90ms linear !important;
+  }
+  :is(
+    [data-slot="sheet-content"],
+    [data-slot="sheet-overlay"],
+    [data-slot="dialog-content"],
+    [data-slot="dialog-overlay"],
+    [data-slot="alert-dialog-content"],
+    [data-slot="alert-dialog-overlay"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="tooltip-content"]
+  )[data-state="closed"] {
+    animation: nav-fade-out 70ms linear forwards !important;
+  }
+  .detail-panel-body:is([data-state="ready"], [data-state="failed"]) { animation: nav-fade-in 90ms linear; }
+}
+
+/* ---------- Loading: a patient progress line, a late shimmer ---------- */
+
+/* The line grows by transform (route-loading-fallback.tsx drives it: towards 70%, then to the end,
+   then fades). Reduced motion keeps motion.css's still bar. */
+@media (prefers-reduced-motion: no-preference) {
+  .route-loading-progress-indicator {
+    width: 100%;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 70%, transparent), var(--primary));
+    transform: scaleX(0);
+    transform-origin: 0 50%;
+    animation: none;
+  }
+  /* A placeholder only shimmers once the wait is noticeable (300ms): a quick load never flickers. */
+  .skeleton::after {
+    animation-name: skeleton-sweep, nav-shimmer-wait;
+    animation-duration: calc(var(--period-breath) / 2), 200ms;
+    animation-timing-function: var(--ease-breath), var(--ease-out);
+    animation-delay: var(--breath-epoch, 0ms), 300ms;
+    animation-iteration-count: infinite, 1;
+    animation-fill-mode: none, both;
+  }
+}
+@keyframes nav-shimmer-wait {
+  from { opacity: 0; }
+}

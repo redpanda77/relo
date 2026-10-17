@@ -3,9 +3,8 @@ import { z } from "zod"
 import { accountDashboardBootstrapSchema } from "@/features/account/types"
 import { dashboardAuthSchema } from "@/features/auth/types"
 import { connectionsDashboardBootstrapSchema } from "@/features/connections/types"
-import { documentationDashboardBootstrapSchema } from "@/features/docs/types"
+import { docsSiteBootstrapSchema } from "@/features/docs/types"
 import { inboxDashboardBootstrapSchema } from "@/features/inbox/types"
-import { projectsDashboardBootstrapSchema } from "@/features/projects/types"
 import { activityHistorySchema } from "@/features/test-lab/activity-history"
 import { testLabBootstrapSchema } from "@/features/test-lab/types"
 
@@ -14,16 +13,16 @@ export const dashboardBootstrapSchema = z.union([
   testLabBootstrapSchema,
   activityHistorySchema,
   inboxDashboardBootstrapSchema,
-  projectsDashboardBootstrapSchema,
   connectionsDashboardBootstrapSchema,
   accountDashboardBootstrapSchema,
-  documentationDashboardBootstrapSchema,
+  docsSiteBootstrapSchema,
 ])
 
 export type DashboardBootstrap = z.infer<typeof dashboardBootstrapSchema>
+/** The pages inside the signed-in Dashboard shell (not sign-in, the landing page or the public docs). */
 export type AuthenticatedDashboardBootstrap = Exclude<
   DashboardBootstrap,
-  { kind: "auth" }
+  { kind: "auth" } | { kind: "docs" }
 >
 
 export function readDashboardBootstrap(

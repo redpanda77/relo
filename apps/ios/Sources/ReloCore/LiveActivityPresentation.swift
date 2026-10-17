@@ -18,10 +18,6 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
         case choice
     }
 
-    public enum Theme: String, Codable, CaseIterable, Sendable {
-        case system, light, dark
-    }
-
     public enum Privacy: String, Codable, Sendable {
         case standard
         case `private`
@@ -47,7 +43,7 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
     }
 
     public struct Step: Codable, Equatable, Hashable, Sendable, Identifiable {
-        public enum State: String, Codable, Sendable { case complete, current, pending }
+        public enum State: String, Codable, Sendable { case complete, current, pending, skipped }
         public let id: String
         public let label: String
         public let state: State
@@ -57,6 +53,22 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
             self.label = label
             self.state = state
         }
+    }
+
+    /// A long plan's card shows a window of it: steps hidden before it (all done) and after it (not started).
+    /// `progress` is the server's own count for the plan line (plan 12b, U1/U2) when the card carries it;
+    /// surfaces prefer it and fall back to counting the shown steps when it is absent.
+    public struct StepWindow: Codable, Equatable, Hashable, Sendable {
+        public let before: Int
+        public let after: Int
+        public let progress: PlanProgress?
+        public init(before: Int = 0, after: Int = 0, progress: PlanProgress? = nil) {
+            self.before = max(0, before)
+            self.after = max(0, after)
+            self.progress = progress
+        }
+        public static let whole = StepWindow()
+        public func total(_ shown: Int) -> Int { before + shown + after }
     }
 
     public struct AssetReference: Codable, Equatable, Hashable, Sendable {
@@ -93,7 +105,7 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
     public enum Visual: Equatable, Hashable, Sendable {
         case none
         case progressBar(value: Double, label: String?)
-        case steps([Step])
+        case steps([Step], window: StepWindow = .whole)
         case image(AssetReference)
 
         public var type: VisualType {
@@ -137,7 +149,6 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
     public let status: String
     public let visual: Visual
     public let behavior: Behavior
-    public let theme: Theme
     public let accentColor: String
     public let secondaryColor: String?
     public let symbol: Symbol
@@ -145,7 +156,7 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
 
     public init(
         header: String?, title: String, subtitle: String?, status: String,
-        visual: Visual, behavior: Behavior, theme: Theme = .system,
+        visual: Visual, behavior: Behavior,
         accentColor: String = LiveActivityPresentationFormatting.defaultAccentColor,
         secondaryColor: String? = nil, symbol: Symbol = .info,
         privacy: Privacy = .standard
@@ -156,7 +167,6 @@ public struct LiveActivityDisplayPresentation: Equatable, Hashable, Sendable {
         self.status = status
         self.visual = visual
         self.behavior = behavior
-        self.theme = theme
         self.accentColor = LiveActivityPresentationFormatting.normalizedAccentColor(accentColor)
         self.secondaryColor = secondaryColor.map(LiveActivityPresentationFormatting.normalizedAccentColor)
         self.symbol = symbol
@@ -205,6 +215,14 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         case terminal, code, build, success, warning, info, question, reply, image, lock
         case project, thread, direct, active, waiting, needsAction = "needs_action"
         case completed, failed, cancelled, expired, superseded
+        case laptop, desktop, server, cloud
+
+        /// An icon this build does not know (a newer server) decodes as `.project`, so one new
+        /// value never kills the whole presentation. The state icon decodes with `.active` instead.
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = SemanticIcon(rawValue: raw) ?? .project
+        }
 
         public var systemImageName: String {
             switch self {
@@ -226,12 +244,16 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
             case .cancelled: "xmark.circle.fill"
             case .expired: "timer"
             case .superseded: "arrow.trianglehead.2.clockwise.rotate.90"
+            case .laptop: "laptopcomputer"
+            case .desktop: "desktopcomputer"
+            case .server: "server.rack"
+            case .cloud: "cloud.fill"
             }
         }
 
         public var displaySymbol: LiveActivityDisplayPresentation.Symbol {
             switch self {
-            case .terminal, .direct: .terminal
+            case .terminal, .direct, .laptop, .desktop, .server: .terminal
             case .code: .code
             case .build, .project, .thread: .build
             case .success, .completed: .success
@@ -240,7 +262,7 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
             case .reply: .reply
             case .image: .image
             case .lock: .lock
-            case .info, .active, .waiting, .superseded: .info
+            case .info, .active, .waiting, .superseded, .cloud: .info
             }
         }
     }
@@ -276,6 +298,17 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         public init(kind: String, tone: String, icon: SemanticIcon) {
             self.kind = kind; self.tone = tone; self.icon = icon
         }
+
+        private enum CodingKeys: String, CodingKey { case kind, tone, icon }
+
+        /// An unknown state icon falls back to `.active` (the identity icon falls back to `.project`).
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try c.decode(String.self, forKey: .kind)
+            tone = try c.decode(String.self, forKey: .tone)
+            let raw = try c.decode(String.self, forKey: .icon)
+            icon = LiveActivityPresentation.SemanticIcon(rawValue: raw) ?? .active
+        }
     }
 
     public struct Appearance: Codable, Equatable, Hashable, Sendable {
@@ -291,16 +324,23 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         }
         public enum ProgressDisplay: String, Codable, Hashable, Sendable { case bar, ring }
 
-        public let theme: LiveActivityDisplayPresentation.Theme
         public let roles: Roles
         /// Absent means the linear bar; `ring` draws progress as a gauge with the percent inside.
         public let progressDisplay: ProgressDisplay?
 
         public init(
-            theme: LiveActivityDisplayPresentation.Theme = .system, roles: Roles = .init(),
-            progressDisplay: ProgressDisplay? = nil
+            roles: Roles = .init(), progressDisplay: ProgressDisplay? = nil
         ) {
-            self.theme = theme; self.roles = roles; self.progressDisplay = progressDisplay
+            self.roles = roles; self.progressDisplay = progressDisplay
+        }
+
+        private enum CodingKeys: String, CodingKey { case roles, progressDisplay }
+
+        /// A `theme` the server still sends is ignored: Relo draws one dark look.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            roles = try c.decode(Roles.self, forKey: .roles)
+            progressDisplay = try c.decodeIfPresent(ProgressDisplay.self, forKey: .progressDisplay)
         }
 
         public var drawsProgressAsRing: Bool { progressDisplay == .ring }
@@ -351,23 +391,25 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
 
     public enum Component: Codable, Equatable, Hashable, Sendable, Identifiable {
         case progressBar(id: String, colorRole: IdentityRole, value: Double, label: String?)
-        case steps(id: String, colorRole: IdentityRole, items: [LiveActivityDisplayPresentation.Step])
+        case steps(id: String, colorRole: IdentityRole, items: [LiveActivityDisplayPresentation.Step],
+                   window: LiveActivityDisplayPresentation.StepWindow = .whole)
         case image(id: String, colorRole: IdentityRole, asset: LiveActivityDisplayPresentation.AssetReference)
 
         public var id: String {
             switch self {
-            case let .progressBar(id, _, _, _), let .steps(id, _, _), let .image(id, _, _): id
+            case let .progressBar(id, _, _, _), let .steps(id, _, _, _), let .image(id, _, _): id
             }
         }
 
         public var colorRole: IdentityRole {
             switch self {
-            case let .progressBar(_, role, _, _), let .steps(_, role, _), let .image(_, role, _): role
+            case let .progressBar(_, role, _, _), let .steps(_, role, _, _), let .image(_, role, _): role
             }
         }
 
         private enum CodingKeys: String, CodingKey {
-            case id, type, colorRole, value, label, items, asset, altText, contentMode
+            case id, type, colorRole, value, label, items, before, after, asset, altText, contentMode
+            case progress = "plan" // the server's steps component carries planProgressWire as `plan`
         }
         private enum ComponentType: String, Codable { case progressBar = "progress_bar", steps, image }
         private struct AssetCore: Codable {
@@ -406,7 +448,10 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
                 self = .progressBar(id: id, colorRole: role, value: value, label: label)
             case .steps:
                 self = .steps(id: id, colorRole: role,
-                    items: try values.decode([LiveActivityDisplayPresentation.Step].self, forKey: .items))
+                    items: try values.decode([LiveActivityDisplayPresentation.Step].self, forKey: .items),
+                    window: .init(before: try values.decodeIfPresent(Int.self, forKey: .before) ?? 0,
+                                  after: try values.decodeIfPresent(Int.self, forKey: .after) ?? 0,
+                                  progress: (try? values.decodeIfPresent(PlanProgress.self, forKey: .progress)) ?? nil))
             case .image:
                 let core = try values.decode(AssetCore.self, forKey: .asset)
                 let altText = try values.decode(String.self, forKey: .altText)
@@ -427,8 +472,11 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
             case let .progressBar(_, _, value, label):
                 try values.encode(ComponentType.progressBar, forKey: .type)
                 try values.encode(value, forKey: .value); try values.encode(label, forKey: .label)
-            case let .steps(_, _, items):
+            case let .steps(_, _, items, window):
                 try values.encode(ComponentType.steps, forKey: .type); try values.encode(items, forKey: .items)
+                if window.before > 0 { try values.encode(window.before, forKey: .before) }
+                if window.after > 0 { try values.encode(window.after, forKey: .after) }
+                try values.encodeIfPresent(window.progress, forKey: .progress)
             case let .image(_, _, asset):
                 try values.encode(ComponentType.image, forKey: .type); try values.encode(AssetCore(asset), forKey: .asset)
                 try values.encode(asset.altText, forKey: .altText); try values.encode(asset.contentMode, forKey: .contentMode)
@@ -556,6 +604,19 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         return .choice(options)
     }
 
+    /// How the work stands for the plan line: a finished card reads "5 of 5 done" or "Stopped at 3 of 5".
+    public var planStanding: PlanProgress.Standing {
+        switch state.kind {
+        case "completed": .done
+        case "failed", "cancelled", "canceled", "expired", "superseded": .stopped
+        case "paused": .paused
+        default: .moving
+        }
+    }
+
+    /// The work waits on something named: the badge reads Waiting, never Running (U4).
+    public var isWaiting: Bool { state.tone == "waiting" || state.kind == "waiting" }
+
     public var projectedForDisplay: LiveActivityPresentation? { privacy == .private ? nil : self }
     public var permitsLiveActivityActions: Bool {
         privacy == .standard && [.approval, .yesNo, .choice].contains(behavior.type)
@@ -584,14 +645,14 @@ public struct LiveActivityPresentation: Codable, Equatable, Hashable, Sendable {
         let component = selectedID.flatMap { id in components.first { $0.id == id } } ?? components.first
         let visual: LiveActivityDisplayPresentation.Visual = switch component {
         case let .progressBar(_, _, value, label): .progressBar(value: value, label: label)
-        case let .steps(_, _, items): .steps(items)
+        case let .steps(_, _, items, window): .steps(items, window: window)
         case let .image(_, _, asset): .image(asset)
         case nil: .none
         }
         return LiveActivityDisplayPresentation(
             header: identity.project?.label ?? (identity.direct ? "Direct" : header),
             title: title, subtitle: subtitle, status: status, visual: visual, behavior: behavior,
-            theme: appearance.theme, accentColor: color(for: appearance.roles.cardIdentity),
+            accentColor: color(for: appearance.roles.cardIdentity),
             symbol: state.icon.displaySymbol, privacy: privacy
         )
     }

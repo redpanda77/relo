@@ -15,7 +15,7 @@ struct ReloRootView: View {
     var body: some View {
         TabView(selection: $navigation.tab) {
             stack(.now) { NowView(model: model, tab: $navigation.tab).reloAttentionBanner(model: model) }
-                .tabItem { Label("Now", systemImage: "bolt.circle") }.tag(ReloTab.now)
+                .tabItem { Label("Now", systemImage: "waveform.circle") }.tag(ReloTab.now)
             stack(.history) { HistoryView(model: model).reloAttentionBanner(model: model) }
                 .tabItem { Label("History", systemImage: "clock") }.tag(ReloTab.history)
             stack(.settings) { SettingsView(model: model).reloAttentionBanner(model: model) }
@@ -33,6 +33,14 @@ struct ReloRootView: View {
             get: { model.presentedAccessRequestID.map(AccessRequestRoute.init) },
             set: { model.presentedAccessRequestID = $0?.id }
         )) { route in AccessRequestSheet(model: model, id: route.id) }
+        // Connect a computer: opened from Settings or the Live Activity, and offered once to a new account with none.
+        .sheet(isPresented: $model.presentsComputerSetup) { ConnectComputerView(model: model) }
+        .task(id: "\(model.computerSetupOfferPending)|\(model.credential != nil)") { await model.offerComputerSetupIfNew() }
+        // A code the wizard made is checked whenever the app comes to the front, wizard on screen or not.
+        .task(id: scenePhase) {
+            guard scenePhase == .active, model.credential != nil else { return }
+            await model.computerSetup.refresh()
+        }
         // Keeps Now's "Needs you" row current: on foreground and when a push lands.
         .task(id: scenePhase) {
             guard scenePhase == .active, model.credential != nil else { return }
@@ -77,8 +85,8 @@ struct ReloRootView: View {
                     if let item = model.selectedNotification {
                         NotificationDetailView(model: model, item: item)
                     } else {
-                        ContentUnavailableView("Notification unavailable", systemImage: "tray",
-                            description: Text("Refresh your connection and try opening it again."))
+                        ReloEmptyState(title: "Notification unavailable",
+                                       detail: "Refresh your connection and try opening it again.", symbol: "tray")
                     }
                 }
         }
@@ -99,7 +107,7 @@ private struct ReloAttentionBanner: View {
 
     var body: some View {
         if let problem {
-            let color = problem == .unreachable ? ReloHoloTheme.amber : ReloHoloTheme.orange
+            let color = problem == .unreachable ? Color.reloWarning : Color.reloAttention
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: problem == .unreachable ? "wifi.exclamationmark" : "bell.slash.fill")
                     .font(.title3).foregroundStyle(color).frame(width: 28)
@@ -115,10 +123,7 @@ private struct ReloAttentionBanner: View {
                 }
                 Spacer(minLength: 0)
                 Button(problem == .unreachable ? "Retry" : "Turn on") { act(problem) }
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                    .padding(.horizontal, 14).frame(minHeight: 36)
-                    .background(color.opacity(0.85), in: Capsule())
-                    .buttonStyle(ReloPressStyle())
+                    .buttonStyle(.reloCapsule(tint: color.opacity(0.85)))
             }
             .padding(14)
             .reloCard(tint: color)

@@ -12,37 +12,43 @@ Only when a relo command fails with an auth or no-phone error, or `relo doctor` 
 1. `relo` not found: ask the owner, then install the CLI from the reviewed tarball or checkout (next section).
 2. `relo doctor`, then run `next.run` for the first unmet `next.step`, repeating until `ready` is `true`:
    - `login`: `relo auth login --no-wait --api-url https://YOUR-RELO-SERVER` (the server address comes from
-     the owner) prints `{"state":"pending","url","code"}` and returns. Relay the **url** to the owner, then run
+     the owner) prints `{"state":"pending","url","code","qr"}` and returns. Show the owner the **url** and the **qr**
+     (in a code block): they approve in the Relo app (Settings → Devices → Sign in a computer, scan it) or by
+     opening the link in a signed-in browser. Never answer it for them with a yes/no question. Then run
      `relo auth login --wait` (up to 100s; exit `4` state `pending`: run it again; exit `8` "expired": start over).
      A pending sign-in resumes (`next.run` is `relo auth login --wait`) instead of starting a second one.
    - `phone`: the owner opens the Relo app, signs in and allows Live Activities; `relo devices list` shows it.
    - `test`: `relo test` shows a short card and asks "Can you see this card on your iPhone?". Done once; a
      phone that passed is remembered. `relo test --again` forces a re-run.
-   - `skill` (warning only): `next.run` is the exact `relo skill install --agent <x>`; tell the owner once and
-     run it only with their go-ahead, never mid-task.
-3. The instruction file (`relo setup`) is not a step: only if the owner asks, for the one file they choose.
+   - `skill` (warning only): `next.run` is the exact `relo setup --agent <x>` (or `relo setup --refresh` for an
+     older copy); tell the owner once and run it only with their go-ahead, never mid-task.
 
 ## The CLI
 
-A fresh machine installs a release (GitHub Releases of `redpanda77/relo`, tag `cli-v<version>`, assets
-`relo-cli-<version>.tgz`, `SHA256SUMS`, `sbom.cdx.json`, `manifest.json`), then checks itself:
+A fresh machine installs the CLI the owner's server hands out (checked against its digest; Node.js 22 comes
+with it when missing), then checks itself:
 
 ```bash
-npm install --global https://github.com/redpanda77/relo/releases/download/cli-v<version>/relo-cli-<version>.tgz
+curl -fsSL https://YOUR-RELO-SERVER/install.sh | sh          # the CLI only; then relo auth login
+curl -fsSL https://YOUR-RELO-SERVER/install.sh | sh -s -- rci_…   # with a code from Add a computer: signed in and set up
 relo doctor
 ```
 
-`relo doctor` names the next step (sign in with `relo auth login`, a phone, `relo test`); never paste tokens.
-CI and containers skip `auth login` and set `RELO_TOKEN` and `RELO_API_URL` from their secret store.
+GitHub releases (`cli-v<version>`, `npm install --global` of their tarball) remain for an npm install.
 
-### Updating (the owner agrees first; an agent never updates mid-task)
+`relo doctor` names the next step (sign in with `relo auth login`, a phone, `relo test`); never paste tokens.
+CI and containers skip `auth login` and set `RELO_TOKEN` and `RELO_API_URL` from their secret store; the owner makes that token with `relo auth token create --secret-file PATH`.
+
+### Updating
+
+A CLI from the install script updates itself in the background when the server offers a newer one. An npm install says so once in a relo reply ("Relo CLI … is behind your server's …"): then run `relo update`.
 
 `relo doctor` shows `"warnings":{"update":{"state":"behind","latest","hint":"relo update"}}` when a newer release
 exists (checked at most once a day with a 2 s timeout; off with `RELO_NO_UPDATE_CHECK=1`). It never changes `ready`.
 
 ```bash
 relo update --check      # {"ok":true,"current","latest","updateAvailable"}; installs nothing
-relo update              # {"ok":true,"from","to","verified":true}: sha256 checked against SHA256SUMS, then npm install --global
+relo update              # {"ok":true,"from","to","verified":true}: from the signed-in server (else GitHub), checked, then installed
 relo update --rollback   # reinstalls the previous release kept in ~/.local/share/relo/cli-releases/<version>/
 relo update --version 0.10.0 --dry-run
 ```
@@ -51,39 +57,43 @@ A checksum mismatch or a download failure installs nothing and prints the reason
 folder, use a user-owned prefix (`npm config set prefix ~/.local`). From a reviewed checkout instead:
 `npm pack ./packages/cli --pack-destination DIR` then `npm install --global DIR/relo-cli-<version>.tgz`.
 
-## The skill
+## Telling agents about Relo: `relo setup` (the owner's command)
 
-The skill ships inside the CLI, at the CLI's exact version. One command copies it into **one** harness's
-skills directory (`relo doctor` names the right one when it is missing or stale; it never installs):
+One command, for the owner (an agent runs it only when the owner asks). For each harness found on this computer
+(or named with `--agent`) it writes a short marked block into the harness's instructions file, so an agent knows
+Relo from its first message, and installs this skill into the harness's skills folder, at the CLI's exact version:
 
 ```bash
-relo skill install --agent claude-code      # or codex, opencode, gemini, amp, cursor, copilot, agents
-relo skill install --dir ~/path/to/skills   # a harness not listed: its skills directory
-relo skill install --agent codex --dry-run  # report only
-relo skill status                           # every copy found: {"cli","copies":[{"dir","version","current"}]}
-relo skill remove --agent codex             # archives the copy, then removes it
+relo setup                          # every harness found here: block + skill
+relo setup --agent codex            # only these (repeat --agent); config-dir variables are honoured
+relo setup --project                # the block in this repository instead of the harnesses' own files
+relo setup --dry-run                # the plan and the exact block, nothing written
+relo setup --refresh                # after an update: stale blocks, older skill copies, hooks, MCP paths; adds nothing
 ```
 
-Result: `{"ok":true,"agent","dir":"~/.agents/skills/relo-notifications","version","action":"installed|updated|unchanged","archived"?}`.
-`unchanged` means the same version and content is already there. Before replacing a copy it is moved to
-`~/.local/share/relo/skill-archives/<timestamp>-<version>/`, outside every skill discovery root, so an old
-copy can never shadow the active one.
+It prints what changed, what was skipped and why, and what to do next (restart the harness); `--json` gives
+`{"ok":true,"changed":[{"kind","harness","file","action"}],"unchanged":N,"skipped"?,"errors"?,"next"}`. Running it
+again changes nothing. Only the text between `<!-- relo:start -->` and `<!-- relo:end -->` is ever touched, and
+the rest of the file keeps its bytes and line endings; a line `<!-- relo:keep -->` inside the block freezes it. A
+file Relo cannot read safely (an unfinished block, JSON with comments) is reported and left alone.
 
-| `--agent` | Skills directory |
-| --- | --- |
-| `claude-code` | `$CLAUDE_CONFIG_DIR` or `~/.claude`, `skills/` |
-| `codex`, `agents` | `~/.agents/skills` (shared by Codex, Cline, Warp, Zed, Pi and other universal harnesses) |
-| `opencode` | `~/.config/opencode/skills` |
-| `gemini` | `~/.gemini/skills` |
-| `amp` | `~/.config/agents/skills` |
-| `cursor` | `~/.cursor/skills` |
-| `copilot` | `$COPILOT_HOME` or `~/.copilot`, `skills/` |
+| Harness | Instructions | Skills folder |
+| --- | --- | --- |
+| `claude-code` | `$CLAUDE_CONFIG_DIR` or `~/.claude`, `CLAUDE.md` | same folder, `skills/` |
+| `codex` | `$CODEX_HOME` or `~/.codex`, `AGENTS.md` | `~/.agents/skills` (shared by Codex, Cline, Warp, Zed, Pi) |
+| `gemini` | `~/.gemini/GEMINI.md` | `~/.gemini/skills` |
+| `opencode` | `~/.config/opencode/AGENTS.md` | `~/.config/opencode/skills` |
+| `copilot` | `$COPILOT_HOME` or `~/.copilot`, `copilot-instructions.md` | same folder, `skills/` |
+| `amp` | `~/.config/amp/AGENTS.md` | `~/.config/agents/skills` |
+| `cursor` | none | `~/.cursor/skills` |
 
-Paths follow the `skills` CLI's agent table. Install for **each** agent that should have it; `relo doctor`
-checks every copy's version against the CLI and names the stale one.
+`--project` writes the repository's `AGENTS.md` or `CLAUDE.md`, whichever exists. Both with their own text is an
+error (make `CLAUDE.md` the line `@AGENTS.md`); neither creates `AGENTS.md`, the cross-harness standard, plus a
+`CLAUDE.md` holding `@AGENTS.md`, because Claude Code reads only `CLAUDE.md`. The block has no versions or dates,
+so tracked files do not churn. Before a copy of the skill is replaced it is moved to
+`~/.local/share/relo/skill-archives/<timestamp>-<version>/`, outside every discovery root.
 
-No CLI yet (an agent that only has the skill, or a machine without Relo)? The public flow still works, and
-a later `relo skill install` replaces it:
+No CLI yet? The public flow still works, and a later `relo setup` replaces it:
 
 ```bash
 npx --yes skills@1.5.22 add redpanda77/relo@relo-notifications --agent codex --yes --copy --global
@@ -92,114 +102,74 @@ npx --yes skills@1.5.22 add redpanda77/relo@relo-notifications --agent codex --y
 Maintainers: run `node scripts/validate-skill.mjs` and `node --test tests/*.test.mjs` in the source copy, and
 keep the skill's `package.json` version and its `@relo/cli` pin equal to the CLI's: `npm pack` fails otherwise.
 
-## Telling agents Relo exists: `relo setup` (the owner's choice)
-
-The skill triggers on matching requests; `relo setup` optionally makes sure one agent also knows Relo exists
-from the first message. It is **never automatic**: an agent runs it only when the owner asks, for the one file
-the owner picked, and `relo doctor` never suggests it. The block lives in **exactly one** file, so tools that
-re-inject their own blocks into every `AGENTS.md` and `CLAUDE.md` cannot make it spread.
-
-```bash
-relo setup                                   # writes nothing: exit 2, lists the choices below
-relo setup --project                         # this repo's AGENTS.md or CLAUDE.md (git root, else the folder)
-relo setup --global --agent codex            # that harness's one global file (see the table)
-relo setup --file path/to/AGENTS.md          # exactly that file
-relo setup --project --move                  # relocate the block from the file it is in now
-relo setup --remove                          # delete the block wherever it is; no target flags needed
-relo setup --project --dry-run               # report what would change, write nothing
-```
-
-`--project` uses the one of `AGENTS.md` / `CLAUDE.md` that exists; both existing is an error (pick with
-`--file`); neither creates `AGENTS.md`, the cross-harness standard. `--global --agent NAME` supports only
-files confirmed from each harness's documentation:
-
-| `--agent` | File |
-| --- | --- |
-| `claude-code` | `$CLAUDE_CONFIG_DIR` or `~/.claude`, `CLAUDE.md` |
-| `codex` | `$CODEX_HOME` or `~/.codex`, `AGENTS.md` |
-| `gemini` | `~/.gemini/GEMINI.md` |
-| `opencode` | `~/.config/opencode/AGENTS.md` |
-| `copilot` | `$COPILOT_HOME` or `~/.copilot`, `copilot-instructions.md` |
-| `amp` | `~/.config/amp/AGENTS.md` |
-
-Any other harness: `--file PATH`. Before writing, setup looks for an existing Relo block in the repository's
-`AGENTS.md`/`CLAUDE.md` and in every file above. If one is in a different file it refuses (exit 2) with
-`Relo is already set up in ~/.codex/AGENTS.md.`; keep it, or pass `--move` to remove the old block and write the
-new one. The same file is refreshed in place. The command is idempotent and touches only the block between the
-marker lines, keeping the rest of the file and its line endings byte for byte. The result is
-`{"ok":true,"file":"~/.codex/AGENTS.md","action":"created|appended|updated|unchanged|kept|moved|removed","from":"<old path when moved>","skill":{…}}`.
-It also reports the installed skill copies and a hint with the install command when the skill is missing or not
-at the CLI's version, but it never installs the skill.
-
-The block, exactly (no versions or dates, so tracked files do not churn):
-
-```markdown
-<!-- relo:start -->
-## Relo (live status on the owner's iPhone)
-For work longer than a couple of minutes, keep one Relo work current; ask on it before risky actions.
-- `relo work start --goal "<the goal, in the owner's words>" --plan "A,B,C"` → `relo work update --status "…" --next-step` → `relo work finish --outcome "<what happened>"`
-- One start per goal (a repeat start continues it; another goal: `start --new`). Unsure? Plan how you will find out (`--plan "Reproduce the bug,Find the cause,Choose the fix"`), then grow it with `--add "…"`; `--plan "…"` lists what is left (done steps stay). Plans are for visibility, not a contract.
-- Steps are milestones in order. Parallel work (subagents, several jobs) is one step with a count: `--progress 2/6`. A counted job without a plan: `--progress 3/10`. Steps are only your own work: what the owner must do is an `ask` or a note, never a step.
-- Real words only: no placeholders, "Step 2", "todo", paths or secrets. Waiting on CI or a review: `--waiting "CI"`. Finish once, honestly: `--outcome`, plus `--failed` or `--dropped` when it did not succeed.
-- `relo ask "Deploy to production?" --approval`: only exit 0 with state `approved` is permission; anything else, a late answer included, means no. The finish outcome is the notification; `relo notify` only when no work is open.
-- Lost track (compaction, a break)? `relo state`. Every command prints the plan, what the owner sees and the next command. Subagents run no relo commands.
-- Details: the relo-notifications skill, or `relo help`.
-<!-- relo:end -->
-```
-
-To edit the wording yourself, add a line `<!-- relo:keep -->` inside the block: `relo setup` (and
-`--remove`) then leave it untouched and report `kept`; `--move` will not move a kept block.
-
-## MCP server (harnesses without a shell): `relo setup --mcp` (the owner's choice)
+## MCP server (harnesses without a shell): `relo setup --mcp`
 
 `relo mcp` is a stdio MCP server inside the CLI (same credentials, no extra install) for Claude desktop, Cursor chat
-and other clients that cannot run a shell command. Tools: `relo_work_start`, `relo_work_update`, `relo_work_finish`, `relo_work_state`,
-`relo_ask` (waits up to 5 minutes, sending MCP progress notifications), `relo_interaction_wait`, `relo_notify`,
-`relo_doctor`. The tool descriptions carry the plan and approval rules. One work per MCP connection (its own session; a harness session id or, outside a harness, your `RELO_SESSION` wins).
+and other clients that cannot run a shell command. Tools: `relo_work_start`, `relo_work_update`, `relo_work_finish`,
+`relo_work_state`, `relo_ask` (waits up to <!--f:question.defaultSeconds-->5 minutes<!--/f-->, sending MCP progress notifications), `relo_interaction_wait`,
+`relo_notify`, `relo_doctor`. The tool descriptions carry the plan and approval rules. One work per MCP connection.
 
 ```bash
-relo setup --mcp --agent claude-code --global      # ~/.claude.json, or --project for <repo>/.mcp.json
-relo setup --mcp --agent claude-desktop            # macOS/Windows only
-relo setup --mcp --agent cursor --project --dry-run
-relo setup --mcp --agent codex --global --move     # relocate the entry from another file
-relo setup --mcp --remove                          # delete Relo's entry wherever it is (--agent NAME to limit)
+relo setup --mcp                          # every harness here that has an MCP config
+relo setup --mcp --agent claude-desktop   # only that one (macOS and Windows)
 ```
 
-| `--agent` | `--global` | `--project` | Key |
-| --- | --- | --- | --- |
-| `claude-code` | `~/.claude.json` | `<repo>/.mcp.json` | `mcpServers` |
-| `claude-desktop` | `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows `%APPDATA%\Claude\…`) | none | `mcpServers` |
-| `cursor` | `~/.cursor/mcp.json` | `<repo>/.cursor/mcp.json` | `mcpServers` |
-| `codex` | `$CODEX_HOME` or `~/.codex`, `config.toml` | `<repo>/.codex/config.toml` | `[mcp_servers.relo]` |
-| `gemini` | `~/.gemini/settings.json` | `<repo>/.gemini/settings.json` | `mcpServers` |
-| `vscode` | none | `<repo>/.vscode/mcp.json` | `servers` |
+| Harness | File | Key |
+| --- | --- | --- |
+| `claude-code` | `~/.claude.json` | `mcpServers` |
+| `claude-desktop` | `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows `%APPDATA%\Claude\…`) | `mcpServers` |
+| `cursor` | `~/.cursor/mcp.json` | `mcpServers` |
+| `codex` | `$CODEX_HOME` or `~/.codex`, `config.toml` | `[mcp_servers.relo]` |
+| `gemini` | `~/.gemini/settings.json` | `mcpServers` |
 
-The entry is named `relo`. Shell harnesses (Claude Code, Codex, Gemini CLI) get `{"command":"relo","args":["mcp"]}`; GUI
-apps (Claude desktop, Cursor, VS Code) do not inherit the shell `PATH`, so they get the absolute `node` and `relo.mjs` paths
-of the CLI that ran setup (run setup again after moving node or reinstalling to refresh it; the result is `updated`).
-Codex's table also sets `tool_timeout_sec = 330`, because its default of 60 s would cut a question short.
-Like the instruction block, the entry lives in **one** file per harness (a second location is refused without
-`--move`), setup is idempotent (`unchanged`), and `--remove` deletes only Relo's entry and leaves the rest of the
-file as it was (JSON keeps 2-space formatting; a file with comments is refused, not edited). `relo doctor --full`
-reports where the entry is, informationally; it never suggests adding it. Restart the harness after changing its config.
+The entry is named `relo` and is user-level, so it works in every project (a project's own MCP file is shared with
+the team, so Relo never writes one). Shell harnesses get `{"command":"relo","args":["mcp"]}`; GUI apps (Claude
+desktop, Cursor) do not inherit the shell `PATH`, so they get the absolute `node` and `relo.mjs` paths of this CLI
+(`relo setup --refresh` updates them after node or the CLI moves). Codex's table also sets
+`tool_timeout_sec = 330`, because its default of 60 s would cut a question short. Restart the harness after.
+
+## Depth: `relo setup --level notify|track|guide|optimize`
+
+The owner picks how deep Relo plugs into the agent, once per computer. A person at the terminal is asked once.
+An agent or script without `--level` keeps what is installed (track on a first install), so it never downgrades.
+
+| Depth | Installs | Owner gets |
+| --- | --- | --- |
+| `notify` | a short block (questions and notifications) | no cards |
+| `track` (default) | the block for cards and plans, and this skill | live cards, rounds, plan trees |
+| `guide` | `track`, plus a continuity part and the presence hooks | continuity across requests, compaction and `/clear`; the Sessions view |
+| `optimize` | `guide`, plus a part on lean context and subagents | see [efficiency](efficiency.md) |
+
+Hooks are optional and only at `guide` and `optimize`. They report the session's phase (working, waiting, idle,
+ended) and, with Claude Code, its name for the owner's Sessions view. A local state machine turns hook events into
+phases and the CLI sends only changes, over a harness credential that can write presence and nothing else (no
+prompts, tool names or tool input or output). Hooks never start, change or end a work, plan or question. Never
+change the depth on your own.
+
+```bash
+relo setup --level guide                  # block, skill and presence hooks
+relo setup --level guide --approvals on   # also answer permission prompts from the phone (guide, optimize)
+relo setup --level track --project        # this repository's block only
+relo setup --level track                  # hooks out everywhere; the harness credential revoked
+relo setup --show                         # the installed depth and block per harness; writes nothing
+relo setup --modules reporting,planning   # a custom mix of block parts
+```
+
+Gemini CLI has hooks at `guide` and `optimize`, in its user settings only. OpenCode too, approvals included: it has
+no command hooks, so setup writes `~/.config/opencode/relo-hooks.json` and Relo's plugin `plugins/relo.js`, which runs
+those commands (a subagent's child session rolls up into its session), adds the continuity context to the session's
+system text, and with `--approvals on` asks the owner when OpenCode asks for permission. OpenCode gets its own
+`AGENTS.md` block and reads the skill from Claude Code's or the shared skills folder. `relo state` and the owner's
+`relo outbox status` show what is queued; `relo outbox flush` sends it at once.
 
 ## Removing
 
 ```bash
-relo setup --remove      # while the CLI is still installed
+relo uninstall            # lists everything Relo wrote on this computer
+relo uninstall --apply    # removes Relo's parts only: blocks, skill copies (archived), hooks, MCP entries
+relo auth logout          # optional: forget this computer's sign-in
 npm uninstall --global @relo/cli
-relo skill remove --agent codex   # once per harness that has a copy (relo skill status lists them)
 ```
 
-Hooks are optional and off by default. Without them Relo works fully. The owner installs them for one settings
-file at a level: `relo setup --global --agent claude-code --hooks presence` (or `--project`, or `--agent gemini`;
-the level is required). `reminders` (Claude Code) is local only: a Stop reminder of an open or unrefreshed work and a restore
-of what the session was doing after a restart or compaction; nothing is sent. `presence` adds the session's
-phase (working, waiting, idle, ended) and, with Claude Code, the session's name for the owner's Sessions view: a local state machine turns hook events into
-phases and the CLI sends only changes, over a harness credential that can write presence and nothing else
-(no prompts, tool names or tool input/output). Hooks never start, change or end a work, plan or question.
-`relo hooks status` shows the level per settings file; `relo hooks off` (or `relo setup --hooks off`) removes
-Relo's entries and revokes that credential. Never install hooks on your own.
-`relo state` and the owner's `relo outbox status` show what is queued; `relo outbox flush` sends it at once.
-Older releases added Codex hooks and a Codex notifier: remove any `relo-codex-hook` entries from
-`~/.codex/hooks.json` and run `npm uninstall --global @relo/codex-notify`.
+A block marked `<!-- relo:keep -->` stays. Older releases added Codex hooks and a Codex notifier: remove any
+`relo-codex-hook` entries from `~/.codex/hooks.json` and run `npm uninstall --global @relo/codex-notify`.

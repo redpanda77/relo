@@ -1,16 +1,22 @@
 import { Activity, LockKeyhole, MessageSquareReply } from "lucide-react"
 import * as React from "react"
 
+import { OrbStage } from "@/components/organisms/orb-stage"
+
 import { BrandLockup } from "@/components/brand"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { authenticateOwner, verifySecondStep } from "@/features/auth/auth-service"
 import { GITHUB_URL, GitHubMark } from "@/features/auth/github"
+import { CONNECT_AFTER_SIGNUP_PATH } from "@/features/onboarding/connect-service"
 import type { DashboardAuth } from "@/features/auth/types"
+import { useShake } from "@/lib/use-shake"
 
-function friendlyAuthError(cause: unknown): string {
+function friendlyAuthError(cause: unknown, mode: "sign-in" | "sign-up"): string {
   const raw = cause instanceof Error ? cause.message.toLowerCase() : ""
+  // The server's own refusal of a sign-up is already written for people.
+  if (raw.includes("couldn't create this account")) return "Couldn't create this account. If you already have one, sign in."
   if (raw.includes("invalid") && (raw.includes("password") || raw.includes("credential") || raw.includes("email")))
     return "That email and password don't match."
   if (raw.includes("owner not bootstrapped")) return "This server isn't ready for its first account yet."
@@ -19,13 +25,13 @@ function friendlyAuthError(cause: unknown): string {
   if (raw.includes("registration closed")) return "This server isn't taking new accounts. Ask its admin to create one for you."
   if (raw.includes("already exists") || raw.includes("user exists")) return "An account with that email already exists."
   if (raw.includes("rate") || raw.includes("too many")) return "Too many attempts. Wait a minute and try again."
-  return "Couldn't sign in. Check your connection and try again."
+  return mode === "sign-up"
+    ? "Couldn't create the account. Check your connection and try again."
+    : "Couldn't sign in. Check your connection and try again."
 }
 
 // The living deck is decoration here; the form never waits for its code.
-const NowHud = React.lazy(() =>
-  import("@/components/organisms/now-hud").then((module) => ({ default: module.NowHud }))
-)
+
 
 const promises = [
   { icon: Activity, text: "Live progress on your iPhone's Lock Screen and Dynamic Island." },
@@ -60,9 +66,19 @@ export function AuthPage({
   const short = useMedia("(max-height: 700px)")
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState("")
-  const [mode, setMode] = React.useState(bootstrap.mode)
+  // "Create account" on the landing page arrives as ?mode=sign-up (only where registration is open).
+  const [mode, setMode] = React.useState(() =>
+    bootstrap.mode === "sign-in" && bootstrap.registration !== "closed" && new URLSearchParams(window.location.search).get("mode") === "sign-up" ? "sign-up" : bootstrap.mode)
   const [awaitingApproval, setAwaitingApproval] = React.useState(false)
   const [secondStep, setSecondStep] = React.useState<null | "totp" | "backup">(null)
+  // A refusal shakes the form and selects the field to retype, once the inputs are enabled again.
+  const [refusals, setRefusals] = React.useState(0)
+  const [form, shake] = useShake<HTMLFormElement>()
+  React.useEffect(() => {
+    if (!refusals) return
+    const field = form.current?.querySelector<HTMLInputElement>('input[name="code"], input[name="password"]')
+    shake(field)
+  }, [refusals, form, shake])
   // The first account claims the server; afterwards registration follows the admin's setting.
   const claimed = bootstrap.mode === "sign-in"
   const canRegister = claimed && bootstrap.registration !== "closed"
@@ -98,10 +114,12 @@ export function AuthPage({
         setPending(false)
         return
       }
-      onAuthenticated(bootstrap.route.nextPath)
+      // A new account lands in Connect a computer; the page it asked for waits behind the wizard.
+      onAuthenticated(mode === "sign-up" && bootstrap.route.nextPath === "/dashboard" ? CONNECT_AFTER_SIGNUP_PATH : bootstrap.route.nextPath)
     } catch (cause) {
-      setError(friendlyAuthError(cause))
+      setError(friendlyAuthError(cause, mode))
       setPending(false)
+      setRefusals((count) => count + 1)
     }
   }
 
@@ -121,6 +139,7 @@ export function AuthPage({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That code did not work.")
       setPending(false)
+      setRefusals((count) => count + 1)
     }
   }
 
@@ -129,6 +148,7 @@ export function AuthPage({
     setMode(signingIn ? "sign-up" : "sign-in")
     setError("")
   }
+  const deckHeight = wideDeck ? 600 : phone ? (short ? 150 : 200) : 330
   const stageLabel = awaitingApproval ? "Waiting" : pending ? (signingIn ? "Signing in" : "Creating") : signingIn ? "Sign in" : "Welcome"
   const inputClass = "min-h-12 rounded-xl border-white/10 bg-white/[0.04] px-4 text-[15px]"
   return (
@@ -155,19 +175,15 @@ export function AuthPage({
       </header>
       <div className="mx-auto grid min-h-[100dvh] w-full max-w-[1240px] items-center gap-x-20 gap-y-4 px-4 pt-14 pb-4 sm:gap-y-6 sm:px-8 sm:pt-16 sm:pb-10 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,27rem)] lg:px-12 lg:pt-24 lg:pb-16">
         <section aria-label="Relo" className="min-w-0">
-          <div className="auth-deck mx-auto max-w-[34rem] lg:max-w-none">
-            <React.Suspense fallback={<div className="h-[200px] sm:h-[330px] lg:h-[600px]" aria-hidden="true" />}>
-              <NowHud
-                welcome={{ label: stageLabel }}
-                today={0}
-                done={0}
-                running={0}
-                needsYou={0}
-                arcs={[]}
-                sentence=""
-                stage={wideDeck ? 600 : phone ? (short ? 150 : 200) : undefined}
-              />
-            </React.Suspense>
+          <div className="mx-auto max-w-[34rem] lg:max-w-none">
+            {/* The same core as the landing and Now, wearing the wordmark instead of a count. `auth-core` names
+                it `relo-core` for the page transition (loading.css), so signing in carries it to Now. */}
+            <OrbStage className="auth-core w-full" style={{ height: deckHeight }}>
+              <div aria-hidden="true" className="flex flex-col items-center gap-2 text-center">
+                <span className="wordmark wordmark-glow" style={{ fontSize: `${(3.75 * deckHeight) / 330}rem` }}>relo</span>
+                <span className="micro" style={{ color: "var(--neon-cyan)" }}>{stageLabel}</span>
+              </div>
+            </OrbStage>
           </div>
           <h1 className="rise-in text-center font-[family-name:var(--font-rounded)] text-[1.75rem] leading-[1.08] sm:mt-2 sm:text-[2.25rem] font-bold tracking-tight text-balance sm:text-[2.75rem] lg:sr-only">
             Every agent.
@@ -216,7 +232,7 @@ export function AuthPage({
                 Back to sign in
               </Button>
             ) : secondStep ? (
-            <form id="two-factor-form" className="space-y-4" onSubmit={(event) => void submitCode(event)}>
+            <form ref={form} id="two-factor-form" className="space-y-4" onSubmit={(event) => void submitCode(event)}>
               <div className="space-y-2">
                 <Label htmlFor="code">{secondStep === "totp" ? "Code" : "Backup code"}</Label>
                 <Input
@@ -251,6 +267,7 @@ export function AuthPage({
             </form>
             ) : (
             <form
+              ref={form}
               id="auth-form"
               data-mode={mode}
               data-next={bootstrap.route.nextPath}

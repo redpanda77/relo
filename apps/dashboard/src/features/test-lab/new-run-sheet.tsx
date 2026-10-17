@@ -10,9 +10,12 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react"
+import { LazyMotion } from "motion/react"
 import * as React from "react"
 
 import { NotificationPreview } from "@/components/organisms/notification-preview"
+import { SelectionIndicator } from "@/components/atoms/selection-indicator"
+import { ActionButton } from "@/components/molecules/action-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -28,6 +31,7 @@ import {
 import { CONNECTIONS_HREF } from "@/features/test-lab/devices"
 import type { LaunchRunReceipt } from "@/features/test-lab/launch-receipt"
 import type { BuilderDraft, TestDevice } from "@/features/test-lab/types"
+import { loadMotionFeatures } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import { navigateDashboard } from "@/state/use-dashboard-route"
 
@@ -219,13 +223,12 @@ function StepsEditor({
                   next[index] = clean(event.target.value)
                   onChange(next, current)
                 }}
-                className="min-h-11"
               />
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-11 shrink-0 text-muted-foreground"
+                className="size-9 shrink-0 text-muted-foreground pointer-coarse:size-11"
                 aria-label={`Remove step ${position}`}
                 disabled={labels.length <= 2}
                 onClick={() => {
@@ -243,7 +246,7 @@ function StepsEditor({
         <Button
           type="button"
           variant="ghost"
-          className="min-h-11 text-muted-foreground"
+          className="text-muted-foreground"
           onClick={() => onChange([...labels, ""], current)}
         >
           <Plus aria-hidden="true" />
@@ -320,7 +323,7 @@ export function NewRunSheet({
     >
       <SheetTrigger asChild>
         <Button
-          className="min-h-11 px-4"
+          className="px-4"
           onClick={() =>
             navigateDashboard(
               "/dashboard/testing?compose=1#activity-builder-panel"
@@ -365,6 +368,7 @@ export function NewRunSheet({
                 <legend className="mb-3 text-sm font-medium">
                   What kind of notification?
                 </legend>
+                <LazyMotion features={loadMotionFeatures} strict>
                 <div className="overflow-hidden rounded-xl border border-border">
                   {KINDS.map((option) => {
                     const Icon = option.icon
@@ -373,10 +377,12 @@ export function NewRunSheet({
                       <label
                         key={option.id}
                         className={cn(
-                          "flex min-h-14 cursor-pointer items-center gap-3 border-b border-border px-3.5 py-2.5 transition-colors last:border-b-0 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-ring",
-                          selected ? "bg-white/[0.07]" : "hover:bg-white/[0.03]"
+                          "hover-fade relative isolate flex min-h-14 cursor-pointer items-center gap-3 border-b border-border px-3.5 py-2.5 last:border-b-0 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-ring",
+                          selected ? null : "hover:bg-white/[0.03]"
                         )}
                       >
+                        {/* The selected fill slides to the new kind on the snappy spring. */}
+                        {selected ? <SelectionIndicator layoutId="builder-kind" variant="row" /> : null}
                         <input
                           type="radio"
                           name="builder-kind"
@@ -402,7 +408,7 @@ export function NewRunSheet({
                         </span>
                         <span
                           className={cn(
-                            "grid size-5 shrink-0 place-items-center rounded-full border",
+                            "hover-fade grid size-5 shrink-0 place-items-center rounded-full border",
                             selected
                               ? "border-foreground bg-foreground text-background"
                               : "border-border"
@@ -417,6 +423,7 @@ export function NewRunSheet({
                     )
                   })}
                 </div>
+                </LazyMotion>
               </fieldset>
 
               <div className="space-y-4">
@@ -428,8 +435,7 @@ export function NewRunSheet({
                     required
                     value={draft.title}
                     onChange={(e) => update("title", e.target.value)}
-                    className="min-h-11"
-                  />
+                      />
                 </Field>
                 <Field label="Status line" htmlFor="builder-status">
                   <Input
@@ -439,8 +445,7 @@ export function NewRunSheet({
                     required
                     value={draft.status}
                     onChange={(e) => update("status", e.target.value)}
-                    className="min-h-11"
-                  />
+                      />
                 </Field>
 
                 {kind === "progress" ? (
@@ -479,8 +484,7 @@ export function NewRunSheet({
                         placeholder="Optional"
                         value={draft.progressLabel}
                         onChange={(e) => update("progressLabel", e.target.value)}
-                        className="min-h-11"
-                      />
+                              />
                     </Field>
                   </div>
                 ) : null}
@@ -508,8 +512,7 @@ export function NewRunSheet({
                         maxLength={24}
                         value={draft.secondaryLabel}
                         onChange={(e) => update("secondaryLabel", e.target.value)}
-                        className="min-h-11"
-                      />
+                              />
                     </Field>
                     <Field label="Right button" htmlFor="builder-primary-label">
                       <Input
@@ -518,8 +521,7 @@ export function NewRunSheet({
                         maxLength={24}
                         value={draft.primaryLabel}
                         onChange={(e) => update("primaryLabel", e.target.value)}
-                        className="min-h-11"
-                      />
+                              />
                     </Field>
                   </div>
                 ) : null}
@@ -541,8 +543,7 @@ export function NewRunSheet({
                       maxLength={40}
                       value={draft.header}
                       onChange={(e) => update("header", e.target.value)}
-                      className="min-h-11"
-                    />
+                          />
                   </Field>
                   <Field label="Subtitle" htmlFor="builder-subtitle">
                     <Input
@@ -551,8 +552,7 @@ export function NewRunSheet({
                       maxLength={120}
                       value={draft.subtitle}
                       onChange={(e) => update("subtitle", e.target.value)}
-                      className="min-h-11"
-                    />
+                          />
                   </Field>
                   <Field label="Icon" htmlFor="builder-symbol">
                     <NativeSelect
@@ -638,7 +638,7 @@ export function NewRunSheet({
                     <Button
                       type="button"
                       variant="ghost"
-                      className="-ml-2.5 min-h-11 text-muted-foreground"
+                      className="-ml-2.5 text-muted-foreground"
                       data-builder-reset
                       onClick={reset}
                     >
@@ -703,14 +703,17 @@ export function NewRunSheet({
             >
               {pending ? "Sending…" : (blocker ?? "Ready to send")}
             </span>
-            <Button
+            <ActionButton
               type="submit"
               id="start-live-activity"
-              disabled={pending || Boolean(blocker)}
-              className="min-h-11 px-5"
+              disabled={Boolean(blocker)}
+              pending={pending}
+              pendingLabel="Sending…"
+              successLabel={null}
+              size="lg"
             >
-              {pending ? "Sending…" : "Send test"}
-            </Button>
+              Send test
+            </ActionButton>
           </div>
         </form>
       </SheetContent>

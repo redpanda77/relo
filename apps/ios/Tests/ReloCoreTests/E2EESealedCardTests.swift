@@ -49,7 +49,7 @@ final class E2EESealedCardTests: XCTestCase {
         XCTAssertEqual(opened.title, "Deploy 0.12")
         XCTAssertEqual(opened.status, "Approved · Shipping")
         XCTAssertEqual(opened.subtitle, "to production")
-        guard case let .steps(_, _, items) = opened.components[0] else { return XCTFail("steps") }
+        guard case let .steps(_, _, items, _) = opened.components[0] else { return XCTFail("steps") }
         XCTAssertEqual(items.map(\.label), ["Build", "Ship"])
         XCTAssertEqual(items.map(\.state), [.complete, .current])
 
@@ -59,7 +59,7 @@ final class E2EESealedCardTests: XCTestCase {
         XCTAssertEqual(question.subtitle, "Deploy now?")
         XCTAssertEqual(question.title, "Encrypted card", "a placeholder title in the sealed text never replaces")
         // Each step on its own: a short list labels what it can, never all or nothing.
-        guard case let .steps(_, _, partial) = placeholderCard().applying(ReloSealedCardText(steps: ["Only one"])).components[0]
+        guard case let .steps(_, _, partial, _) = placeholderCard().applying(ReloSealedCardText(steps: ["Only one"])).components[0]
         else { return XCTFail("steps") }
         XCTAssertEqual(partial.map(\.label), ["Only one", "Step 2"])
     }
@@ -95,7 +95,7 @@ final class E2EESealedCardTests: XCTestCase {
                         "steps": ["st_code", "st_test"], "step": "st_test"]
         let decoded = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(decoded.work?.id, "wrk_e2e")
-        guard case let .steps(_, _, items) = decoded.presentation.components[0] else { return XCTFail("steps") }
+        guard case let .steps(_, _, items, _) = decoded.presentation.components[0] else { return XCTFail("steps") }
         XCTAssertEqual(items.map(\.label), ["Scope", "Code", "Test"], "every step labelled by id")
 
         // The app stores and ActivityKit decodes the state again: the same card.

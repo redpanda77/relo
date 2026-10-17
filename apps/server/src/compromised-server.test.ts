@@ -15,7 +15,7 @@ import { prekeySigningInput } from "./device-keys.js";
 import { migrate } from "./migrate.js";
 
 /**
- * The end-to-end promise, end to end (docs/END-TO-END-ENCRYPTION.md, E6.4): the real `relo` CLI
+ * The end-to-end promise, end to end (docs/ENCRYPTION-PROTOCOL.md, E6.4): the real `relo` CLI
  * talks to a real server for a phone this computer verified. Afterwards nothing the agent wrote —
  * notice title, summary and body, card title, status and steps, question prompt — exists anywhere
  * in the database, which is everything a compromised server, its backups or its operator hold.
@@ -87,7 +87,7 @@ suite("a compromised server holds no readable content (E6.4)",() => {
     env = { PATH: process.env.PATH,HOME: folder,RELO_API_URL: apiUrl,RELO_TOKEN: cliToken,RELO_NO_UPDATE_CHECK: "1",
       RELO_CONFIG_PATH: join(folder,"config.json"),RELO_KEY_STORE_PATH: join(folder,"e2ee.json"),
       RELO_SEALED_CARD_DIR: join(folder,"cards"),XDG_STATE_HOME: join(folder,"state"),
-      RELO_SOURCE: "Proof",RELO_PROJECT: "compromised-relo-project",RELO_COMPUTER: "proof-mac",RELO_ACCOUNT: "proof" };
+      RELO_SESSION: "proof-release",RELO_SOURCE: "Proof",RELO_PROJECT: "compromised-relo-project",RELO_COMPUTER: "proof-mac",RELO_ACCOUNT: "proof" };
   });
 
   afterAll(async () => {
@@ -96,16 +96,22 @@ suite("a compromised server holds no readable content (E6.4)",() => {
     await db.end();
   });
 
-  const relo = async (...args: string[]) => JSON.parse((await run(process.execPath,[cli,...args,"--json"],{ env })).stdout.trim());
+  const relo = async (...args: string[]) => {
+    const result = await run(process.execPath,[cli,...args,"--json"],{ env }).catch((error) => {
+      throw new Error(`relo ${args[0]} failed: ${error.stdout ?? ""}${error.stderr ?? ""}`);
+    });
+    return JSON.parse(result.stdout.trim());
+  };
 
   test("notices, cards and questions reach the server sealed, and no table holds the agent's words",async () => {
     const notice = await relo("notify",`${MARK} body: the database password rotated`,"--title",`${MARK} title`,
       "--summary",`${MARK} summary`,"--topic","Release notes");
     expect(notice.ok).toBe(true);
-    const card = await relo("activity","start","--title",`${MARK} card`,"--status",`${MARK} status`,
-      "--steps",`${MARK} build,${MARK} ship`,"--topic","Release card");
-    expect(card.ok).toBe(true);
-    expect((await relo("activity","update","--status",`${MARK} shipping`,"--next-step","--topic","Release card")).ok).toBe(true);
+    // A script's work and its card (RELO_SESSION names the producer), then a question on that card.
+    const work = await relo("work","start","--goal",`${MARK} card`,"--status",`${MARK} status`,
+      "--plan",`${MARK} build,${MARK} ship`,"--idempotency-key","proof-release-start");
+    expect(work.ok).toBe(true);
+    expect((await relo("work","update","--status",`${MARK} shipping`,"--next-step")).ok).toBe(true);
     const asked = await relo("ask",`${MARK} deploy to production?`,"--approval","--no-wait","--topic","Release card");
     expect(asked.ok).toBe(true);
 

@@ -1,11 +1,9 @@
 import { useState } from "react"
 
-import {
-  DeliveryRow,
-  EmptyInbox,
-  InboxPageFrame,
-  InboxPager,
-} from "@/features/inbox/components"
+import { Empty, List } from "@/components/list"
+import { OperationStatus } from "@/components/molecules/operation-status"
+import { Page } from "@/components/page"
+import { DeliveryRow, InboxPager } from "@/features/inbox/components"
 import type { DeliveryHistory } from "@/features/inbox/types"
 import { createHttpInboxService, type InboxService } from "@/services/inbox-service"
 
@@ -48,36 +46,37 @@ export function DeliveryHistoryPage({
     }
   }
 
+  const total = initial.pagination.total
   return (
-    <InboxPageFrame bootstrap={initial}>
-      <section className="mt-6" aria-labelledby="delivery-heading">
-        <h2 id="delivery-heading" className="text-lg font-medium">
-          Delivery attempts
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {initial.pagination.total} durable target jobs with provider
-          acceptance, retry, and terminal failure evidence.
-        </p>
-        {error ? <p className="mt-3 text-sm text-destructive" role="alert">{error}</p> : null}
-        <div className="mt-4 space-y-2.5">
-          {deliveries.length ? (
-            deliveries.map((delivery, index) => (
-              <DeliveryRow
-                key={`${delivery.id}-${index}`}
-                delivery={delivery}
-                reconciling={reconciling === delivery.id}
-                onReconcile={(action) => void reconcile(delivery.id, action)}
-              />
-            ))
-          ) : (
-            <EmptyInbox
+    <Page
+      title={initial.shell.title}
+      eyebrow={`${total} job${total === 1 ? "" : "s"} · what Apple accepted, retried or refused.`}
+      back={{ href: "/dashboard/inbox/notifications", label: "History" }}
+    >
+      <section aria-label="Delivery attempts">
+        <OperationStatus error={error} className="mb-3" />
+        <List
+          label="Delivery attempts"
+          items={deliveries.map((delivery, index) => ({ delivery, key: `${delivery.id}-${index}` }))}
+          getKey={(item) => item.key}
+          empty={
+            <Empty
               title="No delivery attempts yet"
-              description="Target-level transport evidence will appear after a notification is sent."
+              description="Each phone a notification goes to gets a delivery job here, with Apple's answer."
+            />
+          }
+        >
+          {({ delivery }) => (
+            <DeliveryRow
+              delivery={delivery}
+              reconciling={reconciling === delivery.id}
+              failed={Boolean(error)}
+              onReconcile={(action) => void reconcile(delivery.id, action)}
             />
           )}
-        </div>
+        </List>
         <InboxPager value={initial.pagination} />
       </section>
-    </InboxPageFrame>
+    </Page>
   )
 }

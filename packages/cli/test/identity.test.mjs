@@ -2,7 +2,9 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { noRunningCards } from "./fake-cards.mjs";
-import { detectIdentityDefaults, execute, run, EXIT } from "../src/cli.mjs";
+import { detectIdentityDefaults } from "../src/shared/identity.mjs";
+import { execute, run } from "../src/cli.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
 
 const identity = ["--source", "Codex", "--project", "Relo", "--topic", "Release"];
 const context = { providerName: "Codex", project: "Relo", threadName: "Release" };
@@ -12,7 +14,6 @@ function dependencies(client, stdin) {
 }
 const creates = [
   ["notify", "send", "Ready"], ["ask", "Continue?", "--approval"],
-  ["activity", "start", "--title", "Release", "--status", "Applying migrations"],
 ];
 
 test("every creation rejects each missing or blank grouping level without an API call", async () => {
@@ -63,21 +64,17 @@ test("manual topic correlation is stable, separated by source and project, and p
   assert.equal(bodies[0].sourceName,"Codex");
 });
 
-test("topic alias works, duplicate selectors fail, and updates/ends inherit stored identity", async () => {
+test("topic alias works, duplicate selectors fail, and an end inherits the card's stored identity", async () => {
   const bodies = [];
   const client = {
     sendNotification: async body => { bodies.push(body); return { eligibleDevices: 1,durableCommands: 1,apnsJobs: 0 }; },
-    updateActivity: async (_id,body) => { bodies.push(body); return { eligibleDevices: 1,durableCommands: 1,apnsJobs: 0 }; },
     endActivity: async (_id,body) => { bodies.push(body); return { eligibleDevices: 1,durableCommands: 1,apnsJobs: 0 }; },
   };
   await execute(["notify","Ready",...identity.slice(0,4),"--thread-name","Release"], dependencies(client));
   assert.equal(bodies[0].context.threadName,"Release");
   await assert.rejects(execute(["notify","Ready",...identity,"--thread-name","Other"], dependencies(client)), /either --topic/);
-  await execute(["activity","update","manual","--status","Checking"], dependencies(client));
   await execute(["activity","end","manual"], dependencies(client));
   assert.equal(bodies[1].context,undefined);
-  assert.equal(bodies[2].context,undefined);
-  await assert.rejects(execute(["activity","update","manual","--project"," "], dependencies(client)), /required|empty/);
 });
 
 test("one error names every missing field with a runnable hint, and rejects placeholders", async () => {

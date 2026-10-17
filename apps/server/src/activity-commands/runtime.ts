@@ -18,6 +18,7 @@ import { relevanceDeliveryGuard } from "../relevance/delivery.js";
 import { recordNativeMutation } from "../relevance/native-occurrence.js";
 import { admitOrdinaryEvent } from "../relevance/ordinary-admission.js";
 import type { ActivityRow } from "./types.js";
+import { settleQuestionCopies } from "../interactions/settle-copies.js";
 import { stableJson } from "../stable-json.js";
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<any> };
@@ -121,31 +122,9 @@ export async function cancelPendingActivityInteractions(
   principalId: string,
   activityId: string,
 ): Promise<number> {
-  const canceled = await query.query(
-    `UPDATE interaction_requests r SET state='canceled',responded_at=now()
-     FROM notification_events e
-     WHERE r.notification_event_id=e.id AND r.state='pending'
-       AND e.principal_id=$1 AND e.payload#>>'{liveActivity,activityId}'=$2
-     RETURNING e.id`,
-    [principalId,publicId("act",activityId)],
-  );
-  const eventIds = canceled.rows.map((row: { id: string }) => row.id);
-  if (eventIds.length) {
-    await query.query(
-      "UPDATE notification_events SET state='canceled',updated_at=now() WHERE id=ANY($1::uuid[])",
-      [eventIds],
-    );
-    await query.query(`UPDATE notification_relevance
-      SET relevance=jsonb_set(relevance,'{status}','"settled"'::jsonb)
-      WHERE notification_event_id=ANY($1::uuid[]) AND superseded_at IS NULL
-        AND relevance#>>'{deadlines,kind}'='decision'`,[eventIds]);
-    await query.query(`UPDATE delivery_jobs SET state='canceled',last_error_code='interaction_canceled',
-      last_error_message='The activity no longer accepts this decision',
-      claim_token=NULL,claim_started_at=NULL,claim_phase=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
-      WHERE notification_event_id=ANY($1::uuid[]) AND (state IN ('pending','retry')
-        OR (state='processing' AND claim_phase='preparing'))`,[eventIds]);
-  }
-  return eventIds.length;
+  return (await settleQuestionCopies(query,{
+    scope: { activity: { principalId,activityId } },outcome: { state: "canceled" },
+  })).length;
 }
 
 /** Epoch seconds the activity was created; lets the Lock Screen tick an elapsed timer. */
@@ -240,6 +219,9 @@ export async function createActivityCommands(
       operation: input.operation,
     });
     const command = presentationCommandProjection(canonical);
+    // The step the work is on, in the clear (ids carry no text), so the phone groups a work's card updates by step.
+    const stepsComponent = canonical.components.find((component) => component.type === "steps");
+    const stepId = stepsComponent?.type === "steps" ? stepsComponent.plan?.currentId ?? undefined : undefined;
     const remoteActivityEligible = input.apnsMode !== "disabled"
       && device.apns_environment === input.apnsMode
       && !device.revoked_at
@@ -279,6 +261,7 @@ export async function createActivityCommands(
           sequence: Number(input.activity.sequence),
           providerTimestamp: activityProviderTimestamp(input.activity),
           startedAt: activityStartedAt(input.activity),
+          ...(stepId ? { stepId } : {}),
           relevanceScore: lease.relevanceScore,
           presentationState: lease.state,
           otherActiveCount: lease.otherActiveCount,

@@ -1,0 +1,441 @@
+/* loading: owned by one area; imported last in index.css so it can refine the base rules.
+   How pages load and move between documents (DESIGN.md, "Loading and moving between pages").
+
+   Rules: structure paints at once (it is the page). Loading signals (the core's breath, shimmer,
+   the rail) only after 400 ms; words only after 1 s; anything shown stays at least 500 ms and leaves
+   on a --dur-base fade. No percentages, no fake progress; numbers are real from the first frame.
+   Reduced motion: nothing breathes, shimmers or travels; the words still appear. */
+
+@keyframes loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes loading-hide {
+  to { opacity: 0; visibility: hidden; }
+}
+@keyframes loading-show {
+  from { opacity: 0; visibility: visible; }
+  to { opacity: 1; visibility: visible; }
+}
+
+/* ---------- The server's first frame (apps/server/src/web/dashboard-skeleton.ts) ---------- */
+
+/* The shell: the sidebar's room (the rail on tablets and when the owner folded it, nothing on
+   phones) and the page column. The room is the real sidebar's gap (sidebar.tsx, floating variant):
+   the open width, or the rail's icon width plus 1rem. */
+.loading-shell {
+  display: flex;
+  min-height: 100dvh;
+}
+.loading-shell-main {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1;
+}
+.loading-sidebar {
+  --loading-sidebar-w: calc(var(--sidebar-width-icon) + 1rem);
+  /* The glass inside the container's 8px inset: the open width less 16px; on the rail the
+     container is 2px wider than its gap (sidebar.tsx), so the glass is the icon width plus 2px. */
+  --loading-glass-w: calc(var(--sidebar-width-icon) + 2px);
+  display: none;
+  width: var(--loading-sidebar-w);
+  flex: none;
+}
+@media (min-width: 768px) {
+  .loading-sidebar { display: block; }
+}
+@media (min-width: 1100px) {
+  .loading-sidebar:not([data-folded="true"]) {
+    --loading-sidebar-w: var(--sidebar-width);
+    --loading-glass-w: calc(var(--sidebar-width) - 16px);
+  }
+}
+/* The floating glass the real sidebar wears (index.css `[data-slot="sidebar-inner"]`). */
+.loading-sidebar-glass {
+  position: fixed;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  width: var(--loading-glass-w);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--sheet-border);
+  border-radius: 22px;
+  background: rgb(12 12 19 / 0.78);
+  box-shadow: var(--glass-highlight), 0 24px 48px -24px rgb(0 0 0 / 0.8);
+}
+.loading-sidebar-brand {
+  display: flex;
+  height: 64px;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding-left: 14px;
+}
+.loading-sidebar-orb { width: 28px; height: 28px; }
+.loading-wordmark { font-size: 1.45rem; }
+.loading-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px 0;
+}
+.loading-nav + .loading-nav-section { margin-top: 8px; }
+.loading-nav-section { padding: 12px 20px 0; line-height: 20px; }
+.loading-nav-section + .loading-nav { padding-top: 4px; }
+.loading-nav-link {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 12px;
+  padding-inline: 11px;
+  border-radius: 12px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+.loading-nav-link svg { width: 18px; height: 18px; flex: none; }
+.loading-nav-link[data-current="true"] {
+  background: var(--control-fill-active);
+  color: var(--foreground);
+}
+.loading-nav-link[data-current="true"] svg { color: var(--primary); }
+.loading-nav-label { flex: 1; white-space: nowrap; }
+.loading-nav-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--neon-orange);
+  color: #1b0905;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+/* The rail: icons only, as the real sidebar folds. Tablets always start on it (dashboard-shell.tsx
+   `openAtStart`); wider windows when the owner left it folded (the `sidebar_state=false` cookie). */
+@media (min-width: 768px) and (max-width: 1099px) {
+  .loading-wordmark,
+  .loading-nav-label,
+  .loading-nav-badge,
+  .loading-nav-section { display: none; }
+  .loading-sidebar-brand { justify-content: center; padding: 0; }
+  .loading-nav-link { justify-content: center; padding: 0; }
+}
+@media (min-width: 1100px) {
+  .loading-sidebar[data-folded="true"] :is(.loading-wordmark, .loading-nav-label, .loading-nav-badge, .loading-nav-section) { display: none; }
+  .loading-sidebar[data-folded="true"] :is(.loading-sidebar-brand, .loading-nav-link) { justify-content: center; padding: 0; }
+}
+
+/* Placeholder rows: one frosted list, as the page's own lists. */
+.loading-list {
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+}
+.loading-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+.loading-row + .loading-row { border-top: 1px solid rgb(255 255 255 / 0.06); }
+.loading-row-tile { width: 40px; height: 40px; flex: none; border-radius: 12px; }
+/* ---------- Now (dashboard-skeleton.ts `nowPage`): the same rows, cards and rail as React's ---------- */
+
+/* A work row (work-card.tsx, row variant): 12px by 16px around origin, title, summary and standing
+   lines (16, 20, 18 and 16px, 6px apart); 112px, as React's. */
+.loading-list-now { border-color: rgb(255 255 255 / 0.08); }
+.loading-work-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+}
+.loading-work-row > span { display: flex; align-items: center; height: 16px; }
+.loading-work-row > span:nth-child(2) { height: 20px; }
+.loading-work-row > span:nth-child(3) { height: 18px; }
+.loading-work-row .loading-line { height: 10px; }
+.loading-work-row > span:nth-child(2) .loading-line { height: 13px; }
+/* A live card's place (work-card.tsx, card variant), as tall as its kind usually is: a question
+   under a needs-you card, a progress line under a running one. */
+.loading-card {
+  height: 138px;
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+}
+.loading-card[data-card="needsYou"] { height: 142px; }
+.loading-card[data-card="waitingOnYou"] { height: 122px; }
+/* A session row in the rail. */
+.loading-session-row { display: flex; min-height: 71px; flex-direction: column; justify-content: center; gap: 8px; padding: 12px 16px; }
+/* "Show n more": a phone shows one row of Since you looked, wider pages three (inbox-view.tsx). */
+.split-page-body .loading-more { display: none; }
+.loading-more .loading-line { height: 10px; }
+@container split-page (max-width: 639.98px) {
+  .split-page-body .loading-more[data-phone] { display: inline-flex; }
+  .loading-list-now > .loading-work-row:nth-child(n + 2) { display: none; }
+}
+@container split-page (min-width: 640px) {
+  .split-page-body .loading-more[data-wide] { display: inline-flex; }
+  /* Without its "more" the list is the section's last line (Tailwind's space-y spaces the rest). */
+  [data-skeleton-since] > :has(+ .loading-more:not([data-wide])) { margin-block-end: 0; }
+}
+/* The deck column's sentence (1100px+) and the Sessions rail (1400px+) exist only at those widths. */
+.loading-deck-more,
+.split-page-body > .loading-sessions { display: none; }
+.loading-deck-more .now-deck-sentence { display: flex; flex-direction: column; }
+.loading-deck-more .now-deck-sentence > .loading-line { height: 10px; margin-block: 4px; }
+@container split-page (min-width: 1100px) {
+  .loading-deck-more { display: flex; }
+}
+@container split-page (min-width: 1400px) {
+  .split-page-body > .loading-sessions { display: block; }
+}
+.loading-row-lines { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 8px; }
+.loading-line { height: 14px; max-width: 100%; }
+.loading-line-sm { height: 12px; }
+.loading-line-lg { height: 28px; }
+/* Now's first line, "Since you looked" (text-sm), and a section heading (micro): one line box each,
+   so the rows under them land where React's rows land. */
+.loading-since,
+.loading-heading {
+  display: flex;
+  height: 1lh;
+  align-items: center;
+}
+.loading-heading .loading-line { height: 10px; }
+/* A Now section's caption is 16px tall (its count's line). */
+.split-page-body .loading-heading { height: 16px; }
+.loading-detail {
+  display: flex;
+  max-width: 42rem;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+}
+.loading-readout { display: block; width: 2.5ch; height: 28px; border-radius: 8px; }
+/* The centre's count when it is Today's: only the browser knows the owner's day (dashboard-skeleton.ts). */
+.loading-centre-slot {
+  display: inline-block;
+  width: 1.2ch;
+  height: 0.72em;
+  border-radius: 14px;
+  vertical-align: baseline;
+}
+
+/* The words: "Starting Relo" after 1 s under the core; after 8 s it gives way to an honest
+   "Taking longer than usual · Reload". CSS only (the CSP allows no inline script). */
+.loading-words {
+  position: absolute;
+  z-index: 1;
+  /* Just under the painted core (index.css sizes it min(46cqh, 62cqw) on the stage's centre). */
+  top: calc(50% + min(23cqh, 31cqw) + 14px);
+  right: 0;
+  left: 0;
+  display: grid;
+  margin: 0;
+  text-align: center;
+  pointer-events: none;
+}
+.loading-words > span { grid-area: 1 / 1; }
+.loading-words a {
+  color: var(--primary);
+  pointer-events: auto;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.loading-words-start {
+  opacity: 0;
+  animation:
+    loading-reveal var(--dur-base) var(--ease-out) 1000ms forwards,
+    loading-hide var(--dur-base) var(--ease-in) 8000ms forwards;
+}
+.loading-words-slow {
+  visibility: hidden;
+  opacity: 0;
+  animation: loading-show var(--dur-base) var(--ease-out) 8000ms forwards;
+}
+/* On a list or detail page the words sit under the rows. */
+.loading-frame-words { position: relative; min-height: 20px; }
+.loading-frame-words .loading-words { inset: 0; text-align: left; }
+.loading-frame-words .loading-words { top: 0; }
+
+/* The painted core breathes (.45 ↔ .6, on the heartbeat) once the wait is noticeable. */
+@keyframes loading-breath {
+  0%, 100% { opacity: 0.55; }
+  25% { opacity: 0.6; }
+  75% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-loading-core] .orb-stage-painted {
+    animation: loading-breath var(--period-breath) var(--ease-breath) 400ms infinite;
+  }
+  /* The hand-off: React's painted core takes the breath over on the same beat (the heartbeat puts
+     both loops on the document clock), so it is the same opacity on the frame it replaces the
+     skeleton's, and keeps breathing until the scene is ready (orb-stage.tsx ends the hand-off). */
+  :root[data-skeleton-core="breathing"] .now-deck-stage[data-orb-stage="loading"]:not([data-loading-core]) .orb-stage-painted {
+    animation: loading-breath var(--period-breath) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
+  }
+  /* A placeholder shimmers only once the wait is noticeable (400 ms; nav.css times the sheen). */
+  .skeleton::after { animation-delay: var(--breath-epoch, 0ms), 400ms; }
+}
+
+/* The hand-off: React's rows fade in under the skeleton's still copy fading out (skeleton-handoff.ts). */
+.loading-ghosts {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  pointer-events: none;
+}
+:root[data-skeleton-handoff] :is(.split-page-body > *, .page-frame > .page-stack > *) {
+  animation: loading-reveal var(--dur-base) var(--ease-out) backwards;
+}
+
+/* ---------- The navigation rail (route-loading-fallback.tsx) ---------- */
+
+@property --rail {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #ff6b57;
+}
+.loading-rail {
+  --rail: var(--primary);
+  position: fixed;
+  z-index: 80;
+  inset: env(safe-area-inset-top) 0 auto;
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--rail) 14%, transparent);
+  pointer-events: none;
+  transition: --rail var(--dur-slow) var(--ease-out);
+  animation: loading-reveal var(--dur-fast) var(--ease-out);
+}
+.loading-rail[data-tone="slow"] { --rail: var(--neon-yellow); }
+.loading-rail[data-tone="failed"] { --rail: var(--neon-red); }
+/* Indeterminate: one coral segment travels the hairline, a lap per half breath, on the beat. */
+.loading-rail-segment {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, var(--rail) 40%, var(--rail) 70%, transparent);
+  transform: translateX(-100%);
+  animation: loading-rail-travel calc(var(--period-breath) / 2) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
+}
+@keyframes loading-rail-travel {
+  to { transform: translateX(334%); }
+}
+/* Arrival: a fill sweeps to the end (the component animates it), then the rail fades. */
+.loading-rail-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--rail);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+}
+.loading-rail[data-phase="done"] .loading-rail-segment { visibility: hidden; }
+/* Unreachable: a still red line. */
+.loading-rail[data-tone="failed"] .loading-rail-segment {
+  width: 100%;
+  background: var(--rail);
+  transform: none;
+  animation: none;
+}
+.loading-notice-host {
+  position: fixed;
+  z-index: 79;
+  top: calc(env(safe-area-inset-top) + 12px);
+  left: 50%;
+  width: min(30rem, calc(100% - 32px));
+  translate: -50% 0;
+  animation: loading-reveal var(--dur-base) var(--ease-out);
+}
+
+/* ---------- Sealed text a linked browser is opening (encrypted-text.tsx) ---------- */
+
+.sealed-opening { vertical-align: middle; }
+.sealed-opening-slot { display: inline-grid; min-width: 0; align-items: center; }
+.sealed-opening-slot > * { grid-area: 1 / 1; }
+.sealed-opening-line { display: inline-block; width: 9rem; max-width: 100%; height: 0.8em; border-radius: 6px; }
+/* The words take the line's place once the wait is noticeable. */
+.sealed-opening-words {
+  opacity: 0;
+  animation: loading-reveal var(--dur-base) var(--ease-out) 400ms forwards;
+}
+.sealed-opening-line {
+  animation: loading-hide var(--dur-base) var(--ease-in) 400ms forwards;
+}
+/* Opened: each row's text crossfades in where the placeholder stood, 40 ms after the one before. */
+[data-sealed-opened] {
+  animation: loading-reveal var(--dur-fast) var(--ease-out) calc(var(--sealed-i, 0) * 40ms) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-rail-segment {
+    width: 42%;
+    background: var(--rail);
+    transform: none;
+    animation: none;
+  }
+  .loading-rail,
+  .loading-notice-host,
+  [data-sealed-opened],
+  :root[data-skeleton-handoff] :is(.split-page-body > *, .page-frame > .page-stack > *) { animation: none; }
+  /* Words still appear, without the fade. */
+  .loading-words-start,
+  .loading-words-slow,
+  .sealed-opening-words,
+  .sealed-opening-line { animation-duration: 1ms; }
+}
+
+/* ---------- Moving between documents (landing, sign-in, the Dashboard, the docs) ---------- */
+
+/* Every page is the same bundle and stylesheet, so one rule opts every same-origin navigation in.
+   Browsers without cross-document view transitions simply cut. Reduced motion: no transition. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition { navigation: auto; }
+}
+
+/* Shared identity, one element per name per document. The core travels (landing hero, sign-in
+   deck, the Now deck and the server's painted one); the brand and the title stay in place across
+   pages that share them. Never on a large glass container: snapshots flatten its frost. */
+.landing-stage,
+.auth-core,
+.now-deck-stage { view-transition-name: relo-core; }
+.landing-nav a[aria-label="Relo home"],
+#main-content > header a[aria-label="Relo home"],
+#dashboard-sidebar [data-sidebar="header"] > a,
+.loading-sidebar-brand,
+.docs-brand { view-transition-name: relo-brand; }
+h1.page-title,
+.docs-page-header h1 { view-transition-name: relo-title; }
+/* Phones hide the sidebar (and its brand): only what is shown may carry a name. */
+@media (max-width: 767px) {
+  .loading-sidebar-brand { view-transition-name: none; }
+}
+
+/* The page under them: a short crossfade, the old one leaving first. */
+::view-transition-old(root) {
+  animation: 140ms var(--ease-in) both vt-fade-out;
+}
+::view-transition-new(root) {
+  animation: 200ms var(--ease-out) both vt-fade-in;
+}
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-fade-in { from { opacity: 0; } }
+/* Shared elements morph on the smooth spring: the core is one object travelling; its old and new
+   faces crossfade (the sign-in wordmark fading as Now's count arrives). */
+::view-transition-group(relo-core),
+::view-transition-group(relo-brand),
+::view-transition-group(relo-title) {
+  animation-duration: var(--spring-smooth-dur);
+  animation-timing-function: var(--spring-smooth);
+}
+::view-transition-old(relo-core),
+::view-transition-new(relo-core),
+::view-transition-old(relo-title),
+::view-transition-new(relo-title) {
+  animation-duration: var(--dur-base);
+}

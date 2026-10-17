@@ -11,44 +11,47 @@ const inferLevel = (settings) => inferFor(settings, claudeCode);
 
 const commands = (settings) => Object.values(settings.hooks ?? {}).flatMap((gs) => gs.flatMap((g) => g.hooks.map((h) => h.command)));
 
-test("levels are off, reminders, presence; reminders sends nothing (no presence roles)", () => {
-  assert.deepEqual(HOOK_LEVELS, ["off", "reminders", "presence"]);
+test("sets are off, presence, approvals; presence is the local context entries plus the session phase", () => {
+  assert.deepEqual(HOOK_LEVELS, ["off", "presence", "approvals", "presence+lean", "approvals+lean"]);
   assert.deepEqual(wantedEntries("off"), {});
-  const reminders = commands({ hooks: wantedEntries("reminders") });
-  assert.deepEqual(reminders.sort(), ["relo hook await", "relo hook guard", "relo hook guard", "relo hook release", "relo hook remind", "relo hook restore", "relo hook turn"]);
-  assert.equal(wantedEntries("reminders").Stop[0].hooks[0].timeout, 5);
-  assert.equal(wantedEntries("reminders").UserPromptSubmit[0].hooks[0].async, true);
   const presence = commands({ hooks: wantedEntries("presence") });
+  for (const role of ["await", "guard", "release", "remind", "restore", "turn"]) assert.ok(presence.includes(`relo hook ${role}`), role);
+  assert.equal(wantedEntries("presence").Stop[0].hooks[0].timeout, 5);
+  assert.equal(wantedEntries("presence").UserPromptSubmit[0].hooks[0].async, undefined, "the turn hook adds context, so it is not async");
+  assert.equal(wantedEntries("presence").UserPromptSubmit[0].hooks[0].timeout, 5);
   const observed = ["start", "prompt", "tool-start", "tool-end", "wait", "subagent-start", "subagent-stop", "compact", "stop"];
   for (const role of [...observed, "end"]) assert.ok(presence.includes(`relo hook ${role}`), role);
   for (const [event, groups] of Object.entries(wantedEntries("presence"))) {
     for (const g of groups) for (const h of g.hooks) if (observed.map((role) => `relo hook ${role}`).includes(h.command)) assert.equal(h.async, true, `${event} ${h.command}`);
   }
+  assert.deepEqual(commands({ hooks: wantedEntries("approvals") }).sort(), [...presence, "relo hook permission"].sort());
 });
 
 test("planLevel reconciles to exactly the level, keeps others' hooks, and inferLevel reads it back", () => {
   const original = `${JSON.stringify({ model: "x", hooks: { Stop: [{ hooks: [{ type: "command", command: "mine" }] }] } }, null, 2)}\n`;
-  const reminders = planLevel("/s.json", original, "reminders");
-  const parsed = JSON.parse(reminders.content);
+  const presencePlan = planLevel("/s.json", original, "presence");
+  const parsed = JSON.parse(presencePlan.content);
   assert.equal(parsed.model, "x");
   assert.equal(parsed.hooks.Stop[0].hooks[0].command, "mine");
-  assert.deepEqual(inferLevel(parsed), { level: "reminders", outdated: [] });
-  assert.equal(planLevel("/s.json", reminders.content, "reminders").action, "unchanged");
-  const presence = JSON.parse(planLevel("/s.json", reminders.content, "presence").content);
-  assert.equal(inferLevel(presence).level, "presence");
-  const back = JSON.parse(planLevel("/s.json", JSON.stringify(presence), "reminders").content);
-  assert.equal(inferLevel(back).level, "reminders");
-  const off = planLevel("/s.json", JSON.stringify(presence, null, 2) + "\n", "off");
+  assert.deepEqual(inferLevel(parsed), { level: "presence", outdated: [] });
+  assert.equal(planLevel("/s.json", presencePlan.content, "presence").action, "unchanged");
+  const approvals = JSON.parse(planLevel("/s.json", presencePlan.content, "approvals").content);
+  assert.equal(inferLevel(approvals).level, "approvals");
+  const back = JSON.parse(planLevel("/s.json", JSON.stringify(approvals), "presence").content);
+  assert.equal(inferLevel(back).level, "presence");
+  const off = planLevel("/s.json", JSON.stringify(back, null, 2) + "\n", "off");
   assert.equal(off.action, "removed");
   assert.deepEqual(JSON.parse(off.content), JSON.parse(original));
 });
 
-test("inferLevel reports legacy sync presence entries and hand-edited mixes", () => {
-  const legacy = { hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook stop", timeout: 5 }] }] } };
+test("inferLevel reads a drifted set or the retired reminders set as custom with the nearest set, and unknown commands as legacy", () => {
+  const drifted = { hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook stop", timeout: 5 }] }] } };
+  assert.deepEqual(inferLevel(drifted), { level: "custom", outdated: ["Stop"], nearest: "presence" });
+  const reminders = { hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook remind", timeout: 9 }] }] } };
+  assert.equal(inferLevel(reminders).level, "custom");
+  assert.equal(inferLevel(reminders).nearest, "presence", "refresh upgrades it");
+  const legacy = { hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook old-thing" }] }] } };
   assert.equal(inferLevel(legacy).level, "legacy");
-  assert.deepEqual(inferLevel(legacy).outdated, ["Stop"]);
-  const custom = { hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook remind", timeout: 9 }] }] } };
-  assert.equal(inferLevel(custom).level, "custom");
   assert.equal(inferLevel({}).level, "off");
 });
 

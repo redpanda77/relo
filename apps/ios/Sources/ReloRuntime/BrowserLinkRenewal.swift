@@ -1,7 +1,7 @@
 import Foundation
 import ReloCore
 
-/// Re-signs the links this phone keeps (docs/END-TO-END-ENCRYPTION.md, "Linked browsers"): computers
+/// Re-signs the links this phone keeps (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers"): computers
 /// accept a link signature for 14 days, so every browser in the local list whose signature is older
 /// than 3 days is signed again with `signedAt = now` and posted to the same endpoint. A browser the
 /// server no longer knows (404) or whose identity changed (409) leaves the list; it must be linked

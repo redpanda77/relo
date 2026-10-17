@@ -1,8 +1,8 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ReloApiClient } from "../src/api-client.mjs";
-import { ApiError, NetworkError } from "../src/errors.mjs";
+import { ReloApiClient } from "../src/shared/api-client.mjs";
+import { ApiError, NetworkError } from "../src/shared/errors.mjs";
 
 test("sends bearer auth and idempotency through headers, not URLs or bodies", async () => {
   let request;

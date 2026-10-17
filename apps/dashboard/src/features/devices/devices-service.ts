@@ -7,6 +7,8 @@ export type DeviceRow = {
   name: string
   model: string | null
   modelId?: string | null
+  /** A computer's icon name (ADR 0011). */
+  icon?: "laptop" | "desktop" | "server" | "cloud" | "terminal" | "build"
   osVersion?: string | null
   notificationsOff?: boolean
   status: DeviceStatus

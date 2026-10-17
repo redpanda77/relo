@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// relo.e2e.v1: the on-device half of end-to-end encrypted content
-/// (docs/END-TO-END-ENCRYPTION.md). HPKE is CryptoKit's RFC 9180 implementation with
+/// (docs/ENCRYPTION-PROTOCOL.md). HPKE is CryptoKit's RFC 9180 implementation with
 /// DHKEM(P-256, HKDF-SHA256), HKDF-SHA256 and AES-256-GCM; the CLI's node:crypto implementation
 /// is pinned to it by the shared vectors in `e2ee-v1.json`.
 public enum ReloE2EE {

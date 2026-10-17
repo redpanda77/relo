@@ -366,17 +366,18 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         expiresAt.getTime(),
       ));
       const generation = originSlot?.nextGeneration ?? 1;
-      const producer = producerColumns(credentialProducer({ sessionKey: (input as { sessionKey?: string }).sessionKey,key: input.key }));
+      const producer = command.cardIdentity ?? producerColumns(credentialProducer({ sessionKey: (input as { sessionKey?: string }).sessionKey,key: input.key }));
+      const workId = command.cardIdentity?.workId ?? null;
       const result = await client.query<ActivityStartRow>(
         `INSERT INTO live_activities(
            principal_id,requester_credential_id,activity_key,title,status,detail,progress,symbol,style,privacy,accent_color,
            target_device_ids,start_idempotency_key,start_request_hash,context,expires_at,stale_at,
            start_replace_requested,start_replaced_count,presentation,presentation_sha256,origin_hash,generation,
            lifecycle_provider,lifecycle_run_id,presentation_policy,presentation_policy_source,
-           presentation_preset_id,presentation_preset_revision,stale_after_seconds,producer_type,session_key,created_at,updated_at,declared_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,statement_timestamp(),statement_timestamp(),statement_timestamp()) RETURNING *`,
+           presentation_preset_id,presentation_preset_revision,stale_after_seconds,producer_type,session_key,work_id,created_at,updated_at,declared_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,statement_timestamp(),statement_timestamp(),statement_timestamp()) RETURNING *`,
         [auth.principalId,auth.credentialId,input.key ?? null,input.title,input.status,input.detail ?? null,input.progress ?? null,input.symbol,input.style,privacy,input.accentColor,devices.map((device) => device.id),storedKey,hash,input.context ?? null,expiresAt,staleAt,input.replace,replaced,input.presentation,storedPresentation.presentationHash,originHash,generation,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,presentationPolicy,presentationPolicy.source,presentationPolicy.presetId,presentationPolicy.presetRevision,input.staleAfterSeconds,
-          producer.producerType,producer.sessionKey],
+          producer.producerType,producer.sessionKey,workId],
       );
       const delivery = await createActivityCommands(client,{
         occurredAt: input.occurredAt,

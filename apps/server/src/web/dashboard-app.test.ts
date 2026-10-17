@@ -3,6 +3,7 @@ import { describe,expect,test } from "vitest";
 import {
   dashboardAppAssetResponse,
   landingPreloadTags,
+  pagePreloadTags,
   renderDashboardAppDocumentFromIndex,
   type TestLabDashboardBootstrap,
 } from "./dashboard-app.js";
@@ -100,15 +101,43 @@ describe("dashboard React application delivery", () => {
         file: "assets/landing-page-d.js", css: ["assets/landing-page-e.css"],
         imports: ["_utils-b.js", "_icon-c.js", "index.html", "_bad.js"],
       },
-      "src/features/landing/landing-scene.ts": { file: "assets/landing-scene-f.js" },
+      "src/features/landing/landing-scene.ts": { file: "assets/landing-scene-f.js", imports: ["src/lib/orb-scene.ts"] },
+      "src/lib/orb-scene.ts": { file: "assets/orb-scene-g.js", imports: ["index.html"] },
     });
     expect(tags).toContain('<link rel="stylesheet" crossorigin href="/assets/landing-page-e.css">');
     for (const file of ["landing-page-d.js","utils-b.js","icon-c.js"])
       expect(tags).toContain(`<link rel="modulepreload" crossorigin href="/assets/${file}">`);
-    expect(tags).toContain('<link rel="modulepreload" crossorigin href="/assets/landing-scene-f.js" fetchpriority="low">');
+    for (const file of ["landing-scene-f.js","orb-scene-g.js"])
+      expect(tags).toContain(`<link rel="modulepreload" crossorigin href="/assets/${file}" fetchpriority="low">`);
     expect(tags).not.toContain("index-a.js");
     expect(tags).not.toContain("passwd");
     expect(landingPreloadTags({})).toBe("");
+  });
+
+  test("a Dashboard page preloads its own chunk and the motion features; Now adds the orb scene at low priority",() => {
+    const manifest = {
+      "index.html": { file: "assets/index-a.js", isEntry: true },
+      "_utils-b.js": { file: "assets/utils-b.js" },
+      "src/features/inbox/inbox-feature.tsx": { file: "assets/inbox-feature-c.js", css: ["assets/inbox-d.css"], imports: ["_utils-b.js", "index.html"] },
+      "src/features/connections/connections-feature.tsx": { file: "assets/connections-feature-e.js", imports: ["_utils-b.js"] },
+      "src/lib/motion-features.ts": { file: "assets/motion-features-f.js" },
+      "src/lib/orb-scene.ts": { file: "assets/orb-scene-g.js", imports: ["_three-h.js"] },
+      "_three-h.js": { file: "assets/three-h.js" },
+    };
+    const now = pagePreloadTags(manifest,"inbox-overview");
+    for (const file of ["inbox-feature-c.js","utils-b.js","motion-features-f.js"])
+      expect(now).toContain(`<link rel="modulepreload" crossorigin href="/assets/${file}">`);
+    expect(now).toContain('<link rel="stylesheet" crossorigin href="/assets/inbox-d.css">');
+    for (const file of ["orb-scene-g.js","three-h.js"])
+      expect(now).toContain(`<link rel="modulepreload" crossorigin href="/assets/${file}" fetchpriority="low">`);
+    expect(now).not.toContain("index-a.js");
+
+    const connections = pagePreloadTags(manifest,"connections");
+    expect(connections).toContain("connections-feature-e.js");
+    expect(connections).toContain("motion-features-f.js");
+    expect(connections).not.toContain("orb-scene");
+    expect(connections).not.toContain("inbox-feature");
+    expect(pagePreloadTags(manifest,"auth")).toBe("");
   });
 
   test("the landing document carries a description for link previews; the form does not", () => {

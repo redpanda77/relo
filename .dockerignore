@@ -25,6 +25,11 @@
 !packages/contracts/fixtures/**
 !packages/contracts/src/
 !packages/contracts/src/**
+!packages/cli/
+!packages/cli/**
+!skills/
+!skills/relo-notifications/
+!skills/relo-notifications/**
 **/.env
 **/.env.*
 **/*.key

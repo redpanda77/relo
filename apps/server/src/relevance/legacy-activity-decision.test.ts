@@ -50,6 +50,8 @@ suite("Legacy activity decision boundaries",()=>{
     else {
       await db.query("UPDATE interaction_requests SET expires_at='2000-01-01'");
       expect(await expireDueInteractiveActivities(db,"sandbox")).toBe(1);
+      // Every phone's copy expires with the question, whichever copy the expiry pass reached first.
+      expect((await db.query("SELECT state FROM interaction_requests")).rows.map((row)=>row.state)).toEqual(["expired","expired"]);
     }
     expect((await request(`/api/notifications/ntf_${other.id}/interactions`,secondToken,{kind:"no",idempotencyKey:randomUUID()})).status).toBe(terminal==="expiry"?200:409);
     // After expiry a late answer is stored as a fact on the expired request (never permission), so it is accepted.

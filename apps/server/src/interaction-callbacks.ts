@@ -2,16 +2,17 @@ import { lookup } from "node:dns/promises";
 import { allowsPrivateCallbacks,callbackSignature,resolveCallbackTarget,sendPinnedCallback,standardWebhookSignature,type CallbackSend } from "./callback-destinations.js";
 import { publicId } from "./ids.js";
 import type { TransportTokenEncryption } from "./token-encryption.js";
+import { FACTS } from "@relo/notification-contracts";
 
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null; rows: any[] }> };
 
 export const CALLBACK_TOKEN_PURPOSE = "interaction_callback.token" as const;
 /** Ten attempts over about three days: now, then 30 s, 2 min, 10 min, 1 h, 3 h, 6 h, 12 h, 24 h, 24 h. */
-export const CALLBACK_RETRY_DELAYS_SECONDS = [30, 120, 600, 3_600, 10_800, 21_600, 43_200, 86_400, 86_400] as const;
+export const CALLBACK_RETRY_DELAYS_SECONDS = FACTS.callback.retryDelaysSeconds;
 export const CALLBACK_MAX_ATTEMPTS = CALLBACK_RETRY_DELAYS_SECONDS.length + 1;
 /** A callback stops retrying 72 hours after its first attempt (or after a redelivery). */
-export const CALLBACK_GIVE_UP_SECONDS = 72 * 3_600;
-export const CALLBACK_REDELIVERIES_PER_DAY = 10;
+export const CALLBACK_GIVE_UP_SECONDS = FACTS.callback.giveUpSeconds;
+export const CALLBACK_REDELIVERIES_PER_DAY = FACTS.callback.redeliveriesPerDay;
 const CALLBACK_TIMEOUT_MS = 10_000;
 const CALLBACK_BATCH = 10;
 const ANSWERED = ["approved","denied","yes","no","replied"];
@@ -43,6 +44,8 @@ export function callbackPayload(row: {
   interaction_request_id: string; notification_event_id: string; correlation_id: string | null;
   kind: string; request_state: string; response: unknown; responded_at: Date | string | null;
   response_device_id?: string | null;
+  response_browser_id?: string | null;
+  response_request_id?: string | null; response_event_id?: string | null;
 }) {
   const answer = row.response && typeof row.response === "object" ? row.response as Record<string,unknown> : {};
   const chosen = row.kind === "choice" && typeof answer.optionId === "string";
@@ -60,25 +63,43 @@ export function callbackPayload(row: {
     text: typeof response === "string" ? response : null,
     ...(chosen ? { optionId: answer.optionId,label: answer.label ?? null } : {}),
     respondedAt: row.responded_at ? new Date(row.responded_at).toISOString() : null,
-    ...answerSignature(row.response_device_id ?? null,answer),
+    ...answerSignature(row.response_device_id ?? null,answer,row.response_browser_id ?? null),
+    // Answered on another copy of the question: the signature covers that copy's ids.
+    ...answeredCopyResource({ id: row.interaction_request_id,response_request_id: row.response_request_id ?? null,
+      response_event_id: row.response_event_id ?? null }),
   };
 }
 
 /**
  * The phone's own signature over the answer (ADR 0005), passed through untouched so a verifying
  * receiver trusts the phone, not this server. `signature` is null for phones without published keys.
+ * A linked browser's answer names the browser (`brw_…`); a receiver applies the browser rule
+ * (docs/ENCRYPTION-PROTOCOL.md, "Answering from a linked browser").
  */
-export function answerSignature(deviceId: string | null,answer: Record<string,unknown>) {
+export function answerSignature(deviceId: string | null,answer: Record<string,unknown>,browserId: string | null = null) {
   const str = (value: unknown) => typeof value === "string" ? value : null;
   const sig = str(answer.e2eeSignature);
   return {
-    device: deviceId ? { id: publicId("dev",deviceId),keyId: str(answer.e2eeKeyId) } : null,
+    device: browserId ? { id: publicId("brw",browserId),keyId: str(answer.e2eeKeyId) }
+      : deviceId ? { id: publicId("dev",deviceId),keyId: str(answer.e2eeKeyId) } : null,
     signature: sig ? {
       v: "relo.e2e.v1",kind: "answer",
       keyId: str(answer.e2eeKeyId),signedAt: str(answer.e2eeSignedAt),sig,
       question: str(answer.e2eeQuestion),questionSig: str(answer.e2eeQuestionSignature),
     } : null,
   };
+}
+
+/**
+ * The copy of the question that was answered, when it is not this one (docs/ENCRYPTION-PROTOCOL.md,
+ * "Answers on another copy"): a question folded onto a card has one copy per phone, and a long one
+ * continues as a notification; every copy takes the decision. The answering phone signed that copy's
+ * ids, so a computer verifies the signature over them (and accepts it only bound to its sealed question).
+ */
+export function answeredCopyResource(row: { id: string; response_request_id?: string | null; response_event_id?: string | null }) {
+  return row.response_request_id && row.response_event_id && row.response_request_id !== row.id
+    ? { answeredCopy: { id: publicId("int",row.response_request_id),eventId: publicId("ntf",row.response_event_id) } }
+    : {};
 }
 
 export type CallbackDispatchDependencies = {
@@ -108,7 +129,10 @@ export async function dispatchDueInteractionCallbacks(db: Queryable, dependencie
        ORDER BY next_attempt_at NULLS FIRST LIMIT $1 FOR UPDATE SKIP LOCKED)
      RETURNING c.id,c.principal_id,c.url,c.token_ciphertext,c.correlation_id,c.attempts,c.interaction_request_id,
        c.give_up_at <= now() AS past_give_up,
-       (SELECT i.device_id FROM interactions i WHERE i.interaction_request_id=r.id ORDER BY i.created_at,i.id LIMIT 1) AS response_device_id,
+       (SELECT i.device_id FROM interactions i WHERE i.interaction_request_id=COALESCE(r.answered_on_request_id,r.id) ORDER BY i.created_at,i.id LIMIT 1) AS response_device_id,
+       (SELECT i.browser_id FROM interactions i WHERE i.interaction_request_id=COALESCE(r.answered_on_request_id,r.id) ORDER BY i.created_at,i.id LIMIT 1) AS response_browser_id,
+       r.answered_on_request_id AS response_request_id,
+       (SELECT a.notification_event_id FROM interaction_requests a WHERE a.id=r.answered_on_request_id) AS response_event_id,
        r.notification_event_id,r.kind::text AS kind,r.state::text AS request_state,r.response,r.responded_at`,
     [CALLBACK_BATCH],
   );

@@ -27,17 +27,28 @@ pnpm build
 ## Local gates
 
 Verification runs on your own machine, not in a hosted pipeline. `scripts/gates.sh` runs every gate
-in order and reports all of them at the end (it exits non-zero when any failed):
+and reports all of them at the end (it exits non-zero when any failed):
 
 ```sh
-scripts/gates.sh          # contracts, server typecheck, CLI, skill, Dashboard, owner-surface check, public:check
-scripts/gates.sh --db     # the same, plus the server database suite
+scripts/gates.sh                   # contracts, server typecheck, CLI, skill, Dashboard, owner-surface check, public:check
+scripts/gates.sh --db              # the same, plus the server database suite
+scripts/gates.sh --db --changed F  # only the gates the paths listed in file F need (scripts/select-gates.mjs)
+scripts/gates.sh --db --all        # every gate, even with --changed
 ```
+
+- Order: the contracts and Dashboard builds first (the other gates read them), then every other gate at
+  once with each gate's output captured and printed in order, then the tests that wait on the wall clock
+  (the Dashboard UI tests and the CLI hook-time budgets) alone, so a busy machine does not fail them.
+- `--changed` maps each path to the gates whose tests read it (`scripts/select-gates.mjs`, tested by
+  `scripts/select-gates.test.mjs`). A path no rule knows selects every gate; the owner-surface check,
+  public:check and release state always run. The selection and each skipped gate are printed.
 
 - `--db` creates a throwaway PostgreSQL cluster in a temporary directory, on a random loopback port
   with a C locale, runs the server suite against it, and removes it. It needs PostgreSQL binaries:
   set `PG_BIN_DIR` to their directory (default: Homebrew `postgresql@18`). It never touches an
-  operator database.
+  operator database. The suite runs its files in parallel: the Vitest global setup migrates the base
+  database once, and each worker clones it (`CREATE DATABASE … TEMPLATE`) into its own
+  `<base>_w<N>_test` database (`apps/server/src/test-support/worker-database.ts`).
 - Any install step inside the gates runs with an isolated `HOME` and npm prefix, so a gate never
   changes your global npm, your installed `relo` or your credentials.
 - `node scripts/check-owner-surfaces-display-only.mjs` fails when the Dashboard or the iOS app
@@ -60,8 +71,25 @@ process:
 TEST_DATABASE_URL=postgresql://user:password@localhost:5432/relo_test pnpm --filter @relo/server test
 ```
 
-Do not point tests at an operator database. Missing database cases are reported as skipped and must
-not be described as passing. `scripts/gates.sh --db` does this for you with a disposable cluster.
+A localhost database whose name ends in `_test` is used as a template: each worker gets its own clone,
+so the role needs `CREATEDB`. Set `RELO_TEST_DB_PER_WORKER=0` to use the one database as it is (then
+keep `--no-file-parallelism`, as `pnpm --filter @relo/server test` does).
+
+Do not point tests at an operator database. Without `TEST_DATABASE_URL` the run says once that every database
+suite is skipped; a skip is never a pass. `scripts/gates.sh --db` creates a disposable cluster, runs the suite and
+then fails any test file that ran no tests (`scripts/check-test-ran.mjs`; a file that skips on purpose is listed
+there with its reason). Gates without `--db` print "server DB suite NOT RUN". Releases run
+`scripts/release/head-gates.sh`, which always uses `--db` on an archive of HEAD; a server deploy passes
+`--since <live commit>`, so it runs only the gates the paths changed since the live release need.
+
+## Several sessions, one checkout
+
+Several agent sessions often work in this checkout at once, so a file can hold another session's edits next to
+yours. Read the diff of every file you stage; a file another session is editing is staged by hunk or not at all.
+Never stage a whole directory or `git add -A`. `scripts/stage-review.sh` prints exactly what the commit would
+carry, flags a file that changed again after you staged it, and asks before continuing (`--yes` once you have
+read it). Run `npm run public:check` after staging, since it reads the staged file list. Releases gate an archive
+of HEAD (`scripts/release/head-gates.sh`), so nobody's uncommitted work reaches a release.
 
 ## The CLI while you develop
 

@@ -1,7 +1,10 @@
 import type { Database } from "./db.js";
 import { BROWSER_LINK_DAYS,pendingDevices } from "./device-approvals.js";
 import { friendlyModelName,simulatorSql } from "./device-models.js";
+import { computerIconColumns,iconFromColumns } from "./computers/store.js";
 import { publicId } from "./ids.js";
+import { ownerOverviewSql } from "./owner-overview.js";
+import type { ComputerIcon } from "@relo/notification-contracts";
 
 /**
  * The Dashboard's Devices page (Account → Security): every phone, computer and browser of the
@@ -28,6 +31,13 @@ export type DashboardDevice = {
   osVersion?: string | null;
   /** A phone that has notifications turned off (it still reads cards when opened). */
   notificationsOff?: boolean;
+  /**
+   * An owner overview device (owner-overview.ts), such as the Mac's notch app: listed with the phones
+   * (its kind stays "phone", which the Dashboard revokes as a `dev_` device) and named as a Mac.
+   */
+  ownerOverview?: true;
+  /** A computer's icon (ADR 0011). */
+  icon?: ComputerIcon;
   status: DeviceStatus;
   addedAt: string;
   lastSeenAt: string | null;
@@ -45,7 +55,7 @@ export async function dashboardDevices(db: Pick<Database,"query">,principalId: s
   const [phones,pending,browsers,computers] = await Promise.all([
     db.query<any>(
       `SELECT d.id,d.name,d.model,d.os_version,d.notification_authorization,d.registered_at,d.last_seen_at,${simulatorSql("d")} AS simulator,
-         k.public_key IS NOT NULL AS has_keys,approver.name AS approved_by_phone,approver_browser.name AS approved_by_browser
+         ${ownerOverviewSql("d")} AS owner_overview,k.public_key IS NOT NULL AS has_keys,approver.name AS approved_by_phone,approver_browser.name AS approved_by_browser
        FROM devices d
        LEFT JOIN device_identity_keys k ON k.device_id=d.id
        LEFT JOIN device_approvals a ON a.device_id=d.id AND a.identity_key=k.public_key
@@ -59,8 +69,9 @@ export async function dashboardDevices(db: Pick<Database,"query">,principalId: s
        FROM linked_browsers b LEFT JOIN devices phone ON phone.id=b.linked_by_device AND phone.revoked_at IS NULL
        WHERE b.principal_id=$1 AND b.revoked_at IS NULL ORDER BY b.created_at ASC LIMIT 16`,[principalId]),
     db.query<any>(
-      `SELECT k.id,k.label,k.created_at,k.last_used_at,c.public_key IS NOT NULL AS has_keys
+      `SELECT k.id,COALESCE(comp.display_name,k.label) AS label,k.created_at,k.last_used_at,c.public_key IS NOT NULL AS has_keys,${computerIconColumns("comp")}
        FROM principal_api_keys k LEFT JOIN client_identity_keys c ON c.api_key_id=k.id
+       LEFT JOIN computers comp ON comp.login_key_id=k.id
        WHERE k.principal_id=$1 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
        ORDER BY k.created_at ASC LIMIT 64`,[principalId]),
   ]);
@@ -75,11 +86,12 @@ export async function dashboardDevices(db: Pick<Database,"query">,principalId: s
         osVersion: row.os_version ?? null,status,
         notificationsOff: !["authorized","provisional"].includes(row.notification_authorization),addedAt: iso(row.registered_at)!,lastSeenAt: iso(row.last_seen_at),
         approvedBy: row.approved_by_phone ?? row.approved_by_browser ?? null,
+        ...(row.owner_overview ? { ownerOverview: true as const,model: friendlyModelName(row.model) ?? "Mac" } : {}),
         ...(status === "pending" ? { identityKey: waiting.get(id)!.identityKey,keyId: waiting.get(id)!.keyId } : {}),
       };
     }),
     ...computers.rows.map((row): DashboardDevice => ({
-      id: publicId("key",row.id),kind: "computer",name: row.label,model: null,
+      id: publicId("key",row.id),kind: "computer",name: row.label,model: null,icon: iconFromColumns(row.computer_icon,row.computer_kind).icon,
       status: row.has_keys ? "encrypts" : "no_keys",addedAt: iso(row.created_at)!,lastSeenAt: iso(row.last_used_at),
     })),
     ...browsers.rows.map((row): DashboardDevice => {
@@ -116,7 +128,9 @@ export async function accountPhones(db: Pick<Database,"query">,principalId: stri
        LEFT JOIN device_identity_keys k ON k.device_id=d.id
        WHERE d.principal_id=$1 AND d.revoked_at IS NULL
      ), first_real AS (
-       SELECT id FROM active WHERE NOT simulator AND public_key IS NOT NULL ORDER BY registered_at ASC,id ASC LIMIT 1
+       -- The account's first phone: never a simulator or an overview device (a Mac never stands in for the iPhone).
+       SELECT id FROM active WHERE NOT simulator AND NOT ${ownerOverviewSql("active")} AND public_key IS NOT NULL
+       ORDER BY registered_at ASC,id ASC LIMIT 1
      )
      SELECT a.id,a.name,a.model,a.simulator,a.registered_at,a.last_seen_at,
        a.public_key IS NOT NULL AND (a.id IN (SELECT id FROM first_real) OR EXISTS (

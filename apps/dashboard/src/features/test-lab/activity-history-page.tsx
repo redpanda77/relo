@@ -1,6 +1,8 @@
 import { ArrowLeft } from "lucide-react"
 
-import { Empty, List, Page, Row, Section, Status } from "@/components/page"
+import { Empty, List, Row, Section, Status } from "@/components/list"
+import { Fact, FactList } from "@/components/molecules/fact-list"
+import { Page } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import type { ActivityHistory as ActivityHistoryModel } from "@/features/test-lab/activity-history"
 import { relativeTime } from "@/lib/format"
@@ -15,17 +17,6 @@ function when(value: string | null): string {
 
 function words(value: string): string {
   return value.replaceAll("_", " ")
-}
-
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 min-w-0 text-sm break-words text-foreground">
-        {value}
-      </dd>
-    </div>
-  )
 }
 
 function historyHref(id: string) {
@@ -43,7 +34,7 @@ export function ActivityHistoryPage({
     <Page
       title={activity.title}
       actions={
-        <Button variant="outline" className="min-h-11" asChild>
+        <Button variant="outline" asChild>
           <a href={bootstrap.route.backHref}>
             <ArrowLeft aria-hidden="true" />
             Back to run
@@ -51,7 +42,7 @@ export function ActivityHistoryPage({
         </Button>
       }
     >
-      <section className="glass rounded-2xl p-5 sm:p-6" aria-label="Summary">
+      <section className="glass rounded-card p-5 sm:p-6" aria-label="Summary">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <Status value={activity.state} />
           <span className="text-muted-foreground">{activity.status}</span>
@@ -61,45 +52,36 @@ export function ActivityHistoryPage({
             {activity.detail}
           </p>
         ) : null}
-        <dl className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          <Fact label="Requested by" value={activity.requesterLabel} />
-          <Fact label="Started" value={when(activity.createdAt)} />
-          <Fact label="Last update" value={when(activity.updatedAt)} />
-          <Fact
-            label={activity.endedAt ? "Ended" : "Progress"}
-            value={
-              activity.endedAt
-                ? when(activity.endedAt)
-                : activity.progress == null
-                  ? "—"
-                  : `${Math.round(activity.progress * 100)}%`
-            }
-          />
-        </dl>
+        <FactList columns={4} className="mt-5">
+          <Fact label="Requested by">{activity.requesterLabel}</Fact>
+          <Fact label="Started">{when(activity.createdAt)}</Fact>
+          <Fact label="Last update">{when(activity.updatedAt)}</Fact>
+          <Fact label={activity.endedAt ? "Ended" : "Progress"}>
+            {activity.endedAt
+              ? when(activity.endedAt)
+              : activity.progress == null
+                ? "—"
+                : `${Math.round(activity.progress * 100)}%`}
+          </Fact>
+        </FactList>
         <details className="mt-5 border-t border-border pt-4">
-          <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium text-muted-foreground hover:text-foreground">
+          <summary className="flex min-h-10 cursor-pointer items-center text-sm font-medium text-muted-foreground hover:text-foreground">
             Technical details
           </summary>
-          <dl className="mt-3 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            <Fact
-              label="Test ID"
-              value={<code className="text-xs break-all">{activity.id}</code>}
-            />
-            <Fact label="Origin key" value={<code className="text-xs">{activity.key}</code>} />
-            <Fact label="Live Activity" value={`Generation ${activity.generation}`} />
-            <Fact label="Update number" value={`Sequence ${activity.sequence}`} />
+          <FactList columns={3} className="mt-3">
+            <Fact label="Test ID"><code className="text-xs break-all">{activity.id}</code></Fact>
+            <Fact label="Origin key"><code className="text-xs">{activity.key}</code></Fact>
+            <Fact label="Live Activity">{`Generation ${activity.generation}`}</Fact>
+            <Fact label="Update number">{`Sequence ${activity.sequence}`}</Fact>
             {activity.lifecycle ? (
               <>
-                <Fact label="Agent" value={`${activity.lifecycle.provider} lifecycle`} />
-                <Fact
-                  label="Agent run"
-                  value={<code className="text-xs break-all">{activity.lifecycle.runId}</code>}
-                />
+                <Fact label="Agent">{`${activity.lifecycle.provider} lifecycle`}</Fact>
+                <Fact label="Agent run"><code className="text-xs break-all">{activity.lifecycle.runId}</code></Fact>
               </>
             ) : null}
-            <Fact label="Privacy" value={<span className="capitalize">{activity.privacy}</span>} />
-            <Fact label="Style" value={<span className="capitalize">{activity.style}</span>} />
-          </dl>
+            <Fact label="Privacy"><span className="capitalize">{activity.privacy}</span></Fact>
+            <Fact label="Style"><span className="capitalize">{activity.style}</span></Fact>
+          </FactList>
         </details>
       </section>
 
@@ -145,7 +127,7 @@ export function ActivityHistoryPage({
             ))}
           </List>
         ) : (
-          <Empty title="No iPhone on record" />
+          <Empty title="No iPhone on record" description="This test was not sent to an iPhone Relo knows." />
         )}
       </Section>
 

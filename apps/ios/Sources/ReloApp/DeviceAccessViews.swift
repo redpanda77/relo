@@ -30,71 +30,66 @@ struct AccessRequestSheet: View {
     private var request: EncryptionSecurityModel.AccessRequest? { devices.request(id: id) }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let request {
-                    content(request)
-                } else if !devices.pendingLoaded || devices.phase == .loading {
-                    ProgressView("Checking…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ContentUnavailableView("Nothing to approve", systemImage: "checkmark.shield",
-                        description: Text("This request was already answered, or the device signed out."))
-                }
-            }
-            .reloScreenBackground()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(request == nil ? "Done" : "Not now") { dismiss() } }
-            }
+        if let request {
+            content(request)
+        } else if !devices.pendingLoaded || devices.phase == .loading {
+            ReloSheet {
+                ReloSheetHeader(symbol: "lock.shield", tint: .reloSecondaryText, title: "Checking the request")
+            } content: {
+                ProgressView()
+            } actions: {}
+            .task { await model.refreshDevices() }
+        } else {
+            ReloSheet(cancelTitle: "Done") {
+                ReloSheetHeader(symbol: "checkmark.shield", tint: .reloDone, title: "Nothing to approve",
+                                message: "This request was already answered, or the device signed out.")
+            } actions: {}
         }
-        .task { if request == nil { await model.refreshDevices() } }
-        .presentationDetents([.large])
     }
 
     private func content(_ request: EncryptionSecurityModel.AccessRequest) -> some View {
-        VStack(spacing: 24) {
-            Spacer(minLength: 12)
-            Image(systemName: request.symbol)
-                .font(.system(size: 60, weight: .light))
-                .foregroundStyle(ReloHoloTheme.orange)
-                .accessibilityHidden(true)
-            VStack(spacing: 8) {
-                Text(request.headline)
-                    .font(.title.weight(.bold)).multilineTextAlignment(.center)
-                    .accessibilityIdentifier("access-request-name")
-                Text(request.ask).font(.title3).foregroundStyle(Color.reloSecondaryText).multilineTextAlignment(.center)
-                if let subline = request.subline {
-                    Text(subline).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
+        ReloSheet(cancelTitle: "Not now", busy: working) {
+            ReloSheetHeader(symbol: request.symbol, title: request.headline, message: request.ask)
+                .accessibilityIdentifier("access-request-name")
+        } content: {
+            VStack(spacing: 16) {
+                VStack(spacing: 4) {
+                    if let subline = request.subline { ReloSheetFootnote(text: subline) }
+                    ReloSheetFootnote(text: request.signedInLine)
                 }
-                Text(request.signedInLine).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
-            }
-            Text(request.isPhone
-                 ? "Approve it only if you just signed in on it yourself. Then your computers can send it encrypted cards."
-                 : "Approve it only if you just signed in to Relo on it yourself. Then this iPhone opens what it sends.")
-                .font(.footnote).foregroundStyle(Color.reloSecondaryText).multilineTextAlignment(.center)
-            Spacer(minLength: 12)
-            if let problem = authProblem ?? devices.pendingProblem {
-                Text(problem).font(.footnote).foregroundStyle(Color.reloErrorText).multilineTextAlignment(.center)
-            }
-            VStack(spacing: 12) {
-                Button { Task { await approve(request) } } label: {
-                    Group {
-                        if working { ProgressView() } else { Label("Approve", systemImage: "faceid") }
+                if let code = request.linkCode {
+                    VStack(spacing: 6) {
+                        ReloMonoLabel("Link code")
+                        Text(code)
+                            .font(.system(.title, design: .rounded).weight(.bold).monospacedDigit())
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.7).lineLimit(1)
+                            .textSelection(.enabled)
+                            .accessibilityLabel("Link code \(code)")
+                            .accessibilityIdentifier("access-request-link-code")
                     }
-                    .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14).padding(.horizontal, 20)
+                    .reloCard(tint: .reloAttention)
                 }
-                .buttonStyle(.borderedProminent).tint(.reloInteractive)
-                .accessibilityIdentifier("approve-request")
-                Button(role: .destructive) { Task { await decline(request) } } label: {
-                    Text("Decline").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("decline-request")
-                Text(request.declineLine).font(.footnote).foregroundStyle(Color.reloSecondaryText)
-                    .multilineTextAlignment(.center)
+                Text(request.approveLine)
+                    .font(request.isBrowser ? .subheadline.weight(.semibold) : .footnote)
+                    .foregroundStyle(Color.reloSecondaryText).multilineTextAlignment(.center)
+                if let problem = authProblem ?? devices.pendingProblem { ReloSheetProblem(text: problem) }
             }
-            .disabled(working || model.credential == nil)
+        } actions: {
+            Button { Task { await approve(request) } } label: {
+                if working { ProgressView().tint(.reloOnAction) } else { Label("Approve", systemImage: "faceid") }
+            }
+            .buttonStyle(.reloPrimary)
+            .disabled(model.credential == nil)
+            .accessibilityIdentifier("approve-request")
+            Button("Decline") { Task { await decline(request) } }
+                .buttonStyle(.reloDestructive)
+                .disabled(model.credential == nil)
+                .accessibilityIdentifier("decline-request")
+            ReloSheetFootnote(text: request.declineLine)
         }
-        .padding(.horizontal, 24).padding(.bottom, 16)
     }
 
     private func approve(_ request: EncryptionSecurityModel.AccessRequest) async {
@@ -122,7 +117,7 @@ struct AccessRequestSheet: View {
     }
 }
 
-/// Now's "Needs you" row for a phone or computer waiting for approval.
+/// Now's "Needs you" row for a phone, computer or browser waiting for approval.
 struct DeviceAccessNeedsYouRow: View {
     let model: AppModel
 
@@ -134,10 +129,10 @@ struct DeviceAccessNeedsYouRow: View {
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: first.symbol)
-                        .font(.title3).foregroundStyle(ReloHoloTheme.orange).frame(width: 28)
+                        .font(.title3).foregroundStyle(Color.reloAttention).frame(width: 28)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("NEEDS YOU").font(.caption2.weight(.bold)).tracking(1).foregroundStyle(ReloHoloTheme.orange)
+                        ReloMonoLabel("Needs you", color: .reloAttention)
                         Text(requests.count == 1 ? "\(first.name) \(first.ask)" : "\(requests.count) devices want access")
                             .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                             .multilineTextAlignment(.leading)
@@ -145,13 +140,10 @@ struct DeviceAccessNeedsYouRow: View {
                             .font(.footnote).foregroundStyle(Color.reloSecondaryText)
                     }
                     Spacer(minLength: 0)
-                    Text("Review")
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 14).frame(minHeight: 36)
-                        .background(ReloHoloTheme.orange.opacity(0.85), in: Capsule())
+                    Text("Review").reloCapsule(tint: .reloAttention.opacity(0.85))
                 }
                 .padding(14)
-                .reloCard(tint: ReloHoloTheme.orange)
+                .reloCard(tint: .reloAttention)
                 .contentShape(Rectangle())
             }
             .buttonStyle(ReloPressStyle())

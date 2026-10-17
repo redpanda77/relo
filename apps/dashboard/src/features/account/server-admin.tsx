@@ -1,5 +1,11 @@
 import { useState } from "react"
-import { ShieldCheck } from "lucide-react"
+import { ShieldCheck, UserPlus } from "lucide-react"
+
+import { IconTile } from "@/components/atoms/icon-tile"
+import { StatusChip } from "@/components/atoms/status-chip"
+import { List, Row } from "@/components/list"
+import { ActionButton } from "@/components/molecules/action-button"
+import { OperationStatus } from "@/components/molecules/operation-status"
 
 import {
   AlertDialog,
@@ -11,8 +17,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -80,12 +84,15 @@ export function ServerAdminCard({
   const [privateCallbacks, setPrivateCallbacks] = useState(initial.privateCallbacks)
   const [accounts, setAccounts] = useState(initial.accounts)
   const [busy, setBusy] = useState(false)
+  /** Which button's action is running ("create", or an account id and action), for its spinner. */
+  const [working, setWorking] = useState<string | null>(null)
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null)
   const [deleting, setDeleting] = useState<ServerAccount | null>(null)
   const pending = accounts.filter((account) => account.status === "pending").length
 
-  async function run(work: () => Promise<string | void>, success: string, fallback: string) {
+  async function run(work: () => Promise<string | void>, success: string, fallback: string, key: string | null = null) {
     setBusy(true)
+    setWorking(key)
     setMessage(null)
     try {
       const outcome = await work()
@@ -94,8 +101,10 @@ export function ServerAdminCard({
       setMessage({ error: true, text: errorMessage(cause, fallback) })
     } finally {
       setBusy(false)
+      setWorking(null)
     }
   }
+  const failed = message?.error === true
 
   function changePrivateCallbacks(policy: PrivateCallbackPolicy) {
     if (policy === privateCallbacks) return
@@ -137,7 +146,7 @@ export function ServerAdminCard({
       setAccounts(server.accounts)
       const now = server.accounts.find((item) => item.id === account.id)
       if (action === "enable" && now?.status === "pending") return `${account.name}'s access is back on; they still need your approval.`
-    }, done[action], "Couldn't update access.")
+    }, done[action], "Couldn't update access.", `${account.id}:${action}`)
   }
 
   function addAccount(event: React.FormEvent<HTMLFormElement>) {
@@ -157,7 +166,7 @@ export function ServerAdminCard({
         id, name, email, status: "active", admin: false,
         createdAt: new Date().toISOString(), devices: 0, sessions: 0,
       }])
-    }, `${name}'s account is ready. Share the temporary password with them privately.`, "Couldn't create the account.")
+    }, `${name}'s account is ready. Share the temporary password with them privately.`, "Couldn't create the account.", "create")
   }
 
   async function confirmDelete() {
@@ -167,165 +176,182 @@ export function ServerAdminCard({
     await run(async () => {
       await service.deleteServerAccount(account.id)
       setAccounts((current) => current.filter((item) => item.id !== account.id))
-    }, `${account.name}'s account and all its data are deleted.`, "Couldn't delete the account.")
+    }, `${account.name}'s account and all its data are deleted.`, "Couldn't delete the account.", `${account.id}:delete`)
   }
 
   return (
-    <Card id="server-accounts" className="rounded-2xl">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="size-5 text-primary" aria-hidden="true" />
-          Server accounts
-          {pending ? <Badge variant="default">{pending} waiting</Badge> : null}
-        </CardTitle>
-        <CardDescription>
-          You own this server. Decide who can register and who keeps access.
-          Each account is private: you see names and emails here, never their
-          notifications, cards or phones.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-6">
-        <fieldset className="grid gap-3" disabled={busy}>
-          <legend className="mb-2 text-sm font-medium">Registration</legend>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {modes.map((option) => (
-              <label
-                key={option.value}
-                className={`flex min-h-11 cursor-pointer flex-col gap-1 rounded-xl border p-3 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
-                  mode === option.value ? "border-primary bg-primary/5" : "hover:bg-muted/50"
-                }`}
-              >
-                <span className="flex items-center gap-2 font-medium">
-                  <input
-                    type="radio"
-                    name="registrationMode"
-                    value={option.value}
-                    checked={mode === option.value}
-                    onChange={() => changeMode(option.value)}
-                    className="size-4 accent-primary"
-                  />
-                  {option.label}
-                </span>
-                <span className="text-muted-foreground">{option.detail}</span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+    <div id="server-accounts" className="grid scroll-mt-6 gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center gap-2.5">
+            <IconTile icon={ShieldCheck} tone="violet" />
+            Server accounts
+            {pending ? <StatusChip tone="yellow">{pending} waiting</StatusChip> : null}
+          </CardTitle>
+          <CardDescription>
+            You own this server. Decide who can register and who keeps access.
+            Each account is private: you see names and emails here, never their
+            notifications, cards or phones.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-6">
+          <fieldset className="grid gap-3" disabled={busy}>
+            <legend className="mb-2 text-sm font-medium">Registration</legend>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {modes.map((option) => (
+                <label
+                  key={option.value}
+                  className={`flex cursor-pointer flex-col gap-1 rounded-xl border p-3 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
+                    mode === option.value ? "border-[var(--hairline-strong)] bg-[var(--control-fill)]" : "hover:bg-white/[0.03]"
+                  }`}
+                >
+                  <span className="flex items-center gap-2 font-medium">
+                    <input
+                      type="radio"
+                      name="registrationMode"
+                      value={option.value}
+                      checked={mode === option.value}
+                      onChange={() => changeMode(option.value)}
+                      className="size-4 accent-primary"
+                    />
+                    {option.label}
+                  </span>
+                  <span className="text-muted-foreground">{option.detail}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-          <div>
-            <Label htmlFor="question-wait">Longest a question can wait</Label>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Agents and apps may ask for longer than the usual 5 minutes, up to this. After 8 hours the
-              card ends and the question keeps waiting in Relo.
-            </p>
-          </div>
-          <NativeSelect
-            id="question-wait"
-            value={String(questionWait)}
-            disabled={busy}
-            onChange={(event) => changeQuestionWait(Number(event.target.value))}
-          >
-            {QUESTION_WAITS.map((option) => (
-              <NativeSelectOption key={option.seconds} value={String(option.seconds)}>{option.label}</NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-          <div>
-            <Label htmlFor="private-callbacks">Answer callbacks to your private network</Label>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Apps can have answers posted to an address on this network (for example a CI server on
-              your LAN or VPN). The server's own localhost is never reachable.
-            </p>
-          </div>
-          <NativeSelect
-            id="private-callbacks"
-            value={privateCallbacks}
-            disabled={busy}
-            onChange={(event) => changePrivateCallbacks(event.target.value as PrivateCallbackPolicy)}
-          >
-            {PRIVATE_CALLBACKS.map((option) => (
-              <NativeSelectOption key={option.value} value={option.value}>{option.label}</NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-
-        <ul className="grid gap-3" aria-label="Accounts on this server">
-          {accounts.map((account) => (
-            <li
-              key={account.id}
-              className="grid gap-3 rounded-xl border p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
+          <div className="grid gap-2 border-t border-white/[0.06] pt-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6">
+            <div>
+              <Label htmlFor="question-wait">Longest a question can wait</Label>
+              <p className="mt-1 max-w-[65ch] text-sm text-muted-foreground">
+                Agents and apps may ask for longer than the usual 5 minutes, up to this. After 8 hours the
+                card ends and the question keeps waiting in Relo.
+              </p>
+            </div>
+            <NativeSelect
+              id="question-wait"
+              value={String(questionWait)}
+              disabled={busy}
+              onChange={(event) => changeQuestionWait(Number(event.target.value))}
             >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <strong className="break-words">{account.name}</strong>
-                  {account.admin ? <Badge variant="secondary">Admin · you</Badge> : null}
-                  {account.status === "pending" ? <Badge variant="default">Waiting for approval</Badge> : null}
-                  {account.status === "disabled" ? <Badge variant="destructive">Access off</Badge> : null}
-                </div>
-                <p className="mt-1 text-sm break-words text-muted-foreground">
-                  {account.email} · joined {relativeTime(account.createdAt)} · {account.sessions} session
-                  {account.sessions === 1 ? "" : "s"} · {account.devices} phone{account.devices === 1 ? "" : "s"}
-                </p>
+              {QUESTION_WAITS.map((option) => (
+                <NativeSelectOption key={option.seconds} value={String(option.seconds)}>{option.label}</NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+
+          <div className="grid gap-2 border-t border-white/[0.06] pt-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6">
+            <div>
+              <Label htmlFor="private-callbacks">Answer callbacks to your private network</Label>
+              <p className="mt-1 max-w-[65ch] text-sm text-muted-foreground">
+                Apps can have answers posted to an address on this network (for example a CI server on
+                your LAN or VPN). The server's own localhost is never reachable.
+              </p>
+            </div>
+            <NativeSelect
+              id="private-callbacks"
+              value={privateCallbacks}
+              disabled={busy}
+              onChange={(event) => changePrivateCallbacks(event.target.value as PrivateCallbackPolicy)}
+            >
+              {PRIVATE_CALLBACKS.map((option) => (
+                <NativeSelectOption key={option.value} value={option.value}>{option.label}</NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        </CardContent>
+      </Card>
+
+      <List label="Accounts on this server" items={accounts} getKey={(account) => account.id}>
+        {(account) => {
+          const action = (name: ServerAccountAction | "delete") => ({
+            pending: working === `${account.id}:${name}`,
+            failed,
+            successLabel: null,
+          })
+          return (
+          <Row
+            wrap
+            title={
+              <span className="inline-flex flex-wrap items-center gap-2">
+                {account.name}
+                {account.admin ? <StatusChip tone="neutral" variant="hairline">Admin · you</StatusChip> : null}
+                {account.status === "pending" ? <StatusChip tone="yellow">Waiting for approval</StatusChip> : null}
+                {account.status === "disabled" ? <StatusChip tone="red">Access off</StatusChip> : null}
+              </span>
+            }
+            meta={`${account.email} · joined ${relativeTime(account.createdAt)} · ${account.sessions} session${account.sessions === 1 ? "" : "s"} · ${account.devices} phone${account.devices === 1 ? "" : "s"}`}
+          >
+            {account.admin ? null : (
+              <div className="flex flex-wrap gap-2 px-4 pb-3.5">
+                {account.status === "pending" ? (
+                  <ActionButton size="sm" disabled={busy} {...action("approve")} pendingLabel="Approving…" onClick={() => access(account, "approve")}>
+                    Approve
+                  </ActionButton>
+                ) : null}
+                {account.status === "active" ? (
+                  <ActionButton size="sm" variant="outline" disabled={busy || account.sessions === 0} {...action("sign-out")} pendingLabel="Signing out…" onClick={() => access(account, "sign-out")}>
+                    Sign out
+                  </ActionButton>
+                ) : null}
+                {account.status === "disabled" ? (
+                  <ActionButton size="sm" variant="outline" disabled={busy} {...action("enable")} pendingLabel="Restoring…" onClick={() => access(account, "enable")}>
+                    Restore access
+                  </ActionButton>
+                ) : (
+                  <ActionButton size="sm" variant="outline" disabled={busy} {...action("disable")} pendingLabel="Revoking…" onClick={() => access(account, "disable")}>
+                    {account.status === "pending" ? "Decline" : "Revoke access"}
+                  </ActionButton>
+                )}
+                <ActionButton size="sm" variant="destructive" disabled={busy} {...action("delete")} pendingLabel="Deleting…" onClick={() => setDeleting(account)}>
+                  Delete
+                </ActionButton>
               </div>
-              {account.admin ? null : (
-                <div className="flex flex-wrap gap-2">
-                  {account.status === "pending" ? (
-                    <Button className="min-h-11" disabled={busy} onClick={() => access(account, "approve")}>
-                      Approve
-                    </Button>
-                  ) : null}
-                  {account.status === "active" ? (
-                    <Button variant="outline" className="min-h-11" disabled={busy || account.sessions === 0} onClick={() => access(account, "sign-out")}>
-                      Sign out
-                    </Button>
-                  ) : null}
-                  {account.status === "disabled" ? (
-                    <Button variant="outline" className="min-h-11" disabled={busy} onClick={() => access(account, "enable")}>
-                      Restore access
-                    </Button>
-                  ) : (
-                    <Button variant="outline" className="min-h-11" disabled={busy} onClick={() => access(account, "disable")}>
-                      {account.status === "pending" ? "Decline" : "Revoke access"}
-                    </Button>
-                  )}
-                  <Button variant="destructive" className="min-h-11" disabled={busy} onClick={() => setDeleting(account)}>
-                    Delete
-                  </Button>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
+            )}
+          </Row>
+          )
+        }}
+      </List>
 
-        <form onSubmit={addAccount} className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2">
-          <p className="text-sm font-medium sm:col-span-2">Add an account</p>
-          <div className="grid gap-2">
-            <Label htmlFor="serverAccountName">Name</Label>
-            <Input id="serverAccountName" name="serverAccountName" required maxLength={120} className="min-h-11" />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="serverAccountEmail">Email</Label>
-            <Input id="serverAccountEmail" name="serverAccountEmail" type="email" required autoComplete="off" className="min-h-11" />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="serverAccountPassword">Temporary password</Label>
-            <Input id="serverAccountPassword" name="serverAccountPassword" type="password" minLength={8} maxLength={128} required autoComplete="new-password" className="min-h-11" />
-          </div>
-          <div className="flex items-end">
-            <Button type="submit" className="min-h-11" disabled={busy}>Create account</Button>
-          </div>
-        </form>
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2.5 text-[15px]">
+            <IconTile icon={UserPlus} />
+            Add an account
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={addAccount} className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="serverAccountName">Name</Label>
+              <Input id="serverAccountName" name="serverAccountName" required maxLength={120} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="serverAccountEmail">Email</Label>
+              <Input id="serverAccountEmail" name="serverAccountEmail" type="email" required autoComplete="off" />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="serverAccountPassword">Temporary password</Label>
+              <Input id="serverAccountPassword" name="serverAccountPassword" type="password" minLength={8} maxLength={128} required autoComplete="new-password" />
+            </div>
+            <div className="flex items-end">
+              <ActionButton type="submit" disabled={busy} pending={working === "create"} failed={failed} pendingLabel="Creating…" successLabel="Created">
+                Create account
+              </ActionButton>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
-        <p
-          className={`min-h-5 text-sm ${message?.error ? "text-destructive" : "text-[var(--status-success)]"}`}
-          role={message?.error ? "alert" : "status"}
-        >
-          {message?.text}
-        </p>
-      </CardContent>
+      <OperationStatus
+        reserve
+        pending={busy}
+        pendingLabel=""
+        error={message?.error ? message.text : null}
+        success={message && !message.error ? message.text : null}
+      />
 
       <AlertDialog open={deleting !== null} onOpenChange={(open) => { if (!open) setDeleting(null) }}>
         <AlertDialogContent>
@@ -338,9 +364,8 @@ export function ServerAdminCard({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-11">Cancel</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="min-h-11"
               variant="destructive"
               onClick={(event) => {
                 event.preventDefault()
@@ -352,6 +377,6 @@ export function ServerAdminCard({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+    </div>
   )
 }

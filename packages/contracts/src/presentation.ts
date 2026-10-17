@@ -1,3 +1,4 @@
+import { planProgressWireSchema } from "./works.js";
 import { z } from "zod";
 
 export const LIVE_ACTIVITY_PRESENTATION_MAX_CANONICAL_BYTES = 3_072 as const;
@@ -152,6 +153,7 @@ export const PRESENTATION_STATE_KINDS = [
 export const PRESENTATION_SEMANTIC_ICONS = [
   ...PRESENTATION_SYMBOLS, "project", "thread", "direct", "active", "waiting", "needs_action",
   "completed", "failed", "cancelled", "expired", "superseded",
+  "laptop", "desktop", "server", "cloud",
 ] as const;
 export const presentationComponentTypeSchema = z.enum(PRESENTATION_COMPONENT_TYPES);
 export const presentationSurfaceSchema = z.enum(PRESENTATION_SURFACES);
@@ -170,8 +172,13 @@ const progressFields = {
 export const presentationProgressBarComponentSchema = z.object({
   ...componentBase, type: z.literal("progress_bar"), ...progressFields,
 }).strict();
+/** A plan longer than the card's window: steps hidden before it (all done) and after it (not started). */
+const hiddenStepCountSchema = z.number().int().min(1).max(99).optional();
 export const presentationStepsComponentSchema = z.object({
   ...componentBase, type: z.literal("steps"), items: presentationStepsSchema,
+  before: hiddenStepCountSchema, after: hiddenStepCountSchema,
+  /** Plan UX U1/U2: the count and where the work is in its plan; the phone writes the plan line from it. */
+  plan: planProgressWireSchema.optional(),
 }).strict();
 export const presentationImageComponentSchema = z.object({
   ...componentBase, type: z.literal("image"), asset: immutableReloAssetReferenceSchema,

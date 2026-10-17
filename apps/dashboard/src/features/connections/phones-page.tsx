@@ -1,12 +1,11 @@
-import { Smartphone } from "lucide-react"
+import { Smartphone, Trash2 } from "lucide-react"
 import * as React from "react"
 
-import { Empty, Section } from "@/components/page"
-import {
-  ConnectionList,
-  DestructiveAction,
-  OperationStatus,
-} from "@/features/connections/components"
+import { IconTile } from "@/components/atoms/icon-tile"
+import { StatusDot } from "@/components/atoms/status-dot"
+import { Empty, List, Row, Section } from "@/components/list"
+import { DestructiveAction } from "@/components/molecules/confirmation-action"
+import { OperationStatus } from "@/components/molecules/operation-status"
 import type { ConnectionPhone } from "@/features/connections/types"
 import type { ConnectionsService } from "@/services/connections-service"
 import { relativeTime } from "@/lib/format"
@@ -32,24 +31,29 @@ function PhoneRow({
   const [error, setError] = React.useState<string | null>(null)
   const state = readiness(phone)
   return (
-    <li aria-busy={pending} className="px-4 py-3.5">
-      <div className="flex min-w-0 items-center gap-3">
-        <Smartphone className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{phone.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {phone.model} · iOS {phone.osVersion}
-            {phone.lastSeenAt ? ` · seen ${relativeTime(phone.lastSeenAt)}` : ""}
-          </p>
-        </div>
-        <span className={`hidden text-xs sm:inline ${state === "Ready" ? "text-[var(--status-success)]" : "text-[var(--status-warning)]"}`}>
-          {state}
-        </span>
+    <Row
+      busy={pending}
+      wrap
+      leading={<IconTile icon={Smartphone} />}
+      title={phone.name}
+      status={<StatusDot tone={state === "Ready" ? "mint" : "yellow"} label={state} />}
+      meta={
+        <>
+          {phone.model} · iOS {phone.osVersion}
+          {phone.lastSeenAt ? ` · seen ${relativeTime(phone.lastSeenAt)}` : ""}
+        </>
+      }
+      actions={
         <DestructiveAction
           label="Remove"
           title={`Remove ${phone.name}?`}
           description="It is signed out and can no longer read anything. Cards only it could open are deleted. Sign in on the phone again to reconnect it."
           pending={pending}
+          failed={Boolean(error)}
+          pendingLabel="Removing phone…"
+          size="sm"
+          icon={<Trash2 aria-hidden="true" />}
+          compact
           onConfirm={() => {
             setPending(true)
             setError(null)
@@ -60,9 +64,10 @@ function PhoneRow({
               .finally(() => setPending(false))
           }}
         />
-      </div>
-      <OperationStatus pending={pending} error={error} pendingLabel="Removing phone…" />
-    </li>
+      }
+    >
+      <OperationStatus pending={pending} error={error} pendingLabel="Removing phone…" className="px-4 pb-3 text-xs" />
+    </Row>
   )
 }
 
@@ -78,28 +83,30 @@ export function PhonesSection({
   const [phones, setPhones] = React.useState(initial)
   return (
     <Section
+      id="phones"
       title="Phones"
-      action={
-        <p className="text-xs text-muted-foreground">
-          To add an iPhone, open Relo on it and tap Sign in. Approvals and encryption:{" "}
+      count={phones.length || undefined}
+      description={
+        <>
+          To add an iPhone, open Relo on it and tap Sign in. Approvals and encryption are in{" "}
           <a href="/dashboard/account#devices" className="text-primary underline-offset-4 hover:underline">Devices</a>.
-        </p>
+        </>
       }
     >
-      {phones.length ? (
-        <ConnectionList ariaLabel="Phones">
-          {phones.map((phone) => (
-            <PhoneRow
-              key={phone.id}
-              phone={phone}
-              api={api}
-              onRevoke={(id) => setPhones((current) => current.filter((item) => item.id !== id))}
-            />
-          ))}
-        </ConnectionList>
-      ) : (
-        <Empty title="No phones yet" description="To add an iPhone, open Relo on it and tap Sign in." />
-      )}
+      <List
+        label="Phones"
+        items={phones}
+        getKey={(phone) => phone.id}
+        empty={<Empty icon={<Smartphone />} title="No phones yet" description="To add an iPhone, open Relo on it and tap Sign in." />}
+      >
+        {(phone) => (
+          <PhoneRow
+            phone={phone}
+            api={api}
+            onRevoke={(id) => setPhones((current) => current.filter((item) => item.id !== id))}
+          />
+        )}
+      </List>
       {total > initial.length ? (
         <p className="mt-3 text-xs text-muted-foreground">Showing {initial.length} of {total}.</p>
       ) : null}

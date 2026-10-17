@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe,expect,test } from "vitest";
 import { ownerStateInputSchema,sessionRowInputSchema,type OwnerStateInput } from "@relo/notification-contracts";
 import { deriveOwnerState } from "./owner-state.js";
-import { deriveSessionRow } from "./agent-session-evidence.js";
+import { deriveSessionRow } from "./sessions-view.js";
 
 const fixture = JSON.parse(readFileSync(new URL("../../../../packages/contracts/fixtures/owner-state-v1.json",import.meta.url),"utf8"));
 

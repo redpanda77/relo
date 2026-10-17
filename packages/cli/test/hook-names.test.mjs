@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
-import { b64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { ensureIdentity, loadKeyStore } from "../src/keystore.mjs";
-import { ensureTrust } from "../src/trust.mjs";
+import { b64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { ensureIdentity, loadKeyStore } from "../src/crypto/keystore.mjs";
+import { ensureTrust } from "../src/crypto/trust.mjs";
 import { cardDependencies } from "./fake-cards.mjs";
 
 // Agent sessions carry no card, so the hook seals the names behind its handles for the phone (E2.5).
@@ -18,7 +18,7 @@ test("a sealing computer's hook sends handles plus the names sealed for the phon
   const state = await mkdtemp(join(tmpdir(), "relo-hook-names-"));
   const repo = join(state, "relo");
   await mkdir(join(repo, ".git"), { recursive: true });
-  const env = { RELO_KEY_STORE_PATH: join(state, "e2ee.json"), RELO_SEALED_CARD_DIR: join(state, "s", "cards"),
+  const env = { RELO_KEY_STORE_PATH: join(state, "e2ee.json"), RELO_STATE_DIR: join(state, "s"),
     RELO_HARNESS_CREDENTIAL_PATH: join(state, "harness-credential") };
   const identity = generateKeyPair();
   const prekey = generateKeyPair();

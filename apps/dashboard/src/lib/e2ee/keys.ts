@@ -1,5 +1,5 @@
 /**
- * The linked browser's own keys (docs/END-TO-END-ENCRYPTION.md, "Linked browsers"): an ECDSA P-256
+ * The linked browser's own keys (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers"): an ECDSA P-256
  * identity and rotating ECDH P-256 prekeys, all created non-extractable by WebCrypto and kept as
  * CryptoKey objects in IndexedDB. Private halves never leave WebCrypto.
  */

@@ -4,7 +4,7 @@ import { e2eeKeyId,PREKEY_STALE_AFTER_MS,publishDeviceKeysSchema,verifyPrekeySig
 import { internalId,publicId } from "./ids.js";
 
 /**
- * Linked browsers (docs/END-TO-END-ENCRYPTION.md, "Linked browsers"): a Dashboard that holds its own
+ * Linked browsers (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers"): a Dashboard that holds its own
  * keys, like WhatsApp Web. The server stores public keys and the phone's link signature; it never
  * decides trust. Computers seal to a browser only when a phone they trust signed its identity key.
  */
@@ -99,12 +99,62 @@ export async function linkBrowser(
   if (!current.rows[0]) return { ok: false,error: "browser_not_found" };
   if (current.rows[0].identity_key !== input.identityKey) return { ok: false,error: "identity_mismatch" };
   const linked = await db.query<{ name: string; linked_at: Date }>(
-    `UPDATE linked_browsers SET linked_by_device=$3,link_signed_at=$4,link_signature=$5,linked_at=now()
+    `UPDATE linked_browsers SET linked_by_device=$3,link_signed_at=$4,link_signature=$5,linked_at=now(),link_requested_at=NULL
      WHERE id=$1 AND principal_id=$2 RETURNING name,linked_at`,
     [id,principalId,deviceId,input.signedAt,input.signature],
   );
   const row = linked.rows[0]!;
   return { ok: true,browserId: input.browserId,name: row.name,linkedAt: row.linked_at.toISOString() };
+}
+
+const LINK_REQUEST_MIN_GAP_SECONDS = 30;
+const LINK_REQUEST_LIFETIME_MINUTES = 15;
+
+/** A not yet linked browser asks for a phone's approval; one request per 30 seconds. */
+export async function requestBrowserLink(
+  db: Pick<Database,"query">,principalId: string,browserId: string,
+): Promise<{ ok: true; name: string; requestedAt: Date; id: string } | { ok: false; error: "browser_not_found" | "already_linked" | "too_soon" }> {
+  const id = internalId("brw",browserId);
+  if (!id) return { ok: false,error: "browser_not_found" };
+  const current = await db.query<{ linked: boolean; recent: boolean }>(
+    `SELECT linked_at IS NOT NULL AS linked,
+       COALESCE(link_requested_at>now()-make_interval(secs=>$3),false) AS recent
+     FROM linked_browsers WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL`,[id,principalId,LINK_REQUEST_MIN_GAP_SECONDS]);
+  const row = current.rows[0];
+  if (!row) return { ok: false,error: "browser_not_found" };
+  if (row.linked) return { ok: false,error: "already_linked" };
+  if (row.recent) return { ok: false,error: "too_soon" };
+  // The guard repeats in the UPDATE so two concurrent requests cannot both pass.
+  const updated = await db.query<{ name: string; link_requested_at: Date }>(
+    `UPDATE linked_browsers SET link_requested_at=now()
+     WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL AND linked_at IS NULL
+       AND (link_requested_at IS NULL OR link_requested_at<=now()-make_interval(secs=>$3))
+     RETURNING name,link_requested_at`,[id,principalId,LINK_REQUEST_MIN_GAP_SECONDS]);
+  if (!updated.rows[0]) return { ok: false,error: "too_soon" };
+  return { ok: true,id,name: updated.rows[0].name,requestedAt: updated.rows[0].link_requested_at };
+}
+
+/** Browsers that asked for approval in the last 15 minutes and are not linked: what a phone lists under Devices. */
+export async function browserLinkRequests(db: Pick<Database,"query">,principalId: string) {
+  const result = await db.query<any>(
+    `SELECT id,name,key_id,identity_key,link_requested_at FROM linked_browsers
+     WHERE principal_id=$1 AND revoked_at IS NULL AND linked_at IS NULL
+       AND link_requested_at>now()-make_interval(mins=>$2)
+     ORDER BY link_requested_at DESC LIMIT ${MAX_BROWSERS}`,[principalId,LINK_REQUEST_LIFETIME_MINUTES]);
+  return result.rows.map((row) => ({
+    browserId: publicId("brw",row.id),name: row.name as string,keyId: row.key_id as string,
+    identityKey: row.identity_key as string,requestedAt: new Date(row.link_requested_at).toISOString(),
+  }));
+}
+
+/** Clears a browser's request (a phone declined it, or no phone could show it). False when there was none. */
+export async function declineBrowserLinkRequest(db: Pick<Database,"query">,principalId: string,browserId: string): Promise<boolean> {
+  const id = internalId("brw",browserId);
+  if (!id) return false;
+  const result = await db.query(
+    `UPDATE linked_browsers SET link_requested_at=NULL
+     WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL AND linked_at IS NULL AND link_requested_at IS NOT NULL`,[id,principalId]);
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function listLinkedBrowsers(db: Pick<Database,"query">,principalId: string) {

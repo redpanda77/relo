@@ -11,8 +11,8 @@ through a server the owner runs. These are the maintained documents for contribu
 
 - [`SELF-HOSTING.md`](SELF-HOSTING.md): installation and operation
 - [`HARDENING.md`](HARDENING.md): what protects a publicly reachable server, and the open gaps
-- [`END-TO-END-ENCRYPTION.md`](END-TO-END-ENCRYPTION.md): threat model, protocol and state of
-  end-to-end encryption
+- [`ENCRYPTION-PROTOCOL.md`](ENCRYPTION-PROTOCOL.md): keys, message formats and signing inputs of
+  end-to-end encryption (the model is `site/concepts/encryption.md`)
 - [`HOOKS-AND-HARNESSES.md`](HOOKS-AND-HARNESSES.md): optional hooks, their levels, what leaves the
   computer, and how to add a harness
 

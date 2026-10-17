@@ -20,7 +20,7 @@ what an operator still has to do. Each item names the code it concerns.
   the last accepted attempt.
 - **Hooks hold a narrower credential.** A harness credential has the single scope `presence:write`,
   works only on `POST /api/agent-sessions/observed` (every other route refuses it, before the route
-  runs), is rate limited per credential and per account, and is revoked by `relo hooks off`. The
+  runs), is rate limited per credential and per account, and is revoked by `relo setup --level track`. The
   ordinary CLI credential cannot post observed state
   ([HOOKS-AND-HARNESSES.md](HOOKS-AND-HARNESSES.md#the-harness-credential)).
 - **Request bodies are capped** at 1 MiB on every route, and HTTPS origins send HSTS (`app.ts`).
@@ -35,10 +35,10 @@ what an operator still has to do. Each item names the code it concerns.
   restricted database role.
 - **New phones wait for a trusted phone.** A phone added after the first is *pending* until a
   trusted phone, or a browser a trusted phone linked, signs an approval; computers seal nothing to it
-  until then ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md#new-devices-are-approved-on-a-trusted-phone)).
+  until then ([ENCRYPTION-PROTOCOL.md](ENCRYPTION-PROTOCOL.md#new-devices-are-approved-on-a-trusted-phone)).
   A simulator never counts as that trusted phone and never receives approval notices.
 - **End-to-end encryption** keeps notice, question and card text unreadable to the server and to a
-  TLS-terminating proxy ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md)).
+  TLS-terminating proxy ([Encryption](site/concepts/encryption.md)).
 
 ## Gaps found and how each was handled
 
@@ -69,7 +69,7 @@ their own browser. The limits and the cookie key are in memory: a restart clears
 
 Closed on 14 October 2026: the computers present when the phone signs in are trusted on first use,
 and any computer that appears after that is *pending* on the phone until the owner approves it in
-Settings → Security (`apps/ios/Sources/ReloCore/E2EE/ReloTrustedClients.swift`). The server sends
+Settings → Devices (`apps/ios/Sources/ReloCore/E2EE/ReloTrustedClients.swift`). The server sends
 the phones a plain "New computer wants access" notification when a second or later computer
 publishes its key (`device-approvals.ts`, `announceNewComputer`). A trusted computer's changed key is
 still trusted again with a notice (gap 4).
@@ -78,7 +78,7 @@ still trusted again with a notice (gap 4).
 
 By default the CLI follows WhatsApp: a changed identity key behind a pinned phone, and the account's
 new phone once every phone it trusted has left the account, are trusted again with a visible notice
-("security code changed", "phone set up again"; `packages/cli/src/trust.mjs`). A compromised server,
+("security code changed", "phone set up again"; `packages/cli/src/crypto/trust.mjs`). A compromised server,
 or anyone with the account password (gap 1), can therefore swap in its own phone key, read new
 content and accept approvals signed by it. `relo keys strict on` holds both as pending until a
 person runs `relo keys verify`. This is the owner's accepted trade-off (ADR 0005: Signal/WhatsApp-style
@@ -112,10 +112,11 @@ available on a loopback or private origin.
 
 ### 7. Webhook secrets travel in the URL path (closed)
 
-Closed on 14 October 2026: `POST /hooks` and `/hooks/live-activities…` take the secret in
-`Authorization: Bearer hook_…` or `X-Relo-Webhook-Secret`, so it stays out of proxy, CDN and access
-logs (`services.ts`, `registerHeaderSecretWebhooks`). The `/hooks/:secret` form keeps working for
-existing integrations; prefer the header for new ones.
+Closed on 15 October 2026: every webhook route (`/hooks`, `/hooks/events…`, `/hooks/live-activities…`,
+`/hooks/works…`) takes the secret only in `Authorization: Bearer hook_…` or `X-Relo-Webhook-Secret`, so it
+stays out of proxy, CDN and access logs (`webhooks/auth.ts`, `registerWebhookAuth`). A request with the secret
+in the path is refused (`secret_in_url`), and services are issued an endpoint and a secret, never a URL
+with the secret in it.
 
 ## Operator checklist for a public address
 

@@ -148,6 +148,8 @@ public enum AuthorizationState: String, Codable, Equatable, Sendable {
 /// a phone only the questions its declared capabilities cover.
 public enum DeviceCapability {
     public static let choiceQuestions = "choice_questions"
+    /// Reads the whole account's Now; never a delivery target. Declared by the Mac's notch app, never by the iPhone.
+    public static let ownerOverview = "owner_overview"
     public static let supported = [choiceQuestions]
 }
 

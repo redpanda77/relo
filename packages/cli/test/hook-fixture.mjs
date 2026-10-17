@@ -59,6 +59,8 @@ export async function hookBox({ input, env = {}, config = {}, respond } = {}) {
     stdinIsTTY: false,
     computerName: () => "Studio Mac",
     spawnFlusher: () => { box.spawned += 1; },
+    // No real `ps` walk in tests: a test of the liveness check passes its own.
+    harnessProcess: { findHarnessProcess: async () => undefined, processAlive: async () => true },
     home: state, cwd: repo,
     now: () => box.clock,
   });

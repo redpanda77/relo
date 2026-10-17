@@ -49,7 +49,7 @@ export function DeliveryTrail({ stages }: { stages: DeliveryStage[] }) {
           {index > 0 ? (
             <span
               className={cn(
-                "h-px w-2.5",
+                "step-connector h-px w-2.5",
                 stages[index - 1].state === "done"
                   ? "bg-[var(--status-success)]/60"
                   : "bg-border"
@@ -59,7 +59,7 @@ export function DeliveryTrail({ stages }: { stages: DeliveryStage[] }) {
           <span
             title={`${stage.label}: ${stage.summary}`}
             className={cn(
-              "relative size-2 rounded-full border",
+              "stage-node relative size-2 rounded-full border",
               nodeClass[stage.state]
             )}
           >
@@ -77,7 +77,7 @@ function StageNode({ state }: { state: StageState }) {
   return (
     <span
       className={cn(
-        "relative z-10 grid size-7 shrink-0 place-items-center rounded-full border",
+        "stage-node relative z-10 grid size-7 shrink-0 place-items-center rounded-full border",
         nodeClass[state]
       )}
       aria-hidden="true"
@@ -130,7 +130,7 @@ export function DeliveryChain({
               <span
                 aria-hidden="true"
                 className={cn(
-                  "absolute top-7 bottom-0 left-[13.5px] w-px",
+                  "step-connector absolute top-7 bottom-0 left-[13.5px] w-px",
                   wide &&
                     "sm:top-[13.5px] sm:right-0 sm:bottom-auto sm:left-7 sm:h-px sm:w-auto",
                   linkDone ? "bg-[var(--status-success)]/50" : "bg-border"

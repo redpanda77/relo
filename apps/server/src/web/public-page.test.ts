@@ -7,7 +7,7 @@ describe("public pages", () => {
     expect(wantsHtmlPage("/dashboard/missing", "text/html,application/xhtml+xml")).toBe(true);
     expect(wantsHtmlPage("/dashboard/missing", "application/json")).toBe(false);
     expect(wantsHtmlPage("/dashboard/missing", undefined)).toBe(false);
-    for (const path of ["/api/inbox", "/hooks/secret", "/health/live", "/api"]) {
+    for (const path of ["/api/inbox", "/hooks", "/hooks/works", "/health/live", "/api"]) {
       expect(wantsHtmlPage(path, "text/html")).toBe(false);
     }
   });

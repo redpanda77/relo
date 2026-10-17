@@ -9,7 +9,7 @@ import { join, sep } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
-import { configPath } from "../src/config.mjs";
+import { configPath } from "../src/shared/config.mjs";
 import { outboxDirectory } from "../src/outbox/index.mjs";
 import { stateRoot } from "../src/work/state-file.mjs";
 
@@ -42,7 +42,7 @@ test("an injected env without a state folder keeps the state under the injected 
   const sandbox = mkdtempSync(join(tmpdir(), "relo-test-sandbox-"));
   t.after(() => { rmSync(fakeRealHome, { recursive: true, force: true }); rmSync(sandbox, { recursive: true, force: true }); });
   const cli = pathToFileURL(join(import.meta.dirname, "..", "src", "cli.mjs")).href;
-  const apiClient = pathToFileURL(join(import.meta.dirname, "..", "src", "api-client.mjs")).href;
+  const apiClient = pathToFileURL(join(import.meta.dirname, "..", "src", "shared", "api-client.mjs")).href;
   const script = `
     const { execute } = await import(${JSON.stringify(cli)});
     const { ReloApiClient } = await import(${JSON.stringify(apiClient)});
@@ -57,8 +57,7 @@ test("an injected env without a state folder keeps the state under the injected 
     }).catch(() => {});
   `;
   const env = { PATH: process.env.PATH, HOME: fakeRealHome, RELO_NO_BACKGROUND_FLUSH: "1", RELO_NO_UPDATE_CHECK: "1",
-    RELO_KEY_STORE_PATH: join(sandbox, "e2ee.json"), RELO_SEALED_CARD_DIR: join(sandbox, "cards"),
-    RELO_SEEN_NOTES_PATH: join(sandbox, "seen-notes.json"), RELO_HARNESS_CREDENTIAL_PATH: join(sandbox, "harness-credential") };
+    RELO_KEY_STORE_PATH: join(sandbox, "e2ee.json"), RELO_HARNESS_CREDENTIAL_PATH: join(sandbox, "harness-credential") };
   await promisify(execFile)(process.execPath, ["--input-type=module", "-e", script, sandbox], { env, cwd: sandbox });
   const queued = join(sandbox, ".local", "state", "relo", "outbox", "declared");
   assert.ok(existsSync(queued) && readdirSync(queued).length > 0, "the offline start was queued under the injected home");

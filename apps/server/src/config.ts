@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
+import { isPrivateHost } from "@relo/notification-contracts";
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -55,18 +56,11 @@ const schema = z.object({
 
 export type Config = z.infer<typeof schema>;
 
-/** HTTPS, or HTTP to a loopback, link-local, RFC 1918, unique-local or .local host. */
+/** HTTPS, or HTTP to a private host (packages/contracts/src/origin.ts: the one rule the CLI shares). */
 export function secureOrPrivateOrigin(value: string): boolean {
   const url = new URL(value);
   if (url.protocol === "https:") return true;
-  if (url.protocol !== "http:") return false;
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
-  if (host === "::1" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd")) return true;
-  const octets = host.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [a, b] = octets as [number, number];
-  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  return url.protocol === "http:" && isPrivateHost(url.hostname);
 }
 
 function emptyStringAsUndefined(value: unknown): unknown {

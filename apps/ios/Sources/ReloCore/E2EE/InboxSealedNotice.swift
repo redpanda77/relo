@@ -181,6 +181,20 @@ public extension PendingCurrentPage {
 }
 
 extension InboxItem {
+    /// The whole plan with its sealed labels opened. The work's sealed text lists every visible step's
+    /// label in plan order, as the server's plan does, so they pair by position when the counts agree.
+    static func openingPlan(_ plan: [InboxCardDigest.PlanStep], text: ReloSealedCardText) -> [InboxCardDigest.PlanStep] {
+        // v2 text names labels and details by step id; v1 lists labels in plan order.
+        let byID = text.labelsByStepID, details = text.detailsByStepID
+        let ordered = text.steps.flatMap { $0.count == plan.count ? $0 : nil }
+        return plan.enumerated().map { index, step in
+            let positional = ordered.map { ReloSealedCards.isPlaceholderStep($0[index]) ? nil : $0[index] } ?? nil
+            return .init(id: step.id, state: step.state, label: step.label ?? byID[step.id] ?? positional, parent: step.parent,
+                         round: step.round, detail: step.detail ?? details[step.id],
+                         startedAt: step.startedAt, doneAt: step.doneAt)
+        }
+    }
+
     /// A card event in History or Now: real title, status and current step from the card's envelope.
     func openingSealedCard(_ sealed: InboxSealedNotice, open: ReloSealedOpener) -> InboxItem {
         guard let data = open(sealed.content, id) ?? sealed.alert.flatMap({ open($0, id) }),
@@ -206,7 +220,8 @@ extension InboxItem {
             return InboxCardDigest(state: digest.state, outcome: digest.outcome, status: opened(digest.status),
                                    progress: digest.progress, steps: steps, updates: digest.updates,
                                    startedAt: digest.startedAt, endedAt: digest.endedAt,
-                                   work: digest.work.map { $0.withoutText.opening(text) })
+                                   work: digest.work.map { $0.withoutText.opening(text) },
+                                   plan: digest.plan.map { Self.openingPlan($0, text: text) }, rounds: digest.rounds)
         }
         return InboxItem(
             id: id, kind: kind, sourceName: sourceName, sourceImageUrl: sourceImageUrl, title: shownTitle,
@@ -246,10 +261,6 @@ public extension InboxRepairResponse {
             var summary = summary
             summary.item = summary.item.openingSealed(open, diagnose: diagnose)
             return summary
-        }
-        // Opening a session's names teaches the name book; rows show them when displayed.
-        for session in sessions ?? [] {
-            if let names = session.sealedNames, names.kind == "names" { _ = open(names, session.id) }
         }
         return opened
     }

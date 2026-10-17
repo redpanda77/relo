@@ -68,3 +68,5 @@ export function signalAt(mix: NowMix, position: number): Signal | null {
 
 /** The Sessions section's violet (iOS ReloHoloTheme.sessions); not a work meaning, so not a Signal. */
 export const SESSIONS_CSS = "#8B7CFF"
+
+export const rgbCss = ([r, g, b]: RGB, alpha = 1) => (alpha === 1 ? `rgb(${r} ${g} ${b})` : `rgb(${r} ${g} ${b} / ${alpha})`)

@@ -240,7 +240,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
     public let interaction: InboxInteraction?
     public let context: InboxContext?
     public let resources: InboxResourceLinks?
-    /// End-to-end sealed envelopes (docs/END-TO-END-ENCRYPTION.md); text above is a placeholder until opened.
+    /// End-to-end sealed envelopes (docs/ENCRYPTION-PROTOCOL.md); text above is a placeholder until opened.
     public let sealed: InboxSealedNotice?
     /// The work this item belongs to (ADR 0007): a card of it, or a question or notice that references it.
     /// Sent as `work: { id, … }` or `workId`; absent from servers before works.
@@ -526,8 +526,6 @@ public struct InboxSnapshot: Codable, Equatable, Sendable {
     public var lastSuccessfulSyncAt: Date?
     public var readWatermark: String?
     public var unread: InboxUnreadSummary?
-    /// Agent sessions from the server; nil from older servers.
-    public var sessions: [AgentSession]? = nil
 
     public init(
         items: [InboxItem] = [],

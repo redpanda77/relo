@@ -6,14 +6,14 @@ import { z } from "zod";
 import {
   
   liveActivityStyles } from "../activities.js";
-import { presentationActivityKitContentStateSchema } from "@relo/notification-contracts";
+import { presentationActivityKitContentStateSchema,stepIdSchema } from "@relo/notification-contracts";
 
 import type { Database } from "../db.js";
 import { internalId, publicId } from "../ids.js";
 
 import { createLiveActivityCredential } from "../live-activity-interaction.js";
 
-import { callbackResource } from "../interaction-callbacks.js";
+import { answeredCopyResource,callbackResource } from "../interaction-callbacks.js";
 
 import {
   
@@ -106,6 +106,8 @@ export const inboxLiveActivitySchema = z.object({
   sequence: z.number().int().min(0).default(0),
   providerTimestamp: z.number().int().min(0).optional(),
   startedAt: z.number().int().min(0).optional(),
+  /** The plan step the work was on when this card update was made (ids carry no text), to group updates by step. */
+  stepId: stepIdSchema.optional(),
   relevanceScore: z.number().min(0).max(1).default(0.5),
   presentationState: z.enum([
     "eligible","foreground","background","pending_token","not_presented","ending","ended","unknown",
@@ -383,9 +385,20 @@ export function chosenOption(response: unknown): { optionId: string; label: stri
   return typeof optionId === "string" && typeof label === "string" ? { optionId,label } : null;
 }
 
+/**
+ * Who answered: a phone (`dev_…`) or a linked browser (`brw_…`, docs/ENCRYPTION-PROTOCOL.md,
+ * "Answering from a linked browser"). The id's prefix tells a computer which trust rule applies.
+ */
+export function respondingDeviceResource(row: { response_device_id?: string | null; response_browser_id?: string | null;
+  response_device_name?: unknown }): { id: string; name: string } | null {
+  const name = typeof row.response_device_name === "string" ? row.response_device_name.trim() : "";
+  if (row.response_browser_id) return { id: publicId("brw",row.response_browser_id),name: name || "Linked browser" };
+  if (row.response_device_id) return { id: publicId("dev",row.response_device_id),name: name || "Unnamed device" };
+  return null;
+}
+
 export function interactionResource(row: any) {
   const action = row.response_action === "answer" ? "reply" : (row.response_action ?? null);
-  const deviceName = typeof row.response_device_name === "string" ? row.response_device_name.trim() : "";
   return {
     id: publicId("int",row.id),
     eventId: publicId("ntf",row.notification_event_id),
@@ -395,10 +408,8 @@ export function interactionResource(row: any) {
     state: row.state,
     action,
     response: row.response ?? null,
-    respondingDevice: row.response_device_id ? {
-      id: publicId("dev",row.response_device_id),
-      name: deviceName || "Unnamed device",
-    } : null,
+    respondingDevice: respondingDeviceResource(row),
+    ...answeredCopyResource(row),
     expiresAt: new Date(row.expires_at).toISOString(),
     respondedAt: row.responded_at ? new Date(row.responded_at).toISOString() : null,
     createdAt: new Date(row.created_at).toISOString(),
@@ -437,15 +448,18 @@ export function deviceInventoryResource(row: any) {
 
 export const interactionResultSelection = `SELECT r.id,r.notification_event_id,r.kind,r.prompt,r.options,r.state,r.response,
   r.expires_at,r.responded_at,r.created_at,r.late_response,r.late_responded_at,
-  winner.kind AS response_action,winner.device_id AS response_device_id,d.name AS response_device_name,
+  winner.kind AS response_action,winner.device_id AS response_device_id,winner.browser_id AS response_browser_id,
+  winner.interaction_request_id AS response_request_id,winner.notification_event_id AS response_event_id,
+  COALESCE(d.name,b.name) AS response_device_name,
   cb.state AS callback_state,cb.attempts AS callback_attempts,cb.last_status AS callback_last_status,
   cb.last_error AS callback_last_error,cb.delivered_at AS callback_delivered_at
   FROM interaction_requests r
   LEFT JOIN interaction_callbacks cb ON cb.interaction_request_id=r.id
   JOIN notification_events e ON e.id=r.notification_event_id
   LEFT JOIN LATERAL (
-    SELECT i.kind,i.device_id FROM interactions i
-    WHERE i.interaction_request_id=r.id ORDER BY i.created_at,i.id LIMIT 1
+    SELECT i.kind,i.device_id,i.browser_id,i.interaction_request_id,i.notification_event_id FROM interactions i
+    WHERE i.interaction_request_id=COALESCE(r.answered_on_request_id,r.id) ORDER BY i.created_at,i.id LIMIT 1
   ) winner ON true
-  LEFT JOIN devices d ON d.id=winner.device_id`;
+  LEFT JOIN devices d ON d.id=winner.device_id
+  LEFT JOIN linked_browsers b ON b.id=winner.browser_id`;
 

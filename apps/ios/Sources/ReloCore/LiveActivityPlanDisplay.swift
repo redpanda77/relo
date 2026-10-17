@@ -1,17 +1,18 @@
-import Foundation
-
-/// The one plan line (slice 3, item 2.15): "Step 4 · 4 to go · <current step label>", with the
-/// current step's own count when present ("· 2 of 6", "· 6 of 6 ✓"). No plan-wide ratio: plans grow.
-/// Matches `packages/contracts/fixtures/card-line-v1.json`.
+/// The one plan line (plan 12b, U2): "2 of 5 · <current step> · 1/3", "Round 2 delivered", "Paused at 2 of 5",
+/// "5 of 5 done", "Stopped at 3 of 5". The count is `PlanProgress`: the server's when the card carries it,
+/// else counted from the shown steps. No "Step N", no round number on the Lock Screen while moving.
+/// Matches `packages/contracts/test/fixtures/plan-progress.json`.
 public enum LiveActivityPlanDisplay {
     public enum StepState: String, Sendable { case done, current, open, skipped }
 
     public struct Step: Equatable, Sendable {
+        public let id: String?
         public let label: String?
         public let state: StepState
         public let count: Count?
 
-        public init(label: String?, state: StepState, count: Count? = nil) {
+        public init(label: String?, state: StepState, count: Count? = nil, id: String? = nil) {
+            self.id = id
             self.label = label
             self.state = state
             self.count = count
@@ -24,25 +25,36 @@ public enum LiveActivityPlanDisplay {
         public init(done: Int, total: Int) { self.done = done; self.total = total }
     }
 
-    /// Nil for an empty plan (callers show the status line instead).
-    public static func line(_ steps: [Step]) -> String? {
-        let live = steps.filter { $0.state != .skipped }
-        guard !live.isEmpty else { return nil }
-        if let index = live.firstIndex(where: { $0.state == .current }) {
-            let step = live[index]
-            let toGo = live[(index + 1)...].filter { $0.state == .open }.count
-            var parts = ["Step \(index + 1)", "\(toGo) to go"]
-            if let label = clean(step.label) { parts.append(label) }
-            if let count = step.count, count.total > 0 {
-                parts.append(count.done >= count.total ? "\(count.done) of \(count.total) ✓" : "\(count.done) of \(count.total)")
-            }
-            return parts.joined(separator: " · ")
-        }
-        let open = live.filter { $0.state == .open }
-        if open.isEmpty { return live.count == 1 ? "The step is done" : "All \(live.count) steps done" }
-        let planned = "\(live.count) step\(live.count == 1 ? "" : "s") planned"
-        if let next = clean(open.first?.label) { return "\(planned) · next: \(next)" }
-        return planned
+    /// The count for these steps: the card's own `progress` when it has one, else counted from the shown ones.
+    public static func progress(_ steps: [Step], window: LiveActivityDisplayPresentation.StepWindow = .whole) -> PlanProgress? {
+        window.progress ?? PlanProgress.make(steps: steps, before: window.before, after: window.after)
+    }
+
+    /// The label of the current step: the one the progress names by id if the card lists it, else the one marked current.
+    public static func currentLabel(_ steps: [Step], progress: PlanProgress?) -> String? {
+        if let id = progress?.currentId, let label = steps.first(where: { $0.id == id })?.label { return label }
+        return steps.first { $0.state == .current }?.label
+    }
+
+    /// Nil for an empty plan (callers show the status line instead). `standing` is how the work stands;
+    /// a plan that is not moving reads as its state ("Paused at 2 of 5").
+    public static func line(_ steps: [Step], window: LiveActivityDisplayPresentation.StepWindow = .whole,
+                            standing: PlanProgress.Standing = .moving) -> String? {
+        guard let progress = progress(steps, window: window) else { return nil }
+        return progress.line(label: currentLabel(steps, progress: progress), standing: standing)
+    }
+
+    /// The line in pieces, for a surface that must keep the counts whole and let the label give way.
+    public static func lineParts(_ steps: [Step], window: LiveActivityDisplayPresentation.StepWindow = .whole,
+                                 standing: PlanProgress.Standing = .moving) -> PlanProgress.LineParts? {
+        guard let progress = progress(steps, window: window) else { return nil }
+        return progress.lineParts(label: currentLabel(steps, progress: progress), standing: standing)
+    }
+
+    /// Steps done and the plan's total, counting a long plan's hidden steps.
+    public static func tally(_ steps: [Step], window: LiveActivityDisplayPresentation.StepWindow = .whole) -> (done: Int, total: Int) {
+        guard let progress = progress(steps, window: window) else { return (0, 0) }
+        return (progress.done, progress.total)
     }
 
     /// "+N steps" once, on the update that grew the plan; nil when it did not grow or the
@@ -58,16 +70,14 @@ public enum LiveActivityPlanDisplay {
         _ items: [LiveActivityDisplayPresentation.Step], count: (Int, Int)? = nil
     ) -> [Step] {
         items.map { item in
+            // "Step n" is the server's stand-in for a label this phone could not open: never shown as text.
+            let label = ReloSealedCards.isPlaceholderStep(item.label) ? PlanProgress.unreadable : item.label
             switch item.state {
-            case .complete: Step(label: item.label, state: .done)
-            case .pending: Step(label: item.label, state: .open)
-            case .current: Step(label: item.label, state: .current, count: count.map { Count(done: $0.0, total: $0.1) })
+            case .complete: return Step(label: label, state: .done, id: item.id)
+            case .pending: return Step(label: label, state: .open, id: item.id)
+            case .skipped: return Step(label: label, state: .skipped, id: item.id)
+            case .current: return Step(label: label, state: .current, count: count.map { Count(done: $0.0, total: $0.1) }, id: item.id)
             }
         }
-    }
-
-    private static func clean(_ label: String?) -> String? {
-        guard let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty else { return nil }
-        return label
     }
 }

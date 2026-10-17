@@ -85,6 +85,79 @@ struct ReloLiveActivityWidget: Widget {
     }
 }
 
+/// A work card's plan on the Lock Screen: the shown steps plus the steps of a longer plan hidden around them.
+struct LockScreenPlan: Equatable {
+    let steps: [LiveActivityPlanDisplay.Step]
+    let window: LiveActivityDisplayPresentation.StepWindow
+
+    /// One segment per top-level step, hidden ones included; the current one filled to the server's fraction.
+    var bar: PlanBar { PlanBar.make(steps: steps, before: window.before, after: window.after, fill: window.progress?.fill) }
+
+    var standing: PlanProgress.Standing = .moving
+
+    /// The plan line (U2), as the app reads it: "2 of 10 · Run the migrations · 1/3".
+    var caption: String {
+        LiveActivityPlanDisplay.line(steps, window: window, standing: standing) ?? ""
+    }
+
+    var parts: PlanProgress.LineParts? { LiveActivityPlanDisplay.lineParts(steps, window: window, standing: standing) }
+}
+
+/// The plan line with its counts whole: only the step's label gives way to the width.
+struct PresentationPlanLine: View {
+    let parts: PlanProgress.LineParts
+    let color: Color
+    var font: Font = .caption.weight(.semibold)
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(parts.label == nil ? parts.lead : parts.lead + " ·").fixedSize()
+            if let label = parts.label {
+                Text(label).lineLimit(1).truncationMode(.tail)
+                    .layoutPriority(-1)
+            }
+            if let trail = parts.trail { Text("· " + trail).fixedSize() }
+        }
+        .font(font).foregroundStyle(color)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(parts.text)
+    }
+}
+
+/// One segment per step across the full width, as on the app's card; long plans become one bar.
+struct PresentationPlanMeter: View {
+    let plan: LockScreenPlan
+    let palette: PresentationPalette
+
+    var body: some View {
+        let segments = plan.bar.segments
+        Group {
+            if segments.count <= 12 {
+                HStack(spacing: 3) {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                        Capsule().fill(track(segment.state)).frame(height: 4).frame(maxWidth: .infinity)
+                            .overlay(alignment: .leading) {
+                                GeometryReader { proxy in
+                                    Capsule().fill(palette.state).frame(width: proxy.size.width * segment.fill)
+                                }
+                            }
+                            .clipShape(Capsule())
+                    }
+                }
+            } else {
+                let whole = segments.reduce(0.0) { $0 + $1.fill }
+                PresentationNeonBar(value: whole / Double(segments.count), palette: palette)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(plan.caption)
+    }
+
+    private func track(_ state: LiveActivityPlanDisplay.StepState) -> Color {
+        palette.primaryText.opacity(state == .current ? 0.2 : 0.12)
+    }
+}
+
 enum PresentationCardSurface: String, Sendable {
     case lockScreen = "lock-screen"
     case expanded
@@ -100,7 +173,7 @@ struct PresentationCardView: View {
 
     private var palette: PresentationPalette {
         // Lock Screen and Island share one dark, brand-tinted surface in every appearance.
-        .init(presentation: presentation, surface: surface, hostColorScheme: .dark)
+        .init(presentation: presentation, surface: surface)
     }
     private var componentSurface: LiveActivityPresentation.Surface {
         surface == .lockScreen ? .lockScreen : .expandedBottom
@@ -191,6 +264,17 @@ struct PresentationCardView: View {
                     questionCard(showsTitle: false, questionLines: 2)
                     questionCard(showsTitle: false, questionLines: 1)
                     questionCard(showsTitle: false, questionLines: 0)
+                } else if surface == .lockScreen, let plan = lockScreenPlan {
+                    // Work with a plan reads like its card in Relo: title, status, the plan's segments, one caption.
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        workCard(plan, titleLines: 2, statusLines: 2)
+                        workCard(plan, titleLines: 2, statusLines: 1)
+                        workCard(plan, titleLines: 1, statusLines: 1)
+                    }
+                    workCard(plan, titleLines: 1, statusLines: 0)
+                    compactCard
+                        .fixedSize(horizontal: false, vertical: true)
+                    conciseFact.font(.caption).foregroundStyle(palette.secondaryText).lineLimit(1)
                 } else {
                     if !dynamicTypeSize.isAccessibilitySize {
                         card(showComponents: true)
@@ -236,6 +320,40 @@ struct PresentationCardView: View {
                     .lineLimit(1)
             }
         }
+    }
+
+    /// The Lock Screen's plan: its steps (with any hidden around the window) and the current step's own count.
+    private var lockScreenPlan: LockScreenPlan? {
+        guard let step = projection.components.first(where: { if case .steps = $0 { true } else { false } }),
+              case .steps(_, _, let items, let window) = step else { return nil }
+        let count = projection.components.lazy.compactMap { component -> (Int, Int)? in
+            if case .progressBar(_, _, _, let label) = component { LiveActivitySurfaceProjection.stepCount(label) } else { nil }
+        }.first
+        return LockScreenPlan(steps: LiveActivityPlanDisplay.steps(items, count: count), window: window,
+                              standing: presentation.planStanding)
+    }
+
+    private func workCard(_ plan: LockScreenPlan, titleLines: Int, statusLines: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(presentation.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.primaryText)
+                .lineLimit(titleLines)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            if statusLines > 0, !presentation.status.isEmpty {
+                Text(presentation.status)
+                    .font(.caption).foregroundStyle(palette.secondaryText)
+                    .lineLimit(statusLines)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            PresentationPlanMeter(plan: plan, palette: palette)
+                .padding(.top, 2)
+            if let parts = plan.parts {
+                PresentationPlanLine(parts: parts, color: palette.secondaryText, font: .caption)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var componentsCarryFact: Bool {
@@ -317,18 +435,17 @@ struct PresentationComponentStack: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let step = components.first(where: { if case .steps = $0 { true } else { false } }),
-                case .steps(_, _, let items) = step,
+                case .steps(_, _, let items, let window) = step,
                 components.contains(where: { if case .progressBar = $0 { true } else { false } })
             {
                 // Progress belongs to the current step: "Step 2 · 1 to go · <step> · n of m" (2.15).
                 let count = components.lazy.compactMap { component -> (Int, Int)? in
                     if case .progressBar(_, _, _, let label) = component { LiveActivitySurfaceProjection.stepCount(label) } else { nil }
                 }.first
-                let line = LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(items, count: count)) ?? ""
-                Text(line)
-                    .font(.caption.weight(.semibold)).foregroundStyle(palette.primaryText)
-                    .lineLimit(1).allowsTightening(true)
-                    .accessibilityLabel(line)
+                if let parts = LiveActivityPlanDisplay.lineParts(LiveActivityPlanDisplay.steps(items, count: count), window: window,
+                                                                 standing: presentation.planStanding) {
+                    PresentationPlanLine(parts: parts, color: palette.primaryText)
+                }
             }
             ForEach(components) { component in
                 if case .steps = component,
@@ -401,15 +518,12 @@ struct PresentationComponentView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label ?? "Progress")
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
-        case .steps(_, _, let items):
-            // No plan-wide ratio bar: plans grow (2.15).
-            let line = LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(items)) ?? ""
-            Text(line)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(palette.primaryText)
-                .lineLimit(1)
-                .allowsTightening(true)
-                .accessibilityLabel(line)
+        case .steps(_, _, let items, let window):
+            // No plan-wide ratio bar here: plans grow (2.15). The Lock Screen work card draws the plan's segments.
+            if let parts = LiveActivityPlanDisplay.lineParts(LiveActivityPlanDisplay.steps(items), window: window,
+                                                             standing: presentation.planStanding) {
+                PresentationPlanLine(parts: parts, color: palette.primaryText)
+            }
         case .image(_, _, let asset):
             ZStack {
                 palette.primaryText.opacity(0.08)
@@ -885,16 +999,13 @@ struct PresentationPalette: Sendable {
     let primaryText = Color.white
     let secondaryText = Color.white.opacity(0.72)
     let canvas = Color(neonHex: 0x0B0E1A)
-    /// Live Activities are always dark glass so the neon reads, even on a light Lock Screen.
-    let isLight = false
 
     var rampGradient: LinearGradient {
         LinearGradient(colors: [state, rampEnd], startPoint: .leading, endPoint: .trailing)
     }
 
     init(
-        presentation: LiveActivityPresentation, surface: PresentationCardSurface = .expanded,
-        hostColorScheme: ColorScheme = .dark
+        presentation: LiveActivityPresentation, surface: PresentationCardSurface = .expanded
     ) {
         let project = (ReloReadableColor(hex: presentation.color(for: .project))
             ?? .init(red: 0.37, green: 0.85, blue: 0.72)).readable(onLight: false)
@@ -913,7 +1024,6 @@ struct PresentationPalette: Sendable {
         state = ramp.0
         rampEnd = ramp.1
     }
-    func identityColor(_ hex: String) -> Color { cyan }
 }
 
 /// The Lock Screen surface: near-black glass that rises diagonally into the state colour.
@@ -962,16 +1072,6 @@ extension Color {
         self.init(
             red: Double((rgb >> 16) & 0xff) / 255, green: Double((rgb >> 8) & 0xff) / 255,
             blue: Double(rgb & 0xff) / 255)
-    }
-    fileprivate static func presentationHex(_ value: String) -> Color? {
-        guard value.range(of: #"^#[0-9A-F]{6}$"#, options: .regularExpression) != nil,
-            let rgb = UInt64(value.dropFirst(), radix: 16)
-        else { return nil }
-        return Color(
-            red: Double((rgb >> 16) & 0xff) / 255,
-            green: Double((rgb >> 8) & 0xff) / 255,
-            blue: Double(rgb & 0xff) / 255
-        )
     }
 }
 

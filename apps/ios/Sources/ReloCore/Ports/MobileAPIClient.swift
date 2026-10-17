@@ -14,6 +14,8 @@ public enum MobileAPIError: Error, Equatable, Sendable {
     case serverUnreachable
     case unavailable
     case invalidResponse
+    /// Ending a work was refused because it is moving again (`work_running`, 409).
+    case workRunning
     case decisionRejected(NotificationDecisionRejection)
 }
 
@@ -106,11 +108,16 @@ public protocol MobileAPIClient: Sendable {
         activityId: String,
         registration: LiveActivityTokenRegistration
     ) async throws
+    /// `generation` is the card generation the owner dismissed: the server ignores a dismissal for an older one,
+    /// so a replacement card (a new generation) survives its predecessor's dismissal.
     func reportLiveActivityDismissed(
         credential: DeviceCredential,
-        activityId: String
+        activityId: String,
+        generation: Int
     ) async throws
     func dismissMissedQuestion(credential: DeviceCredential, questionId: String) async throws
+    /// Ends a Quiet, Paused or Your-turn work (`POST api/works/{id}/end`, device bearer).
+    func endWork(credential: DeviceCredential, workId: String) async throws
     func submitInteraction(
         credential: DeviceCredential,
         notificationId: String,
@@ -140,14 +147,21 @@ public extension MobileAPIClient {
         throw MobileAPIError.unavailable
     }
 
+    /// `generation` is the card generation the owner dismissed: the server ignores a dismissal for an older one,
+    /// so a replacement card (a new generation) survives its predecessor's dismissal.
     func reportLiveActivityDismissed(
         credential: DeviceCredential,
-        activityId: String
+        activityId: String,
+        generation: Int
     ) async throws {
         throw MobileAPIError.unavailable
     }
 
     func dismissMissedQuestion(credential: DeviceCredential, questionId: String) async throws {
+        throw MobileAPIError.unavailable
+    }
+
+    func endWork(credential: DeviceCredential, workId: String) async throws {
         throw MobileAPIError.unavailable
     }
 }

@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// The phone's end-to-end encryption keys (docs/END-TO-END-ENCRYPTION.md, E2.1).
+/// The phone's end-to-end encryption keys (docs/ENCRYPTION-PROTOCOL.md, E2.1).
 ///
 /// One identity key signs prekeys and answers; prekeys receive sealed content. A new prekey replaces
 /// the current one every `rotationInterval`; a replaced prekey keeps opening late envelopes until

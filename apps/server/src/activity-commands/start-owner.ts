@@ -3,7 +3,7 @@ import { QUESTION_SECONDS } from "../question-policy.js";
 import { beginActivityTransaction } from "../activity-lifecycle-domain.js";
 import { syncActivityPresentationLease } from "../activity-presentation-leases.js";
 import { recordActivityCorrelationDecision,recordActivityStartEvidence } from "../activity-relationships.js";
-import { hashToken } from "../auth.js";
+import { sha256Hex as hashToken } from "../digest.js";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
 import { dashboardTestLabOrigin,lockOriginGenerationSlot,originGenerationMetadata } from "../origin-slots.js";

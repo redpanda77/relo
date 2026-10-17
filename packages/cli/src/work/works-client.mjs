@@ -1,7 +1,7 @@
 // Typed calls for /api/session/works (plan 04 §0.4). Identity travels as headers set from the typed caller,
 // never from a flag. Uses the configured client's URL, token and fetch.
 import { randomUUID } from "node:crypto";
-import { ApiError, EXIT, NetworkError } from "../errors.mjs";
+import { ApiError, EXIT, NetworkError } from "../shared/errors.mjs";
 import { WorkRefusal } from "./refusal.mjs";
 
 export function newIdempotencyKey() {
@@ -17,7 +17,7 @@ const NEXT = {
   version_conflict: "relo state --sync",
   outcome_required: 'relo work finish --outcome "…"',
   text_refused: "the same command with plainer words",
-  plan_too_long: 'relo work update --plan "<fewer, larger steps>"',
+  plan_too_long: 'relo work update --plan "<fewer, larger steps for this round>"',
   plan_ids_invalid: "relo state --sync",
   step_not_found: "relo state --sync",
   labels_sealed: "relo work update --step s3",
@@ -28,9 +28,19 @@ const NEXT = {
   owner_only: "relo state",
   plan_invalid: "relo state --sync",
   invalid_request: "relo help",
+  round_required: 'relo work start --round "<the request in a few words>" --plan "…"',
+  round_closed: 'relo work start --round "<the request in a few words>" --plan "…"',
+  no_open_round: 'relo work start --round "<the request in a few words>" --plan "…"',
+  round_open: 'relo work deliver --outcome "…"',
+  open_steps: 'relo ask "…" --approval  |  relo work update --waiting "…"  |  relo work deliver --outcome "…" --drop-rest',
+  plan_too_deep: 'relo work update --plan "…" (at most three levels)',
+  handoff_invalid: 'relo work start --goal "…"   (the handoff is unknown, used, expired or from another computer)',
+  handoff_finished: 'relo work start --goal "…"   (that work is already finished)',
 };
 
-export function serverRefusal(payload, status, method, path) {
+function serverRefusal(payload, status, method, path) {
+  // A 429 says when to come back; the declared lane queues the write and the outbox waits that long.
+  const wait = Number.isFinite(payload?.retryAfterSeconds) ? { retryAfterSeconds: payload.retryAfterSeconds } : {};
   const raw = typeof payload?.error === "string" ? payload.error : payload?.error?.code;
   const message = payload?.message ?? payload?.error?.message ?? `Relo API returned HTTP ${status}`;
   if (raw && Object.hasOwn(NEXT, raw)) {
@@ -41,12 +51,12 @@ export function serverRefusal(payload, status, method, path) {
       state: raw === "not_found" ? "no such work in this session" : "nothing changed on the server",
       next: NEXT[raw],
       exitCode: status >= 500 ? EXIT.API : EXIT.USAGE,
-      details: { status, view: payload?.work ?? payload?.state },
+      details: { status, view: payload?.work ?? payload?.state, ...wait },
     });
     refusal.status = status;
     return refusal;
   }
-  return new ApiError(message, { status, code: String(raw ?? "API_ERROR").toUpperCase(), details: { view: payload?.work, method, path } });
+  return new ApiError(message, { status, code: String(raw ?? "API_ERROR").toUpperCase(), details: { view: payload?.work, method, path, ...wait } });
 }
 
 /** Where each declared write goes. `id` may be "current" (the session's open work) when it is not known yet. */
@@ -56,6 +66,8 @@ export const WORK_ROUTES = {
   pause: (id) => ({ method: "POST", path: `/api/session/works/${encodeURIComponent(id)}/pause` }),
   resume: (id) => ({ method: "POST", path: `/api/session/works/${encodeURIComponent(id)}/resume` }),
   finish: (id) => ({ method: "POST", path: `/api/session/works/${encodeURIComponent(id)}/finish` }),
+  deliver: (id) => ({ method: "POST", path: `/api/session/works/${encodeURIComponent(id)}/deliver` }),
+  handoff: (id) => ({ method: "POST", path: `/api/session/works/${encodeURIComponent(id)}/handoff` }),
 };
 
 export function worksClient(client, { sessionKey, harness }) {
@@ -65,7 +77,7 @@ export function worksClient(client, { sessionKey, harness }) {
       if (typeof client?.sessionRequest === "function") return client.sessionRequest(method, path, { body, idempotencyKey, sessionKey, harness });
       throw new WorkRefusal("DRY_RUN", { what: "no request is made in a dry run", state: "nothing was sent", next: "the same command without --dry-run" });
     }
-    const headers = { accept: "application/json", authorization: `Bearer ${client.token}`, "user-agent": `reloctl/${client.version}`, "relo-session-key": sessionKey, "relo-harness": harness };
+    const headers = { accept: "application/json", authorization: `Bearer ${client.token}`, "user-agent": `relo/${client.version}`, "relo-session-key": sessionKey, "relo-harness": harness };
     if (body !== undefined) headers["content-type"] = "application/json";
     if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
     let response;

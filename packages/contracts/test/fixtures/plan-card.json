@@ -1,0 +1,111 @@
+{
+  "name": "4 steps, the first with 3 substeps (2 done), and a stale work-level progress",
+  "note": "Plan 14 workstream 7. Every surface (server card, iPhone, Dashboard) reads `card` and says: done 0 of 4, step 1 current, its segment 2/3 full, 4 segments, no percentage.",
+  "plan": {
+    "v": 1,
+    "next": 8,
+    "steps": [
+      {
+        "id": "s1",
+        "state": "open",
+        "addedIn": 1,
+        "label": "Migrate the batches"
+      },
+      {
+        "id": "s2",
+        "state": "done",
+        "addedIn": 1,
+        "label": "Batch 1",
+        "parent": "s1",
+        "startedAt": "2026-10-17T10:01:00.000Z",
+        "doneAt": "2026-10-17T10:02:00.000Z"
+      },
+      {
+        "id": "s3",
+        "state": "done",
+        "addedIn": 1,
+        "label": "Batch 2",
+        "parent": "s1",
+        "startedAt": "2026-10-17T10:02:00.000Z",
+        "doneAt": "2026-10-17T10:03:00.000Z"
+      },
+      {
+        "id": "s4",
+        "state": "current",
+        "addedIn": 1,
+        "label": "Batch 3",
+        "parent": "s1",
+        "startedAt": "2026-10-17T10:03:00.000Z"
+      },
+      {
+        "id": "s5",
+        "state": "open",
+        "addedIn": 1,
+        "label": "Verify the counts"
+      },
+      {
+        "id": "s6",
+        "state": "open",
+        "addedIn": 1,
+        "label": "Switch traffic"
+      },
+      {
+        "id": "s7",
+        "state": "open",
+        "addedIn": 1,
+        "label": "Clean up"
+      }
+    ]
+  },
+  "workProgress": {
+    "done": 3,
+    "total": 4
+  },
+  "card": {
+    "labels": [
+      "Migrate the batches",
+      "Verify the counts",
+      "Switch traffic",
+      "Clean up"
+    ],
+    "current": 1,
+    "plan": {
+      "done": 0,
+      "total": 4,
+      "currentId": "s1",
+      "sub": {
+        "done": 2,
+        "total": 3
+      },
+      "round": 1,
+      "rounds": 1,
+      "delivered": false,
+      "current": 1,
+      "fill": 0.6666666666666666,
+      "stepLabel": "Migrate the batches",
+      "subLabel": "Batch 3"
+    },
+    "progress": null
+  },
+  "expected": {
+    "caption": "Step 1 of 4",
+    "segments": [
+      {
+        "state": "current",
+        "fill": 0.6666666666666666
+      },
+      {
+        "state": "open",
+        "fill": 0
+      },
+      {
+        "state": "open",
+        "fill": 0
+      },
+      {
+        "state": "open",
+        "fill": 0
+      }
+    ]
+  }
+}

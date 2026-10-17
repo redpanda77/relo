@@ -4,13 +4,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { b64u, generateKeyPair, keyId, linkSigningInput, openEnvelope, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { loadKeyStore, saveKeyStore, trustKey } from "../src/keystore.mjs";
-import { sealNoticeRequest } from "../src/seal-notice.mjs";
-import { ensureTrust, trustNotices } from "../src/trust.mjs";
+import { b64u, generateKeyPair, keyId, linkSigningInput, openEnvelope, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { loadKeyStore, saveKeyStore, trustKey } from "../src/crypto/keystore.mjs";
+import { sealNoticeRequest } from "../src/crypto/seal-notice.mjs";
+import { ensureTrust, trustNotices } from "../src/crypto/trust.mjs";
 
 // A browser reads sealed content only when a phone this computer trusts signed its identity key.
-const apiUrl = "https://relo.example";
+// A private server: strict mode is off unless a test turns it on (on a public address it defaults on).
+const apiUrl = "https://relo.internal";
 
 function endpoint(deviceId, kind) {
   const identity = generateKeyPair();
@@ -34,7 +35,7 @@ function link(signer = phone, { identityKey = browser.device.identityKey.publicK
 
 function harness() {
   const folder = mkdtempSync(join(tmpdir(), "relo-browser-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "state", "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   const dependencies = { configPath: () => join(folder, "config.json"), env, now: () => Date.now() };
   const client = (devices) => ({ publishClientKey: async () => ({}), listDeviceKeys: async () => ({ devices }) });
   return { dependencies, client, env, cleanup: () => rmSync(folder, { recursive: true, force: true }),
@@ -75,13 +76,16 @@ test("no link, a forged link, a link by an unknown phone or over another key: th
   } finally { h.cleanup(); }
 });
 
-test("review H1: a linked browser can never answer, even with a valid signature by its own key", async () => {
-  const { answerProblem } = await import("../src/answer-verify.mjs");
+test("review H1: a pinned browser alone never answers; its answer needs a current link (browser-answers.test.mjs)", async () => {
+  const { answerProblem } = await import("../src/crypto/answer-verify.mjs");
   const store = { identity: {}, trusted: { [trustKey(apiUrl, browser.device.deviceId)]: { deviceId: browser.device.deviceId, kind: "browser",
     level: "auto", publicKey: browser.device.identityKey.publicKey } } };
   const problem = answerProblem({ id: "int_1", state: "approved", respondingDevice: { id: browser.device.deviceId }, response: {} },
     store, apiUrl, { interactionId: "int_1" });
-  assert.equal(problem, "answered on a device that is not a phone");
+  assert.equal(problem, "answered in a browser that is no longer linked");
+  // A browser relabelled as a phone id is still not a trusted phone.
+  assert.equal(answerProblem({ id: "int_1", state: "approved", respondingDevice: { id: "web_1" }, response: {} }, store, apiUrl, {}),
+    "answered on a device that is not a phone or a linked browser");
 });
 
 test("review H2: the server cannot relabel the trusted phone as a browser and reopen first contact", async () => {
@@ -95,7 +99,7 @@ test("review H2: the server cannot relabel the trusted phone as a browser and re
     assert.equal(store.trusted[trustKey(apiUrl, phone.device.deviceId)].level, "auto");
     // Even with every pin gone, a later phone is pending: first contact happened once.
     store.trusted = {};
-    await (await import("../src/keystore.mjs")).saveKeyStore(h.env.RELO_KEY_STORE_PATH, store);
+    await (await import("../src/crypto/keystore.mjs")).saveKeyStore(h.env.RELO_KEY_STORE_PATH, store);
     await ensureTrust({ client: h.client([phone.device, evil.device]), config: { apiUrl }, dependencies: h.dependencies });
     store = await loadKeyStore(h.env.RELO_KEY_STORE_PATH);
     assert.equal(store.trusted[trustKey(apiUrl, evil.device.deviceId)].level, "pending");
@@ -174,7 +178,7 @@ test("the same phone under a new device id (signed in again, same key) is truste
 });
 
 test("a new phone approved in Settings → Security on the trusted phone is trusted; any other approval is not", async () => {
-  const { approveDeviceSigningInput } = await import("../src/e2ee.mjs");
+  const { approveDeviceSigningInput } = await import("../src/crypto/e2ee.mjs");
   assert.equal(approveDeviceSigningInput({ deviceId: "dev_00000000-0000-4000-8000-0000000000bb", identityKey: "BAAA",
     approverDeviceId: "dev_00000000-0000-4000-8000-00000000000a", signedAt: "2026-10-14T00:00:00.000Z" }).toString(),
   "relo.e2e.v1 approve-device\ndev_00000000-0000-4000-8000-0000000000bb\nBAAA\ndev_00000000-0000-4000-8000-00000000000a\n2026-10-14T00:00:00.000Z",

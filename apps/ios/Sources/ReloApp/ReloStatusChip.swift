@@ -1,14 +1,5 @@
 import SwiftUI
 
-/// Palette shared by the all-clear surfaces (kept local so it does not depend on the HUD theme).
-enum ReloClearPalette {
-    static let mint = Color(red: 0x34 / 255, green: 0xD3 / 255, blue: 0x99 / 255)
-    static let amber = Color(red: 0xFB / 255, green: 0xBF / 255, blue: 0x24 / 255)
-    static let cyan = Color(red: 0x5C / 255, green: 0xE1 / 255, blue: 1)
-    static let violet = Color(red: 0x8B / 255, green: 0x7C / 255, blue: 1)
-    static let gray = Color(red: 0x8A / 255, green: 0x8F / 255, blue: 0xA3 / 255)
-}
-
 /// A compact live-status chip: a glowing dot, or a scanning sweep while it works.
 struct ReloStatusChip: View {
     enum Mode: Equatable { case live, syncing, offline, pending }
@@ -19,18 +10,16 @@ struct ReloStatusChip: View {
 
     private var tone: Color {
         switch mode {
-        case .live: ReloClearPalette.mint
-        case .syncing, .pending: ReloClearPalette.cyan
-        case .offline: ReloClearPalette.amber
+        case .live: ReloHoloTheme.mint
+        case .syncing, .pending: ReloHoloTheme.cyan
+        case .offline: ReloHoloTheme.amber
         }
     }
 
     var body: some View {
         HStack(spacing: 8) {
             indicator
-            Text(text.uppercased())
-                .font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.1)
-                .foregroundStyle(mode == .live ? Color.reloSecondaryText : tone)
+            ReloMonoLabel(text, color: mode == .live ? Color.reloSecondaryText : tone)
                 .lineLimit(1).minimumScaleFactor(0.8)
         }
         .padding(.horizontal, 12).padding(.vertical, 7)

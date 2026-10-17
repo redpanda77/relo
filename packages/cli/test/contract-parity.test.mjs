@@ -4,7 +4,7 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
-import { notificationRelevance } from "../src/relevance.mjs";
+import { notificationRelevance } from "../src/shared/relevance.mjs";
 
 const contractsUrl = new URL("../../contracts/dist/src/relevance.js", import.meta.url);
 

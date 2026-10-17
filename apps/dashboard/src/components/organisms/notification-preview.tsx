@@ -1,15 +1,14 @@
 import { Bell } from "lucide-react"
-import * as React from "react"
 
+import { LockScreenSurface } from "@/components/organisms/live-activity-preview"
 import type { BuilderDraft } from "@/features/test-lab/types"
 
 const HEX = /^#[\da-f]{6}$/i
 
 /**
- * Mirrors the Lock Screen Live Activity in ReloLiveActivityWidget.swift: 16 px margins, an
- * ink base lit by the project colour, source mark, title, subtitle, then exactly one of
- * decision buttons, a step track, a progress bar or ring, or a status line. Colours are SVG
- * attributes because the dashboard CSP blocks inline styles.
+ * The Test Lab's Lock Screen preview of a draft: the shared card surface (live-activity-preview.tsx, drawn like
+ * ReloLiveActivityWidget.swift) around the draft's source mark, title, subtitle, then exactly one of decision
+ * buttons, a step track, a progress bar or ring, or a status line.
  */
 export function NotificationPreview({
   draft,
@@ -18,7 +17,6 @@ export function NotificationPreview({
   draft: BuilderDraft
   secondaryColor?: string
 }) {
-  const id = React.useId().replaceAll(":", "")
   const accent = HEX.test(draft.accentColor) ? draft.accentColor : "#ff6b5e"
   const secondary =
     secondaryColor && HEX.test(secondaryColor) ? secondaryColor : accent
@@ -33,32 +31,13 @@ export function NotificationPreview({
   const visual = decision ? "none" : draft.visual
 
   return (
-    <div
-      className="relative mx-auto w-full max-w-[360px] overflow-hidden rounded-[24px] p-4 text-white shadow-2xl shadow-black/40 ring-1 ring-white/10"
+    <LockScreenSurface
+      lead={accent}
+      end={secondary}
+      className="max-w-[360px]"
       aria-label="Lock Screen Live Activity preview"
     >
-      <svg
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 size-full"
-        preserveAspectRatio="none"
-      >
-        <defs>
-          <linearGradient id={`${id}-wash`} x1="0" x2="1" y1="0" y2="1">
-            <stop offset="0" stopColor={accent} stopOpacity="0.38" />
-            <stop offset="0.5" stopColor={secondary} stopOpacity="0.14" />
-            <stop offset="1" stopColor={secondary} stopOpacity="0" />
-          </linearGradient>
-          <radialGradient id={`${id}-glow`} cx="1" cy="1" r="0.75">
-            <stop offset="0" stopColor={secondary} stopOpacity="0.22" />
-            <stop offset="1" stopColor={secondary} stopOpacity="0" />
-          </radialGradient>
-        </defs>
-        <rect width="100%" height="100%" fill="#08080d" />
-        <rect width="100%" height="100%" fill={`url(#${id}-wash)`} />
-        <rect width="100%" height="100%" fill={`url(#${id}-glow)`} />
-      </svg>
-
-      <div className="relative space-y-1.5">
+      <div className="space-y-1.5">
         <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold">
           <svg aria-hidden="true" className="size-3.5 shrink-0" viewBox="0 0 16 16">
             <circle cx="8" cy="8" r="8" fill={accent} />
@@ -175,6 +154,6 @@ export function NotificationPreview({
           </p>
         )}
       </div>
-    </div>
+    </LockScreenSurface>
   )
 }

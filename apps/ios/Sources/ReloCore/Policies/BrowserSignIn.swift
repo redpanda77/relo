@@ -35,8 +35,9 @@ public struct BrowserSignIn: Equatable, Sendable {
         base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
     }
 
-    /// `<origin>/mobile/sign-in` with the PKCE challenge, redirect and state.
-    public func authorizationURL(origin: URL) -> URL? {
+    /// `<origin>/mobile/sign-in` with the PKCE challenge, redirect and state; `signUp` adds `mode=sign-up`, which opens the
+    /// Dashboard's sign-up form inside the same flow ("Create account").
+    public func authorizationURL(origin: URL, signUp: Bool = false) -> URL? {
         guard var components = URLComponents(url: origin.appendingPathComponent("mobile/sign-in"), resolvingAgainstBaseURL: false) else { return nil }
         components.queryItems = [
             URLQueryItem(name: "code_challenge", value: challenge),
@@ -44,6 +45,7 @@ public struct BrowserSignIn: Equatable, Sendable {
             URLQueryItem(name: "redirect_uri", value: Self.redirectURI),
             URLQueryItem(name: "state", value: state)
         ]
+        if signUp { components.queryItems?.append(URLQueryItem(name: "mode", value: "sign-up")) }
         return components.url
     }
 

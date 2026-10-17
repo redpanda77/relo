@@ -5,7 +5,7 @@ import { bootstrapOwner } from "../bootstrap.js";
 import { hashToken } from "../auth.js";
 import { createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
-import { createWebhookService } from "../services.js";
+import { createWebhookService } from "../webhooks/admin.js";
 import { expireInteraction,respondToInteraction } from "./commands.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
@@ -26,8 +26,8 @@ suite("Shared interaction expiry",()=>{
   });
   function app(){return createApp(db,{apnsMode:"sandbox",credentialDerivationSecret:secret});}
   async function decision(adapter="credential"){
-    const response=await app().request(adapter==="service"?new URL(service.webhookUrl).pathname:"/api/interactions",{
-      method:"POST",headers:{authorization:`Bearer ${owner}`,"content-type":"application/json","idempotency-key":randomUUID()},
+    const response=await app().request(adapter==="service"?"/hooks":"/api/interactions",{
+      method:"POST",headers:{authorization:`Bearer ${adapter==="service"?service.secret:owner}`,"content-type":"application/json","idempotency-key":randomUUID()},
       body:JSON.stringify(adapter==="service"?{body:"Continue?",response:{type:"yes_no",expiresInSeconds:30}}:{title:"Continue",prompt:"Continue?",type:"yes_no",expiresInSeconds:30}),
     });
     expect(response.status).toBe(201);
@@ -38,9 +38,9 @@ suite("Shared interaction expiry",()=>{
   test.each(["credential-read","credential-wait","service"])("%s expiry immediately cancels unsent delivery",async adapter=>{
     const command=await decision(adapter==="service"?"service":"credential");
     await db.query("UPDATE interaction_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[command.interactionId]);
-    const path=adapter==="service"?`${new URL(service.webhookUrl).pathname}/events/ntf_${command.eventId}`:
+    const path=adapter==="service"?`/hooks/events/ntf_${command.eventId}`:
       `/api/interactions/int_${command.interactionId}${adapter==="credential-wait"?"/wait":""}`;
-    const response=await app().request(path,{headers:{authorization:`Bearer ${owner}`}});expect(response.status).toBe(200);
+    const response=await app().request(path,{headers:{authorization:`Bearer ${adapter==="service"?service.secret:owner}`}});expect(response.status).toBe(200);
     expect((await db.query("SELECT state FROM interaction_requests WHERE id=$1",[command.interactionId])).rows[0].state).toBe("expired");
     expect((await db.query("SELECT state,last_error_code FROM delivery_jobs WHERE notification_event_id=$1",[command.eventId])).rows[0]).toEqual({state:"canceled",last_error_code:"interaction_expired"});
   });

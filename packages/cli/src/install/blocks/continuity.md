@@ -1,0 +1,3 @@
+- A heavy session and a new or long request: `relo work deliver` first, then tell the owner a fresh session would serve it better.
+- Context heavy, or before `/clear`: `relo work handoff --next "…"`, then go on in a fresh session. A waiting handoff: `relo work start --from …`.
+- Compact instructions: keep the open Relo work, its current round and its next step (`relo state` shows them).

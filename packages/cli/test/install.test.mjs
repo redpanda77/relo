@@ -1,6 +1,7 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ async function versionedFixture(temp, version) {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   manifest.version = version;
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  const cliPath = join(root, "src", "cli.mjs");
+  const cliPath = join(root, "src", "version.mjs");
   await writeFile(
     cliPath,
     (await readFile(cliPath, "utf8")).replace(
@@ -48,7 +49,7 @@ async function versionedFixture(temp, version) {
 }
 
 test("uses distinct artifacts for install, update, exact rollback, and removal without touching state", async () => {
-  const temp = await mkdtemp(join(tmpdir(), "reloctl-install-"));
+  const temp = await mkdtemp(join(tmpdir(), "relo-install-"));
   const prefix = join(temp, "prefix");
   const home = join(temp, "home");
   const config = join(home, ".config", "relo", "config.json");
@@ -76,11 +77,11 @@ test("uses distinct artifacts for install, update, exact rollback, and removal w
       assert.equal(await readFile(hook, "utf8"), hookSentinel);
     };
     const bin = join(prefix, "bin", "relo");
-    const alias = join(prefix, "bin", "reloctl");
 
     install(oldArtifact.tarball);
     assert.equal(execFileSync(bin, ["--version"], { encoding: "utf8" }).trim(), "0.1.0");
-    assert.match(execFileSync(alias, ["help", "all"], { encoding: "utf8" }), /--secret-file PATH/);
+    assert.match(execFileSync(bin, ["help", "all"], { encoding: "utf8" }), /--secret-file PATH/);
+    assert.equal(existsSync(join(prefix, "bin", "reloctl")), false, "one executable: relo");
     await assertSentinels();
 
     install(newArtifact.tarball);
@@ -95,7 +96,6 @@ test("uses distinct artifacts for install, update, exact rollback, and removal w
       env: { HOME: home, RELO_CONFIG_PATH: config },
     });
     await assert.rejects(access(bin), (error) => error.code === "ENOENT");
-    await assert.rejects(access(alias), (error) => error.code === "ENOENT");
     await assertSentinels();
   } finally {
     await rm(temp, { recursive: true, force: true });

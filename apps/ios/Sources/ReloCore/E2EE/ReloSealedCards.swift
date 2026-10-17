@@ -1,6 +1,6 @@
 import Foundation
 
-/// The text of an end-to-end sealed card or of a question folded into one (docs/END-TO-END-ENCRYPTION.md, E5).
+/// The text of an end-to-end sealed card or of a question folded into one (docs/ENCRYPTION-PROTOCOL.md, E5).
 ///
 /// Two shapes: v1 `{ title, status, steps: [label] }` (labels in plan order, matching the server's
 /// "Step n" placeholders), and v2 `{ title, status, detail, phases: [{ id, title, steps: [{ id, label }] }] }`
@@ -10,29 +10,45 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
         public struct Step: Codable, Equatable, Sendable {
             public var id: String
             public var label: String?
+            /// A longer note on the step (v2 text of rounds and plan trees).
+            public var detail: String?
 
-            public init(id: String, label: String? = nil) {
+            public init(id: String, label: String? = nil, detail: String? = nil) {
                 self.id = id
                 self.label = label
+                self.detail = detail
+            }
+
+            private enum CodingKeys: String, CodingKey { case id, label, detail }
+
+            public init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                id = try values.decode(String.self, forKey: .id)
+                label = (try? values.decodeIfPresent(String.self, forKey: .label)) ?? nil
+                detail = (try? values.decodeIfPresent(String.self, forKey: .detail)) ?? nil
             }
         }
 
         public var id: String
         public var title: String?
+        /// What a closed round delivered (a round is the phase `r<n>`).
+        public var outcome: String?
         public var steps: [Step]?
 
-        public init(id: String, title: String? = nil, steps: [Step]? = nil) {
+        public init(id: String, title: String? = nil, outcome: String? = nil, steps: [Step]? = nil) {
             self.id = id
             self.title = title
+            self.outcome = outcome
             self.steps = steps
         }
 
-        private enum CodingKeys: String, CodingKey { case id, title, steps }
+        private enum CodingKeys: String, CodingKey { case id, title, outcome, steps }
 
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             id = try values.decode(String.self, forKey: .id)
             title = try? values.decodeIfPresent(String.self, forKey: .title)
+            outcome = try? values.decodeIfPresent(String.self, forKey: .outcome)
             let steps: [Step] = ReloWork.lenientArray(values, .steps)
             self.steps = values.contains(.steps) ? steps : nil
         }
@@ -46,6 +62,8 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
     public var progressLabel: String?
     /// A sealed question's prompt.
     public var summary: String?
+    /// The plan step that was current when this card update was sent (plan 12b 4.6: updates are grouped by step).
+    public var stepId: String?
 
     public init(title: String? = nil, status: String? = nil, detail: String? = nil, steps: [String]? = nil,
                 phases: [Phase]? = nil, progressLabel: String? = nil, summary: String? = nil) {
@@ -58,7 +76,7 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
         self.summary = summary
     }
 
-    private enum CodingKeys: String, CodingKey { case title, status, detail, steps, phases, progressLabel, summary }
+    private enum CodingKeys: String, CodingKey { case title, status, detail, steps, phases, progressLabel, summary, stepId }
 
     /// A field of an unexpected type is dropped, never the whole text: the rest still opens.
     public init(from decoder: Decoder) throws {
@@ -71,6 +89,7 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
         self.phases = phases.isEmpty ? nil : phases
         progressLabel = try? values.decodeIfPresent(String.self, forKey: .progressLabel)
         summary = try? values.decodeIfPresent(String.self, forKey: .summary)
+        stepId = (try? values.decodeIfPresent(String.self, forKey: .stepId)) ?? nil
     }
 
     /// v2 labels by step id. Placeholder labels ("Step 3") are never real labels.
@@ -82,6 +101,16 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
             labels[step.id] = label
         }
         return labels
+    }
+
+    /// v2 step details by step id.
+    public var detailsByStepID: [String: String] {
+        var details: [String: String] = [:]
+        for step in (phases ?? []).flatMap({ $0.steps ?? [] }) {
+            guard let detail = ReloWork.text(step.detail), details[step.id] == nil else { continue }
+            details[step.id] = detail
+        }
+        return details
     }
 
     /// The v1 label for a server placeholder "Step n", by the number the placeholder carries.
@@ -163,10 +192,10 @@ public enum ReloSealedCards {
 
     /// One plain line for a card that stays encrypted, instead of a silent placeholder.
     public static func failureLine(sealed: Bool) -> String {
-        guard sealed else { return "Not encrypted for this iPhone. Check Relo → Settings → Security." }
+        guard sealed else { return "Not encrypted for this iPhone. Check Relo → Settings → Devices." }
         switch box.lock.withLock({ box.opener == nil ? "no_opener" : box.lastFailure }) {
         case "not_for_this_phone": return "Encrypted for another device or an older key of this iPhone."
-        case "computer_pending": return "From a computer waiting for your approval in Relo → Settings → Security."
+        case "computer_pending": return "From a computer waiting for your approval in Relo → Settings → Devices."
         case "computer_declined": return "From a computer you declined."
         case "computer_unknown": return "From a computer this iPhone doesn't know yet. Open Relo to refresh."
         case "no_keys", "keys_unreadable", "trust_unreadable", "no_opener": return "Open Relo once to read encrypted cards here."
@@ -212,7 +241,7 @@ public enum ReloSealedCards {
         switch outcome {
         case "not_for_this_phone": "This was sealed for another device, so this iPhone can't read it."
         case "not_sealed": "This wasn't sealed for this iPhone, so it can't be read here."
-        case "computer_pending": "It comes from a computer waiting for your approval. Approve it in Settings → Security to read it."
+        case "computer_pending": "It comes from a computer waiting for your approval. Approve it in Settings → Devices to read it."
         case "computer_declined": "It comes from a computer you declined, so this iPhone won't open it."
         case "computer_unknown": "It comes from a computer you haven't approved, so this iPhone won't open it."
         case "no_keys", "keys_unreadable", "trust_unreadable": "This iPhone's encryption keys aren't ready yet. Open Relo again in a moment."
@@ -271,14 +300,14 @@ public extension LiveActivityPresentation {
         }
         let newComponents = components.map { component -> Component in
             switch component {
-            case let .steps(id, role, items):
+            case let .steps(id, role, items, window):
                 // Each step on its own, by id (v2) or by its placeholder's number (v1); never all or nothing.
                 return .steps(id: id, colorRole: role, items: items.map { item in
                     guard ReloSealedCards.isPlaceholderStep(item.label) else { return item }
                     guard let label = text.label(forStepID: item.id, placeholder: item.label) ?? remembered[item.id]
                     else { return item }
                     return LiveActivityDisplayPresentation.Step(id: item.id, label: label, state: item.state)
-                })
+                }, window: window)
             case let .progressBar(id, role, value, label):
                 guard let real = text.progressLabel, label == nil || label?.isEmpty == true else { return component }
                 return .progressBar(id: id, colorRole: role, value: value, label: real)

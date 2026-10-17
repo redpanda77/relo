@@ -1,9 +1,9 @@
 import Foundation
 import ReloCore
 
-/// Opens end-to-end sealed notices on this phone (docs/END-TO-END-ENCRYPTION.md, E3.2): the push's
+/// Opens end-to-end sealed notices on this phone (docs/ENCRYPTION-PROTOCOL.md, E3.2): the push's
 /// alert envelope in the Notification Service Extension, and alert and body envelopes in the app.
-/// Only computers the owner verified on Settings → Security are accepted as senders. It reads the key
+/// Only computers the owner verified on Settings → Devices are accepted as senders. It reads the key
 /// ring and never rotates it, so the extension never races the app's key maintenance.
 public struct ReloSealedContent: Sendable {
     public enum Outcome: Equatable, Sendable {
@@ -97,7 +97,7 @@ public struct ReloSealedContent: Sendable {
             let names = nameBook?.names() ?? [:]
             return (ReloNames.resolve(alert.title, names), ReloNames.resolve(alert.summary ?? "", names))
         case .unverifiedSender:
-            return ("Relo", "Encrypted message from a new computer. Approve it in Relo → Settings → Security to read it.")
+            return ("Relo", "Encrypted message from a new computer. Approve it in Relo → Settings → Devices to read it.")
         case .replayed:
             return ("Relo", "A repeated encrypted message was blocked.")
         case .unavailable:
@@ -264,7 +264,7 @@ public struct ReloSealedOpenRecord: Codable, Equatable, Sendable {
 }
 
 /// The last sealed-card open attempts, in the App Group so the app can tell the owner why a card
-/// stayed encrypted (Settings → Security) and a developer can copy it off a device.
+/// stayed encrypted (Settings → Devices) and a developer can copy it off a device.
 public struct ReloSealedOpenLog: Sendable {
     public static let maximum = 40
     public let url: URL

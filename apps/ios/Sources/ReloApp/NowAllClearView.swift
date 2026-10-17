@@ -10,7 +10,7 @@ struct NowSectionCaption: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(title.uppercased()).tracking(1.6).foregroundStyle(Color.reloSecondaryText)
+            ReloMonoLabel(title)
             if let count {
                 Text(count.formatted()).monospacedDigit().foregroundStyle(color ?? Color.reloSecondaryText)
                     .contentTransition(.numericText(value: Double(count)))
@@ -59,10 +59,9 @@ private struct HistoryLink: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Text("VIEW HISTORY").tracking(1.4)
-                Image(systemName: "arrow.right")
+                ReloMonoLabel("View history")
+                Image(systemName: "arrow.right").font(.caption.weight(.semibold))
             }
-            .font(.system(.caption, design: .monospaced).weight(.semibold))
             .foregroundStyle(Color.reloSecondaryText)
             .frame(maxWidth: .infinity, minHeight: 44)
             .overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 0.5) }
@@ -106,9 +105,7 @@ private struct LogRow: View {
                 glyph
                 VStack(alignment: .leading, spacing: 3) {
                     Text(row.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
-                    Text(detail)
-                        .font(.system(.caption2, design: .monospaced)).tracking(0.6)
-                        .foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                    ReloMonoLabel(detail).lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Text(row.at.formatted(date: .omitted, time: .shortened))
@@ -116,7 +113,7 @@ private struct LogRow: View {
                     .foregroundStyle(Color.reloSecondaryText.opacity(0.8))
             }
             .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 52)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.04)))
+            .background(RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous).fill(Color.primary.opacity(0.04)))
             .contentShape(Rectangle())
         }
         .buttonStyle(ReloPressStyle())
@@ -240,7 +237,7 @@ private struct ActivityStrip: View {
     private func xPosition(_ hour: Int, _ width: CGFloat) -> CGFloat { (CGFloat(hour) + 0.5) / 24 * width }
 
     private func label(_ text: String, color: Color) -> some View {
-        Text(text).font(.system(size: 9, design: .monospaced).weight(.medium)).tracking(0.8).foregroundStyle(color)
+        Text(text).font(.system(size: 9, design: .monospaced).weight(.medium)).tracking(0.8).foregroundStyle(color) // design: chart axis text
     }
 
     @ViewBuilder
@@ -269,9 +266,7 @@ private struct ActivityStrip: View {
 private struct StandingBy: View {
     var body: some View {
         VStack(spacing: 10) {
-            Text("STANDING BY").tracking(2.4)
-                .font(.system(.footnote, design: .monospaced).weight(.semibold))
-                .foregroundStyle(Color.reloSecondaryText)
+            ReloMonoLabel("Standing by")
             Text("When a session or script starts work or sends a message, it shows up here, live.")
                 .font(.footnote).foregroundStyle(Color.reloSecondaryText.opacity(0.85))
                 .multilineTextAlignment(.center)

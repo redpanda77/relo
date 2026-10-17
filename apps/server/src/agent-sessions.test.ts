@@ -2,18 +2,16 @@ import { createHash,randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 import {
   OWNER_STATE_QUIET_SECONDS,OWNER_STATE_TIMING,agentSessionListResponseSchema,harnessCredentialCreateResponseSchema,
-  inboxSnapshotResponseSchema,
 } from "@relo/notification-contracts";
-import { deriveSessionRow } from "./derive/agent-session-evidence.js";
+import { deriveSessionRow } from "./derive/sessions-view.js";
 import { createApp } from "./app.js";
+import { loadNowSummary } from "./api/now-routes.js";
 import { generateToken,hashToken } from "./auth.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
-import {
-  SESSION_LIST_MAX,
-  listAgentSessions,readAgentSessions,reconcileAgentSessions,
-} from "./agent-sessions.js";
+import { SESSION_LIST_MAX,reconcileAgentSessions,recordObservedSnapshot } from "./agent-sessions.js";
+import { listAgentSessions,readAgentSessions } from "./agent-session-reads.js";
 
 const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 suite("Agent sessions: observed snapshots, read model and retention",() => {
@@ -61,6 +59,85 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       phaseSince: now,lastSeenAt: now,openToolSince: null,...body,seq },token);
   }
   const row = async (hash = S1) => (await db.query("SELECT * FROM agent_sessions WHERE session_hash=$1",[hash])).rows[0];
+  test("context use and cost are stored, and kept when a later snapshot omits them",async () => {
+    expect((await snapshot({ contextPct: 42,costUsd: 1.25 })).status).toBe(200);
+    let stored = await row();
+    expect(stored.context_pct).toBe(42);
+    expect(Number(stored.cost_usd)).toBe(1.25);
+    expect((await snapshot({ phase: "stopped" })).status).toBe(200);
+    stored = await row();
+    expect(stored.phase).toBe("stopped");
+    expect(stored.context_pct).toBe(42);
+    expect(Number(stored.cost_usd)).toBe(1.25);
+    expect((await snapshot({ contextPct: 60,costUsd: 2 })).status).toBe(200);
+    expect((await row()).context_pct).toBe(60);
+    expect((await snapshot({ contextPct: 101 })).status).toBe(400);
+  });
+  test("context tokens are stored, and kept when a later snapshot omits them",async () => {
+    expect((await snapshot({ contextTokens: 282_000 })).status).toBe(200);
+    expect((await row()).context_tokens).toBe(282_000);
+    expect((await snapshot({ phase: "stopped" })).status).toBe(200);
+    expect((await row()).context_tokens).toBe(282_000);
+    expect((await snapshot({ contextTokens: 300_000 })).status).toBe(200);
+    expect((await row()).context_tokens).toBe(300_000);
+    expect((await snapshot({ contextTokens: 10_000_001 })).status).toBe(400);
+  });
+  const transitions = async (hash = S1) => (await db.query(
+    `SELECT t.previous_phase,t.new_phase,t.end_reason FROM agent_session_transitions t JOIN agent_sessions s ON s.id=t.session_id
+     WHERE s.session_hash=$1 ORDER BY t.id`,[hash])).rows;
+  test("each accepted phase change is logged once, with how the session ended; heartbeats and stale snapshots are not",async () => {
+    await snapshot({ phase: "working" });
+    await snapshot({ phase: "working" });
+    await snapshot({ phase: "waiting" });
+    await snapshot({ phase: "waiting",seq: 1 });
+    await snapshot({ phase: "ended",endReason: "gone" });
+    expect(await transitions()).toEqual([
+      { previous_phase: null,new_phase: "working",end_reason: null },
+      { previous_phase: "working",new_phase: "waiting",end_reason: null },
+      { previous_phase: "waiting",new_phase: "ended",end_reason: "gone" },
+    ]);
+    expect((await snapshot({ phase: "ended",endReason: "bogus" })).status).toBe(400);
+  });
+  test("a heartbeat sets heartbeat_at, moves last_seen_at, logs no transition, and a plain snapshot of the same wait keeps heartbeat_at",async () => {
+    const since = at(300);
+    await snapshot({ phase: "waiting",phaseSince: since,lastSeenAt: since });
+    expect((await row()).heartbeat_at).toBeNull();
+    const beat = at(60);
+    expect((await snapshot({ phase: "waiting",phaseSince: since,lastSeenAt: beat,heartbeat: true })).status).toBe(200);
+    const stored = await row();
+    expect(new Date(stored.heartbeat_at).toISOString()).toBe(beat);
+    expect(new Date(stored.last_seen_at).toISOString()).toBe(beat);
+    expect(new Date(stored.phase_since).toISOString()).toBe(since);
+    expect(await transitions()).toEqual([{ previous_phase: null,new_phase: "waiting",end_reason: null }]);
+    await snapshot({ phase: "waiting",phaseSince: since,lastSeenAt: at(30) });
+    expect(new Date((await row()).heartbeat_at).toISOString()).toBe(beat);
+    expect((await snapshot({ phase: "waiting",heartbeat: "yes" })).status).toBe(400);
+  });
+  test("each wait proves its own heartbeat: a later wait without one has none",async () => {
+    await snapshot({ phase: "waiting",heartbeat: true });
+    expect((await row()).heartbeat_at).not.toBeNull();
+    await snapshot({ phase: "working" });
+    expect((await row()).heartbeat_at).toBeNull();
+    await snapshot({ phase: "waiting" });
+    expect((await row()).heartbeat_at).toBeNull();
+  });
+  test("concurrent snapshots leave a consistent transition log",async () => {
+    const at = new Date().toISOString();
+    const send = (phase: "working" | "waiting" | "stopped" | "ended",seq: number) => recordObservedSnapshot(db,principalId,
+      { session: S1,harness: "claude-code",phase,phaseSince: at,lastSeenAt: at,openToolSince: null,seq });
+    await Promise.all([send("working",1),send("waiting",2),send("stopped",3),send("ended",4)]);
+    const rows = await transitions();
+    // Each row's previous phase is the prior row's new phase, whatever order the snapshots ran in.
+    expect(rows.map((r) => r.previous_phase)).toEqual([null,...rows.slice(0,-1).map((r) => r.new_phase)]);
+    expect(rows.at(-1)!.new_phase).toBe((await db.query("SELECT phase FROM agent_sessions WHERE session_hash=$1",[S1])).rows[0].phase);
+  });
+  test("transitions are pruned with the session retention",async () => {
+    await snapshot({ phase: "working" });
+    await snapshot({ phase: "stopped" });
+    await db.query("UPDATE agent_session_transitions SET recorded_at=now()-interval '8 days' WHERE new_phase='working'");
+    await reconcileAgentSessions(db);
+    expect((await transitions()).map((r) => r.new_phase)).toEqual(["stopped"]);
+  });
   async function keyWith(scopes: string[]) {
     const token = generateToken();
     await db.query("INSERT INTO principal_api_keys(principal_id,label,token_hash,scopes) VALUES ($1,$2,$3,$4)",
@@ -169,8 +246,14 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
     });
 
     test("is rate limited per harness credential",async () => {
+      // The limit counts per clock minute: a burst that straddles a minute boundary starts a fresh window, so
+      // it is sent again (once) rather than reading a slow machine as a missing limit.
       let last = 200;
-      for (let i = 0; i < 121 && last === 200; i += 1) last = (await snapshot({})).status;
+      for (let attempt = 0; attempt < 2 && last === 200; attempt += 1) {
+        const minute = Math.floor(Date.now() / 60_000);
+        for (let i = 0; i < 121 && last === 200; i += 1) last = (await snapshot({})).status;
+        if (Math.floor(Date.now() / 60_000) === minute) break;
+      }
       expect(last).toBe(429);
       const limited = await snapshot({});
       expect(limited.body).toMatchObject({ error: "rate_limited",scope: "client" });
@@ -223,7 +306,7 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       const columns = (await db.query<{ column_name: string }>(
         "SELECT column_name FROM information_schema.columns WHERE table_name='agent_sessions'")).rows.map((column) => column.column_name);
       // The snapshot and its labels, nothing per event.
-      expect(columns.sort()).toEqual(["account","computer","created_at","harness","id","last_seen_at","open_tool_since","phase",
+      expect(columns.sort()).toEqual(["account","computer","context_pct","context_tokens","cost_usd","created_at","harness","heartbeat_at","id","last_seen_at","open_tool_since","phase",
         "phase_since","principal_id","project","sealed_names","seq","session_hash","started_at","updated_at"]);
       const tables = (await db.query<{ table_name: string }>(
         "SELECT table_name FROM information_schema.tables WHERE table_name ~ '(session|hook).*event'")).rows;
@@ -328,7 +411,8 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       await snapshot({ session: idle,phase: "stopped" }); await ago(idle,OWNER_STATE_TIMING.freshSeconds + 5);
       await snapshot({ session: ended,phase: "ended" });
       const all = await request("GET","/api/agent-sessions");
-      expect(all.body.sessions.map((session: any) => session.phase)).toEqual(["working","waiting","idle","ended"]);
+      expect(all.body.sessions.map((session: any) => session.phase)).toEqual(["working","waiting","idle"]); // ended ones are gone
+      expect((await request("GET","/api/agent-sessions?phase=ended")).body.sessions.map((session: any) => session.phase)).toEqual(["ended"]);
       const live = await request("GET","/api/agent-sessions?phase=working,waiting");
       expect(live.status).toBe(200);
       expect(agentSessionListResponseSchema.parse(live.body).sessions.map(session => session.phase)).toEqual(["working","waiting"]);
@@ -371,7 +455,8 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       expect(agentSessionListResponseSchema.parse(read).sessions).toHaveLength(SESSION_LIST_MAX);
       expect(read.counts).toEqual({ working: SESSION_LIST_MAX + 3,waiting: 0,idle: 1,ended: 1 });
       await db.query("DELETE FROM agent_sessions WHERE session_hash NOT IN ($1,$2)",[sessionHash("many-0"),sessionHash("ended")]);
-      expect((await listAgentSessions(db,principalId)).map(session => session.phase)).toEqual(["idle","ended"]);
+      expect((await listAgentSessions(db,principalId)).map(session => session.phase)).toEqual(["idle"]);
+      expect((await listAgentSessions(db,principalId,{ phases: ["ended"] })).map(session => session.phase)).toEqual(["ended"]);
     });
 
     test("has the documented JSON shape",async () => {
@@ -387,21 +472,25 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       expect(body.sessions[0]).toEqual({
         id: expect.stringMatching(/^ags_[0-9a-f-]{36}$/),harness: "claude-code",computer: "mac",account: "work",project: "relo",
         phase: "working",waitingFor: null,startedAt: expect.any(String),lastSeenAt: expect.any(String),
-        card: { id,state: "active",quietForSeconds: expect.any(Number) },presence: "working",
+        card: { id,state: "active" },
       });
     });
 
-    test("the inbox snapshot a phone reads carries the sessions",async () => {
+    test("the inbox snapshot a phone reads carries no sessions; Now is the one sessions view",async () => {
       const device = await phone();
       const credential = generateToken();
       await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[device,hashToken(credential)]);
-      await snapshot({ phase: "open",computer: "mac" });
-      const inbox = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
-      expect(inbox.sessions).toHaveLength(1);
-      expect(inbox.sessions[0]).toMatchObject({ computer: "mac",presence: "no_card",phase: "idle" });
+      await snapshot({ phase: "working",computer: "mac" });
+      await snapshot({ session: sessionHash("never-prompted"),phase: "open",computer: "mac" });
+      const inbox = (await request("GET","/api/inbox/snapshot",undefined,credential)).body;
+      expect(inbox.sessions).toBeUndefined();
+      const now = await loadNowSummary(db,principalId,device,undefined);
+      // A session that started and never prompted is not in Sessions until its first prompt.
+      expect(now.sessions.sessions).toHaveLength(1);
+      expect(now.sessions.sessions[0]).toMatchObject({ computer: "mac",phase: "working" });
     });
 
-    test("sealed session names reach the phone's snapshot only, as stored",async () => {
+    test("sealed session names reach the phone's Now only, as stored",async () => {
       const bytes = (n: number) => randomBytes(n).toString("base64url");
       const names = { v: "relo.e2e.v1",kind: "names",context: "ses:abc",sender: `k_${bytes(16)}`,
         recipients: [{ device: "dev_1",prekey: "pk_1",enc: bytes(65),key: bytes(48) }],nonce: bytes(12),ct: bytes(272),sig: bytes(64) };
@@ -412,8 +501,9 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       const device = await phone();
       const credential = generateToken();
       await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[device,hashToken(credential)]);
-      const inbox = inboxSnapshotResponseSchema.parse((await request("GET","/api/inbox/snapshot",undefined,credential)).body);
-      expect(inbox.sessions[0]!.sealedNames).toEqual(names);
+      const now = await loadNowSummary(db,principalId,device,undefined);
+      expect(now.sessions.sessions[0]!.sealedNames).toEqual(names);
+      expect((await loadNowSummary(db,principalId,undefined,undefined)).sessions.sessions[0]!.sealedNames).toBeUndefined();
       const read = await request("GET","/api/agent-sessions");
       expect(read.body.sessions[0].sealedNames).toBeUndefined();
     });

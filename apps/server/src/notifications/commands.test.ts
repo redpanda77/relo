@@ -6,7 +6,7 @@ import { bootstrapOwner } from "../bootstrap.js";
 import { hashToken } from "../auth.js";
 import { createAuthDatabase,createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
-import { createWebhookService } from "../services.js";
+import { createWebhookService } from "../webhooks/admin.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
 suite("Notification command adapter authority and atomicity",()=>{
@@ -39,9 +39,9 @@ suite("Notification command adapter authority and atomicity",()=>{
       [principalId,adapter==="credential"?credentialId:null,adapter==="service"?service.row.id:null,randomUUID()])).rows[0]!.id;
   }
   async function withdraw(adapter:string,eventId:string,token?:string){
-    const route=adapter==="service"?`${new URL(service.webhookUrl).pathname}/events/ntf_${eventId}/withdraw`
+    const route=adapter==="service"?`/hooks/events/ntf_${eventId}/withdraw`
       :`/api/${adapter==="owner"?"account/":""}notifications/ntf_${eventId}/withdraw`;
-    return application.request(route,{method:"POST",headers:{"idempotency-key":"withdraw-command",...(adapter==="service"?{}:{authorization:`Bearer ${token??(adapter==="owner"?accountToken:owner)}`})}});
+    return application.request(route,{method:"POST",headers:{"idempotency-key":"withdraw-command",authorization:`Bearer ${adapter==="service"?service.secret:token??(adapter==="owner"?accountToken:owner)}`}});
   }
   test.each(["credential","service","owner"])("%s withdraw commits cancellation and append-only evidence once",async adapter=>{
     const eventId=await seed(adapter);
@@ -82,8 +82,8 @@ suite("Notification command adapter authority and atomicity",()=>{
     expect((await withdraw("owner",serviceEvent)).status).toBe(200);
   });
   async function create(adapter:string,key:string,body="Shared notification",relevance?:unknown){
-    return application.request(adapter==="credential"?"/api/notifications":new URL(service.webhookUrl).pathname,{
-      method:"POST",headers:{"content-type":"application/json","idempotency-key":key,...(adapter==="credential"?{authorization:`Bearer ${owner}`}:{})},
+    return application.request(adapter==="credential"?"/api/notifications":"/hooks",{
+      method:"POST",headers:{"content-type":"application/json","idempotency-key":key,authorization:`Bearer ${adapter==="credential"?owner:service.secret}`},
       body:JSON.stringify({title:"Shared notification",body,...(adapter==="credential"?{sourceName:"Command fixture"}:{}),
         deviceIds:[`dev_${deviceId}`],...(relevance?{relevance}:{})}),
     });

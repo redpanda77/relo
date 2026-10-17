@@ -3,8 +3,9 @@
 ## Status
 
 Accepted (13 October 2026) by the owner: WhatsApp/Signal-style end-to-end encryption, on by
-default, with linked devices. The threat model is in
-[END-TO-END-ENCRYPTION.md](../END-TO-END-ENCRYPTION.md).
+default, with linked devices. The model is in
+[site/concepts/encryption.md](../site/concepts/encryption.md) and the formats in
+[ENCRYPTION-PROTOCOL.md](../ENCRYPTION-PROTOCOL.md).
 
 ## Context
 

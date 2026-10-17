@@ -1,7 +1,7 @@
 import { randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,describe,expect,test } from "vitest";
 // @ts-expect-error The CLI's crypto module is plain JavaScript; the test uses it as the reference.
-import { b64u,generateKeyPair,prekeySigningInput,signBytes } from "../../../packages/cli/src/e2ee.mjs";
+import { b64u,generateKeyPair,prekeySigningInput,signBytes } from "../../../packages/cli/src/crypto/e2ee.mjs";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
 import { resetAuthAttempts } from "./auth-throttle.js";
@@ -26,7 +26,7 @@ function browser(identity: Keys = generateKeyPair(),browserId = `brw_${randomUUI
       signature: b64u(signBytes(identity.privateKey,prekeySigningInput({ deviceId: browserId,prekeyId: "pk_1",publicKey: prekey.publicKey,createdAt }))) } } };
 }
 
-suite("linked browsers (docs/END-TO-END-ENCRYPTION.md, Linked browsers)",() => {
+suite("linked browsers (docs/ENCRYPTION-PROTOCOL.md, Linked browsers)",() => {
   let db: Database,authDb: Database,app: ReturnType<typeof createApp>;
   let session: string,apiKey: string,phoneCredential: string,phoneId: string,principalId: string;
 
@@ -119,5 +119,65 @@ suite("linked browsers (docs/END-TO-END-ENCRYPTION.md, Linked browsers)",() => {
     expect((await call(session,"DELETE",`/api/dashboard/browser/${second.browserId}`)).status).toBe(204);
     expect((await call(session,"GET",`/api/dashboard/browser/${second.browserId}`)).status).toBe(404);
     expect((await call(session,"DELETE",`/api/dashboard/browser/brw_${randomUUID()}`)).status).toBe(404);
+  });
+  test("approval on the iPhone: request, list, decline, link; too soon, already linked, no phone, trusted phones only",async () => {
+    const request = (id: string) => call(session,"POST",`/api/dashboard/browser/${id}/link-request`);
+    const mine = browser();
+    expect((await call(session,"POST","/api/dashboard/browser",mine.body)).status).toBe(200);
+    expect((await request(`brw_${randomUUID()}`)).status).toBe(404);
+
+    // No phone can show it yet (notifications not allowed, no keys): 409, and a retry is not held back.
+    expect((await request(mine.browserId))).toMatchObject({ status: 409,body: { error: "no_phone" } });
+    expect((await call(phoneCredential,"GET","/api/devices/self/link-requests")).body).toEqual({ browsers: [] });
+
+    await db.query("UPDATE devices SET notification_authorization='authorized' WHERE id=$1",[phoneId]);
+    await db.query("INSERT INTO device_identity_keys(device_id,principal_id,key_id,public_key) VALUES ($1,$2,$3,$4)",
+      [phoneId,principalId,`k_${randomBytes(16).toString("base64url")}`,randomBytes(65).toString("base64url")]);
+    // A newer phone nobody approved yet is not trusted: it gets no notice.
+    const newer = (await db.query<{ id: string }>(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
+      app_version,app_build,os_version,apns_environment,notification_authorization,apns_token,registered_at) VALUES ($1,$2,$3,'Unapproved iPhone',
+      'com.example.relo.notifications','1','1','26','sandbox','authorized','fixture-alert',now()+interval '1 minute') RETURNING id`,
+    [principalId,randomUUID(),randomUUID()])).rows[0]!.id;
+    await db.query("INSERT INTO device_identity_keys(device_id,principal_id,key_id,public_key) VALUES ($1,$2,$3,$4)",
+      [newer,principalId,`k_${randomBytes(16).toString("base64url")}`,randomBytes(65).toString("base64url")]);
+
+    const first = await request(mine.browserId);
+    expect(first).toMatchObject({ status: 200,body: { requested: true,phones: 1 } });
+    expect((await request(mine.browserId)).status).toBe(429);
+
+    const notice = (await db.query<any>(
+      `SELECT e.title,e.deep_link,e.payload,array_agg(t.device_id) AS devices FROM notification_events e
+       JOIN notification_event_targets t ON t.notification_event_id=e.id WHERE e.principal_id=$1 AND e.idempotency_key LIKE 'browser-link:%'
+       GROUP BY e.id`,[principalId])).rows;
+    expect(notice).toHaveLength(1);
+    expect(notice[0]).toMatchObject({ title: "Chrome on macOS wants to read your Relo cards",
+      deep_link: `relo://security/request/${mine.browserId}`,devices: [phoneId] });
+    expect(notice[0].payload.browserLink).toEqual({ browserId: mine.browserId });
+
+    const listed = (await call(phoneCredential,"GET","/api/devices/self/link-requests")).body.browsers;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ browserId: mine.browserId,name: "Chrome on macOS",identityKey: mine.body.identityKey });
+    expect(typeof listed[0].keyId).toBe("string");
+    expect(Number.isNaN(Date.parse(listed[0].requestedAt))).toBe(false);
+
+    // Declining clears it; asking again waits out the 30 seconds unless the clock is moved.
+    expect((await call(phoneCredential,"POST",`/api/devices/self/link-requests/${mine.browserId}/decline`)).status).toBe(204);
+    expect((await call(phoneCredential,"POST",`/api/devices/self/link-requests/${mine.browserId}/decline`)).status).toBe(404);
+    expect((await call(phoneCredential,"GET","/api/devices/self/link-requests")).body.browsers).toEqual([]);
+
+    await db.query("UPDATE linked_browsers SET link_requested_at=now()-interval '1 minute' WHERE id=$1",[mine.browserId.slice(4)]);
+    expect((await request(mine.browserId)).body).toMatchObject({ requested: true });
+    // An old request is no longer listed.
+    await db.query("UPDATE linked_browsers SET link_requested_at=now()-interval '16 minutes' WHERE id=$1",[mine.browserId.slice(4)]);
+    expect((await call(phoneCredential,"GET","/api/devices/self/link-requests")).body.browsers).toEqual([]);
+    await db.query("UPDATE linked_browsers SET link_requested_at=now()-interval '1 minute' WHERE id=$1",[mine.browserId.slice(4)]);
+    expect((await call(phoneCredential,"GET","/api/devices/self/link-requests")).body.browsers).toHaveLength(1);
+
+    // Linking clears the request, and a linked browser cannot ask again.
+    const link = { browserId: mine.browserId,identityKey: mine.body.identityKey,signedAt: new Date().toISOString(),
+      signature: randomBytes(64).toString("base64url") };
+    expect((await call(phoneCredential,"POST","/api/devices/self/links",link)).status).toBe(200);
+    expect((await call(phoneCredential,"GET","/api/devices/self/link-requests")).body.browsers).toEqual([]);
+    expect((await request(mine.browserId))).toMatchObject({ status: 409,body: { error: "already_linked" } });
   });
 });

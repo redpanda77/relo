@@ -27,10 +27,3 @@ export function resolveProducer(options, caller) {
 export function producerPathKey(key) {
   return createHash("sha256").update(`producer:${key}`).digest("base64url");
 }
-
-/** "30m" | "15m" | "900s" | "1h" | "900" → seconds; undefined when not a duration. */
-export function parseDuration(value) {
-  const match = /^(\d+)\s*([smh]?)$/.exec(String(value ?? "").trim());
-  if (!match) return undefined;
-  return Number(match[1]) * ({ "": 1, s: 1, m: 60, h: 3600 })[match[2]];
-}

@@ -23,3 +23,25 @@ export async function writeBookkeeping(directory, session, patch) {
     return true;
   } catch { return false; }
 }
+
+// What the status line wrapper last read for a session (relo statusline): context use and cost, plus what was last
+// sent to the server. A file of its own: the status line refreshes while hooks write the bookkeeping above.
+const contextFile = (directory, session) => join(directory, `context-${String(session).slice(0, 64)}.json`);
+
+export async function readContext(directory, session) {
+  try {
+    const value = JSON.parse(await readFile(contextFile(directory, session), "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+  } catch { return undefined; }
+}
+
+export async function writeContext(directory, session, value) {
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const path = contextFile(directory, session);
+    const temp = `${path}.${process.pid}.tmp`;
+    await writeFile(temp, JSON.stringify(value), { mode: 0o600 });
+    await rename(temp, path);
+    return true;
+  } catch { return false; }
+}

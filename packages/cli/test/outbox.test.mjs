@@ -215,3 +215,32 @@ test("an entry without a server (written before servers were recorded) is never 
   await assert.rejects(flush({ directory, send }), /server/u);
   assert.equal(serverOrigin("https://relo.example.test/"), "https://relo.example.test");
 });
+
+test("the dead list is the last 7 days: older entries age out", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "relo-outbox-dead-"));
+  const now = Date.parse("2026-10-22T12:00:00.000Z");
+  const old = { at: "2026-10-14T12:00:00.000Z", lane: "declared", route: "/api/session/works/current", reason: "queued for another server" };
+  const fresh = { ...old, at: "2026-10-21T12:00:00.000Z" };
+  await writeFile(join(directory, "dead.json"), JSON.stringify([old, fresh]));
+  assert.deepEqual((await pending({ directory, now })).dead, [fresh]);
+});
+
+test("a lane the server rate-limited waits for Retry-After before it sends again, in order", async () => {
+  const directory = await dir();
+  for (let n = 1; n <= 2; n += 1) await enqueue({ directory, lane: "declared", entry: declared(n), now: n });
+  let limited = true;
+  let clock = 1_000_000;
+  const { seen, send } = recorder(() => {
+    if (limited) throw Object.assign(new Error("rate limited"), { status: 429, details: { status: 429, retryAfterSeconds: 30 } });
+    return { status: 200 };
+  });
+  assert.equal((await flush({ directory, send, server: SERVER, now: () => clock })).pending, 2);
+  assert.equal(seen.length, 1, "stops at the first refusal");
+  limited = false;
+  clock += 10_000;
+  assert.equal((await flush({ directory, send, server: SERVER, now: () => clock })).pending, 2, "still waiting: nothing sent");
+  assert.equal(seen.length, 1);
+  clock += 21_000;
+  assert.equal((await flush({ directory, send, server: SERVER, now: () => clock })).pending, 0);
+  assert.deepEqual(seen.map((entry) => entry.body.n), [1, 1, 2]);
+});

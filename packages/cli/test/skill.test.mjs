@@ -5,10 +5,13 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { EXIT, VERSION, run } from "../src/cli.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
+import { run } from "../src/cli.mjs";
+import { VERSION } from "../src/version.mjs";
 import { bundleSkill } from "../scripts/bundle-skill.mjs";
-import { bundledSkillDirectory } from "../src/skill.mjs";
+import { bundledSkillDirectory } from "../src/install/skill.mjs";
 import { cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 const PACKAGE = new URL("..", import.meta.url).pathname;
@@ -74,95 +77,83 @@ test("a skill whose version differs from the CLI fails the bundle and the prepac
   await rm(temp, { recursive: true, force: true });
 });
 
-test("install, unchanged, update with archive, and remove for one harness in a temp home", async () => {
+const skillRow = (line) => line.changed.find((row) => row.kind === "skill") ?? { action: "unchanged" };
+
+test("relo setup installs the skill into one harness's folder; unchanged, updated with an archive, and removed by relo uninstall", async () => {
   const b = await box();
   assert.ok(bundledSkillDirectory());
-  const dry = await b.run(["skill", "install", "--agent", "claude-code", "--dry-run"]);
-  assert.deepEqual(dry.line, { ok: true, agent: "claude-code", dir: "~/.claude/skills/relo-notifications", version: VERSION, action: "installed", dryRun: true });
+  const dry = await b.run(["setup", "--agent", "claude-code", "--dry-run"]);
+  assert.deepEqual(skillRow(dry.line), { kind: "skill", harness: "claude-code", file: "~/.claude/skills", action: "installed" });
   assert.equal(existsSync(join(b.home, ".claude")), false, "a dry run writes nothing");
 
-  const first = await b.run(["skill", "install", "--agent", "claude-code"]);
+  const first = await b.run(["setup", "--agent", "claude-code"]);
   assert.equal(first.exitCode, EXIT.OK);
-  assert.deepEqual(first.line, { ok: true, agent: "claude-code", dir: "~/.claude/skills/relo-notifications", version: VERSION, action: "installed" });
+  assert.equal(skillRow(first.line).action, "installed");
   const dir = join(b.home, ".claude", "skills", SKILL);
   const files = await tree(dir);
   assert.ok(files.includes("SKILL.md"));
   assert.equal(files.some((file) => file.startsWith("tests/")), false);
-  assert.deepEqual(await readdir(join(b.home, ".claude")), ["skills"], "only that harness's skills folder");
-  assert.equal(existsSync(join(b.home, ".agents")), false);
+  assert.equal(existsSync(join(b.home, ".agents")), false, "only that harness's skills folder");
 
-  const again = await b.run(["skill", "install", "--agent", "claude-code"]);
-  assert.deepEqual(again.line, { ok: true, agent: "claude-code", dir: "~/.claude/skills/relo-notifications", version: VERSION, action: "unchanged" });
+  assert.equal(skillRow((await b.run(["setup", "--agent", "claude-code"])).line).action, "unchanged");
   assert.equal(existsSync(join(b.home, ".local")), false, "unchanged archives nothing");
 
   // same version, edited content: updated, with the old copy archived outside the discovery roots
   await writeFile(join(dir, "SKILL.md"), "edited\n");
-  const updated = await b.run(["skill", "install", "--agent", "claude-code"]);
-  assert.equal(updated.line.action, "updated");
-  assert.match(updated.line.archived, new RegExp(`^~/\\.local/share/relo/skill-archives/20261013T\\d{6}Z-${VERSION.replaceAll(".", "\\.")}$`, "u"));
-  const archived = join(b.home, updated.line.archived.slice(2));
-  assert.equal(await readFile(join(archived, SKILL, "SKILL.md"), "utf8"), "edited\n");
+  const updated = skillRow((await b.run(["setup", "--agent", "claude-code"])).line);
+  assert.equal(updated.action, "updated");
+  assert.match(updated.archived, new RegExp(`^~/\\.local/share/relo/skill-archives/20261013T\\d{6}Z-${VERSION.replaceAll(".", "\\.")}$`, "u"));
+  assert.equal(await readFile(join(b.home, updated.archived.slice(2), SKILL, "SKILL.md"), "utf8"), "edited\n");
   assert.notEqual(await readFile(join(dir, "SKILL.md"), "utf8"), "edited\n");
 
-  const removed = await b.run(["skill", "remove", "--agent", "claude-code"]);
-  assert.equal(removed.line.action, "removed");
+  const removed = skillRow((await b.run(["uninstall", "--apply"])).line);
+  assert.equal(removed.action, "removed");
   assert.equal(existsSync(dir), false);
-  assert.equal(existsSync(join(b.home, removed.line.archived.slice(2), SKILL, "SKILL.md")), true);
-  assert.equal((await b.run(["skill", "remove", "--agent", "claude-code"])).line.action, "absent");
-  assert.notEqual(removed.line.archived, updated.line.archived, "each archive is its own folder");
+  assert.equal(existsSync(join(b.home, removed.archived.slice(2), SKILL, "SKILL.md")), true);
+  assert.notEqual(removed.archived, updated.archived, "each archive is its own folder");
 });
 
-test("an older copy is updated and archived under its own version; shared dirs, --dir and CLAUDE_CONFIG_DIR", async () => {
+test("an older copy is updated and archived under its own version; each harness's folder; CLAUDE_CONFIG_DIR", async () => {
   const b = await box({ skillVersion: "0.1.0" });
   const old = join(b.home, ".agents", "skills", SKILL);
-  const out = await b.run(["skill", "install", "--agent", "codex"]);
-  assert.equal(out.line.action, "updated");
-  assert.equal(out.line.dir, "~/.agents/skills/relo-notifications");
-  assert.match(out.line.archived, /-0\.1\.0$/u);
+  const out = skillRow((await b.run(["setup", "--agent", "codex"])).line);
+  assert.equal(out.action, "updated");
+  assert.equal(out.file, "~/.agents/skills");
+  assert.match(out.archived, /-0\.1\.0$/u);
   assert.equal(JSON.parse(await readFile(join(old, "package.json"), "utf8")).version, VERSION);
-  assert.equal(existsSync(join(b.home, out.line.archived.slice(2), SKILL, "package.json")), true);
-
-  const custom = join(b.cwd, "elsewhere");
-  const dir = await b.run(["skill", "install", "--dir", custom]);
-  assert.equal(dir.line.action, "installed");
-  assert.equal(dir.line.agent, undefined);
-  assert.equal(existsSync(join(custom, SKILL, "SKILL.md")), true);
-
   const configHome = join(b.cwd, "claude-work");
   const work = { ...b.deps, env: { CLAUDE_CONFIG_DIR: configHome } };
-  assert.equal((await cli(["skill", "install", "--agent", "claude"], work)).line.dir, join(configHome, "skills", SKILL));
-  for (const [agent, path] of [["opencode", ".config/opencode/skills"], ["gemini-cli", ".gemini/skills"], ["amp", ".config/agents/skills"],
+  assert.equal(skillRow((await cli(["setup", "--agent", "claude"], work)).line).file, join(configHome, "skills"));
+  assert.deepEqual((await b.run(["setup", "--agent", "opencode", "--dry-run"])).line.skipped.map((row) => row.reason),
+    ["reads the skill from ~/.agents/skills"], "OpenCode reads the copy in ~/.agents/skills");
+  for (const [agent, path] of [["gemini-cli", ".gemini/skills"], ["amp", ".config/agents/skills"],
     ["cursor", ".cursor/skills"], ["copilot", ".copilot/skills"]]) {
-    assert.equal((await b.run(["skill", "install", "--agent", agent, "--dry-run"])).line.dir, `~/${path}/${SKILL}`, agent);
+    assert.equal(skillRow((await b.run(["setup", "--agent", agent, "--dry-run"])).line).file, `~/${path}`, agent);
   }
 });
 
-test("bad choices write nothing; links are never followed", async () => {
+test("in a checkout the skill comes from its source, and a copy is current only when its files match it", async () => {
+  assert.equal(bundledSkillDirectory(), fileURLToPath(new URL("../../../skills/relo-notifications", import.meta.url)).replace(/\/$/u, ""));
+  const b = await box({ skillVersion: VERSION });
+  const copy = join(b.home, ".agents", "skills", SKILL);
+  const { findSkillCopies } = await import("../src/install/skill.mjs");
+  assert.deepEqual(findSkillCopies({ env: {}, home: b.home, cliVersion: VERSION }).map((found) => found.current), [true]);
+  await writeFile(join(copy, "SKILL.md"), "edited at the same version\n");
+  assert.deepEqual(findSkillCopies({ env: {}, home: b.home, cliVersion: VERSION }).map((found) => found.current), [false],
+    "same version, different files: stale");
+  assert.equal(skillRow((await b.run(["setup", "--refresh"])).line).action, "updated");
+});
+
+test("links are never followed: a linked skill folder is an error row and nothing is written through it", async () => {
   const b = await box();
-  for (const argv of [["skill", "install"], ["skill", "install", "--agent", "nope"], ["skill", "install", "--agent", "codex", "--dir", "x"],
-    ["skill", "remove"], ["skill", "bogus"], ["skill", "status", "--agent", "codex"]]) {
-    assert.equal((await b.run(argv)).exitCode, EXIT.USAGE, argv.join(" "));
-  }
-  assert.match((await b.run(["skill", "install"])).line.error.hint, /--agent <claude-code\|codex/u);
-  assert.deepEqual(await readdir(b.home), []);
   await mkdir(join(b.home, ".agents", "skills"), { recursive: true });
   await mkdir(join(b.cwd, "real"));
   await symlink(join(b.cwd, "real"), join(b.home, ".agents", "skills", SKILL));
-  const linked = await b.run(["skill", "install", "--agent", "codex"]);
+  const linked = await b.run(["setup", "--agent", "codex"]);
   assert.equal(linked.exitCode, EXIT.USAGE);
+  assert.equal(linked.line.errors[0].kind, "skill");
   assert.deepEqual(await readdir(join(b.cwd, "real")), []);
-});
-
-test("skill status lists every copy with its version and whether it is current", async () => {
-  const b = await box({ skillVersion: "0.1.0" });
-  assert.deepEqual((await b.run(["skill", "status"])).line, {
-    ok: true, cli: VERSION, copies: [{ dir: "~/.agents/skills/relo-notifications", agent: "codex", version: "0.1.0", current: false }],
-  });
-  await b.run(["skill", "install", "--agent", "claude-code"]);
-  const status = (await b.run(["skill", "status"])).line;
-  assert.deepEqual(status.copies.map((copy) => [copy.dir, copy.current]),
-    [["~/.claude/skills/relo-notifications", true], ["~/.agents/skills/relo-notifications", false]]);
-  assert.deepEqual((await (await box()).run(["skill", "status"])).line, { ok: true, cli: VERSION, copies: [] });
+  assert.equal((await b.run(["skill", "install", "--agent", "codex"])).exitCode, EXIT.USAGE, "relo skill is relo setup now");
 });
 
 test("doctor's skill step is the exact install command and never installs", async () => {
@@ -179,16 +170,16 @@ test("doctor's skill step is the exact install command and never installs", asyn
   const missing = await prepare({});
   const none = await cli(["doctor"], missing.deps);
   assert.equal(none.line.next.step, "skill");
-  assert.equal(none.line.next.run, "relo skill install --agent claude-code");
+  assert.equal(none.line.next.run, "relo setup --agent claude-code");
   const inCodex = await cli(["doctor"], { ...missing.deps, env: { CODEX_THREAD_ID: "t1" } });
-  assert.equal(inCodex.line.next.run, "relo skill install --agent codex");
+  assert.equal(inCodex.line.next.run, "relo setup --agent codex");
   assert.equal(existsSync(join(missing.home, ".claude", "skills")), false, "doctor never installs");
 
   const stale = await prepare({ skillVersion: "0.1.0" });
   const behind = await cli(["doctor"], stale.deps);
   assert.equal(behind.line.ready, true);
-  assert.equal(behind.line.next.run, "relo skill install --agent codex");
-  const installed = await cli(behind.line.next.run.split(" ").slice(1), stale.deps);
-  assert.equal(installed.line.action, "updated");
+  assert.equal(behind.line.next.run, "relo setup --refresh");
+  const refreshed = await cli(behind.line.next.run.split(" ").slice(1), stale.deps);
+  assert.equal(skillRow(refreshed.line).action, "updated");
   assert.deepEqual((await cli(["doctor"], stale.deps)).line, { ok: true, ready: true });
 });

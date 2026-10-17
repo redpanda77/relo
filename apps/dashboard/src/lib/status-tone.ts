@@ -50,3 +50,38 @@ export function semanticStatusTone(value: string): SemanticStatusTone {
   if (INFO_STATES.has(state)) return "info"
   return "neutral"
 }
+
+/**
+ * The meaning palette (DESIGN.md): every state colour in the dashboard is one of these, and each
+ * maps to a `.tone-*` class. mint done, cyan running, orange needs you, yellow attention, red
+ * failed, violet messages, neutral for everything quiet.
+ */
+export type NeonTone =
+  "mint" | "cyan" | "orange" | "yellow" | "red" | "violet" | "neutral"
+
+const NEON_BY_SEMANTIC: Record<SemanticStatusTone, NeonTone> = {
+  success: "mint",
+  active: "cyan",
+  warning: "yellow",
+  danger: "red",
+  info: "violet",
+  neutral: "neutral",
+}
+
+/** The meaning colour for a semantic tone (success, active, warning, danger, info, neutral). */
+export function neonTone(tone: SemanticStatusTone): NeonTone {
+  return NEON_BY_SEMANTIC[tone]
+}
+
+/** One mapping from a state word ("delivered", "pending", "failed", "running"…) to its colour. */
+export function toneFor(state: string): NeonTone {
+  const value = state.toLowerCase()
+  if (value === "running" || value === "live") return "cyan"
+  if (value === "needs_you" || value === "needs you" || value === "awaiting_response") return "orange"
+  return neonTone(semanticStatusTone(value))
+}
+
+/** The `.tone-*` class for a tone. */
+export function toneClass(tone: NeonTone): string {
+  return `tone-${tone}`
+}

@@ -6,6 +6,7 @@ import {
   projectLiveActivityPresentationToActivityKitContentState,
   stableSerializeLiveActivityPresentation,
   type LiveActivityPresentation,
+  type PlanProgressWire,
   type PresentationActivityKitContentState,
 } from "@relo/notification-contracts";
 
@@ -43,7 +44,9 @@ function progressValue(presentation: LiveActivityPresentation): number | null {
     ?? presentation.components.find((candidate) => candidate.type === "steps");
   if (!component) return null;
   if (component.type === "progress_bar") return component.value;
-  return component.items.filter((item) => item.state === "complete").length / component.items.length;
+  const before = component.before ?? 0;
+  const total = before + component.items.length + (component.after ?? 0);
+  return (before + component.items.filter((item) => item.state === "complete").length) / total;
 }
 
 function databaseSymbol(presentation: LiveActivityPresentation):
@@ -113,44 +116,18 @@ export function persistedPresentationColumns(presentationInput: unknown): Persis
   };
 }
 
-export function patchPresentationColumns(row: any, patch: {
-  title?: string | undefined;
-  status?: string | undefined;
-  detail?: string | null | undefined;
-  progress?: number | null | undefined;
-  progressLabel?: string | null | undefined;
-}): PersistedPresentationColumns {
-  const current = presentationFromRow(row);
-  const presentation = canonicalPresentation({
-    ...current,
-    content: {
-      ...current.content,
-      title: patch.title ?? current.content.title,
-      status: patch.status ?? current.content.status,
-      subtitle: patch.detail === undefined ? current.content.subtitle : patch.detail,
-    },
-    components: current.components.map((component) => {
-      if (component.type !== "progress_bar") return component;
-      return {
-        ...component,
-        ...(typeof patch.progress === "number" ? { value: patch.progress } : {}),
-        ...(patch.progressLabel !== undefined ? { label: patch.progressLabel } : {}),
-      };
-    }),
-  });
-  return persistedPresentationColumns(presentation);
-}
-
 export function terminalPresentationFromRow(
   row: any,
   status: string,
-  symbol: "success" | "warning",
+  symbol: "success" | "warning" | "stopped",
   patch: {
     detail?: string | null | undefined;
     progress?: number | null | undefined;
     accentColor?: string | undefined;
     /** The work itself finished: on success, steps complete and a measured bar fills. */
     workFinished?: boolean | undefined;
+    /** Where the work stood in its plan when the card ended (plan UX U1, U2). */
+    plan?: PlanProgressWire | undefined;
   } = {},
 ): LiveActivityPresentation {
   const current = presentationFromRow(row);
@@ -179,9 +156,10 @@ export function terminalPresentationFromRow(
           : []),
       ];
   // A finished card shows finished progress; a stopped one keeps exactly where the work stopped.
-  const components = finished
+  const withPlan = finished
     ? rawComponents.map((component) => component.type === "steps"
-      ? { ...component,items: component.items.map((item) => ({ ...item,state: "complete" as const })) }
+      ? (({ after,...rest }) => ({ ...rest,items: component.items.map((item) => ({ ...item,state: "complete" as const })),
+        ...(after || component.before ? { before: (component.before ?? 0) + (after ?? 0) } : {}) }))(component)
       : component.type === "progress_bar" && typeof patch.progress !== "number"
         ? { ...component,value: 1 }
         : component)
@@ -199,6 +177,9 @@ export function terminalPresentationFromRow(
           minimal: current.surfaces.minimal.length === 0 ? [addedProgressId] : current.surfaces.minimal,
         }
     : current.surfaces;
+  const components = patch.plan
+    ? withPlan.map((component) => component.type === "steps" ? { ...component,plan: patch.plan! } : component)
+    : withPlan;
   const cardIdentity = current.appearance.roles.cardIdentity;
   const identity = patch.accentColor === undefined ? current.identity : {
     ...current.identity,
@@ -223,21 +204,25 @@ export function terminalPresentationFromRow(
     behavior: interactive || patch.progress === null
       ? { type: "informational" as const }
       : current.behavior,
+    // Stopped (paused or dropped): neither a success nor a failure; the steps stay where the work stopped.
     state: symbol === "success"
       ? { kind: "completed" as const,tone: "success" as const,icon: "completed" as const }
-      : { kind: "failed" as const,tone: "failure" as const,icon: "failed" as const },
+      : symbol === "stopped"
+        ? { kind: "cancelled" as const,tone: "neutral" as const,icon: "cancelled" as const }
+        : { kind: "failed" as const,tone: "failure" as const,icon: "failed" as const },
   });
 }
 
 export function terminalPresentationColumnsFromRow(
   row: any,
   status: string,
-  symbol: "success" | "warning",
+  symbol: "success" | "warning" | "stopped",
   patch: {
     detail?: string | null | undefined;
     progress?: number | null | undefined;
     accentColor?: string | undefined;
     workFinished?: boolean | undefined;
+    plan?: PlanProgressWire | undefined;
   } = {},
 ): PersistedPresentationColumns {
   return persistedPresentationColumns(terminalPresentationFromRow(row,status,symbol,patch));

@@ -23,6 +23,15 @@ COPY apps/server/src ./apps/server/src
 COPY apps/server/migrations ./apps/server/migrations
 COPY apps/server/fixtures ./apps/server/fixtures
 RUN pnpm --filter @relo/server build
+# Add a computer (docs/site/guides/servers.md): the CLI this server hands out, packed with its skill. It has no
+# dependencies, so the install script only unpacks it; the manifest names its version and digest.
+COPY packages/cli ./packages/cli
+COPY skills/relo-notifications ./skills/relo-notifications
+RUN node packages/cli/scripts/bundle-skill.mjs \
+  && mkdir -p apps/server/cli \
+  && cd packages/cli && npm pack --ignore-scripts --silent --pack-destination /workspace/apps/server/cli >/dev/null \
+  && cd /workspace/apps/server/cli && mv relo-cli-*.tgz relo-cli.tgz \
+  && node -e 'const fs=require("fs"),c=require("crypto");const v=require("/workspace/packages/cli/package.json").version;fs.writeFileSync("manifest.json",JSON.stringify({version:v,sha256:c.createHash("sha256").update(fs.readFileSync("relo-cli.tgz")).digest("hex")}))'
 WORKDIR /workspace/apps/server
 
 FROM pnpm AS production-deps
@@ -36,6 +45,7 @@ RUN pnpm install --prod --frozen-lockfile --ignore-scripts \
 COPY --from=build /workspace/apps/server/dist ./apps/server/dist
 COPY --from=build /workspace/apps/server/fixtures ./apps/server/fixtures
 COPY --from=build /workspace/apps/server/migrations ./apps/server/migrations
+COPY --from=build /workspace/apps/server/cli ./apps/server/cli
 COPY --from=build /workspace/apps/dashboard/dist ./apps/dashboard/dist
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
 

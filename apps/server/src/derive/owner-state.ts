@@ -1,6 +1,8 @@
 import {
   OWNER_STATE_SURFACES,
   type NeedsYouReason,
+  COMPUTER_OFFLINE_SECONDS,
+  type Absence,
   type OwnerState,
   type OwnerStateInput,
   type OwnerStateResult,
@@ -36,8 +38,37 @@ export function deriveOwnerState(input: OwnerStateInput): OwnerStateResult {
     interruptionLevel: surface.interruptionLevel,
     relevance: surface.relevance,
     apnsPriority: surface.apnsPriority,
+    ...quietOf(input,evidence,current.state,now),
+    ...absenceOf(input,evidence,current.state,now),
     nextChangeAt: nextChange(input,evidence,now),
   };
+}
+
+/** Why and since when an open work reads as Quiet; nothing for any other state. */
+function quietOf(input: OwnerStateInput,evidence: BoundEvidence,state: OwnerState,now: number): Pick<OwnerStateResult,"quietReason" | "quietSince"> {
+  if (input.work.lifecycle !== "open" || (state !== "stale" && state !== "no_signal" && state !== "stopped_responding")) return {};
+  const cause = evidence.quietCause(now);
+  return { quietReason: cause.reason,quietSince: iso(cause.since) };
+}
+
+/**
+ * The one reason an item left the screen or dimmed (workstream 6): shown only, never stored. An open work
+ * that fell quiet, stopped responding or was left unfinished whose computer has been silent longer than
+ * COMPUTER_OFFLINE_SECONDS (session not ended) reads "computer offline since its last-seen time"; else its quiet
+ * cause; a failed work reads failed. Moving, finished, dropped and owner-waiting items need no reason.
+ */
+function absenceOf(input: OwnerStateInput,evidence: BoundEvidence,state: OwnerState,now: number): { absence?: Absence } {
+  if (state === "failed") return { absence: { reason: "failed",since: input.work.finishedAt ?? iso(evidence.clock.at) } };
+  if (input.work.lifecycle !== "open") return {};
+  if (state !== "stale" && state !== "no_signal" && state !== "stopped_responding" && state !== "left_unfinished") return {};
+  const seen = input.evidence.producer === "agent_session" ? input.evidence.computerLastSeenAt : undefined;
+  if (seen && !evidence.sessionEnded && now - ms(seen) > COMPUTER_OFFLINE_SECONDS * 1000) {
+    return { absence: { reason: "computer_offline",since: seen } };
+  }
+  if (state === "stopped_responding") return { absence: { reason: "stopped_responding",since: iso(evidence.clock.at) } };
+  if (state === "left_unfinished") return { absence: { reason: "left_unfinished",since: iso(evidence.clock.at) } };
+  const cause = evidence.quietCause(now);
+  return { absence: { reason: cause.reason,since: iso(cause.since) } };
 }
 
 /** The single dispatch from a producer type to its evidence module (spec 11.1a). */
@@ -48,6 +79,9 @@ function bindEvidence(evidence: ProducerEvidence,work: DeclaredWork): BoundEvide
     case "service": return bindServiceEvidence(evidence,work);
   }
 }
+
+const roundClosedAt = (work: OwnerStateInput["work"]): number | null =>
+  work.lifecycle === "open" && work.roundClosedAt ? ms(work.roundClosedAt) : null;
 
 type Evaluated = { state: OwnerState; needsYou: NeedsYouReason | null };
 
@@ -67,12 +101,26 @@ function evaluate(input: OwnerStateInput,evidence: BoundEvidence,now: number): E
       case "dropped": return "dropped";
       case "open": case "paused": break;
     }
+    // Delivered: an open work whose last round is closed is the owner's turn for T_deliveredYourTurn, then History as
+    // delivered. When its session ended it is a finished item: the final card for T_done, then History.
+    const closedAt = roundClosedAt(work);
+    if (closedAt !== null) {
+      const turn = evidence.sessionEnded ? T.done : T.deliveredYourTurn;
+      return now - closedAt < turn ? "waiting_on_you" : "done";
+    }
+    // An open work whose session ended is treated like a finished item too: Quiet (the final card) for T_done,
+    // then no signal and History only (placementAt takes it out of Now). Shown only, never written.
+    if (work.lifecycle === "open" && evidence.sessionEnded) {
+      return now - evidence.quietCause(now).since < T.done ? "stale" : "no_signal";
+    }
     const silentFor = now - evidence.clock.at;
     if (silentFor >= T.history) return "left_unfinished";
     if (work.lifecycle === "paused") return "paused";
     const live = evidence.liveness(now);
     if (live) return live;
-    return silentFor >= T.retire ? "no_signal" : "stale";
+    // Quiet: dimmed until it has been quiet for T_retire (from when the session went idle or ended, else the last evidence).
+    const quietFor = now - evidence.quietCause(now).since;
+    return Math.max(silentFor,quietFor) >= T.retire ? "no_signal" : "stale";
   };
   return { state: state(),needsYou: null };
 }
@@ -87,7 +135,7 @@ function placementAt(input: OwnerStateInput,evidence: BoundEvidence,state: Owner
   if (surface.lockScreenSeconds !== null) {
     const from = surface.lockScreenFrom === "finished"
       ? (input.work.finishedAt === null ? null : ms(input.work.finishedAt))
-      : evidence.turnStoppedAt;
+      : roundClosedAt(input.work) ?? evidence.turnStoppedAt(now);
     const until = from === null ? null : from + surface.lockScreenSeconds * 1000;
     if (until === null || now >= until) lockScreen = "none";
     else lockScreenUntil = until;
@@ -101,6 +149,10 @@ function placementAt(input: OwnerStateInput,evidence: BoundEvidence,state: Owner
     const seen = input.work.seenAt !== null && from !== null && ms(input.work.seenAt) >= from;
     if (from === null || seen || now >= from + T.history) section = null;
   }
+  // A delivered round whose session ended is not "your turn" in Now: only the final card, then History.
+  if (state === "waiting_on_you" && roundClosedAt(input.work) !== null && evidence.sessionEnded) section = null;
+  // An open work whose session ended leaves Now with its final card (T_done): History only.
+  if (state === "no_signal" && input.work.lifecycle === "open" && evidence.sessionEnded) section = null;
   return { lockScreen,lockScreenUntil,now: section };
 }
 
@@ -120,8 +172,8 @@ function nextChange(input: OwnerStateInput,evidence: BoundEvidence,now: number):
     clock + T.fresh,clock + T.retire,clock + T.history,clock + 2 * T.history,
     ...(work.waitingSince === null ? [] : [ms(work.waitingSince) + T.retire]),
     ...(work.finishedAt === null ? [] : [ms(work.finishedAt) + T.done,ms(work.finishedAt) + T.retire,ms(work.finishedAt) + T.history]),
-    ...(evidence.turnStoppedAt === null ? [] : [evidence.turnStoppedAt + T.fresh]),
-    ...evidence.instants(),
+    ...(roundClosedAt(work) === null ? [] : [roundClosedAt(work)! + T.fresh,roundClosedAt(work)! + T.done,roundClosedAt(work)! + T.deliveredYourTurn]),
+    ...evidence.instants(now),
   ].filter((at) => at > now).sort((a,b) => a - b);
   const current = signature(input,evidence,now);
   for (const at of candidates) {

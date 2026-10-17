@@ -2,60 +2,67 @@ import ReloCore
 import SwiftUI
 import UIKit
 
-private extension Color {
-    static let techCyan = Color(red: 0x5C / 255, green: 0xE1 / 255, blue: 0xFF / 255)
-    static let techViolet = Color(red: 0x8B / 255, green: 0x7C / 255, blue: 0xFF / 255)
-    static let techHairline = Color.white.opacity(0.10)
-}
+// MARK: - Header
 
-private extension ShapeStyle where Self == LinearGradient {
-    static var techGradient: LinearGradient {
-        LinearGradient(colors: [.techCyan, .techViolet], startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-}
-
-// MARK: - Identity strip
-
-/// Source, project, topic, type and time as compact mono chips; then the title, outcome and status.
-/// Hold the header to copy the item's ID.
+/// What it is and how it stands, read top to bottom: where it runs, the title, the state the server
+/// derived (with how long it has run), then the latest status in its own words. Where, when and
+/// which computer live in Details at the bottom. Hold the header to copy the item's ID.
 struct ReloIdentityHeader: View {
     let item: InboxItem
     let title: String
     let kind: ReloMessageKind
     let status: String?
+    /// The server's state for this work (Now summary); it wins over the card's own declared state.
+    var serverOutcome: HistoryServerOutcome? = nil
     let now: Date
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var row: HistoryRow { HistoryRowProjection.row(item, now: now) }
-    private var badgeLabel: String { item.kind == .liveActivity ? (row.outcome.label ?? kind.label) : kind.label }
+    /// The badge tells the truth (U4): a work that declared it waits is Waiting, never Running.
+    private var waiting: Bool {
+        item.isDeclaredWaiting && (serverOutcome.map { $0.label == "Running" || $0.label == "Waiting" } ?? (row.outcome == .running))
+    }
+    private var badge: (label: String, color: Color, symbol: String) {
+        if waiting { return ("Waiting", .reloWarning, "hourglass") }
+        if let serverOutcome { return (serverOutcome.label, serverOutcome.color, serverOutcome.symbol) }
+        return (item.kind == .liveActivity ? (row.outcome.label ?? kind.label) : kind.label, kind.color, kind.symbol)
+    }
+    private var badgeLabel: String { badge.label }
+    private var badgeColor: Color { badge.color }
+    private var badgeSymbol: String { badge.symbol }
+    /// Running work shows its live timer next to the badge; the system ticks it. Waiting work does not run.
+    private var runningSince: Date? {
+        guard !waiting, row.outcome == .running, serverOutcome == nil || serverOutcome?.label == "Running",
+              let started = row.startedAt, started <= now else { return nil }
+        return started
+    }
 
     var body: some View {
-        let source = row.source
-        VStack(alignment: .leading, spacing: 14) {
-            ActivityChipFlow(spacing: 6) {
-                chip(source.name, symbol: source.systemImageName, tint: .primary)
-                if let project = row.project {
-                    chip(project.name, symbol: project.systemImageName, tint: projectColor(project), accent: true)
-                }
-                if let topic = row.topic { chip(topic, symbol: "number", tint: .reloSecondaryText) }
-                if let origin = row.origin { chip(origin, symbol: "laptopcomputer", tint: .reloSecondaryText) }
-                chip(row.type, symbol: nil, tint: .reloSecondaryText)
-                chip(item.createdAt.formatted(date: .abbreviated, time: .shortened), symbol: "clock", tint: .reloSecondaryText)
-            }
-            .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        VStack(alignment: .leading, spacing: 12) {
+            origin
             Text(title)
-                .font(.title.weight(.bold))
+                .font(.title2.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
             let line = typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 10))
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
             line {
-                if badgeLabel.caseInsensitiveCompare(row.type) != .orderedSame { badge }
-                if let status, !status.isEmpty {
-                    Text(status).font(.subheadline.monospaced()).foregroundStyle(Color.reloSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                if badgeLabel.caseInsensitiveCompare(row.type) != .orderedSame { badgeView }
+                if let runningSince {
+                    HStack(spacing: 4) {
+                        Text("for")
+                        Text(timerInterval: runningSince...Date.distantFuture, countsDown: false, showsHours: true)
+                            .monospacedDigit()
+                    }
+                    .font(.subheadline).foregroundStyle(Color.reloSecondaryText)
+                    .fixedSize()
                 }
+            }
+            if let status, !status.isEmpty {
+                Text(status).font(.body).foregroundStyle(Color.primary.opacity(0.86))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -65,33 +72,37 @@ struct ReloIdentityHeader: View {
         }
     }
 
-    private var badge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: kind.symbol).font(.caption.weight(.bold))
-            Text(badgeLabel.uppercased()).font(.caption.monospaced().weight(.bold)).tracking(0.8)
+    /// Source · project › session, as on the cards; the project carries its color.
+    private var origin: some View {
+        let source = row.source
+        return ActivityChipFlow(spacing: 4) {
+            SourceMark(name: source.name, fallbackSymbol: source.systemImageName, size: 17)
+            if let project = row.project {
+                Text("·").accessibilityHidden(true)
+                Text(project.name).foregroundStyle(projectColor(project))
+            }
+            if let topic = row.topic {
+                ReloChevron()
+                Text(topic)
+            }
         }
-        .foregroundStyle(kind.color)
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background { Capsule().fill(kind.color.opacity(0.12)) }
-        .overlay { Capsule().strokeBorder(kind.color.opacity(0.35), lineWidth: 0.5) }
-        .shadow(color: kind.color.opacity(0.25), radius: 8)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(badgeLabel)
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(Color.reloSecondaryText)
+        .accessibilityElement(children: .combine)
     }
 
-    private func chip(_ text: String, symbol: String?, tint: Color, accent: Bool = false) -> some View {
-        HStack(spacing: 5) {
-            if let symbol { Image(systemName: symbol).font(.caption2.weight(.semibold)) }
-            Text(text).font(.caption.monospaced()).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+    private var badgeView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: badgeSymbol).font(.caption.weight(.bold))
+            Text(badgeLabel).font(.subheadline.weight(.semibold))
         }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background { RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(0.04)) }
-        .overlay {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .strokeBorder(accent ? tint.opacity(0.4) : Color.techHairline, lineWidth: 0.5)
-        }
-        .accessibilityElement(children: .combine)
+        .foregroundStyle(badgeColor)
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background { Capsule().fill(badgeColor.opacity(0.14)) }
+        .overlay { Capsule().strokeBorder(badgeColor.opacity(0.35), lineWidth: 0.5) }
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(badgeLabel)
     }
 
     private func projectColor(_ project: InboxProjectIdentity) -> Color {
@@ -137,171 +148,162 @@ private struct ActivityChipFlow: Layout {
     }
 }
 
-// MARK: - Mission timeline
+// MARK: - Plan card
 
-/// The card's named steps as a vertical rail: done, the one in progress, and what is still ahead.
-/// Without steps it falls back to one progress readout.
+/// The work's plan (plan 12b): one row for rounds, steps and substeps; the header counts, the list points;
+/// only the current step opens; folds keep a long plan under a screen; tapping a step opens its sheet.
+/// Without a plan it falls back to one progress readout.
 struct ReloMissionTimeline: View {
     let item: InboxItem
     let steps: [LiveActivityDisplayPresentation.Step]
+    var window: LiveActivityDisplayPresentation.StepWindow = .whole
+    /// The plan arranged in rounds and nested steps; built from `steps` when the whole plan did not arrive.
+    var outline: PlanOutline? = nil
     let progress: Double?
     let status: String
     let now: Date
+    /// How the work stands, from the server (the same as the badge): a paused work's plan stops at its step.
+    var serverOutcome: HistoryServerOutcome? = nil
+    /// The work declared it waits on something: its current step shows a pause (U4).
+    var waiting = false
+    /// The work's card updates sent while a step was current (4.6), newest first.
+    var updates: (String) -> [PlanStepUpdate] = { _ in [] }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var revealed = false
+    @State private var toggledRounds: Set<Int> = []
+    @State private var earlierExpanded = false
+    @State private var expandedFolds: Set<String> = []
+    @State private var openedSteps: Set<String> = []
+    @State private var sheetStep: SheetStep?
+
+    private struct SheetStep: Identifiable { let id: String }
 
     private var row: HistoryRow { HistoryRowProjection.row(item, now: now) }
     private var outcome: HistoryRow.Outcome { row.outcome }
+    private var paused: Bool { serverOutcome?.label == "Paused" }
+    private var quiet: Bool { serverOutcome?.label == "Quiet" }
+    private var finishedWork: Bool { outcome == .done }
 
-    private enum Phase { case done, current, stopped, pending, ended }
-
-    private func phase(_ step: LiveActivityDisplayPresentation.Step) -> Phase {
-        if outcome == .done { return .done }
-        switch step.state {
-        case .complete: return .done
-        case .pending: return .pending
-        case .current:
-            switch outcome {
-            case .running: return .current
-            case .stopped: return .stopped
-            default: return .ended
-            }
+    private var standing: PlanProgress.Standing {
+        if paused { return .paused }
+        switch outcome {
+        case .done: return .done
+        case .stopped, .expired, .ended, .replaced: return .stopped
+        default: return .moving
         }
     }
 
+    /// The outline to draw: the whole plan, else the steps the card carries.
+    private var shown: PlanOutline? {
+        if let outline { return standing == .stopped ? outline.unskipped() : outline }
+        guard !steps.isEmpty else { return nil }
+        return PlanOutline.make(entries: steps.map {
+            PlanOutline.Entry(id: $0.id, label: $0.label, state: $0.state, readable: !ReloSealedCards.isPlaceholderStep($0.label))
+        }, rounds: nil)
+    }
+
+    private var header: String? {
+        // The server's count whenever the card carries one; counted from the outline only without it.
+        if shown != nil, let server = window.progress { return server.header(standing) }
+        if let shown, let counted = outline == nil ? LiveActivityPlanDisplay.progress(LiveActivityPlanDisplay.steps(steps), window: window)
+            : PlanProgress.make(outline: shown, stopped: standing == .stopped) { return counted.header(standing) }
+        return nil
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 12) {
             sectionHeader
-            if steps.isEmpty { progressReadout } else { rail }
-            Rectangle().fill(Color.techHairline).frame(height: 0.5)
-            telemetry
+            if let shown { plan(shown) } else { progressReadout }
         }
         .padding(ReloLayout.cardInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .reloCard()
-        .overlay(alignment: .top) {
-            Rectangle().fill(.techGradient).frame(height: 1).opacity(0.55).padding(.horizontal, 24)
+        .sheet(item: $sheetStep) { target in
+            if let shown, let node = shown.node(target.id) {
+                PlanStepSheet(node: node, outline: shown, mark: mark(for: node), finishedWork: finishedWork,
+                              updates: updates(node.id), now: now)
+            }
         }
-        .onAppear { revealed = true }
     }
 
     private var sectionHeader: some View {
-        HStack {
-            Text(steps.isEmpty ? "TELEMETRY" : "MISSION")
-                .font(.caption.monospaced().weight(.bold)).tracking(1.4).foregroundStyle(.techGradient)
-            Spacer(minLength: 8)
-            // The plan line, not a ratio: plans grow (2.15).
-            if outcome == .running, let line = LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(steps)) {
-                Text(line).font(.caption.weight(.semibold))
+        HStack(alignment: .firstTextBaseline) {
+            Text(shown == nil ? "Progress" : "Plan")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(Color.reloSecondaryText)
+            Spacer(minLength: 12)
+            // The header counts, the list points (U3): never truncated.
+            if let header {
+                Text(header).font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(Color.reloSecondaryText)
-                    .lineLimit(1).truncationMode(.tail)
-                    .accessibilityLabel(line)
+                    .multilineTextAlignment(.trailing).fixedSize(horizontal: false, vertical: true)
             }
         }
+        .opacity(quiet ? 0.6 : 1)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isHeader)
     }
 
-    private var rail: some View {
+    // MARK: Marks and context
+
+    private func mark(for node: PlanOutline.Node) -> PlanMark {
+        switch node.state {
+        case .complete: return .done
+        case .skipped: return .skipped
+        case .pending: return .open
+        case .current:
+            switch outcome {
+            case .running, .waitingForYou: return waiting && !paused ? .waiting : (paused ? .paused : .current)
+            case .stopped: return .stopped
+            default: return paused ? .paused : .open
+            }
+        }
+    }
+
+    private func context(_ outline: PlanOutline) -> PlanCardContext {
+        PlanCardContext(
+            outline: outline, finishedWork: finishedWork, indent: typeSize.isAccessibilitySize ? 12 : 30,
+            markFor: { mark(for: $0) },
+            timeLabel: { $0.state == .complete ? PlanOutline.durationLabel($0.duration) : nil },
+            select: { sheetStep = SheetStep(id: $0.id) },
+            toggleStep: { id in animated { if openedSteps.contains(id) { openedSteps.remove(id) } else { openedSteps.insert(id) } } },
+            openedByOwner: openedSteps,
+            expandFold: { id in animated { _ = expandedFolds.insert(id) } },
+            items: { outline.items(in: $0, expandedFolds: expandedFolds, openedSteps: openedSteps) },
+            toggleRound: { n in animated { if toggledRounds.contains(n) { toggledRounds.remove(n) } else { toggledRounds.insert(n) } } },
+            roundFolded: { outline.startsFolded($0) != toggledRounds.contains($0.n) },
+            expandEarlier: { animated { earlierExpanded = true } })
+    }
+
+    private func animated(_ change: () -> Void) {
+        if reduceMotion { change() } else { withAnimation(.easeInOut(duration: 0.3), change) }
+    }
+
+    // MARK: The plan
+
+    @ViewBuilder private func plan(_ outline: PlanOutline) -> some View {
+        let ctx = context(outline)
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                let phase = phase(step)
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(spacing: 0) {
-                        marker(phase)
-                        if index < steps.count - 1 {
-                            Rectangle().fill(railFill(from: phase, next: self.phase(steps[index + 1])))
-                                .frame(width: 1).frame(maxHeight: .infinity)
-                                .scaleEffect(x: 1, y: revealed || reduceMotion ? 1 : 0, anchor: .top)
-                                .animation(reduceMotion ? nil : .easeOut(duration: 0.3).delay(0.1 + Double(index) * 0.08), value: revealed)
-                        }
-                    }
-                    .frame(width: 20)
-                    stepText(index: index, step: step, phase: phase)
-                        .padding(.bottom, index < steps.count - 1 ? 14 : 0)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Step \(index + 1) of \(steps.count), \(step.label), \(stateWord(phase))")
+            if self.outline == nil, window.before > 0 {
+                hiddenRow(window.before == 1 ? "1 earlier step done" : "\(window.before) earlier steps done")
+            }
+            if outline.hasRoundSections {
+                PlanRoundsView(slots: outline.roundSlots(earlierExpanded: earlierExpanded), ctx: ctx)
+            } else if let round = outline.currentRound {
+                PlanItemsView(items: ctx.items(round), ctx: ctx)
+            }
+            if self.outline == nil, window.after > 0 {
+                hiddenRow(window.after == 1 ? "1 more step" : "\(window.after) more steps")
             }
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: outline)
     }
 
-    private func stepText(index: Int, step: LiveActivityDisplayPresentation.Step, phase: Phase) -> some View {
-        let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 10))
-        return layout {
-            Text(String(format: "%02d", index + 1)).font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
-            Text(step.label)
-                .font(.subheadline.weight(phase == .current || phase == .stopped ? .semibold : .regular))
-                .foregroundStyle(labelColor(phase))
-                .fixedSize(horizontal: false, vertical: true)
-            if !typeSize.isAccessibilitySize { Spacer(minLength: 6) }
-            Text(stateWord(phase).uppercased()).font(.caption2.monospaced().weight(.semibold)).tracking(0.8)
-                .foregroundStyle(tagColor(phase))
-        }
-        .frame(minHeight: 20, alignment: .top)
-    }
-
-    private func stateWord(_ phase: Phase) -> String {
-        switch phase {
-        case .done: "done"
-        case .current: "current"
-        case .stopped: "stopped"
-        case .pending: "pending"
-        case .ended: outcome == .expired ? "expired" : "ended"
-        }
-    }
-
-    private func labelColor(_ phase: Phase) -> Color {
-        switch phase {
-        case .pending: .reloSecondaryText
-        case .stopped: .reloWarning
-        default: .primary
-        }
-    }
-
-    private func tagColor(_ phase: Phase) -> Color {
-        switch phase {
-        case .done: outcome == .done ? .reloDone : .techCyan
-        case .current: .techViolet
-        case .stopped: .reloWarning
-        default: Color.reloSecondaryText.opacity(0.7)
-        }
-    }
-
-    private func railFill(from: Phase, next: Phase) -> AnyShapeStyle {
-        if from == .done && (next == .done || next == .current || next == .stopped) {
-            return outcome == .done ? AnyShapeStyle(Color.reloDone.opacity(0.6))
-                : AnyShapeStyle(LinearGradient(colors: [.techCyan.opacity(0.8), .techViolet.opacity(0.8)], startPoint: .top, endPoint: .bottom))
-        }
-        return AnyShapeStyle(Color.white.opacity(0.12))
-    }
-
-    @ViewBuilder private func marker(_ phase: Phase) -> some View {
-        ZStack {
-            switch phase {
-            case .done:
-                Circle().fill(outcome == .done ? AnyShapeStyle(Color.reloDone) : AnyShapeStyle(.techGradient))
-                    .shadow(color: (outcome == .done ? Color.reloDone : Color.techCyan).opacity(0.5), radius: 5)
-                Image(systemName: "checkmark").font(.system(size: 8, weight: .black)).foregroundStyle(Color.reloCanvas)
-            case .current:
-                ActivityStepPulse()
-                Circle().strokeBorder(.techGradient, lineWidth: 1.5)
-                Circle().fill(Color.techViolet).padding(4.5).shadow(color: Color.techViolet.opacity(0.8), radius: 5)
-            case .stopped:
-                Circle().strokeBorder(Color.reloWarning, lineWidth: 1.5)
-                Circle().fill(Color.reloWarning.opacity(0.18))
-                Image(systemName: "exclamationmark").font(.system(size: 9, weight: .black)).foregroundStyle(Color.reloWarning)
-            case .pending, .ended:
-                Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.75)
-            }
-        }
-        .frame(width: 18, height: 18)
-        .padding(.top, 1)
-        .scaleEffect(revealed || reduceMotion ? 1 : 0.5)
-        .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.65), value: revealed)
-        .accessibilityHidden(true)
+    /// Steps of a longer plan that the card did not carry: counted, not listed.
+    private func hiddenRow(_ text: String) -> some View {
+        Text(text).font(.footnote).foregroundStyle(Color.reloSecondaryText)
+            .padding(.leading, 30).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var progressReadout: some View {
@@ -316,8 +318,8 @@ struct ReloMissionTimeline: View {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.white.opacity(0.07))
-                        Capsule().fill(.techGradient).frame(width: max(4, proxy.size.width * min(max(progress, 0), 1)))
-                            .shadow(color: Color.techCyan.opacity(0.45), radius: 5)
+                        Capsule().fill(LinearGradient(colors: [ReloHoloTheme.cyan, ReloHoloTheme.violet], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(4, proxy.size.width * min(max(progress, 0), 1)))
                     }
                 }
                 .frame(height: 5)
@@ -332,40 +334,6 @@ struct ReloMissionTimeline: View {
         }
     }
 
-    // MARK: Telemetry
-
-    private var telemetry: some View {
-        let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
-        return layout {
-            cell("ELAPSED") { elapsed }
-            if let updates = row.updates { cell("UPDATES") { Text("\(updates)") } }
-            if let started = row.startedAt {
-                cell("STARTED") { Text(started, format: .dateTime.hour().minute().second()) }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder private var elapsed: some View {
-        if let duration = row.duration {
-            Text(Self.format(duration))
-        } else if outcome == .running, let started = row.startedAt, started <= now {
-            Text(timerInterval: started...Date.distantFuture, countsDown: false, showsHours: true)
-        } else {
-            Text("--:--")
-        }
-    }
-
-    private func cell<Value: View>(_ label: String, @ViewBuilder value: () -> Value) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.monospaced().weight(.semibold)).tracking(1.0).foregroundStyle(Color.reloSecondaryText)
-            value().font(.callout.monospacedDigit().weight(.medium))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-
     static func format(_ seconds: TimeInterval) -> String {
         let total = Int(seconds.rounded())
         let (h, m, s) = (total / 3600, total % 3600 / 60, total % 60)
@@ -373,24 +341,16 @@ struct ReloMissionTimeline: View {
     }
 }
 
-/// A slow ring around the current step; static with Reduce Motion.
-private struct ActivityStepPulse: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expanded = false
-    var body: some View {
-        Circle().stroke(Color.techCyan.opacity(reduceMotion ? 0.25 : (expanded ? 0 : 0.6)), lineWidth: 1)
-            .scaleEffect(reduceMotion ? 1.35 : (expanded ? 2.0 : 1))
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { expanded = true }
-            }
-    }
-}
-
 extension LiveActivityDisplayPresentation {
     /// The card's steps with the labels this phone opened (ReloCore `InboxItem.timelineSteps`).
     func timelineSteps(for item: InboxItem) -> [Step] {
-        if case let .steps(items) = visual { return item.timelineSteps(presented: items) }
+        if case let .steps(items, _) = visual { return item.timelineSteps(presented: items) }
         return item.timelineSteps(presented: [])
+    }
+
+    /// Steps of a longer plan that the card does not carry.
+    var stepWindow: StepWindow {
+        if case let .steps(_, window) = visual { return window }
+        return .whole
     }
 }

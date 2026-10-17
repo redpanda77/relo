@@ -55,19 +55,20 @@ struct OnboardingView: View {
             }
             server
             VStack(spacing: 10) {
-                Button(action: signIn) {
+                Button { signIn() } label: {
                     HStack(spacing: 8) {
-                        if model.isAuthenticating { ProgressView().tint(.white) }
+                        if model.isAuthenticating { ProgressView().tint(.reloOnAction) }
                         Text(model.isAuthenticating ? "Signing in…" : "Sign in")
                     }
-                    .font(.headline).foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 54)
-                    .background { ReloSignInFill(shimmers: hasServer && !model.isAuthenticating) }
-                    .shadow(color: ReloHoloTheme.blue.opacity(hasServer ? 0.4 : 0), radius: 18, y: 6)
-                    .opacity(hasServer ? 1 : 0.45)
                 }
-                .buttonStyle(ReloPressStyle())
+                .buttonStyle(.reloPrimary)
                 .disabled(!hasServer || model.isAuthenticating)
+                Button { signIn(signUp: true) } label: {
+                    Text("Create account")
+                }
+                .buttonStyle(.reloSecondary)
+                .disabled(!hasServer || model.isAuthenticating)
+                .accessibilityIdentifier("create-account")
                 Text("Sign-in opens in the browser. You'll come straight back here.")
                     .font(.footnote).foregroundStyle(Color.reloSecondaryText)
                     .multilineTextAlignment(.center)
@@ -119,12 +120,12 @@ struct OnboardingView: View {
         return url.appendingPathComponent("dashboard")
     }
 
-    private func signIn() {
+    private func signIn(signUp: Bool = false) {
         guard hasServer, !model.isAuthenticating else { return }
         if model.chosenServerOrigin?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) != normalizedOrigin {
             guard model.selectServerOrigin(normalizedOrigin) else { return }
         }
-        Task { _ = await model.signInWithBrowser() }
+        Task { _ = await model.signInWithBrowser(signUp: signUp) }
     }
 
     /// Where this iPhone signs in: typed by the owner, never filled in for them. The card shows the
@@ -132,13 +133,11 @@ struct OnboardingView: View {
     private var server: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("YOUR SERVER")
-                    .font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(2)
-                    .foregroundStyle(Color.reloSecondaryText)
+                ReloMonoLabel("Your server")
                 Spacer()
                 if let dashboardURL {
                     Link(destination: dashboardURL) {
-                        Text("DASHBOARD ↗").font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(2)
+                        ReloMonoLabel("Dashboard ↗", color: .reloInteractive)
                     }
                     .tint(.reloInteractive).frame(minHeight: 32)
                     .accessibilityLabel("Open dashboard")
@@ -159,8 +158,7 @@ struct OnboardingView: View {
                     if hasServer {
                         Text("Change").font(.subheadline.weight(.medium)).foregroundStyle(Color.reloInteractive)
                     } else {
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
-                            .foregroundStyle(Color.reloSecondaryText)
+                        ReloChevron()
                     }
                 }
                 .frame(minHeight: 44).contentShape(Rectangle())
@@ -235,7 +233,7 @@ private struct ServerAddressSheet: View {
         }
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)
-        .presentationBackground(.regularMaterial)
+        .presentationBackground(Color.reloSurface)
         .onAppear { focused = true }
     }
 
@@ -272,15 +270,13 @@ private struct ReloWelcomeStage: View {
                 .frame(width: 286, height: 286)
             VStack(spacing: 4) {
                 Text("relo")
-                    .font(.system(size: 60, weight: .bold, design: .rounded)).tracking(-1)
+                    .font(.system(size: 60, weight: .bold, design: .rounded)).tracking(-1) // design: the wordmark
                     .foregroundStyle(.white)
                     .shadow(color: ReloHoloTheme.accent(for: state).opacity(0.55), radius: 16)
                 if let status {
                     HStack(spacing: 6) {
                         Circle().fill(ReloHoloTheme.accent(for: state)).frame(width: 6, height: 6)
-                        Text(status)
-                            .font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(2)
-                            .foregroundStyle(ReloHoloTheme.accent(for: state))
+                        ReloMonoLabel(status, color: ReloHoloTheme.accent(for: state))
                             .contentTransition(.numericText())
                     }
                     .lineLimit(1).minimumScaleFactor(0.6)
@@ -327,48 +323,5 @@ private struct ReloWelcomeStage: View {
         let now = Date.now
         waves = waves.filter { now.timeIntervalSince($0.at) < 2.6 }.suffix(7)
             + [ReloOrbWave(origin: point, at: now, strength: strength)]
-    }
-}
-
-/// The Sign in fill: the deck's blue into violet, deep enough for white text, with a highlight
-/// that crosses now and then. The highlight is one gradient spanning the whole capsule whose
-/// start and end points move (no band view with edges), so the light fades in and out softly.
-private struct ReloSignInFill: View {
-    var shimmers = true
-    /// 0: the highlight waits off the leading edge; 1: it has left past the trailing edge.
-    @State private var phase: CGFloat = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let deepBlue = Color(red: 0x2A / 255, green: 0x5F / 255, blue: 0xE8 / 255)
-    private static let deepViolet = Color(red: 0x66 / 255, green: 0x50 / 255, blue: 0xE6 / 255)
-    /// The highlight's width, as a share of the gradient line.
-    private let band: CGFloat = 0.3
-
-    var body: some View {
-        Capsule()
-            .fill(LinearGradient(colors: [Self.deepBlue, Self.deepViolet], startPoint: .leading, endPoint: .trailing))
-            .overlay {
-                // Both points travel from before the leading edge to beyond the trailing one, the
-                // end leading the start by one band, so the highlight is never cut by the shape.
-                LinearGradient(stops: [.init(color: .white.opacity(0), location: 0),
-                                       .init(color: .white.opacity(0.3), location: 0.5),
-                                       .init(color: .white.opacity(0), location: 1)],
-                               startPoint: UnitPoint(x: -band + phase * (1 + band), y: 0.2),
-                               endPoint: UnitPoint(x: phase * (1 + band), y: 0.8))
-                    .clipShape(Capsule())
-                    .blendMode(.plusLighter)
-                    .opacity(shimmers ? 1 : 0)
-            }
-            .overlay { Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(0.3), .clear],
-                                                             startPoint: .top, endPoint: .center)) }
-            .task(id: shimmers) {
-                guard shimmers, !reduceMotion else { return }
-                try? await Task.sleep(for: .seconds(1.2))
-                while !Task.isCancelled {
-                    var reset = Transaction(); reset.disablesAnimations = true
-                    withTransaction(reset) { phase = 0 }
-                    withAnimation(.easeInOut(duration: 1.4)) { phase = 1 }
-                    try? await Task.sleep(for: .seconds(5))
-                }
-            }
     }
 }

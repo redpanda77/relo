@@ -162,6 +162,11 @@ public struct OwnerStateResult: Codable, Equatable, Hashable, Sendable {
     public var relevance: Double
     public var apnsPriority: Int
     public var nextChangeAt: Date?
+    /// Why a quiet work is quiet and since when: the server puts both on `owner` (absent from older servers).
+    public var quietReason: QuietReason? = nil
+    public var quietSince: Date? = nil
+    /// Why this item left the screen or dimmed (the server's derivation); absent from older servers.
+    public var absence: Absence? = nil
 
     public init(state: OwnerState, needsYou: NeedsYouReason? = nil, evidenceAt: Date, evidenceSource: String = "declared",
                 staleDate: Date, lockScreen: LockScreenPlacement, lockScreenUntil: Date? = nil, now: NowSection? = nil,
@@ -180,6 +185,16 @@ public struct NowItem: Codable, Equatable, Hashable, Identifiable, Sendable {
         public var done: Int
         public var total: Int
         public var current: String?
+        /// Which top-level step is current (from 1) and how far it is (0 to 1), from the server's plan wire.
+        public var currentIndex: Int?
+        public var fill: Double?
+
+        public init(done: Int, total: Int, current: String? = nil, currentIndex: Int? = nil, fill: Double? = nil) {
+            self.done = done; self.total = total; self.current = current; self.currentIndex = currentIndex; self.fill = fill
+        }
+
+        /// The bar for these counts: one segment per top-level step.
+        public var bar: PlanBar { PlanBar.make(done: done, total: total, current: currentIndex, fill: fill) }
     }
 
     public struct Question: Codable, Equatable, Hashable, Sendable {
@@ -205,8 +220,12 @@ public struct NowItem: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var title: String
     public var status: String?
     public var sourceName: String?
+    /// The icon of the computer this work runs on; nil when the server names none.
+    public var computerIcon: ComputerIcon?
     public var project: String?
     public var steps: Steps?
+    /// The plan's count as the server computes it (top-level steps, the current one and its fraction); preferred over `steps`.
+    public var progress: PlanProgress?
     public var producer: ProducerType
     public var sessionId: String?
     public var notificationId: String?
@@ -214,9 +233,34 @@ public struct NowItem: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var declaredAt: Date
     public var question: Question?
     public var owner: OwnerStateResult
+    /// Why a Quiet work is quiet and since when (the server derives both; absent from older servers).
+    public var quietReason: QuietReason?
+    public var quietSince: Date?
     public var sealed: Sealed?
+    /// What the last closed round delivered, when the work waits on the owner after a round (ADR 0012):
+    /// sent in the clear by the server for a readable work, else opened from the sealed card (the phase
+    /// `r<n>` outcome). Display only; the server derives that it is the owner's turn.
+    public var roundOutcome: String?
+    /// The number of that round (the sealed phase `r<n>`), so the row can say "Round 2 delivered".
+    public var roundNumber: Int?
 
     public var chip: OwnerChip? { owner.chip }
+    /// The plan the row shows: the server's `progress` when it sent one (top-level steps only), else the older `steps`.
+    /// The label stays the opened one (`steps.current`) when this phone has it.
+    public var planSteps: Steps? {
+        guard let progress, progress.total > 0 else { return steps }
+        return Steps(done: progress.done, total: progress.total, current: steps?.current ?? progress.stepLabel,
+                     currentIndex: progress.current, fill: progress.fill)
+    }
+    /// The quiet reason and time wherever the server put them (on `owner` today).
+    public var quietWhy: QuietReason? { owner.quietReason ?? quietReason }
+    public var quietFrom: Date? { owner.quietSince ?? quietSince }
+
+    /// The Quiet status line (`Session idle since 3:12 PM`); nil unless the work is Quiet and the server said why.
+    public func quietLine(locale: Locale = .current, timeZone: TimeZone = .current) -> String? {
+        guard owner.chip == .quiet else { return nil }
+        return QuietWording.line(reason: quietWhy, since: quietFrom ?? owner.evidenceAt, locale: locale, timeZone: timeZone)
+    }
 }
 
 public struct SessionRow: Codable, Equatable, Hashable, Identifiable, Sendable {
@@ -224,6 +268,8 @@ public struct SessionRow: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var source: String?
     public var project: String?
     public var computer: String?
+    /// The computer's icon; nil when the session has no work on a computer.
+    public var computerIcon: ComputerIcon?
     /// Observed phase with hooks; nil without hooks (show "last seen").
     public var phase: SessionPhase?
     public var observed: Bool
@@ -238,6 +284,12 @@ public struct SessionRow: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// The session's name (the title the owner or Claude gave it), opened on this phone from
     /// `sealedNames`; never sent by the server in the clear.
     public var title: String?
+    /// How full the session's context window is (0-100); nil when the computer does not report it.
+    public var contextPct: Int?
+    /// Tokens in the session's context window, read by a hook where no status line runs; nil when not reported.
+    public var contextTokens: Int?
+    /// What the session has cost so far, in US dollars; nil when not reported.
+    public var costUsd: Double?
 
     public var isFoldedIdle: Bool { fold == "idle" }
     public var sourceLabel: String? { source.map(SessionSource.label) }
@@ -342,6 +394,10 @@ public extension NowItem {
             steps.current = label.map { String($0.prefix(80)) }
             item.steps = steps
         }
+        if item.roundOutcome == nil, let last = card?.phases?.last, let outcome = last.outcome {
+            item.roundOutcome = ReloWork.text(outcome).map { String($0.prefix(200)) }
+            if last.id.hasPrefix("r") { item.roundNumber = Int(last.id.dropFirst()) }
+        }
         return item
     }
 }
@@ -391,10 +447,51 @@ public struct NowSummary: Codable, Equatable, Hashable, Sendable {
         return summary
     }
     public func item(id: String) -> NowItem? { allItems.first { $0.id == id } }
+
+    /// The summary without one work (it was just ended on this phone).
+    public func removingWork(_ workID: String) -> NowSummary {
+        var summary = self
+        summary.needsYou.removeAll { $0.id == workID }
+        summary.recent.removeAll { $0.id == workID }
+        summary.waitingOnYou.removeAll { $0.id == workID }
+        summary.running.removeAll { $0.id == workID }
+        summary.quiet.removeAll { $0.id == workID }
+        summary.paused.removeAll { $0.id == workID }
+        return summary
+    }
 }
 
 /// `GET /api/now?since=<ISO>`: the server's Now summary for this device's account.
 /// `since` is the owner's last look on this device (a device fact, category E).
 public protocol NowSource: Sendable {
     func fetchNow(since: Date?) async throws -> NowSummary
+}
+/// The optional context and cost facts of a session, as one display line ("62% context · $4.10", or "282k context"
+/// when only the token count is known).
+public enum SessionUsage {
+    /// Context at or above this share reads in the attention tone.
+    public static let heavyContextPct = 80
+
+    public static func line(contextPct: Int?, contextTokens: Int? = nil, costUsd: Double?, locale: Locale = .current) -> String? {
+        var parts: [String] = []
+        if let contextPct {
+            parts.append("\(min(max(contextPct, 0), 100))% context")
+        } else if let contextTokens, contextTokens >= 0 {
+            parts.append("\(tokenCount(contextTokens)) context")
+        }
+        if let costUsd, costUsd >= 0, costUsd.isFinite {
+            parts.append(costUsd.formatted(.currency(code: "USD").locale(locale)))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Under 1,000 exact ("850"), under a million in thousands ("282k"), else in millions ("1.2M").
+    static func tokenCount(_ tokens: Int) -> String {
+        if tokens < 1_000 { return "\(tokens)" }
+        if tokens < 1_000_000 { return "\(tokens / 1_000)k" }
+        let tenths = tokens / 100_000
+        return tenths % 10 == 0 ? "\(tenths / 10)M" : "\(tenths / 10).\(tenths % 10)M"
+    }
+
+    public static func isHeavy(contextPct: Int?) -> Bool { (contextPct ?? 0) >= heavyContextPct }
 }

@@ -16,13 +16,14 @@ describe("EncryptionPolicyCard", () => {
     const select = screen.getByLabelText("Require encryption")
     fireEvent.change(select, { target: { value: "on" } })
     await waitFor(() => expect(service.save).toHaveBeenCalledWith("on"))
-    expect(await screen.findByText(/must seal text/)).toBeTruthy()
+    // The status line crossfades: the outgoing words can share the frame with the new ones.
+    expect((await screen.findAllByText(/must seal text/)).length).toBeGreaterThan(0)
 
     fireEvent.change(select, { target: { value: "off" } })
     expect(service.save).toHaveBeenCalledTimes(1)
     fireEvent.click(await screen.findByRole("button", { name: "Turn off" }))
     await waitFor(() => expect(service.save).toHaveBeenCalledWith("off"))
-    expect(await screen.findByText(/may send readable text/)).toBeTruthy()
+    expect((await screen.findAllByText(/may send readable text/)).length).toBeGreaterThan(0)
   })
 
   test("renders nothing on a server without the setting", async () => {

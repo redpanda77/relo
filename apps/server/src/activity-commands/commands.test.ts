@@ -5,11 +5,11 @@ import { bootstrapOwner } from "../bootstrap.js";
 import { hashToken } from "../auth.js";
 import { createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
-import { createWebhookService } from "../services.js";
+import { createWebhookService } from "../webhooks/admin.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
 suite("Activity command adapter chronology",()=>{
-  let db:Database,principalId:string,hook:string;
+  let db:Database,principalId:string,hookSecret:string;
   const owner="activity_command_owner_abcdefghijklmnopqrstuvwxyz";
   beforeAll(async()=>{db=createDatabase(process.env.TEST_DATABASE_URL!);await migrate(db);});
   afterAll(async()=>db.end());
@@ -19,13 +19,13 @@ suite("Activity command adapter chronology",()=>{
     await db.query(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,app_version,app_build,
       os_version,apns_environment,notification_authorization,live_activity_authorization,live_activity_push_to_start_token)
       VALUES ($1,$2,$3,'Chronology','com.example.fixture','1','1','27','sandbox','authorized','authorized','fixture-start')`,[principalId,randomUUID(),randomUUID()]);
-    hook=new URL((await createWebhookService(db,principalId,"Chronology","http://127.0.0.1:8180")).webhookUrl).pathname;
+    hookSecret=(await createWebhookService(db,principalId,"Chronology","http://127.0.0.1:8180")).secret;
   });
   const before=(seconds:number)=>new Date(Date.now()-seconds*1000).toISOString();
   async function send(adapter:string,suffix:string,body:unknown,method="POST",key=randomUUID()){
     const response=await createApp(db,{apnsMode:"sandbox",credentialDerivationSecret:"activity-command-secret-with-at-least-32-characters"})
-      .request(`${adapter==="service"?hook:"/api"}/live-activities${suffix}`,{method,
-        headers:{authorization:`Bearer ${owner}`,"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body)});
+      .request(`${adapter==="service"?"/hooks":"/api"}/live-activities${suffix}`,{method,
+        headers:{authorization:`Bearer ${adapter==="service"?hookSecret:owner}`,"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body)});
     return {status:response.status,body:await response.json() as {activity:{id:string;sequence:number};queued:number;replayed?:boolean;error?:string}};
   }
   test.each(["credential","service"])("%s delayed start preserves its original delivery deadline and exact replay",async adapter=>{
@@ -100,4 +100,11 @@ suite("Activity command adapter chronology",()=>{
     expect(row.stale_at.getTime()).toBe(Date.parse(occurredAt)+180000);
   });
 
+  test.each(["credential","service"])("%s: a raw API card with steps keeps its own percentage when an update brings steps (only a work's card drops it)",async adapter=>{
+    const first=await send(adapter,"",{title:"Raw",status:"Working",progress:0.6,steps:{labels:["A","B","C"],current:1}});expect(first.status).toBe(201);
+    const progress=async()=>Number((await db.query("SELECT progress FROM live_activities WHERE id=$1",[first.body.activity.id.slice(4)])).rows[0].progress);
+    expect(await progress()).toBeCloseTo(0.6);
+    const updated=await send(adapter,`/${first.body.activity.id}`,{status:"Next",steps:{labels:["A","B","C"],current:2}},"PATCH");expect(updated.status).toBe(200);
+    expect(await progress()).toBeCloseTo(0.6);
+  });
 });

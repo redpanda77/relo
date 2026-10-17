@@ -15,7 +15,7 @@ import {  requireScope } from "../auth.js";
 import { internalId, publicId } from "../ids.js";
 import { createInteractionSchema,  interactionSchema,  notificationRequestSchema,  sealedNotificationRequestSchema } from "../schemas.js";
 import { checkSealedNotice,SEALED_BODY,SEALED_TITLE,sealedQuestionRequest,unsignedSealed } from "../sealed-content.js";
-import { END_TO_END_REQUIRED,endToEndRequired } from "../end-to-end-policy.js";
+import { refuseReadable } from "../content-policy.js";
 import {
   
   markActivityPresentationApplied } from "../activity-presentation-leases.js";
@@ -46,8 +46,7 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     const sealed = raw !== null && typeof raw === "object" && "sealed" in raw
       ? sealedNotificationRequestSchema.parse(raw) : null;
     const input = sealed ?? notificationRequestSchema.parse(raw);
-    if (!sealed && context.get("auth").credentialKind === "principal"
-      && await endToEndRequired(db,context.get("auth").principalId)) return context.json(END_TO_END_REQUIRED,409);
+    if (!sealed) { const refused = await refuseReadable(db,context.get("auth").principalId); if (refused) return context.json(refused,409); }
     if (!notificationContentCipher) return context.json({ error: "content_encryption_unavailable" },503);
     const sealedCheck = sealed ? checkSealedNotice(sealed.sealed) : null;
     if (sealedCheck && !sealedCheck.ok) return context.json({ error: sealedCheck.error },400);
@@ -104,8 +103,7 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     try { await assertQuestionWait(db,parsed.expiresInSeconds); }
     catch (error) { if (error instanceof QuestionWaitTooLongError) return context.json(questionWaitTooLongBody(error),400); throw error; }
     if (sealedQuestion && parsed.presentation !== "notification") return context.json({ error: "sealed_requires_notification" },400);
-    if (!sealedQuestion && context.get("auth").credentialKind === "principal"
-      && await endToEndRequired(db,context.get("auth").principalId)) return context.json(END_TO_END_REQUIRED,409);
+    if (!sealedQuestion) { const refused = await refuseReadable(db,context.get("auth").principalId); if (refused) return context.json(refused,409); }
     const sealedDevices = sealedQuestion ? checkSealedNotice(sealedQuestion,"question") : null;
     if (sealedDevices?.ok && parsed.deviceIds !== undefined
       && [...parsed.deviceIds].sort().join() !== [...sealedDevices.deviceIds].sort().join()) {
@@ -291,7 +289,6 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     } finally { client.release(); }
   };
   app.post("/api/interactions/:interactionId/cancel", requireScope("interactions:create"), cancelInteraction);
-  app.delete("/api/interactions/:interactionId", requireScope("interactions:create"), cancelInteraction);
 
   app.get("/api/interactions/:interactionId/wait", requireScope("interactions:read"), async (context) => {
     const auth = context.get("auth");
@@ -371,7 +368,8 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     if (!eventId) return context.json({ error: "not_found" }, 404);
     const input = await jsonBody(context, interactionSchema);
     if (input.kind !== "received" && input.kind !== "opened") {
-      const result = await respondToInteraction(db,{ kind: "device",principalId: auth.principalId,deviceId: auth.deviceId },{
+      const result = await respondToInteraction(db,{ kind: "device",principalId: auth.principalId,deviceId: auth.deviceId,
+        ownerOverview: auth.ownerOverview },{
         eventId,interactionId: input.expectedInteractionId ? internalId("int",input.expectedInteractionId) ?? undefined : undefined,
         kind: input.kind,value: input.value,idempotencyKey: input.idempotencyKey,expectedSubject: input.expectedSubject,
       },{ apnsMode });
@@ -387,9 +385,10 @@ export function registerNotificationRoutes(app: Hono, shared: ApiRouteContext): 
     try {
       await client.query("BEGIN");
       const event = await client.query<{ id: string;payload: unknown }>(
+        // An overview device sees, and so receives and opens, any of the account's events (owner-overview.ts).
         `SELECT e.id,e.payload FROM notification_events e WHERE e.id=$1 AND e.principal_id=$3
-         AND (e.target_mode='broadcast' OR EXISTS (SELECT 1 FROM notification_event_targets t
-           WHERE t.notification_event_id=e.id AND t.device_id=$2))`,[eventId,auth.deviceId,auth.principalId],
+         AND ($4::boolean OR e.target_mode='broadcast' OR EXISTS (SELECT 1 FROM notification_event_targets t
+           WHERE t.notification_event_id=e.id AND t.device_id=$2))`,[eventId,auth.deviceId,auth.principalId,auth.ownerOverview === true],
       );
       if (!event.rowCount) { await client.query("ROLLBACK");return context.json({ error: "not_found" },404); }
       type ReceiptEvidenceRow = { id: string;notification_event_id: string;interaction_request_id: string | null;

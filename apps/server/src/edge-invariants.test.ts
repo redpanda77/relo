@@ -48,8 +48,26 @@ describe("EDGE.5: the server never interprets raw harness activity",() => {
   test("observed evidence is read only by its storage module and derive(): no phase rules elsewhere",() => {
     const evidence = /\b(phase_since|open_tool_since|phaseSince|openToolSince)\b/;
     const owners = (file: string) => file.startsWith("derive/") || file === "agent-sessions.ts" || file.endsWith(".test.ts")
-      || file === "api/agent-session-routes.ts";
+      || file === "api/agent-session-routes.ts"
+      // Read-only measures over the transition log; they write and derive nothing.
+      || file === "agent-session-metrics.ts"
+      // The docs site documents the HTTP fields as text; it reads no state.
+      || file === "web/docs/site.generated.ts";
     expect(scan(evidence,owners)).toEqual([]);
+  });
+
+  test("the transition metrics are read-only and nothing that derives or writes a card or work imports them",() => {
+    const metrics = readFileSync(join(SRC,"agent-session-metrics.ts"),"utf8");
+    expect(metrics).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+    const importers = [...sources()].map((file) => relative(SRC,file)).filter((file) => !file.endsWith(".test.ts")
+      && (file.startsWith("derive/") || file.startsWith("works/") || /card/i.test(file))
+      && /agent-session-metrics/.test(readFileSync(join(SRC,file),"utf8")));
+    expect(importers).toEqual([]);
+  });
+
+  test("the storage module derives no freshness of its own: sessions are shown as derive() reports them",() => {
+    const text = readFileSync(join(SRC,"agent-sessions.ts"),"utf8");
+    expect(text).not.toMatch(/freshSeconds|OWNER_STATE_TIMING|quietFor|presence/);
   });
 
   test("the storage module stores snapshots as reported: no comparison on a stored phase",() => {

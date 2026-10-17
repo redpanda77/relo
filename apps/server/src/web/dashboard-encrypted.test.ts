@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { createApp } from "../app.js";
 import { generateToken, hashToken } from "../auth.js";
+import { recordObservedSnapshot } from "../agent-sessions.js";
 import { bootstrapOwner } from "../bootstrap.js";
 import { createDatabase, type Database } from "../db.js";
 import { migrate } from "../migrate.js";
@@ -138,5 +139,33 @@ suite("Dashboard marks end-to-end sealed items without their envelopes (ADR 0005
     expectNoEnvelopes(cardDetail, sealed);
     expect(cardDetail.notification.encrypted).toBe(true);
     expect(cardDetail.activity?.encrypted).toBe(true);
+  });
+  test("pages name the agent sessions whose sealed names cover their handles, ids only", async () => {
+    const phone = await cardPhone();
+    const sealedCard = { alerts: [envelope([phone.publicId], "card")], content: envelope([phone.publicId], "card") };
+    const card = await request("POST", "/api/live-activities", { key: "named-card", title: "Encrypted card", status: "Updating…",
+      context, deviceIds: [phone.publicId], sealed: sealedCard });
+    expect(card.status).toBe(201);
+    const names = envelope([phone.publicId], "names" as SealedEnvelope["kind"]);
+    const now = new Date().toISOString();
+    const session = async (hash: string, project: string, sealedNames?: unknown) => recordObservedSnapshot(db, principalId, {
+      session: hash, harness: "claude-code", phase: "working", phaseSince: now, lastSeenAt: now, openToolSince: null, seq: 1,
+      project, ...(sealedNames ? { sealedNames } : {}) });
+    await session("named-session-0000000000", context.project, names);
+    await session("unsealed-session-00000000", context.project);
+    await session("other-session-0000000000", "p-qqqqqqqqqqqqqqqq", envelope([phone.publicId], "names" as SealedEnvelope["kind"]));
+    const named = (await db.query<{ id: string }>("SELECT id FROM agent_sessions WHERE session_hash='named-session-0000000000'")).rows[0]!.id;
+
+    const read = dashboard();
+    const history = await read<"notification-history">("/dashboard/inbox/notifications");
+    expect(history.namesFrom).toEqual([`ags_${named}`]);
+    expectNoEnvelopes(history, [{ content: names }]);
+    const row = history.notifications.find((item) => item.activity?.id === card.body.activity.id)!;
+    expect(row.activity?.context.project).toBe(context.project);
+    const detail = await read<"notification-detail">(`/dashboard/inbox/notifications/${row.id}`);
+    expect(detail.namesFrom).toEqual([`ags_${named}`]);
+    expectNoEnvelopes(detail, [{ content: names }]);
+    expect((await read<"inbox-overview">("/dashboard")).namesFrom).toContain(`ags_${named}`);
+
   });
 });

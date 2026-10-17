@@ -6,9 +6,10 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ReloApiClient } from "../src/api-client.mjs";
-import { EXIT, run } from "../src/cli.mjs";
-import { setupWarnings } from "../src/doctor.mjs";
+import { ReloApiClient } from "../src/shared/api-client.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
+import { run } from "../src/cli.mjs";
+import { setupWarnings } from "../src/owner/doctor.mjs";
 import { cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 const SESSION_ID = "9f2c1c34-5c0e-4d63-8a3a-7f1d3bd2c001";
@@ -25,16 +26,16 @@ async function cli(argv, dependencies) {
 
 test("relo sessions prints a compact list", async () => {
   const sessions = [{ id: "ags_11111111-1111-4111-8111-111111111111", harness: "claude-code", computer: "Studio", account: null, project: "relo",
-    phase: "working", waitingFor: null, startedAt: "2026-10-13T10:00:00Z", lastSeenAt: "2026-10-13T10:05:00Z", presence: "quiet",
-    card: { id: "act_11111111-1111-4111-8111-111111111111", state: "active", quietForSeconds: 840 } },
+    phase: "working", waitingFor: null, startedAt: "2026-10-13T10:00:00Z", lastSeenAt: "2026-10-13T10:05:00Z",
+    card: { id: "act_11111111-1111-4111-8111-111111111111", state: "active" } },
   { id: "ags_22222222-2222-4222-8222-222222222222", harness: "gemini", computer: null, account: "work", project: null,
-    phase: "waiting", waitingFor: "turn", startedAt: "2026-10-13T10:00:00Z", lastSeenAt: "2026-10-13T10:06:00Z", presence: "no_card", card: null }];
+    phase: "waiting", waitingFor: "turn", startedAt: "2026-10-13T10:00:00Z", lastSeenAt: "2026-10-13T10:06:00Z", card: null }];
   const deps = cardDependencies({ listAgentSessions: async () => ({ sessions }) });
   const out = await cli(["sessions"], deps);
   assert.equal(out.exitCode, EXIT.OK);
   assert.deepEqual(out.line, { ok: true, sessions: [
-    { harness: "claude-code", computer: "Studio", project: "relo", phase: "working", presence: "quiet", lastSeenAt: "2026-10-13T10:05:00Z", card: { state: "active", quietForSeconds: 840 } },
-    { harness: "gemini", account: "work", phase: "waiting", waitingFor: "turn", presence: "no_card", lastSeenAt: "2026-10-13T10:06:00Z" },
+    { harness: "claude-code", computer: "Studio", project: "relo", phase: "working", lastSeenAt: "2026-10-13T10:05:00Z", card: { state: "active" } },
+    { harness: "gemini", account: "work", phase: "waiting", waitingFor: "turn", lastSeenAt: "2026-10-13T10:06:00Z" },
   ] });
   assert.equal((await cli(["sessions", "extra"], deps)).exitCode, EXIT.USAGE);
 });
@@ -43,8 +44,8 @@ test("relo sessions shows phases and counts; --live asks the server for working 
   const counts = { working: 1, waiting: 1, idle: 4, ended: 2 };
   const asked = [];
   const sessions = [
-    { harness: "claude-code", project: "relo", phase: "working", presence: "no_card", lastSeenAt: "2026-10-13T10:05:00Z", card: null },
-    { harness: "claude-code", project: "relo", phase: "waiting", waitingFor: "input", presence: "no_card", lastSeenAt: "2026-10-13T10:04:00Z", card: null },
+    { harness: "claude-code", project: "relo", phase: "working", lastSeenAt: "2026-10-13T10:05:00Z", card: null },
+    { harness: "claude-code", project: "relo", phase: "waiting", waitingFor: "input", lastSeenAt: "2026-10-13T10:04:00Z", card: null },
   ];
   const deps = cardDependencies({ listAgentSessions: async (options) => { asked.push(options); return { sessions, counts }; } });
   const out = await cli(["sessions", "--live"], deps);
@@ -65,7 +66,7 @@ test("the API client sends ?phase= only when asked", async () => {
   assert.deepEqual(urls.map((url) => new URL(url).search), ["", "?phase=working%2Cwaiting"]);
 });
 
-// ---- relo setup --hooks <off|reminders|presence> ---------------------------------------------------
+// ---- relo setup --level guide|track (hooks: presence | off) ---------------------------------------------------
 
 const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "SubagentStart", "SubagentStop", "PreCompact", "Stop", "SessionEnd"];
 const PRESENCE_EVENTS = [...EVENTS].sort();
@@ -80,15 +81,31 @@ async function setupBox(options) {
   await mkdir(join(cwd, ".git"));
   const deps = { ...cardDependencies({}), home, cwd, env: {} };
   return { home, cwd, deps, run: (argv, extra = {}) => cli(argv, { ...deps, ...extra }),
-    global: join(home, ".claude", "settings.json"), project: join(cwd, ".claude", "settings.json") };
+    global: join(home, ".claude", "settings.json"), project: join(cwd, ".claude", "settings.local.json") };
 }
 
-test("--global --agent claude-code --hooks presence writes one marked async entry per presence event", async () => {
+/** The hook row of a setup line: what happened to one settings file ({ action, file, level } or a skip's reason). */
+const hooks = (line, harness = "claude-code") => [...line.changed, ...(line.skipped ?? []), ...(line.errors ?? [])]
+  .find((row) => row.kind === "hooks" && row.harness === harness) ?? { action: "unchanged" };
+const CLAUDE = ["setup", "--agent", "claude-code", "--level"];
+/** The hook set `relo setup --show` reports for Claude Code (what is installed, user level). */
+const shownHooks = async (box, extra) => (await box.run(["setup", "--agent", "claude-code", "--show"], extra)).line.harnesses[0].hooks;
+/** A reminders-only file, as the retired level wrote it: presence's entries without the session-phase commands. */
+const PHASE_ROLES = new Set(["start", "prompt", "tool-start", "tool-end", "wait", "subagent-start", "subagent-stop", "compact", "stop", "end"]);
+const remindersOnly = (settings) => {
+  for (const [event, groups] of Object.entries(settings.hooks)) {
+    const kept = groups.map((group) => ({ ...group, hooks: group.hooks.filter((hook) => !PHASE_ROLES.has(hook.command.slice("relo hook ".length))) })).filter((group) => group.hooks.length);
+    if (kept.length) settings.hooks[event] = kept; else delete settings.hooks[event];
+  }
+  return settings;
+};
+
+test("--level guide writes one marked async entry per presence event into the user settings", async () => {
   const box = await setupBox();
-  const out = await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
+  const out = await box.run([...CLAUDE, "guide"]);
   assert.equal(out.exitCode, EXIT.OK);
-  assert.deepEqual(out.line, { ok: true, file: "~/.claude/settings.json", action: "created", hooks: PRESENCE_EVENTS, harnessCredential: "pending" },
-    "the server could not mint the harness credential: the flusher will");
+  assert.deepEqual(hooks(out.line), { kind: "hooks", harness: "claude-code", file: "~/.claude/settings.json", action: "created", level: "presence" });
+  assert.equal(out.line.harnessCredential, "pending", "the server could not mint the harness credential: the flusher will");
   const written = JSON.parse(await readFile(box.global, "utf8"));
   assert.deepEqual(Object.keys(written.hooks).sort(), PRESENCE_EVENTS);
   assert.deepEqual(reloGroup(written, "PostToolUse", "tool-end"), [{ hooks: [{ type: "command", command: "relo hook tool-end", async: true }] }]);
@@ -102,26 +119,24 @@ test("--global --agent claude-code --hooks presence writes one marked async entr
   }
   assert.deepEqual(reloGroup(written, "SessionEnd", "end"), [{ hooks: [{ type: "command", command: "relo hook end", timeout: 3 }] }],
     "SessionEnd is synchronous with a short ceiling (the process is exiting)");
-  const again = await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
-  assert.equal(again.line.action, "unchanged");
+  assert.equal(hooks((await box.run([...CLAUDE, "guide"])).line).action, "unchanged");
   assert.equal(await readFile(box.global, "utf8"), stringify(written));
-  assert.equal((await box.run(["hooks", "status"])).line.data.level, "presence");
+  assert.equal(await shownHooks(box), "presence");
 });
 
-test("--project --hooks presence writes <repo>/.claude/settings.json; CLAUDE_CONFIG_DIR moves the global file", async () => {
+test("--project --level guide goes in the personal .claude/settings.local.json; CLAUDE_CONFIG_DIR moves the user file", async () => {
   const box = await setupBox();
-  const project = await box.run(["setup", "--project", "--hooks", "presence"]);
-  assert.equal(project.line.action, "created");
+  const project = await box.run([...CLAUDE, "guide", "--project"]);
+  assert.equal(hooks(project.line).action, "created");
   assert.equal(existsSync(box.project), true);
+  assert.equal(existsSync(join(box.cwd, ".claude", "settings.json")), false, "never the shared, committed settings file");
   assert.equal(existsSync(box.global), false);
   const other = await setupBox();
-  const custom = join(other.home, "cc");
-  const out = await other.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"], { env: { CLAUDE_CONFIG_DIR: custom } });
-  assert.equal(out.line.file, "~/cc/settings.json");
-  assert.equal(existsSync(join(custom, "settings.json")), true);
+  const out = await other.run([...CLAUDE, "guide"], { env: { CLAUDE_CONFIG_DIR: join(other.home, "cc") } });
+  assert.equal(hooks(out.line).file, "~/cc/settings.json");
 });
 
-test("setup --hooks presence keeps everything else, and --hooks off restores the file exactly", async () => {
+test("--level guide keeps everything else, and --level track restores the file exactly", async () => {
   const box = await setupBox();
   const original = stringify({
     model: "opus",
@@ -134,8 +149,7 @@ test("setup --hooks presence keeps everything else, and --hooks off restores the
   });
   await mkdir(join(box.home, ".claude"), { recursive: true });
   await writeFile(box.global, original);
-  const added = await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
-  assert.equal(added.line.action, "updated");
+  assert.equal(hooks((await box.run([...CLAUDE, "guide"])).line).action, "updated");
   const settings = JSON.parse(await readFile(box.global, "utf8"));
   assert.deepEqual(Object.keys(settings), ["model", "permissions", "hooks", "env"], "key order kept");
   assert.deepEqual(settings.hooks.PostToolUse[0], { matcher: "Edit|Write", hooks: [{ type: "command", command: "prettier --write", timeout: 10 }] },
@@ -143,30 +157,24 @@ test("setup --hooks presence keeps everything else, and --hooks off restores the
   assert.equal(reloGroup(settings, "PostToolUse", "tool-end").length, 1);
   assert.deepEqual(settings.hooks.Notification, [{ hooks: [{ type: "command", command: "say done" }] },
     { matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }], "the owner's own group is untouched");
-  const removed = await box.run(["setup", "--hooks", "off"]);
-  assert.equal(removed.line.action, "removed");
-  assert.equal(removed.line.file, "~/.claude/settings.json");
+  const removed = await box.run([...CLAUDE, "track"]);
+  assert.deepEqual(hooks(removed.line), { kind: "hooks", harness: "claude-code", file: "~/.claude/settings.json", action: "removed", level: "off" });
   assert.equal(await readFile(box.global, "utf8"), original, "byte for byte");
-  assert.equal((await box.run(["setup", "--hooks", "off"])).line.action, "unchanged");
-  assert.equal((await box.run(["hooks", "status"])).line.data.level, "off");
+  assert.deepEqual((await box.run([...CLAUDE, "track"])).line.changed, []);
+  assert.equal(await shownHooks(box), "off");
 });
 
-test("--hooks off deletes a settings file that held only Relo's hooks, and a user hook in a shared group survives", async () => {
+test("--level track deletes a settings file that held only Relo's hooks, and a user hook in a shared group survives", async () => {
   const box = await setupBox();
-  await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
-  await box.run(["setup", "--hooks", "off"]);
+  await box.run([...CLAUDE, "guide"]);
+  await box.run([...CLAUDE, "track"]);
   assert.equal(existsSync(box.global), false);
   await mkdir(join(box.home, ".claude"), { recursive: true });
-  const shared = stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook stop", async: true }, { type: "command", command: "mine" }] }] } });
-  await writeFile(box.global, shared);
-  await box.run(["setup", "--hooks", "off"]);
+  await writeFile(box.global, stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook stop", async: true }, { type: "command", command: "mine" }] }] } }));
+  await box.run([...CLAUDE, "track"]);
   assert.deepEqual(JSON.parse(await readFile(box.global, "utf8")), { hooks: { Stop: [{ hooks: [{ type: "command", command: "mine" }] }] } });
-  // relo hooks off does the same from the hooks group.
-  await writeFile(box.global, shared);
-  const off = await box.run(["hooks", "off"]);
-  assert.deepEqual(off.line.data, { action: "removed", level: "off", files: ["~/.claude/settings.json"] });
-  assert.deepEqual(JSON.parse(await readFile(box.global, "utf8")), { hooks: { Stop: [{ hooks: [{ type: "command", command: "mine" }] }] } });
-  assert.equal((await box.run(["hooks", "off"])).line.data.action, "unchanged");
+  assert.equal((await box.run(["hooks", "status"])).exitCode, EXIT.USAGE, "relo hooks is gone: relo setup --show");
+  assert.equal((await box.run(["setup", "--agent", "claude-code", "--hooks", "off"])).exitCode, EXIT.USAGE, "--hooks is gone: --level track");
 });
 
 test("a stale synchronous Relo hook is replaced by the async one and 4-space or CRLF formatting is kept", async () => {
@@ -174,95 +182,83 @@ test("a stale synchronous Relo hook is replaced by the async one and 4-space or 
   await mkdir(join(box.home, ".claude"), { recursive: true });
   const old = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "relo hook stop", timeout: 60 }] }] } }, null, 4).replaceAll("\n", "\r\n");
   await writeFile(box.global, old);
-  assert.equal((await box.run(["hooks", "status"])).line.data.files[0].level, "legacy");
-  const out = await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
-  assert.equal(out.line.action, "updated");
+  assert.equal(await shownHooks(box), "custom", "an older entry of a command presence runs: refresh and setup rewrite it");
+  assert.equal(hooks((await box.run([...CLAUDE, "guide"])).line).action, "updated");
   const text = await readFile(box.global, "utf8");
   assert.equal(text.includes("\r\n    \"hooks\""), true);
   assert.deepEqual(reloGroup(JSON.parse(text), "Stop", "stop"), [{ hooks: [{ type: "command", command: "relo hook stop", async: true }] }], "no duplicate, no stale timeout");
   assert.equal(text.endsWith("}"), true, "no trailing newline was invented");
 });
 
-test("hooks live in one place: the other location refuses, --move relocates, --dry-run writes nothing", async () => {
+test("--refresh rewrites outdated hook entries at the set installed, an old reminders-only set to presence, and --dry-run writes nothing", async () => {
   const box = await setupBox();
-  await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
-  const refused = await box.run(["setup", "--project", "--hooks", "presence"]);
-  assert.equal(refused.exitCode, EXIT.USAGE);
-  assert.match(refused.line.error.message, /already set up in ~\/\.claude\/settings\.json/u);
-  assert.match(refused.line.error.hint, /--move/u);
-  assert.equal(existsSync(box.project), false);
-  const dry = await box.run(["setup", "--project", "--hooks", "presence", "--move", "--dry-run"]);
-  assert.equal(dry.line.dryRun, true);
-  assert.equal(existsSync(box.project), false);
-  assert.equal(existsSync(box.global), true);
-  const moved = await box.run(["setup", "--project", "--hooks", "presence", "--move"]);
-  assert.equal(moved.line.action, "moved");
-  assert.equal(moved.line.from, "~/.claude/settings.json");
-  assert.equal(existsSync(box.global), false);
-  assert.equal(existsSync(box.project), true);
+  await mkdir(join(box.home, ".claude"), { recursive: true });
+  await box.run([...CLAUDE, "guide"]);
+  const installed = await readFile(box.global, "utf8");
+  const settings = JSON.parse(installed);
+  settings.hooks.Stop[0].hooks[0].timeout = 99;
+  await writeFile(box.global, stringify(settings));
+  const dry = await box.run(["setup", "--refresh", "--dry-run"]);
+  assert.deepEqual(dry.line.changed.filter((row) => row.kind === "hooks").map((row) => [row.action, row.level]), [["updated", "presence"]]);
+  assert.equal(JSON.parse(await readFile(box.global, "utf8")).hooks.Stop[0].hooks[0].timeout, 99);
+  await box.run(["setup", "--refresh"]);
+  assert.equal(await readFile(box.global, "utf8"), installed, "back to exactly what the set installs");
+  await writeFile(box.global, stringify(remindersOnly(JSON.parse(installed))));
+  assert.equal(await shownHooks(box), "custom", "the retired reminders set is a custom one now");
+  const upgraded = await box.run(["setup", "--refresh"]);
+  assert.deepEqual(upgraded.line.changed.filter((row) => row.kind === "hooks").map((row) => [row.action, row.level]), [["updated", "presence"]]);
+  assert.equal(await readFile(box.global, "utf8"), installed, "refresh upgrades it to presence");
 });
 
-test("setup --hooks refuses a missing level, the removed --remove, unsupported harnesses, unreadable JSON and missing choices, leaving files alone", async () => {
+test("setup refuses an unknown level or --hooks, says why a harness gets none, and never edits unreadable JSON", async () => {
   const box = await setupBox();
-  const bare = await box.run(["setup", "--project", "--hooks"]);
-  assert.equal(bare.exitCode, EXIT.USAGE);
-  assert.match(bare.line.error.message, /--hooks needs a level: off, reminders or presence/u);
-  assert.equal((await box.run(["setup", "--hooks"])).exitCode, EXIT.USAGE);
-  assert.equal((await box.run(["setup", "--project", "--hooks", "everything"])).exitCode, EXIT.USAGE);
-  const gone = await box.run(["setup", "--hooks", "--remove"]);
-  assert.equal(gone.exitCode, EXIT.USAGE);
-  assert.match(gone.line.error.message, /relo setup --hooks off/u);
-  const codex = await box.run(["setup", "--global", "--agent", "codex", "--hooks", "presence"]);
-  assert.equal(codex.exitCode, EXIT.USAGE);
-  assert.match(codex.line.error.message, /Hooks are available for claude-code and gemini/u);
-  assert.match(codex.line.error.hint, /go stale on their own/u);
-  const nowhere = await box.run(["setup", "--hooks", "presence"]);
-  assert.equal(nowhere.exitCode, EXIT.USAGE);
-  assert.match(nowhere.line.error.message, /Nothing was written/u);
-  assert.equal((await box.run(["setup", "--project", "--global", "--hooks", "presence"])).exitCode, EXIT.USAGE);
-  assert.equal((await box.run(["setup", "--file", "x.json", "--hooks", "presence"])).exitCode, EXIT.USAGE);
-  assert.equal(existsSync(box.project), false);
+  assert.equal((await box.run([...CLAUDE, "everything"])).exitCode, EXIT.USAGE);
+  assert.equal((await box.run([...CLAUDE, "track", "--approvals", "on"])).exitCode, EXIT.USAGE, "approvals need guide or optimize");
+  const codex = await box.run(["setup", "--agent", "codex", "--level", "guide"]);
+  assert.equal(codex.exitCode, EXIT.OK);
+  assert.match(hooks(codex.line, "codex").reason, /^no hooks for this harness$/u);
+  const track = await box.run(["setup", "--agent", "codex", "--level", "track"]);
+  assert.equal((track.line.skipped ?? []).some((row) => row.kind === "hooks"), false, "a depth without hooks has no hooks row to explain");
   assert.equal(existsSync(box.global), false);
   await mkdir(join(box.home, ".claude"), { recursive: true });
   await writeFile(box.global, "{ // comment\n}\n");
-  const bad = await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"]);
+  const bad = await box.run([...CLAUDE, "guide"]);
   assert.equal(bad.exitCode, EXIT.USAGE);
-  assert.match(bad.line.error.message, /not plain JSON/u);
+  assert.match(hooks(bad.line).reason, /not plain JSON/u);
   assert.equal(await readFile(box.global, "utf8"), "{ // comment\n}\n");
-  assert.equal(existsSync(join(box.home, ".codex")), false);
 });
 
-test("Gemini CLI hooks go in its settings.json with millisecond timeouts and --agent gemini; presence or off only", async () => {
+test("Gemini CLI hooks go in its settings.json with millisecond timeouts and --agent gemini; presence or off only (approvals fall back to presence); no project file", async () => {
   const box = await setupBox();
-  const reminders = await box.run(["setup", "--global", "--agent", "gemini", "--hooks", "reminders"]);
-  assert.equal(reminders.exitCode, EXIT.USAGE);
-  assert.match(reminders.line.error.message, /only --hooks presence or --hooks off/u);
-  const out = await box.run(["setup", "--global", "--agent", "gemini", "--hooks", "presence"]);
-  assert.deepEqual(out.line, { ok: true, file: "~/.gemini/settings.json", action: "created",
-    hooks: ["AfterAgent", "AfterTool", "BeforeAgent", "Notification", "PreCompress", "SessionEnd", "SessionStart"], harnessCredential: "pending" });
+  const out = await box.run(["setup", "--agent", "gemini", "--level", "guide", "--approvals", "on"]);
+  assert.deepEqual(hooks(out.line, "gemini"), { kind: "hooks", harness: "gemini", file: "~/.gemini/settings.json", action: "created", level: "presence" });
   const settings = JSON.parse(await readFile(join(box.home, ".gemini", "settings.json"), "utf8"));
   assert.deepEqual(settings.hooks.AfterAgent, [{ hooks: [{ type: "command", command: "relo hook stop --agent gemini", timeout: 5000 }] }]);
-  const project = await box.run(["setup", "--project", "--agent", "gemini", "--hooks", "presence"]);
-  assert.equal(project.exitCode, EXIT.USAGE, "gemini hooks are in one place too");
-  assert.equal((await box.run(["setup", "--hooks", "off"])).line.action, "removed");
-  assert.equal(existsSync(join(box.home, ".gemini", "settings.json")), false);
+  assert.match(hooks((await box.run(["setup", "--project", "--agent", "gemini", "--level", "guide"])).line, "gemini").reason, /no personal project settings file/u);
+  await box.run(["setup", "--agent", "gemini", "--level", "track"]);
+  assert.equal(existsSync(join(box.home, ".gemini", "settings.json")), false, "a file that held only Relo's hooks goes");
 });
 
-test("doctor --full reports hooks informationally: where and which events, never a suggestion", async () => {
+test("doctor reports installed hooks (where, level, events), flags what needs fixing, and never suggests adding them", async () => {
   const box = await setupBox();
-  const none = setupWarnings({ env: {}, home: box.home, cwd: box.cwd, version: "0.10.0" });
+  const none = await setupWarnings({ env: {}, home: box.home, cwd: box.cwd, version: "0.10.0" });
   assert.deepEqual(none.hooks, { ok: true, state: "none" });
-  await box.run(["setup", "--project", "--hooks", "presence"]);
-  const set = setupWarnings({ env: {}, home: box.home, cwd: box.cwd, version: "0.10.0" });
-  assert.equal(set.hooks.ok, true);
-  assert.equal(set.hooks.state, "set");
-  assert.deepEqual(set.hooks.files[0].events, EVENTS);
-  assert.equal(JSON.stringify(none).includes("--hooks"), false);
+  assert.equal(JSON.stringify(none).includes("--level"), false);
+  await mkdir(join(box.cwd, ".claude"), { recursive: true });
+  await box.run([...CLAUDE, "guide", "--project"]);
+  await writeFile(box.project, stringify(remindersOnly(JSON.parse(await readFile(box.project, "utf8")))));
+  const old = await setupWarnings({ env: {}, home: box.home, cwd: box.cwd, version: "0.10.0" });
+  assert.deepEqual([old.hooks.ok, old.hooks.state, old.hooks.files[0].level, old.hooks.files[0].nearest], [false, "stale", "custom", "presence"]);
+  assert.match(old.hooks.hint, /relo setup --refresh/u);
+  await box.run([...CLAUDE, "guide", "--project"]);
+  const presence = await setupWarnings({ env: {}, home: box.home, cwd: box.cwd, version: "0.10.0" });
+  assert.deepEqual(presence.hooks.files[0].events, EVENTS);
+  assert.match(presence.hooks.hint, /harness credential: relo setup --level guide/u, "presence hooks with no credential cannot send");
 });
 
 // ---- hooks are optional: nothing depends on them -----------------------------------------------------
 
-test("a full start, update, ask, end flow with no hooks installed makes no session-event request", async () => {
+test("an ask, notify and end flow with no hooks installed makes no session-event request", async () => {
   const { fakeCards } = await import("./fake-cards.mjs");
   const fake = fakeCards({ answer: "approved" });
   fake.client.sendNotification = async () => ({ eventId: "ntf_1", delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 } });
@@ -272,16 +268,15 @@ test("a full start, update, ask, end flow with no hooks installed makes no sessi
   const deps = { ...cardDependencies(client), home: box.home, cwd: box.cwd, env: {} };
   const topic = ["--topic", "Release 0.7.57"];
   const step = async (argv) => { const out = await cli(argv, deps); assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out.line)); };
-  await step(["activity", "start", "--title", "Deploy", "--status", "Building", "--steps", "Build image,Ship it", ...topic]);
-  await step(["activity", "update", "--status", "Testing", ...topic]);
+  await fake.client.startActivity({ title: "Deploy", status: "Building", key: "deploy-card" });
   await step(["ask", "Deploy?", "--approval", ...topic]);
   await step(["notify", "Done", ...topic]);
-  await step(["activity", "end", "--status", "Live", "--name", fake.calls.find((call) => call.op === "start").body.key]);
+  await step(["activity", "end", "--status", "Live", "--name", "deploy-card"]);
   assert.ok(requested.length > 4, "the flow really ran");
   assert.deepEqual(requested.filter((name) => /session/iu.test(name)), [], "no session event or session list was requested");
-  // setup without --hooks writes no hooks, and doctor never suggests them.
-  await cli(["setup", "--project"], deps);
-  await cli(["setup", "--global", "--agent", "claude-code"], deps);
+  // setup without a hooked --level writes no hooks, and doctor never suggests them.
+  await cli(["setup", "--project", "--agent", "claude-code"], deps);
+  await cli(["setup", "--agent", "claude-code"], deps);
   assert.equal(existsSync(box.project), false);
   assert.equal(existsSync(box.global), false);
   assert.equal(existsSync(join(box.home, ".gemini", "settings.json")), false);
@@ -317,38 +312,37 @@ test("a server without the sessions API: relo sessions says so, relo hook stays 
   assert.deepEqual(hook.stdout, []);
 });
 
-test("setup --hooks presence puts Relo's matcher on its own Notification group, never on a shared one", async () => {
+test("setup --level guide puts Relo's matcher on its own Notification group, never on a shared one", async () => {
   const box = await setupBox();
   await mkdir(join(box.home, ".claude"), { recursive: true });
   await writeFile(box.global, stringify({ hooks: {
     Notification: [{ hooks: [{ type: "command", command: "relo hook wait", timeout: 5 }] }],
     Stop: [{ matcher: "", hooks: [{ type: "command", command: "relo hook stop", timeout: 5 }, { type: "command", command: "mine" }] }],
   } }));
-  assert.equal((await box.run(["setup", "--global", "--agent", "claude-code", "--hooks", "presence"])).line.action, "updated");
+  assert.equal(hooks((await box.run([...CLAUDE, "guide"])).line).action, "updated");
   const settings = JSON.parse(await readFile(box.global, "utf8"));
   assert.deepEqual(settings.hooks.Notification, [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }]);
   assert.deepEqual(settings.hooks.Stop[0], { matcher: "", hooks: [{ type: "command", command: "mine" }] }, "a shared group keeps the owner's matcher and hook");
   assert.equal(reloGroup(settings, "Stop", "stop").length, 1, "Relo's stop lives in its own group");
 });
 
-test("presence mints this computer's harness credential with the CLI credential; reminders does not; off revokes it", async () => {
+test("guide mints this computer's harness credential with the CLI credential; track needs none; going back to track revokes it", async () => {
   const box = await setupBox();
   const credentialPath = join(box.home, "harness-credential");
   const calls = [];
   const client = { createHarnessCredential: async (body) => { calls.push(["mint", body]); return { id: "hcr_1", token: "h".repeat(44) }; },
     revokeHarnessCredential: async (id) => { calls.push(["revoke", id]); return {}; } };
   const extra = { env: { RELO_HARNESS_CREDENTIAL_PATH: credentialPath, RELO_COMPUTER: "Build Mac" }, clientFactory: () => client };
-  await box.run(["setup", "--project", "--hooks", "reminders"], extra);
-  assert.deepEqual(calls, [], "reminders send nothing, so need no credential");
-  const presence = await box.run(["setup", "--project", "--hooks", "presence"], extra);
+  await box.run([...CLAUDE, "track", "--project"], extra);
+  assert.deepEqual(calls, [], "track installs no hooks, so needs no credential");
+  const presence = await box.run([...CLAUDE, "guide", "--project"], extra);
   assert.equal(presence.line.harnessCredential, "ready");
   assert.deepEqual(calls, [["mint", { name: "Build Mac" }]]);
   assert.deepEqual(JSON.parse(await readFile(credentialPath, "utf8")), { apiUrl: "https://relo.example", id: "hcr_1", token: "h".repeat(44) });
-  await box.run(["setup", "--project", "--hooks", "presence"], extra);
+  await box.run([...CLAUDE, "guide", "--project"], extra);
   assert.equal(calls.length, 1, "kept, not minted again");
-  const status = await box.run(["hooks", "status"], extra);
-  assert.equal(status.line.data.harnessCredential, "present");
-  const off = await box.run(["setup", "--hooks", "off"], extra);
+  assert.equal(existsSync(credentialPath), true);
+  const off = await box.run([...CLAUDE, "track", "--project"], extra);
   assert.equal(off.line.harnessCredential, "revoked");
   assert.deepEqual(calls.at(-1), ["revoke", "hcr_1"]);
   assert.equal(existsSync(credentialPath), false);

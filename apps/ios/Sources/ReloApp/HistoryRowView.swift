@@ -6,9 +6,13 @@ struct HistoryServerOutcome: Equatable, Sendable {
     let label: String
     let color: Color
     let symbol: String
+    /// Why the work left the screen or dimmed, from the server; shown as the first fact.
+    var absence: Absence? = nil
 
     /// From the item's owner state and, for a question, its standing.
-    static func make(state: OwnerState?, standing: QuestionStanding?, answer: String? = nil) -> HistoryServerOutcome? {
+    /// The badge tells the truth (plan 12b, U4): Running only while moving; a work that declared it waits reads
+    /// Waiting; a question reads Needs you; a delivered round reads Your turn. The server's state is the input.
+    static func make(state: OwnerState?, standing: QuestionStanding?, answer: String? = nil, waiting: Bool = false) -> HistoryServerOutcome? {
         switch standing {
         case .missed?: return .init(label: "Missed", color: .reloSignalCoral, symbol: "clock.badge.xmark")
         case .answeredLate?:
@@ -22,8 +26,11 @@ struct HistoryServerOutcome: Equatable, Sendable {
         case .failed?: return .init(label: "Failed", color: .reloErrorText, symbol: "xmark.octagon.fill")
         case .dropped?: return .init(label: "Dropped", color: .reloWarning, symbol: "stop.fill")
         case .leftUnfinished?: return .init(label: "Left unfinished", color: .reloWarning, symbol: "exclamationmark.triangle.fill")
-        case .moving?, .workingQuietly?: return .init(label: "Running", color: .reloSignalIndigo, symbol: "waveform")
-        case .waitingOnYou?, .needsYou?: return .init(label: "Your turn", color: .reloSignalCoral, symbol: "hand.raised.fill")
+        case .moving?, .workingQuietly?:
+            return waiting ? .init(label: "Waiting", color: .reloWarning, symbol: "hourglass")
+                : .init(label: "Running", color: .reloSignalIndigo, symbol: "waveform")
+        case .needsYou?: return .init(label: "Needs you", color: .reloSignalCoral, symbol: "exclamationmark.bubble.fill")
+        case .waitingOnYou?: return .init(label: "Your turn", color: .reloSignalCoral, symbol: "hand.raised.fill")
         case .stale?: return .init(label: "Quiet", color: .reloInfo, symbol: "moon.zzz")
         case .stoppedResponding?: return .init(label: "Stopped responding", color: .reloInfo, symbol: "pause.circle")
         case .noSignal?: return .init(label: "No signal", color: .reloInfo, symbol: "antenna.radiowaves.left.and.right.slash")
@@ -38,44 +45,37 @@ struct HistoryServerOutcome: Equatable, Sendable {
 
     /// The outcome of a work the Now summary still lists (recent outcomes, missed questions).
     init?(item: NowItem) {
-        guard let outcome = Self.make(state: item.owner.state, standing: item.question?.standing) else { return nil }
+        guard let outcome = Self.make(state: item.owner.state, standing: item.question?.standing,
+                                      waiting: PlanWaiting.reason(status: item.status) != nil) else { return nil }
         self = outcome
+        absence = item.owner.absence
     }
 }
 
-/// A History row reads top to bottom as: where it came from, what it was, how it turned out, what it took.
+/// A History row: the shared work card (`ReloWorkCard`) built from the row, with the question asked on it.
 struct HistoryRowView: View {
     let row: HistoryRow
     var showsSource = true
     var showsProject = true
     var responseStatus: String?
-    /// The server's outcome when known; it replaces the badge worked out from the row.
+    /// The server's outcome when known; it replaces the state worked out from the row.
     var serverOutcome: HistoryServerOutcome? = nil
-    @Environment(\.dynamicTypeSize) private var typeSize
+    /// The icon of the computer the row came from, looked up by the caller; a laptop when unknown.
+    var computerIcon: ComputerIcon? = nil
 
     var body: some View {
-        // No icon column: every line gets the full width. The outcome lives in the badge,
-        // the steps bar is the card's spine, and one meta line carries the counts and the type.
-        VStack(alignment: .leading, spacing: 6) {
-            origin
-            titleRow
-            if let summary = row.summary {
-                // With nothing to measure, the type rides on the summary instead of taking a line alone.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(summary).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
-                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if typePlacement == .summary { typeLabel.font(.caption).foregroundStyle(Color.reloSecondaryText) }
-                }
-            }
+        ReloWorkCard(
+            origin: ReloCardOrigin(source: row.source.name, sourceSymbol: row.source.systemImageName,
+                                   project: showsProject ? row.project?.name : nil,
+                                   projectColor: (showsProject ? row.project : nil).map(projectColor),
+                                   topic: row.topic, showsSource: showsSource),
+            at: row.at, title: row.title, summary: row.summary,
+            steps: row.steps.map { NowItem.Steps(done: HistoryStepsMeter.done($0, outcome: row.outcome), total: $0.total,
+                                                 current: $0.current, currentIndex: $0.currentIndex, fill: $0.fill) },
+            progress: row.steps == nil ? row.progress : nil,
+            color: color, state: state, facts: facts, computer: row.origin, computerIcon: computerIcon
+        ) {
             if let decision = row.decision { decisionStrip(decision) }
-            if let steps = row.steps {
-                HistoryStepsMeter(steps: steps, color: color, outcome: row.outcome).padding(.top, 2)
-            } else if let progress = row.progress {
-                HistoryProgressMeter(value: progress, color: color, showsValue: false).padding(.top, 2)
-            }
-            if typePlacement == .meta || row.origin != nil { meta }
         }
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -84,71 +84,23 @@ struct HistoryRowView: View {
         .accessibilityHint("Opens details")
     }
 
-    /// Large text stacks the badge under the title so the title keeps the full width.
-    private var titleRow: some View {
-        let stacked = typeSize.isAccessibilitySize
-        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 10))
-        return layout {
-            Text(row.title).font(.headline).foregroundStyle(.primary)
-                .lineLimit(stacked ? nil : 2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let label = responseStatus ?? serverOutcome?.label ?? row.outcome.label {
-                badge(label)
-            } else {
-                typeLabel.font(.caption.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background { Capsule().fill(Color.primary.opacity(0.07)) }
-                    .fixedSize()
-            }
+    /// How it turned out, in its color; a message has no outcome, so its type stands there instead.
+    private var state: ReloCardState {
+        if let label = responseStatus ?? serverOutcome?.label ?? row.outcome.label {
+            return ReloCardState(label: label, color: color, symbol: symbol)
         }
+        return ReloCardState(label: row.type, color: .reloSecondaryText, symbol: typeSymbol)
     }
 
-    private enum TypePlacement { case badge, summary, meta }
-    /// A message has no outcome, so its type takes the badge; otherwise it joins the first line with room.
-    private var typePlacement: TypePlacement {
-        if responseStatus == nil && serverOutcome == nil && row.outcome.label == nil { return .badge }
-        if metaFacts.isEmpty && row.summary != nil { return .summary }
-        return .meta
-    }
-
-    private var typeLabel: some View {
-        Label(row.type, systemImage: typeSymbol).labelStyle(HistoryInlineLabelStyle()).fixedSize()
-    }
-
-    /// What the work amounted to and where it ran on the left; what kind of item it is on the right.
-    private var meta: some View {
-        let measure = metaFacts.joined(separator: " · ")
-        let showsType = typePlacement == .meta
-        let type = Label(row.type, systemImage: typeSymbol).labelStyle(HistoryInlineLabelStyle())
-        let origin = row.origin.map { Label($0, systemImage: "laptopcomputer").labelStyle(HistoryInlineLabelStyle()) }
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                if !measure.isEmpty { Text(measure).fixedSize() }
-                if let origin { origin.fixedSize() }
-                Spacer(minLength: 8)
-                if showsType { type.fixedSize() }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                if !measure.isEmpty { Text(measure).fixedSize(horizontal: false, vertical: true) }
-                if let origin { origin.fixedSize(horizontal: false, vertical: true) }
-                if showsType { type }
-            }
-        }
-        .font(.caption).foregroundStyle(Color.reloSecondaryText)
-    }
-
-    private var metaFacts: [String] {
+    /// What it amounted to. The time closes the line; work cards need no "Live Activity" label.
+    private var facts: [String] {
         var parts: [String] = []
+        if let absence = serverOutcome?.absence, let why = AbsenceWording.line(absence, computer: row.origin) { parts.append(why) }
         if let steps = row.steps { parts.append(HistoryStepsMeter.caption(steps, outcome: row.outcome)) }
         else if let progress = row.progress { parts.append(progress.formatted(.percent.precision(.fractionLength(0)))) }
-        if let updates = row.updates, updates > 1 { parts.append("\(updates) updates") }
-        if let duration = row.duration {
-            parts.append(Self.duration(duration))
-        } else if row.outcome == .running, let started = row.startedAt {
-            parts.append("since \(started.formatted(date: .omitted, time: .shortened))")
-        }
+        if let duration = row.duration { parts.append(Self.duration(duration)) }
+        let hasOutcome = responseStatus != nil || serverOutcome != nil || row.outcome.label != nil
+        if hasOutcome && row.item.kind != .liveActivity { parts.append(row.type) }
         return parts
     }
 
@@ -163,73 +115,6 @@ struct HistoryRowView: View {
         }
     }
 
-    /// Source › project › topic, with the time on the right. Filters hide what they already pin.
-    private var origin: some View {
-        let stacked = typeSize.isAccessibilitySize
-        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 6))
-        return layout {
-            if stacked {
-                originParts(source: showsSource, topic: true).fixedSize(horizontal: false, vertical: true)
-            } else {
-                // The fullest line that fits; a part is dropped whole rather than cut to an ellipsis.
-                ViewThatFits(in: .horizontal) {
-                    originParts(source: showsSource, topic: true).fixedSize()
-                    originParts(source: showsSource, topic: false).fixedSize()
-                    originParts(source: false, topic: false).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 5) {
-                if row.unread {
-                    Circle().fill(Color.reloInteractive).frame(width: 7, height: 7).accessibilityLabel("Unread")
-                }
-                Text(row.at, style: .time)
-                    .font(.caption.monospacedDigit()).foregroundStyle(Color.reloSecondaryText)
-            }
-            .layoutPriority(1)
-        }
-        .font(.caption.weight(.medium))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel([showsSource ? row.source.name : nil, showsProject ? row.project?.name : nil, row.topic]
-            .compactMap { $0 }.joined(separator: ", "))
-    }
-
-    private func originParts(source: Bool, topic: Bool) -> some View {
-        let project = showsProject ? row.project : nil
-        let showsSourceName = source || project == nil
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 5))
-        return layout {
-            if showsSourceName {
-                Label(row.source.name, systemImage: row.source.systemImageName)
-                    .labelStyle(HistoryInlineLabelStyle())
-                    .foregroundStyle(Color.reloSecondaryText)
-            }
-            if let project {
-                if showsSourceName && !typeSize.isAccessibilitySize { separator("·") }
-                Text(project.name).foregroundStyle(projectColor(project)).fontWeight(.semibold)
-            }
-            if topic, let name = row.topic {
-                if !typeSize.isAccessibilitySize { separator("›") }
-                Text(name).foregroundStyle(Color.reloSecondaryText)
-            }
-        }
-    }
-
-    private func separator(_ mark: String) -> some View {
-        Text(mark).foregroundStyle(Color.reloSecondaryText.opacity(0.6)).accessibilityHidden(true)
-    }
-
-    private func badge(_ label: String) -> some View {
-        Label(label, systemImage: symbol).labelStyle(HistoryInlineLabelStyle())
-            .font(.caption.weight(.semibold)).foregroundStyle(color)
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background { Capsule().fill(color.opacity(0.14)) }
-            .overlay { Capsule().strokeBorder(color.opacity(0.25), lineWidth: 0.5) }
-            .fixedSize()
-    }
-
     /// The question asked on the card and its answer, on one line when it fits.
     private func decisionStrip(_ decision: HistoryRow.Decision) -> some View {
         let tint: Color = decision.pending ? .reloSignalCoral : decision.declined ? .reloWarning : .reloDone
@@ -240,7 +125,7 @@ struct HistoryRowView: View {
                     .monospacedDigit()
             }
         }
-        let prompt = Label(decision.prompt, systemImage: "questionmark.bubble").labelStyle(HistoryInlineLabelStyle())
+        let prompt = Label(decision.prompt, systemImage: "questionmark.bubble").labelStyle(ReloCardInlineLabelStyle())
             .foregroundStyle(.primary)
         return ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) { prompt.fixedSize(); Spacer(minLength: 8); answer.fixedSize() }
@@ -297,12 +182,6 @@ struct HistoryRowView: View {
     }
 }
 
-private struct HistoryInlineLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 3) { configuration.icon.imageScale(.small); configuration.title }
-    }
-}
-
 /// One segment per step across the full width, so "4 of 6" reads at a glance; long plans become a bar.
 struct HistoryStepsMeter: View {
     let steps: HistoryRow.Steps
@@ -332,16 +211,16 @@ struct HistoryStepsMeter: View {
         outcome == .done ? steps.total : steps.done
     }
 
+    /// The one plan line (U2): "2 of 5 · Patch token refresh", "5 of 5 done", "Stopped at 3 of 5".
     static func caption(_ steps: HistoryRow.Steps, outcome: HistoryRow.Outcome) -> String {
         let done = done(steps, outcome: outcome)
-        if done >= steps.total { return "All \(steps.total) steps" }
-        guard let current = steps.current else { return "\(done) of \(steps.total) steps" }
-        switch outcome {
-        case .stopped: return "Stopped at \(current)"
-        case .expired: return "Expired at \(current)"
-        case .ended, .replaced: return "Ended at \(current)"
-        default: return "\(done) of \(steps.total) · \(current)"
+        let progress = PlanProgress(done: done, total: steps.total, current: outcome == .done ? nil : steps.currentIndex)
+        let standing: PlanProgress.Standing = switch outcome {
+        case .done: .done
+        case .stopped, .expired, .ended, .replaced: .stopped
+        default: done >= steps.total ? .done : .moving
         }
+        return progress.line(label: steps.current, standing: standing) ?? "\(done) of \(steps.total)"
     }
 }
 

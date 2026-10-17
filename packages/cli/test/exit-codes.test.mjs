@@ -2,8 +2,9 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { EXIT, HELP, run } from "../src/cli.mjs";
-import { ApiError, NetworkError } from "../src/errors.mjs";
+import { ApiError, EXIT, EXIT_CODES, NetworkError } from "../src/shared/errors.mjs";
+import { HELP } from "../src/help.mjs";
+import { run } from "../src/cli.mjs";
 
 const CONFIG = {
   apiUrl: "https://server.example.test",
@@ -32,9 +33,8 @@ test("publishes the golden exit-code matrix (0.11: 4 still open, 8 closed)", asy
     NO_DELIVERY: 7,
     CLOSED: 8,
   });
-  assert.match(HELP, /1 API\/other failure[\s\S]*2 usage/);
-  assert.match(HELP, /3 authentication\/scope[\s\S]*4 still open \(resume\)[\s\S]*5 denied\/no/);
-  assert.match(HELP, /6 network[\s\S]*7 no accepted device[\s\S]*8 closed without an answer/);
+  // Help renders the one table (EXIT_CODES), so every code appears with its meaning, in order.
+  assert.ok(HELP.includes(EXIT_CODES.map(({ code, meaning }) => `  ${code} ${meaning}`).join("\n")));
   const cliReadme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
   const skillReference = readFileSync(
     new URL("../../../skills/relo-notifications/references/cli.md", import.meta.url),

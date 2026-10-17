@@ -174,22 +174,16 @@ struct ReloPressStyle: ButtonStyle {
     }
 }
 
-struct ReloNotice: View {
-    let title: String
-    let detail: String
-    let symbol: String
-    let actionTitle: String
-    let action: () -> Void
+/// The one caps label: monospaced, one weight, one tracking. Section kickers, codes and small status words.
+struct ReloMonoLabel: View {
+    let text: String
+    var color: Color = .reloSecondaryText
+    init(_ text: String, color: Color = .reloSecondaryText) { self.text = text; self.color = color }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol).font(.headline)
-            Text(detail).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: action) { Text(actionTitle).frame(minHeight: 44) }
-                .buttonStyle(.bordered).tint(.reloInteractive)
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .contain)
+        Text(text.uppercased())
+            .font(.system(.caption2, design: .monospaced).weight(.semibold))
+            .tracking(ReloLayout.labelTracking)
+            .foregroundStyle(color)
     }
 }
 
@@ -275,16 +269,14 @@ struct ReloRequestWidget: View {
                 HStack(alignment: .center, spacing: 12) {
                     ReloRequestGlyph(item: item, size: 40)
                     summary
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary).accessibilityHidden(true)
+                    ReloChevron()
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         ReloRequestGlyph(item: item, size: 40)
                         Spacer()
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary).accessibilityHidden(true)
+                        ReloChevron()
                     }
                     summary
                 }
@@ -292,7 +284,7 @@ struct ReloRequestWidget: View {
         }
         .padding(ReloLayout.cardInset)
         .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
-        .reloCard().contentShape(RoundedRectangle(cornerRadius: 20))
+        .reloCard().contentShape(RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine).accessibilityHint("Opens request")
     }
 
@@ -373,8 +365,7 @@ struct ReloActivityWidget: View {
                         .font(.caption.weight(.semibold)).foregroundStyle(Color.reloSignalIndigo)
                     Spacer(minLength: 0)
                     if revealsDetails {
-                        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary).accessibilityHidden(true)
+                        ReloChevron()
                     }
                 }
                 Text(presentation.title).font(.title3.weight(.semibold)).foregroundStyle(.primary)
@@ -392,7 +383,7 @@ struct ReloActivityWidget: View {
             }
         }
         .padding(ReloLayout.cardInset).frame(maxWidth: .infinity, alignment: .leading).reloCard()
-        .contentShape(RoundedRectangle(cornerRadius: 20))
+        .contentShape(RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 }
@@ -423,25 +414,5 @@ struct ReloFilterPill: View {
         .overlay { Capsule().strokeBorder(Color.white.opacity(selected ? 0 : 0.12), lineWidth: 0.75) }
         .contentShape(Capsule())
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-/// Time left to answer a question, counted down live until it expires.
-struct ReloAnswerCountdown: View {
-    let deadline: Date
-
-    var body: some View {
-        Label {
-            HStack(spacing: 4) {
-                Text("Answer within")
-                Text(timerInterval: Date.now...max(deadline, Date.now), countsDown: true)
-                    .monospacedDigit().fontWeight(.semibold)
-            }
-        } icon: {
-            Image(systemName: "timer")
-        }
-        .font(.footnote)
-        .foregroundStyle(Color.reloSecondaryText)
-        .accessibilityElement(children: .combine)
     }
 }

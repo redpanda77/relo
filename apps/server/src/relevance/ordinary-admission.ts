@@ -1,7 +1,8 @@
 import type { ApnsMode } from "../activities.js";
 import type { QuestionInteraction } from "../interactions/types.js";
 import { settleInteractiveLiveActivity } from "../interactive-activity-lifecycle.js";
-import { generateToken,hashToken } from "../auth.js";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "../digest.js";
 import { publicId } from "../ids.js";
 import { decisionSubjectCommand,noticeSubjectCommand } from "./admission.js";
 import { applySubjectMutation,SubjectAdmissionError,type ServerSubjectActor,type SubjectCommand,type SubjectTransaction } from "./commands.js";
@@ -56,7 +57,7 @@ export async function admitOrdinaryEvent(tx: SubjectTransaction,actor: ServerSub
          CASE WHEN $6::timestamptz<=admission_clock.at THEN 'expired'::interaction_request_state ELSE 'pending'::interaction_request_state END,
          CASE WHEN $6::timestamptz<=admission_clock.at THEN admission_clock.at ELSE NULL END,$7::jsonb
        FROM admission_clock RETURNING id,state,expires_at`,
-      [actor.principalId,input.eventId,input.interaction.kind,input.interaction.prompt,hashToken(generateToken()),deadline,
+      [actor.principalId,input.eventId,input.interaction.kind,input.interaction.prompt,sha256Hex(randomBytes(32).toString("base64url")),deadline,
         input.interaction.options ? JSON.stringify(input.interaction.options) : null],
     )).rows[0]!;
     await tx.query(`UPDATE notification_events SET expires_at=$2,

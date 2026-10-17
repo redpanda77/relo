@@ -1,6 +1,15 @@
-import { Globe, Laptop, Smartphone, type LucideIcon } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { Globe, Laptop, Smartphone, Trash2, type LucideIcon } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
+import { COMPUTER_ICON_META } from "@/components/atoms/computer-icon-meta"
+import { IconTile } from "@/components/atoms/icon-tile"
+import { StatusChip } from "@/components/atoms/status-chip"
+import { StatusDot } from "@/components/atoms/status-dot"
+import { List, Row } from "@/components/list"
+import { ActionButton } from "@/components/molecules/action-button"
+import { DestructiveAction } from "@/components/molecules/confirmation-action"
+import { Notice } from "@/components/molecules/notice"
+import { OperationStatus } from "@/components/molecules/operation-status"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -13,36 +22,38 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { DestructiveAction } from "@/features/connections/components"
 import {
   createHttpDevicesService,
   type DeviceRow,
   type DevicesService,
   type DevicesView,
 } from "@/features/devices/devices-service"
+import { AddComputerControl } from "@/features/onboarding/connect-computer"
 import { LinkBrowserSection } from "@/features/linked-browser/link-browser-card"
 import { useBrowserLink } from "@/features/linked-browser/use-browser-link"
 import type { BrowserLink } from "@/lib/e2ee/browser-link"
 import { relativeTime } from "@/lib/format"
+import type { NeonTone } from "@/lib/status-tone"
+import { useShake } from "@/lib/use-shake"
 
 const httpService = createHttpDevicesService()
 const REFRESH_MS = 60_000
 
-type Tone = "success" | "warning" | "neutral"
+type Tone = Extract<NeonTone, "mint" | "yellow" | "neutral">
 
 /** One plain line per device: what it can do with encrypted content. */
 function encryptionStatus(device: DeviceRow): { text: string; tone: Tone } {
   switch (device.status) {
     case "can_read":
-      return { text: "Can read your encrypted cards", tone: "success" }
+      return { text: "Can read your encrypted cards", tone: "mint" }
     case "pending":
-      return { text: "Waiting for approval", tone: "warning" }
+      return { text: "Waiting for approval", tone: "yellow" }
     case "simulator":
       return { text: "Simulator", tone: "neutral" }
     case "unlinked":
       return { text: "Not linked — can't read encrypted content", tone: "neutral" }
     case "encrypts":
-      return { text: "Sends encrypted cards", tone: "success" }
+      return { text: "Sends encrypted cards", tone: "mint" }
     case "no_keys":
       return device.kind === "computer"
         ? { text: "Not set up for encryption", tone: "neutral" }
@@ -50,15 +61,9 @@ function encryptionStatus(device: DeviceRow): { text: string; tone: Tone } {
   }
 }
 
-const toneClass: Record<Tone, string> = {
-  success: "text-[var(--status-success)] before:bg-[var(--status-success)]",
-  warning: "text-[var(--status-warning)] before:bg-[var(--status-warning)]",
-  neutral: "text-muted-foreground before:bg-muted-foreground",
-}
-
 const removeCopy: Record<DeviceRow["kind"], string> = {
   phone: "It is signed out and can no longer read anything. Cards only it could open are deleted.",
-  computer: "Its CLI key stops working and it can no longer send cards. Run relo auth login on it to connect it again.",
+  computer: "Its CLI key stops working and it can no longer send cards. Add it again with Add a computer to connect it.",
   browser: "It is signed out of encryption and can no longer read anything. It needs to be linked from your iPhone again.",
 }
 
@@ -76,6 +81,8 @@ function ApproveDialog({
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [form, shake] = useShake<HTMLFormElement>()
+  const codeField = useRef<HTMLInputElement>(null)
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const code = String(new FormData(event.currentTarget).get("code") ?? "").trim()
@@ -86,15 +93,17 @@ function ApproveDialog({
       setOpen(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Approval failed.")
+      // A wrong code: the form shakes and the code is selected for the next try.
+      shake(codeField.current)
     } finally {
       setBusy(false)
     }
   }
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); setError("") }}>
-      <Button type="button" className="min-h-11" onClick={() => setOpen(true)}>Approve</Button>
+      <Button type="button" size="sm" onClick={() => setOpen(true)}>Approve</Button>
       <DialogContent>
-        <form className="grid gap-4" onSubmit={submit}>
+        <form ref={form} className="grid gap-4" onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>Approve {device.name}?</DialogTitle>
             <DialogDescription>
@@ -105,6 +114,7 @@ function ApproveDialog({
             <div className="grid gap-2">
               <Label htmlFor={`approve-code-${device.id}`}>Code from your authenticator app</Label>
               <Input
+                ref={codeField}
                 id={`approve-code-${device.id}`}
                 name="code"
                 inputMode="numeric"
@@ -112,16 +122,17 @@ function ApproveDialog({
                 pattern="[0-9]{6}"
                 maxLength={6}
                 required
-                className="min-h-11"
               />
             </div>
           ) : null}
-          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <OperationStatus error={error || null} />
           <DialogFooter>
             <DialogClose asChild>
-              <Button type="button" variant="outline" className="min-h-11">Cancel</Button>
+              <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
-            <Button type="submit" className="min-h-11" disabled={busy}>{busy ? "Approving…" : "Approve"}</Button>
+            <ActionButton type="submit" pending={busy} failed={Boolean(error)} pendingLabel="Approving…" successLabel={null}>
+              Approve
+            </ActionButton>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -144,16 +155,16 @@ function DeviceItem({
   onApprove(code?: string): Promise<void>
   onRemove(): Promise<void>
 }) {
-  const [pending, setPending] = useState(false)
+  const [pending, setPending] = useState<"Removal" | "Decline" | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const Icon = icons[device.kind]
+  const Icon = device.kind === "computer" && device.icon ? COMPUTER_ICON_META[device.icon].glyph : icons[device.kind]
   const status = encryptionStatus(device)
-  const remove = (verb: string) => {
-    setPending(true)
+  const remove = (verb: "Removal" | "Decline") => {
+    setPending(verb)
     setError(null)
     void onRemove()
       .catch((cause) => setError(cause instanceof Error ? cause.message : `${verb} failed.`))
-      .finally(() => setPending(false))
+      .finally(() => setPending(null))
   }
   const meta = [
     device.model && device.model !== device.name ? device.model : null,
@@ -162,55 +173,60 @@ function DeviceItem({
     device.approvedBy ? `approved by ${device.approvedBy}` : null,
     device.linkedBy ? `linked by ${device.linkedBy}` : null,
   ].filter(Boolean)
+  const removeAction = (
+    <DestructiveAction
+      label="Remove"
+      title={`Remove ${device.name}?`}
+      description={removeCopy[device.kind]}
+      pending={pending === "Removal"}
+      disabled={pending !== null}
+      failed={Boolean(error)}
+      pendingLabel="Removing…"
+      size="sm"
+      icon={<Trash2 aria-hidden="true" />}
+      compact
+      onConfirm={() => remove("Removal")}
+    />
+  )
   return (
-    <li aria-busy={pending} className="grid gap-2 px-4 py-3.5">
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <div className="min-w-0 flex-1 basis-48">
-          <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
-            <span className="truncate">{device.name}</span>
-            {thisBrowser ? (
-              <span className="shrink-0 rounded-full bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary">This browser</span>
-            ) : null}
-          </p>
-          {meta.length ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{meta.join(" · ")}</p> : null}
-          <p
-            className={`mt-1 inline-flex items-center gap-1.5 text-xs font-medium before:size-1.5 before:shrink-0 before:rounded-full ${toneClass[status.tone]}`}
-          >
-            {status.text}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 pl-7 sm:pl-0">
-          {device.status === "pending" ? (
-            <>
-              {canApprove ? (
-                <ApproveDialog device={device} twoFactor={twoFactor} onApprove={onApprove} />
-              ) : (
-                <Button asChild variant="outline" className="min-h-11">
-                  <a href="#linked-browser">Link this browser from your iPhone first</a>
-                </Button>
-              )}
-              <DestructiveAction
-                label="Decline"
-                title={`Decline ${device.name}?`}
-                description="It is signed out and can never read your encrypted cards. To use it again, sign in on it and approve it."
-                pending={pending}
-                onConfirm={() => remove("Decline")}
-              />
-            </>
+    <Row
+      busy={pending !== null}
+      wrap
+      leading={<IconTile icon={Icon} />}
+      title={
+        <span className="inline-flex max-w-full flex-wrap items-center gap-2">
+          {device.name}
+          {thisBrowser ? <StatusChip tone="violet" variant="hairline">This browser</StatusChip> : null}
+        </span>
+      }
+      status={<StatusDot tone={status.tone} label={status.text} className="text-muted-foreground" />}
+      meta={meta.length ? meta.join(" · ") : undefined}
+      actions={device.status === "pending" ? undefined : removeAction}
+    >
+      {device.status === "pending" ? (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3.5 sm:pl-[58px]">
+          {canApprove ? (
+            <ApproveDialog device={device} twoFactor={twoFactor} onApprove={onApprove} />
           ) : (
-            <DestructiveAction
-              label="Remove"
-              title={`Remove ${device.name}?`}
-              description={removeCopy[device.kind]}
-              pending={pending}
-              onConfirm={() => remove("Removal")}
-            />
+            <Button asChild variant="outline" size="sm">
+              <a href="#linked-browser">Link this browser from your iPhone first</a>
+            </Button>
           )}
+          <DestructiveAction
+            label="Decline"
+            title={`Decline ${device.name}?`}
+            description="It is signed out and can never read your encrypted cards. To use it again, sign in on it and approve it."
+            pending={pending === "Decline"}
+            disabled={pending !== null}
+            failed={Boolean(error)}
+            pendingLabel="Declining…"
+            size="sm"
+            onConfirm={() => remove("Decline")}
+          />
         </div>
-      </div>
-      {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
-    </li>
+      ) : null}
+      <OperationStatus error={error} className="px-4 pb-3" />
+    </Row>
   )
 }
 
@@ -229,8 +245,11 @@ export function DevicesSection({
   service = httpService,
   link,
   onLinked,
+  scope = "devices",
 }: {
   accountId: string
+  /** "devices": phones and browsers (Security). "computers": computers and Add a computer (Computers). */
+  scope?: "devices" | "computers"
   service?: DevicesService
   link?: BrowserLink | null
   onLinked?: () => void
@@ -273,6 +292,26 @@ export function DevicesSection({
 
   const thisBrowserId = state.status === "linked" || state.status === "unlinked" ? state.browserId : null
   const linked = state.status === "linked" && resolved !== null
+  // Computers this browser holds back: signed in after its first contact, approved by no device it trusts yet.
+  const [waiting, setWaiting] = useState<Array<{ clientId: string; name: string }>>([])
+  const [approving, setApproving] = useState<string | null>(null)
+  useEffect(() => {
+    if (!linked || typeof resolved?.pendingComputers !== "function") return
+    let active = true
+    void resolved.pendingComputers().then((next) => { if (active) setWaiting(next) }, () => undefined)
+    return () => { active = false }
+  }, [linked, resolved, view])
+
+  async function approveComputer(clientId: string) {
+    if (!resolved) return
+    setApproving(clientId)
+    try {
+      await resolved.approveComputer(clientId)
+      setWaiting(await resolved.pendingComputers())
+    } finally {
+      setApproving(null)
+    }
+  }
 
   async function approve(device: DeviceRow, code?: string) {
     if (!resolved || !device.identityKey) throw new Error("Link this browser from your iPhone first.")
@@ -289,20 +328,45 @@ export function DevicesSection({
 
   if (view === null) return null
   return (
-    <div className="grid gap-6">
-      {view === undefined && !error ? <p className="px-1 text-sm text-muted-foreground">Loading devices…</p> : null}
-      {error ? <p className="px-1 text-sm text-muted-foreground">Devices could not be loaded ({error}). Trying again in a minute.</p> : null}
+    <div className="grid gap-5">
+      {view === undefined && !error ? <p className="text-sm text-muted-foreground">Loading devices…</p> : null}
+      <Notice show={Boolean(error)} variant="quiet" tone="neutral">
+        Devices could not be loaded ({error}). Trying again in a minute.
+      </Notice>
+      {scope === "computers" && waiting.length > 0 ? (
+        <div className="grid gap-2">
+          <h4 className="micro px-1">Waiting for approval in this browser</h4>
+          <p className="px-1 text-sm text-muted-foreground">
+            These computers signed in after this browser was linked. Approve one to read its cards here; your other
+            devices follow your approval too.
+          </p>
+          <List label="Computers waiting for approval" items={waiting} getKey={(computer) => computer.clientId}>
+            {(computer) => (
+              <Row
+                leading={<IconTile icon={Laptop} />}
+                title={computer.name}
+                description="Can't show its cards in this browser yet"
+                trailing={
+                  <ActionButton size="sm" pending={approving === computer.clientId} pendingLabel="Approving…"
+                    onClick={() => void approveComputer(computer.clientId)}>
+                    Approve
+                  </ActionButton>
+                }
+              />
+            )}
+          </List>
+        </div>
+      ) : null}
       {view
-        ? GROUPS.map(({ kind, title }) => {
+        ? GROUPS.filter(({ kind }) => (kind === "computer") === (scope === "computers")).map(({ kind, title }) => {
             const rows = view.devices.filter((device) => device.kind === kind)
             if (!rows.length) return null
             return (
               <div key={kind} className="grid gap-2">
-                <h4 className="px-1 text-sm font-medium text-muted-foreground">{title}</h4>
-                <ul aria-label={title} className="glass divide-y divide-white/[0.06] overflow-hidden rounded-[20px]">
-                  {rows.map((device) => (
+                <h4 className="micro px-1">{title}</h4>
+                <List label={title} items={rows} getKey={(device) => device.id}>
+                  {(device) => (
                     <DeviceItem
-                      key={device.id}
                       device={device}
                       thisBrowser={device.id === thisBrowserId}
                       canApprove={linked}
@@ -310,13 +374,14 @@ export function DevicesSection({
                       onApprove={(code) => approve(device, code)}
                       onRemove={() => remove(device)}
                     />
-                  ))}
-                </ul>
+                  )}
+                </List>
               </div>
             )
           })
         : null}
-      {state.status !== "linked" ? <LinkBrowserSection accountId={accountId} link={resolved} onLinked={onLinked} /> : null}
+      {scope === "computers" ? <AddComputerControl /> : null}
+      {scope === "devices" && state.status !== "linked" ? <LinkBrowserSection accountId={accountId} link={resolved} onLinked={onLinked} /> : null}
     </div>
   )
 }

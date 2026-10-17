@@ -25,10 +25,9 @@ renderDashboardAppDocument,
 import { createDashboardAuthHandler } from "./web/dashboard-auth.js";
 import { createDashboardConnectionsHandlers } from "./web/dashboard-connections.js";
 import { createDashboardInboxHandlers } from "./web/dashboard-inbox.js";
-import { createDashboardProjectHandlers } from "./web/dashboard-projects.js";
 import { createDashboardSystemHandlers } from "./web/dashboard-system.js";
-import { dashboardReleaseIdentity,secureHtml } from "./web/http.js";
-import { agentsMarkdown,documentationMarkdown,llmsText } from "./web/docs-content.js";
+import { dashboardDocumentOptions,dashboardReleaseIdentity,secureHtml } from "./web/http.js";
+import { registerDocsSite } from "./web/docs-site.js";
 
 export type WebAuthDependencies = {
   accountAuth: AccountAuth;
@@ -114,9 +113,12 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
     const response = await dashboardAppAssetResponse(context.req.param("dashboardAsset"));
     return response ?? context.notFound();
   });
-  app.get("/docs.md", (context) => context.text(documentationMarkdown(),200,{ "content-type": "text/markdown; charset=utf-8" }));
-  app.get("/agents.md", (context) => context.text(agentsMarkdown(),200,{ "content-type": "text/markdown; charset=utf-8" }));
-  app.get("/llms.txt", (context) => context.text(llmsText(),200,{ "content-type": "text/plain; charset=utf-8" }));
+  registerDocsSite(app,{
+    releaseIdentity,
+    origin: appOrigin,
+    signedIn: async (headers) => Boolean(await getOwnerAccount(db,accountAuth,headers)),
+    renderDocument: renderDashboardAppDocument,
+  });
 
   async function dashboardMutationAccount(context: any): Promise<OwnerAccount | Response> {
     const account = await getOwnerAccount(db, accountAuth, context.req.raw.headers);
@@ -124,14 +126,6 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
     if (context.req.header("origin") !== appOrigin) return context.json({ error: "forbidden" }, 403);
     return account;
   }
-
-  const projectHandlers = createDashboardProjectHandlers({
-    db,
-    releaseIdentity,
-    getAccount: (headers) => getOwnerAccount(db,accountAuth,headers),
-    authorizeMutation: dashboardMutationAccount,
-    renderDocument: renderDashboardAppDocument,
-  });
 
   async function accountMutationAccount(context: any): Promise<OwnerAccount | Response> {
     const account = await getOwnerAccount(db,accountAuth,context.req.raw.headers);
@@ -197,9 +191,10 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
         run_interaction.action AS interaction_action,run_interaction.responded_at AS interaction_responded_at,
         a.requester_service_id,a.requester_credential_id,
         CASE WHEN a.requester_service_id IS NOT NULL THEN 'Service · '||COALESCE(s.title,'revoked')
-             WHEN a.requester_credential_id IS NOT NULL THEN 'Client · '||COALESCE(k.label,'revoked') ELSE 'Dashboard' END AS requester_label
+             WHEN a.requester_credential_id IS NOT NULL THEN 'Client · '||COALESCE(comp.display_name,k.label,'revoked') ELSE 'Dashboard' END AS requester_label
         FROM live_activities a LEFT JOIN webhook_services s ON s.id=a.requester_service_id
         LEFT JOIN principal_api_keys k ON k.id=a.requester_credential_id
+        LEFT JOIN computers comp ON comp.login_key_id=k.id
         LEFT JOIN LATERAL (
           SELECT d.name FROM devices d WHERE d.principal_id=a.principal_id
             AND d.id=ANY(a.target_device_ids) ORDER BY d.name,d.id LIMIT 1
@@ -246,12 +241,12 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
         presentation: dashboardBuilderPresetPresentation(id),
       })),
     });
-    return secureHtml(context,await renderDashboardAppDocument(bootstrap));
+    return secureHtml(context,await renderDashboardAppDocument(bootstrap,dashboardDocumentOptions(context)));
   };
-  app.get("/docs", (context) => context.redirect("/dashboard/docs"));
   app.get("/dashboard", inboxHandlers.overview);
-  app.get("/dashboard/projects", projectHandlers.index);
-  app.get("/dashboard/projects/:projectId", projectHandlers.detail);
+  // Projects page retired: its old links land on Now.
+  app.get("/dashboard/projects", (context) => context.redirect("/dashboard",302));
+  app.get("/dashboard/projects/:projectId", (context) => context.redirect("/dashboard",302));
   app.get("/dashboard/inbox", (context) => context.redirect("/dashboard",302));
   app.get("/dashboard/inbox/notifications", inboxHandlers.history);
   app.get("/dashboard/inbox/notifications/:notificationId", inboxHandlers.detail);
@@ -264,7 +259,7 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
   app.get("/dashboard/testing/runs/:activityId/history", activityHistoryHandler);
   app.get("/dashboard/testing/runs/:activityId", testLabPage);
   app.get("/dashboard/account", systemHandlers.account);
-  app.get("/dashboard/docs", systemHandlers.docs);
+  app.get("/dashboard/docs", (context) => context.redirect("/docs",302));
   app.get("/dashboard/notifications", (context) => context.redirect("/dashboard/inbox/notifications",302));
   app.get("/dashboard/notifications/:notificationId", (context) => context.redirect(`/dashboard/inbox/notifications/${encodeURIComponent(context.req.param("notificationId"))}`,302));
   app.get("/dashboard/delivery", (context) => context.redirect("/dashboard/inbox/delivery",302));
@@ -273,11 +268,4 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
   app.get("/dashboard/clients", (context) => context.redirect("/dashboard/connections",302));
   app.get("/dashboard/approvals", (context) => context.redirect("/dashboard",302));
 
-  app.patch("/api/dashboard/resources/projects/:projectId",projectHandlers.update);
-  app.post("/api/dashboard/resources/projects/:projectId/aliases",projectHandlers.addAlias);
-  app.delete("/api/dashboard/resources/projects/:projectId/aliases/:aliasId",projectHandlers.removeAlias);
-  app.post("/api/dashboard/resources/projects/:projectId/merge",projectHandlers.merge);
-  app.post("/api/dashboard/resources/projects/:projectId/split",projectHandlers.split);
-  app.delete("/api/dashboard/resources/projects/:projectId",projectHandlers.archive);
-  app.post("/api/dashboard/resources/projects/:projectId/restore",projectHandlers.restore);
 }

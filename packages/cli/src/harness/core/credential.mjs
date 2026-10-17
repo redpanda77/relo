@@ -5,9 +5,10 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { label } from "./labels.mjs";
+import { cleanLabel as label } from "../../shared/label.mjs";
+import { resolveComputerName } from "../../shared/computer.mjs";
 
-export function harnessCredentialPath(dependencies) {
+function harnessCredentialPath(dependencies) {
   // process.env too: a caller's own env object (as in tests) must never fall back to the real file.
   return dependencies.env?.RELO_HARNESS_CREDENTIAL_PATH || process.env.RELO_HARNESS_CREDENTIAL_PATH
     || join(dirname(dependencies.configPath()), "harness-credential");
@@ -38,11 +39,10 @@ export async function removeHarnessCredential(dependencies) {
 }
 
 function computerLabel(dependencies, config) {
-  const fromEnv = label(dependencies.env.RELO_COMPUTER, 120);
-  if (fromEnv) return fromEnv;
-  const cached = label(config?.computerName ?? dependencies.loadComputerName?.(), 120);
-  if (cached) return cached;
-  try { return label(dependencies.computerName?.(), 120) ?? "computer"; } catch { return "computer"; }
+  return resolveComputerName(dependencies.env, {
+    cached: () => config?.computerName ?? dependencies.loadComputerName?.(),
+    detect: () => dependencies.computerName?.(),
+  }) ?? "computer";
 }
 
 /** Mints a new harness credential with the CLI credential and stores it. Throws on failure. */

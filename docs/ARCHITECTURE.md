@@ -25,13 +25,14 @@ flowchart LR
 | Boundary | Owns | Must not own |
 | --- | --- | --- |
 | `apps/server/src/app.ts`, route modules | Authentication adapters, validation, orchestration, HTTP projection | APNs socket behavior or client UI rules |
-| Domain modules such as `activities.ts`, `services.ts` | Canonical state transitions and transaction boundaries | Provider retries or HTML rendering |
+| Domain modules such as `activities.ts`; producer modules such as `webhooks/` (one per producer type) | Canonical state transitions and transaction boundaries | Provider retries or HTML rendering |
 | PostgreSQL migrations and stores | Durable state, constraints, idempotency, outbox jobs | Presentation policy decisions |
 | `worker.ts`, `apns-runtime.ts` | Job leases, provider attempts, retry classification | Canonical notification/interaction outcomes |
 | `apns-provider-cleanroom.ts` | HTTP/2, signing, Apple response handling | Database/domain policy |
 | `apps/dashboard` | Owner-facing control surface; displays derived state | Canonical business rules, policy |
 | `packages/cli` | Authenticated commands and stable process exits; the edge: each session's local declared copy, the per-session phase state machine, sealing, the durable outbox, hook adapters | Time-based policy, aggregation across producers, delivery, hidden server fallback |
-| `apps/server/src/works`, `agent-sessions.ts`, `harness-credentials.ts` | Declared work records per producer type, observed session snapshots, harness credentials | Interpreting raw hook events; reading sealed text |
+| `apps/server/src/credentials` | Minting, authenticating, rotating, revoking and listing every credential kind (logins, phones, hooks, services); the only code that writes credential columns or computes token digests | Route logic, scopes policy beyond the registry |
+| `apps/server/src/works`, `agent-sessions.ts` | Declared work records per producer type, observed session snapshots | Interpreting raw hook events; reading sealed text |
 | `apps/server/src/derive` | The one function that turns declared work, observed evidence and time into owner state (`GET /api/now`) | Storing derived state as truth |
 | `skills/relo-notifications` | Agent workflow guidance: keep one work current with `relo work`, ask on it, notify sparingly | Credentials, server authority, or UI composition |
 | `apps/ios` | Native UI, local cache, ActivityKit, receipts, replies | Server policy, timers or phase rules, or inferred delivery truth |
@@ -54,6 +55,18 @@ The owner's surfaces (iPhone, Lock Screen, Dynamic Island, Watch, Dashboard) dis
 and keep no timers, windows or phase rules. They read `GET /api/now` and refetch at the `refreshAt`
 it returns.
 
+A write reaches them as a hint, never as state. PostgreSQL `NOTIFY` triggers on questions,
+notifications, Live Activities and agent sessions wake one in-process change hub per server, which
+fans out to Server-Sent Event streams scoped to the owner's principal: `GET /api/inbox/events` for
+phones (bearer credential, `inbox:read`; `event: current` with the subject ids that changed) and
+`GET /api/dashboard/events` for the signed-in Dashboard (the better-auth cookie session; a refused
+foreign `Origin`; `event: changed` with an empty body, no ids, state or counts). A hint only says
+"read again": the Dashboard refetches its Now view (debounced, at most once every 2 s), so Now
+follows a write within about a second. Both streams send a keepalive comment every 15 s, set
+`Cache-Control: no-store` and `X-Accel-Buffering: no`, close when the credential or session ends,
+and allow 16 streams per credential (per browser session for the Dashboard). The client's 60 s
+refetch and the `refreshAt` one-shot stay as reconciliation, so a lost stream only costs latency.
+
 ### Vocabulary
 
 | Term | Meaning |
@@ -75,7 +88,7 @@ code is limited to identical primitives: the content filter, idempotency, sealin
 | --- | --- | --- | --- |
 | Agent session | the harness's session id, read by the CLI | `relo work`, `relo state`, `/api/session/works` | its own writes, plus hooks when enabled |
 | Script | login plus a producer key | `relo work --producer`, `/api/producers/{key}/works` | its writes and a lease it renews |
-| App or service | login with scopes, or a service secret | the HTTP API, `/hooks/{secret}/works` | its writes and a lease |
+| App or service | login with scopes, or a service secret | the HTTP API, `/hooks/works` (secret in a header) | its writes and a lease |
 | Harness hooks | a harness credential (scope `presence:write` only) | nothing: observed snapshots only | is the observation |
 
 Records carry their producer type and that type's identity, and `derive()` reads each type's own
@@ -91,7 +104,7 @@ relevance come from one table by state, evaluated in a fixed order. Four constan
 | --- | --- | --- |
 | `T_fresh` | 20 minutes | a card is stale after it; "your turn" on the Lock Screen; reminder threshold |
 | `T_retire` | 60 minutes | a quiet card leaves the Lock Screen; a declared wait ends its protection |
-| `T_done` | 15 minutes | a finished card lingers; an ended session is hidden |
+| `T_done` | 15 minutes | a finished card lingers (an ended session is hidden at once) |
 | `T_history` | 8 hours | "left unfinished"; the "since you looked" window; the ActivityKit card limit |
 
 Derived safeguards keep idle, stopped, stale or broken items off the owner's screens, and change
@@ -237,7 +250,8 @@ release note, a fresh database, and clients signing in again; they are not silen
 
 ## Known structural debt
 
-- `app.ts`, `web.ts`, the CLI dispatcher, and iOS `AppModel` are larger than ideal.
+- `app.ts`, `web.ts` and iOS `AppModel` are larger than ideal. The CLI's structure is set by
+  [ADR 0009](adr/0009-cli-structure.md): type modules, one command registry, one descriptor per harness.
 - Route registration, operation logic, stores, and response projection are not consistently split.
 - The CLI still hand-maintains parts of the API shape instead of consuming a generated client.
 - Clean public-source install proof remains the primary adoption gap tracked in the roadmap.

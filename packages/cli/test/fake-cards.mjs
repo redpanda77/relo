@@ -87,9 +87,21 @@ export async function fakeHome({ block = false, skillVersion, agents = [".claude
   const { join } = await import("node:path");
   const home = await mkdtemp(join(tmpdir(), "relo-home-"));
   for (const agent of agents) await mkdir(join(home, agent), { recursive: true });
-  if (block) await writeFile(join(home, ".claude", "CLAUDE.md"), "<!-- relo:start -->\nold\n<!-- relo:end -->\n");
+  // block: true writes the block relo setup writes now; "stale" an older one.
+  if (block) {
+    const { DEPTHS, renderBlock } = await import("../src/install/block.mjs");
+    await writeFile(join(home, ".claude", "CLAUDE.md"), block === "stale" ? "<!-- relo:start -->\nold\n<!-- relo:end -->\n" : `${renderBlock(DEPTHS.track).join("\n")}\n`);
+  }
   if (skillVersion !== undefined) {
     const skill = join(home, ".agents", "skills", "relo-notifications");
+    const { VERSION } = await import("../src/version.mjs");
+    if (skillVersion === VERSION) {
+      // The current skill is the one this CLI carries, file for file.
+      const { cp } = await import("node:fs/promises");
+      const { bundledSkillDirectory } = await import("../src/install/skill.mjs");
+      await cp(bundledSkillDirectory(), skill, { recursive: true, filter: (path) => !/\/(tests|node_modules)(\/|$)/u.test(path) });
+      return home;
+    }
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "package.json"), JSON.stringify({ name: "relo-notifications", version: skillVersion }));
     await writeFile(join(skill, "SKILL.md"), "---\nname: relo-notifications\n---\n");

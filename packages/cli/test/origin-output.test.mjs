@@ -1,9 +1,11 @@
 import "./hermetic-env.mjs";
+import { loginKeyStoreEnv } from "./cli-fixtures.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EXIT, execute, run } from "../src/cli.mjs";
-import { ApiError } from "../src/errors.mjs";
-import { detectAccount, detectComputerName } from "../src/identity.mjs";
+import { ApiError } from "../src/shared/errors.mjs";
+import { execute, run } from "../src/cli.mjs";
+import { detectAccount } from "../src/shared/identity.mjs";
+import { detectComputerName } from "../src/shared/computer.mjs";
 import { cardDependencies, fakeCards } from "./fake-cards.mjs";
 
 const HOME = "/Users/test";
@@ -37,25 +39,19 @@ test("the account is RELO_ACCOUNT, a stored nickname, or the name of a custom ag
   assert.equal(detectAccount({ CLAUDE_CONFIG_DIR: `${HOME}/.claude-work` }, { home: HOME }).account, undefined);
 });
 
-test("cards start with the computer and account; flags override", async () => {
-  const { client, calls } = fakeCards();
+test("notices carry the computer and account; flags override", async () => {
+  const sent = [];
+  const { client } = fakeCards();
+  client.sendNotification = async (body) => { sent.push(body); return { eventId: "ntf_1", delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 } }; };
   const deps = { ...cardDependencies(client), originDefaults: () => ({ computer: "Studio", account: "work" }) };
-  await execute(["activity", "start", "--title", "Nightly export", "--status", "Exporting rows", "--topic", "Nightly release"], deps);
-  const start = calls.find((call) => call.op === "start");
-  assert.equal(start.body.context.computer, "Studio");
-  assert.equal(start.body.context.account, "work");
-  const second = fakeCards();
-  await execute(["activity", "start", "--title", "Nightly export", "--status", "Exporting rows", "--topic", "Nightly release", "--computer", "Laptop", "--account", "  home "],
-    { ...cardDependencies(second.client), originDefaults: () => ({ computer: "Studio", account: "work" }) });
-  const secondStart = second.calls.find((call) => call.op === "start");
-  assert.equal(secondStart.body.context.computer, "Laptop");
-  assert.equal(secondStart.body.context.account, "home");
-  await assert.rejects(execute(["activity", "start", "--title", "Nightly export", "--status", "Exporting rows", "--topic", "Nightly release", "--account", "x".repeat(41)], deps), /at most 40/);
+  await execute(["notify", "Export finished", "--topic", "Nightly release"], deps);
+  assert.deepEqual([sent[0].context.computer, sent[0].context.account], ["Studio", "work"]);
+  await execute(["notify", "Export finished", "--topic", "Nightly release", "--computer", "Laptop", "--account", "  home "], deps);
+  assert.deepEqual([sent[1].context.computer, sent[1].context.account], ["Laptop", "home"]);
+  await assert.rejects(execute(["notify", "Export finished", "--topic", "Nightly release", "--account", "x".repeat(41)], deps), /at most 40/);
   // Without any account, the field is simply absent.
-  const third = fakeCards();
-  await execute(["activity", "start", "--title", "Nightly export", "--status", "Exporting rows", "--topic", "Nightly release"],
-    { ...cardDependencies(third.client), originDefaults: () => ({ computer: "Studio" }) });
-  assert.equal("account" in third.calls.find((call) => call.op === "start").body.context, false);
+  await execute(["notify", "Export finished", "--topic", "Nightly release"], { ...cardDependencies(client), originDefaults: () => ({ computer: "Studio" }) });
+  assert.equal("account" in sent[2].context, false);
 });
 
 function accountDeps(initial = {}) {
@@ -89,7 +85,7 @@ test("relo account shows, stores and clears the nickname for this agent config d
 test("login names the credential after this computer unless told otherwise", async () => {
   const names = [];
   const deps = (extra) => ({
-    env: { RELO_API_URL: "http://192.168.1.10:8180" }, configPath: () => "/cfg/c.json", configRevision: async () => null,
+    env: { RELO_API_URL: "http://192.168.1.10:8180", ...loginKeyStoreEnv() }, configPath: () => "/cfg/c.json", configRevision: async () => null,
     clientFactory: () => ({ startDeviceAuthorization: async (body) => { names.push(body.clientName); throw new ApiError("stop", { status: 500 }); } }),
     ...extra,
   });
@@ -133,16 +129,4 @@ test("rate limits and missing cards read plainly", async () => {
   }))).stdout[0]);
   assert.equal(missing.error.message, "No such card.");
 });
-
-function stepCard({ current = 1, labels = ["Plan", "Build", "Ship"] } = {}) {
-  return { id: "act_1", state: "active", sequence: 4, presentation: { components: [{ type: "steps",
-    items: labels.map((label, index) => ({ label, state: index + 1 < current ? "complete" : index + 1 === current ? "current" : "pending" })) }] } };
-}
-function stepDeps(card) {
-  const sent = [];
-  return { sent, deps: cardDependencies({
-    getActivity: async () => ({ activity: card }),
-    updateActivity: async (_id, body) => { sent.push(body); return { activity: card, delivery: { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 } }; },
-  }, { env: { CLAUDE_CODE_SESSION_ID: "s4" } }) };
-}
 

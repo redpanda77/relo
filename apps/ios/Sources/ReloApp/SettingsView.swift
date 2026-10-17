@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Bindable var model: AppModel
     @AppStorage(ReloHistoryPreferences.retentionKey) private var retentionRaw = HistoryRetention.standard.rawValue
     @AppStorage(ReloHistoryPreferences.clearedAtKey) private var clearedAt: Double = 0
+    @AppStorage(ReloSessionUsagePreferences.showKey) private var showsUsage = false
     @State private var confirmsClear = false
     @State private var showsSecurity = false
     var body: some View {
@@ -37,11 +38,10 @@ struct SettingsView: View {
                             Text("\(model.devices.waitingRequests.count)")
                                 .font(.footnote.weight(.bold)).foregroundStyle(.white)
                                 .padding(.horizontal, 7).frame(minHeight: 20)
-                                .background(ReloHoloTheme.orange, in: Capsule())
+                                .background(Color.reloAttention, in: Capsule())
                                 .accessibilityLabel("\(model.devices.waitingRequests.count) waiting for approval")
                         }
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
+                        ReloChevron()
                     }
                     .contentShape(Rectangle())
                 }
@@ -66,6 +66,14 @@ struct SettingsView: View {
             }
             .listRowBackground(ReloListRowBackground())
             Section {
+                Toggle(isOn: $showsUsage) {
+                    ReloSettingLabel(title: "Show context and cost", symbol: "gauge.with.dots.needle.50percent", color: .reloIndigo)
+                }
+            } header: { Text("Sessions") } footer: {
+                Text("On sessions in Now: how much context each agent has used and, from a terminal's status line, what the session has cost. Needs the optimize depth on that computer.")
+            }
+            .listRowBackground(ReloListRowBackground())
+            Section {
                 NavigationLink { DiagnosticsView(model: model) } label: {
                     ReloSettingLabel(title: "Recovery & diagnostics", symbol: "stethoscope", color: Color(uiColor: .systemGray))
                 }
@@ -85,10 +93,12 @@ struct SettingsView: View {
             .listRowBackground(ReloListRowBackground())
         }
         .listStyle(.insetGrouped).listSectionSpacing(20)
-        .confirmationDialog("Clear history on this iPhone?", isPresented: $confirmsClear, titleVisibility: .visible) {
-            Button("Clear history", role: .destructive) { ReloHistoryPreferences.clear(&clearedAt) }
-        } message: {
-            Text("Past notifications and finished activities disappear from Now, History and Notification Center. Requests waiting for you stay, and the dashboard keeps everything.")
+        .reloConfirmation(isPresented: $confirmsClear) {
+            ReloConfirmSpec(
+                title: "Clear history on this iPhone?",
+                message: "Past notifications and finished activities disappear from Now, History and Notification Center. Requests waiting for you stay, and the dashboard keeps everything.",
+                symbol: "clock.arrow.circlepath", actionTitle: "Clear history",
+                action: { ReloHistoryPreferences.clear(&clearedAt) })
         }
         .reloGroupedScreen().navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $showsSecurity) { EncryptionSettingsView(model: model) }

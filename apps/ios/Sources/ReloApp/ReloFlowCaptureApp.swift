@@ -21,6 +21,7 @@ struct ReloFlowCaptureApp: App {
             state: requested == "welcome" || requested == "signin" ? .signedOut : requested == "long-message" ? .longContent : .ready
         )
         if requested == "now" || requested == "now-clear" { model.seedPreviewCurrentWork(clear: requested == "now-clear") }
+        if requested == "quiet-activity" || requested == "quiet-now" { model.seedPreviewQuietWork() }
         _model = State(initialValue: model)
     }
 
@@ -44,6 +45,8 @@ private struct ReloFlowCaptureScreen: View {
         Group {
             switch screen {
             case let deck where deck.hasPrefix("deck-"): ReloDeckGallery(variant: String(deck.dropFirst(5)))
+            case let plan where plan.hasPrefix("plan-"): PlanFixtureGallery(model: model, variant: String(plan.dropFirst(5)))
+            case let sheet where sheet.hasPrefix("sheet-"): ReloSheetGallery(model: model, variant: String(sheet.dropFirst(6)))
             case "welcome": OnboardingView(model: model)
             case "signin": NavigationStack { SignInView(model: model) }
             default:
@@ -57,13 +60,47 @@ private struct ReloFlowCaptureScreen: View {
             let id: String? = switch screen {
             case "message": "ntf_previewmessage"
             case "approval": "ntf_previewapproval"
-            case "activity": "ntf_previewworking"
+            case "activity", "quiet-activity": "ntf_previewworking"
             case "text-request", "reply": "ntf_previewreply"
             case "long-message": "ntf_previewlong"
             default: nil
             }
             // The preview model has no remote Inbox; opening a fixture uses its cached item.
             if let id { await model.openNotification(notificationID: id) }
+        }
+    }
+}
+
+/// Capture only: each sheet template over the Now screen, to review them side by side.
+private struct ReloSheetGallery: View {
+    @Bindable var model: AppModel
+    let variant: String
+    @State private var shown = true
+
+    var body: some View {
+        ReloRootView(model: model, initialTab: .settings)
+            .sheet(isPresented: $shown) {
+                switch variant {
+                case "access": AccessRequestSheet(model: model, id: "dev_preview")
+                default: ReloConfirmSheet(spec: spec)
+                }
+            }
+    }
+
+    private var spec: ReloConfirmSpec {
+        switch variant {
+        case "approve":
+            ReloConfirmSpec(title: "Approve Studio Mac?", message: "It will read and send encrypted items for this account.",
+                            symbol: "laptopcomputer", actionTitle: "Approve", destructive: false,
+                            alternative: .init(title: "Deny", destructive: true, action: {}), action: {})
+        case "notice":
+            ReloConfirmSpec(title: "Export unavailable",
+                            message: "The diagnostic file could not be saved. Your responses and current state are unchanged.",
+                            symbol: "exclamationmark.triangle", actionTitle: "OK", destructive: false, cancelTitle: nil, action: {})
+        default:
+            ReloConfirmSpec(title: "Sign out Studio Mac?",
+                            message: "It stops reading encrypted items until you approve it again.",
+                            symbol: "rectangle.portrait.and.arrow.right", actionTitle: "Sign out", action: {})
         }
     }
 }

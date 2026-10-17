@@ -1,13 +1,16 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { z } from "zod";
+import { computerApprovals,type ComputerApprovalResource } from "./computer-approvals.js";
+import { computerIconColumns,iconFromColumns } from "./computers/store.js";
 import type { Database } from "./db.js";
+import type { ComputerIcon } from "@relo/notification-contracts";
 import { simulatorSql } from "./device-models.js";
 import { publicId } from "./ids.js";
 
 /**
- * Key directory for end-to-end encryption (docs/END-TO-END-ENCRYPTION.md, E2.2).
+ * Key directory for end-to-end encryption (docs/ENCRYPTION-PROTOCOL.md, E2.2).
  * Phones publish an identity key and signed prekeys; CLIs read them and decide trust themselves.
- * The signing input and key id match packages/cli/src/e2ee.mjs and ReloE2EE.swift, pinned by
+ * The signing input and key id match packages/cli/src/crypto/e2ee.mjs and ReloE2EE.swift, pinned by
  * packages/contracts/fixtures/e2ee-v1.json.
  */
 const E2EE_VERSION = "relo.e2e.v1";
@@ -153,6 +156,11 @@ export type DeviceKeyResource = {
   approval?: { deviceId: string; signedAt: string; signature: string } | null;
   /** True for a phone running in the iOS Simulator (never for a browser). */
   simulator?: boolean;
+  /**
+   * What the device declared (schemas.ts DEVICE_CAPABILITIES). Computers seal to an `owner_overview`
+   * device as a reader only: it gets the content envelope, never an alert, and is never a target.
+   */
+  capabilities?: string[];
 };
 
 /** Every active phone of the account that has published keys, newest prekey first. */
@@ -164,7 +172,7 @@ export async function listDeviceKeys(
   const result = await db.query<any>(
     `SELECT d.id,d.name,k.key_id,k.public_key AS identity_key,k.changed_at,
        p.prekey_id,p.public_key AS prekey_public_key,p.signature,p.signed_created_at,p.received_at,
-       ${simulatorSql("d")} AS simulator,
+       ${simulatorSql("d")} AS simulator,d.capabilities,
        approval.approved_by_device,approval.approved_by_browser,approval.signed_at AS approval_signed_at,approval.signature AS approval_signature
      FROM devices d
      JOIN device_identity_keys k ON k.device_id=d.id AND k.principal_id=d.principal_id
@@ -193,47 +201,58 @@ export async function listDeviceKeys(
       signedAt: row.approval_signed_at,signature: row.approval_signature,
     } : null,
     simulator: Boolean(row.simulator),
+    capabilities: Array.isArray(row.capabilities) ? [...row.capabilities].sort() : [],
   }));
 }
 
 // ---- CLI identity keys ----------------------------------------------------------------------
 
-export const publishClientKeySchema = z.object({ identityKey: b64u(65) }).strict();
+export const publishClientKeySchema = z.object({ identityKey: b64u(65),binding: b64u(32).optional() }).strict();
 
 /** Stores the calling CLI credential's identity key; a different key replaces it and moves changedAt. */
 export async function publishClientKey(
   db: Pick<Database,"query">,
-  input: { principalId: string; apiKeyId: string; identityKey: string },
+  input: { principalId: string; apiKeyId: string; identityKey: string; binding?: string | undefined },
 ): Promise<{ ok: true; keyId: string; changed: boolean; created: boolean } | { ok: false; error: "invalid_identity_key" }> {
   const identity = Buffer.from(input.identityKey,"base64url");
   if (!verifyingKey(identity)) return { ok: false,error: "invalid_identity_key" };
   const keyId = e2eeKeyId(identity);
   const result = await db.query<{ changed: boolean; created: boolean }>(
     `WITH previous AS (SELECT public_key FROM client_identity_keys WHERE api_key_id=$1)
-     INSERT INTO client_identity_keys(api_key_id,principal_id,key_id,public_key) VALUES ($1,$2,$3,$4)
+     INSERT INTO client_identity_keys(api_key_id,principal_id,key_id,public_key,binding) VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (api_key_id) DO UPDATE SET key_id=EXCLUDED.key_id,public_key=EXCLUDED.public_key,
+       binding=CASE WHEN client_identity_keys.public_key=EXCLUDED.public_key THEN client_identity_keys.binding ELSE EXCLUDED.binding END,
        changed_at=CASE WHEN client_identity_keys.public_key=EXCLUDED.public_key
          THEN client_identity_keys.changed_at ELSE now() END
      RETURNING COALESCE((SELECT public_key FROM previous)<>$4,false) AS changed,
        NOT EXISTS (SELECT 1 FROM previous) AS created`,
-    [input.apiKeyId,input.principalId,keyId,input.identityKey],
+    [input.apiKeyId,input.principalId,keyId,input.identityKey,input.binding ?? null],
   );
   return { ok: true,keyId,changed: Boolean(result.rows[0]?.changed),created: Boolean(result.rows[0]?.created) };
 }
 
-export type ClientKeyResource = { clientId: string; name: string; keyId: string; publicKey: string; changedAt: string };
+export type ClientKeyResource = {
+  clientId: string; name: string; keyId: string; publicKey: string; changedAt: string; icon: ComputerIcon;
+  /** The join code's binding of this key (b64url HMAC), when it was published with one; the server never checks it. */
+  binding: string | null;
+  /** Signed approvals of this key by the account's phones, Mac app or linked browsers (computer-approvals.ts). */
+  approvals: ComputerApprovalResource[];
+};
 
 /** Identity keys of the account's active CLI credentials, for the phone's security screen. */
 export async function listClientKeys(db: Pick<Database,"query">,principalId: string): Promise<ClientKeyResource[]> {
   const result = await db.query<any>(
-    `SELECT k.id,k.label,c.key_id,c.public_key,c.changed_at
+    `SELECT k.id,COALESCE(comp.display_name,k.label) AS label,c.key_id,c.public_key,c.binding,c.changed_at,${computerIconColumns("comp")}
      FROM principal_api_keys k JOIN client_identity_keys c ON c.api_key_id=k.id AND c.principal_id=k.principal_id
+     LEFT JOIN computers comp ON comp.login_key_id=k.id
      WHERE k.principal_id=$1 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
      ORDER BY c.changed_at DESC,k.id DESC LIMIT 64`,
     [principalId],
   );
+  const approvals = await computerApprovals(db,principalId);
   return result.rows.map((row) => ({
-    clientId: publicId("key",row.id),name: row.label,keyId: row.key_id,publicKey: row.public_key,
-    changedAt: new Date(row.changed_at).toISOString(),
+    clientId: publicId("key",row.id),name: row.label,keyId: row.key_id,publicKey: row.public_key,binding: row.binding ?? null,
+    changedAt: new Date(row.changed_at).toISOString(),icon: iconFromColumns(row.computer_icon,row.computer_kind).icon,
+    approvals: approvals.get(publicId("key",row.id)) ?? [],
   }));
 }

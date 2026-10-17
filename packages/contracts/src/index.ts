@@ -1,6 +1,5 @@
 import { choiceOptionSchema } from "./presentation.js";
 import { z } from "zod";
-import { agentSessionListSchema } from "./agent-sessions.js";
 import { safeContextSchema } from "./context.js";
 
 export * from "./presentation.js";
@@ -13,6 +12,11 @@ export * from "./owner-state.js";
 export * from "./works.js";
 export * from "./card-line.js";
 export * from "./sealed.js";
+export * from "./orb-palette.js";
+export * from "./scopes.js";
+export * from "./facts.js";
+export * from "./origin.js";
+export * from "./computers.js";
 
 export function isPublicHttpsUrl(value: string): boolean {
   try {
@@ -74,19 +78,6 @@ export const httpsUrlSchema = z.url().max(2_048).startsWith("https://");
 export const appDestinationUrlSchema = z.string().max(2_048).regex(/^relo:\/\/[a-z][a-z0-9\/_-]*$/);
 /** Where an inbox item opens: a web page, or a screen in the app. */
 export const inboxDestinationUrlSchema = z.union([httpsUrlSchema, appDestinationUrlSchema]);
-
-export const API_TOKEN_SCOPES = [
-  "notifications:send",
-  "interactions:create",
-  "interactions:read",
-  "activities:write",
-  "activities:read",
-  "devices:read",
-  "services:read",
-  "services:write",
-] as const;
-export const apiTokenScopeSchema = z.enum(API_TOKEN_SCOPES);
-export type ApiTokenScope = z.infer<typeof apiTokenScopeSchema>;
 
 export const identifierSchema = z.string().regex(/^[a-z]+_[A-Za-z0-9_-]{12,}$/);
 export const hexTokenSchema = z.string().regex(/^[a-fA-F0-9]{32,512}$/);
@@ -167,7 +158,10 @@ export const serviceSchema = z
 export const serviceCreateResponseSchema = z
   .object({
     service: serviceSchema,
-    webhookUrl: z.url(),
+    /** Where a service sends (`<origin>/hooks`); the secret is never part of a URL. */
+    endpoint: z.url(),
+    /** Sent as `Authorization: Bearer hook_…` (or `X-Relo-Webhook-Secret`); shown once. */
+    secret: z.string().regex(/^hook_[A-Za-z0-9_-]{43}$/),
   })
   .strict();
 
@@ -225,17 +219,20 @@ export const liveActivitySymbolSchema = z.enum(LIVE_ACTIVITY_SYMBOLS);
 export const LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR = "#5ED8B7" as const;
 export const liveActivityAccentColorSchema = z.string()
   .regex(/^#[0-9a-fA-F]{6}$/, "Accent color must use #RRGGBB format");
-export const LIVE_ACTIVITY_PRESENTATION_PRESETS = [
+/** Named presets a single request may ask for. A stored policy no longer has one. */
+export const LIVE_ACTIVITY_REQUEST_PRESETS = [
   "automatic",
   "standard",
   "terminal",
   "steps",
 ] as const;
+export const LIVE_ACTIVITY_COLOR_STRATEGIES = ["project", "fixed"] as const;
+/**
+ * A computer's (or service's, or the account's) appearance on the phone: whether
+ * the color of its cards follows the project or is one accent, and that accent. The phone always renders dark.
+ */
 export const liveActivityPresentationPolicySchema = z.object({
-  preset: z.enum(LIVE_ACTIVITY_PRESENTATION_PRESETS).default("automatic"),
-  theme: z.enum(["system", "light", "dark"]).default("system"),
-  symbol: z.union([z.literal("automatic"), liveActivitySymbolSchema]).default("automatic"),
-  colorStrategy: z.enum(["fixed", "thread", "project"]).default("thread"),
+  colorStrategy: z.enum(LIVE_ACTIVITY_COLOR_STRATEGIES),
   accentColor: liveActivityAccentColorSchema.default(LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR),
 }).strict();
 export type LiveActivityPresentationPolicy = z.infer<typeof liveActivityPresentationPolicySchema>;
@@ -272,6 +269,8 @@ export const inboxLiveActivitySchema = z.object({
   secondaryLabel: z.string().min(1).max(24).nullable().default(null),
   alertOwner: z.enum(["apns", "app", "none"]).default("none"),
   sequence: z.number().int().min(0).default(0),
+  /** The plan step the work was on when this card update was made. */
+  stepId: z.string().regex(/^s[1-9][0-9]{0,2}$/).optional(),
   relevanceScore: z.number().min(0).max(1).default(0.5),
   presentationState: z.enum([
     "eligible", "foreground", "background", "pending_token", "not_presented", "ending", "ended", "unknown",
@@ -473,7 +472,7 @@ export const liveActivityStartRequestSchema = z
     progress: z.number().min(0).max(1).optional(),
     symbol: liveActivitySymbolSchema.optional(),
     style: taskLiveActivityStyleSchema.optional(),
-    preset: z.enum(LIVE_ACTIVITY_PRESENTATION_PRESETS).optional(),
+    preset: z.enum(LIVE_ACTIVITY_REQUEST_PRESETS).optional(),
     theme: z.enum(["system", "light", "dark"]).optional(),
     accentColor: liveActivityAccentColorSchema.optional(),
     deviceIds: z.array(identifierSchema).min(1).max(50).optional(),
@@ -631,9 +630,29 @@ export const inboxHistorySummarySchema = inboxItemSchema.omit({
     steps: z.object({
       done: z.number().int().nonnegative(), total: z.number().int().positive(),
       current: z.string().refine(value => Array.from(value).length <= 80).nullable(),
+      /** The card's plan wire: the current top-level step's position (from 1) and fraction; absent on an older card. */
+      currentIndex: z.number().int().min(1).nullable().optional(), fill: z.number().min(0).max(1).nullable().optional(),
     }).strict().nullable(),
     updates: z.number().int().nonnegative(),
     startedAt: isoTimestampSchema, endedAt: isoTimestampSchema.nullable(),
+    /** The work's whole plan (skipped steps omitted); the card carries only a window of a long one.
+     *  Labels are null for sealed or private work (the phone opens them by step id). */
+    plan: z.array(z.object({
+      id: z.string().regex(/^s[1-9][0-9]{0,2}$/), state: z.enum(["open","current","done","skipped"]),
+      label: z.string().refine(value => Array.from(value).length <= 120).nullable(),
+      /** Nested and multi-round plans (the working layer): the parent step, the round (absent means 1), the detail text. */
+      parent: z.string().regex(/^s[1-9][0-9]{0,2}$/).optional(),
+      round: z.number().int().positive().optional(),
+      detail: z.string().max(200).optional(),
+    }).strict()).max(120).nullable().optional(),
+    /** The plan's rounds (absent without them); title and outcome are absent for sealed or private work. */
+    rounds: z.array(z.object({
+      n: z.number().int().positive(), state: z.enum(["open","closed"]),
+      title: z.string().max(80).optional(), outcome: z.string().max(200).optional(),
+      openedAt: z.string().optional(), closedAt: z.string().optional(),
+    }).strict()).max(60).nullable().optional(),
+    /** The closed last round's outcome of a readable open work (the "Your turn" text). */
+    roundOutcome: z.string().max(200).nullable().optional(),
   }).strict().nullable().optional(),
   relevance: z.object({
     subjectId: z.string().regex(/^sub_[0-9a-f-]{36}$/),
@@ -650,8 +669,6 @@ export const inboxSnapshotResponseSchema = z.object({
   total: z.number().int().nonnegative(), serverTime: isoTimestampSchema,
   readWatermark: z.string().max(512).nullable(),
   unread: z.object({ account: z.number().int().nonnegative(), projects: z.record(z.string(), z.number().int().nonnegative()) }).strict(),
-  // Live and recent agent sessions (last 24 hours, at most 20); absent from servers that predate them.
-  sessions: agentSessionListSchema.optional(),
 }).strict().refine(value => value.total >= value.items.length && new Set(value.items.map(item => item.id)).size === value.items.length);
 export type InboxHistorySummary = z.infer<typeof inboxHistorySummarySchema>;
 export type InboxSnapshotResponse = z.infer<typeof inboxSnapshotResponseSchema>;

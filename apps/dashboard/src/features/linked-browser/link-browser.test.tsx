@@ -1,9 +1,9 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { LinkBrowserBanner, LinkBrowserSection } from "@/features/linked-browser/link-browser-card"
 import { LINK_STEPS, LINK_TITLE } from "@/features/linked-browser/link-text"
-import { BrowserLink } from "@/lib/e2ee/browser-link"
+import { BrowserLink, linkCode } from "@/lib/e2ee/browser-link"
 import { memoryStore } from "@/lib/e2ee/keys"
 
 function jsonResponse(status: number, body: unknown) {
@@ -17,6 +17,7 @@ async function startedLink(server: { linked: boolean }) {
       const body = JSON.parse(String(init.body)) as { browserId: string }
       return jsonResponse(200, { browserId: body.browserId, linked: server.linked })
     }
+    if (url.endsWith("/link-request") && init?.method === "POST") return jsonResponse(200, { requested: true, phones: 1 })
     if (url.startsWith("/api/dashboard/browser/")) return jsonResponse(200, server.linked ? { linked: true, linkedBy: "Owner iPhone" } : { linked: false })
     return jsonResponse(404, {})
   })
@@ -42,7 +43,7 @@ describe("linking this browser", () => {
     expect(screen.getByText(/cannot keep encryption keys/i)).toBeInTheDocument()
   })
 
-  it("shows the QR code on request, polls while it is shown and reloads once linked", async () => {
+  it("shows the QR code on request, polls while it is shown and links in place, without a reload", async () => {
     const server = { linked: false }
     const { link, fetcher } = await startedLink(server)
     const onLinked = vi.fn()
@@ -57,7 +58,7 @@ describe("linking this browser", () => {
     const statusCalls = () => fetcher.mock.calls.filter(([url]) => String(url).startsWith("/api/dashboard/browser/")).length
     expect(statusCalls()).toBe(0)
 
-    fireEvent.click(screen.getByRole("button", { name: /Show QR code/i }))
+    fireEvent.click(screen.getByRole("button", { name: /Scan a QR code/i }))
     const qr = screen.getByRole("img", { name: /QR code/i })
     const state = link.getState()
     if (state.status !== "unlinked") throw new Error("expected unlinked")
@@ -76,16 +77,50 @@ describe("linking this browser", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_000)
     })
-    vi.useRealTimers()
-    await vi.waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1))
-    // Linked: the banner goes away.
+    expect(onLinked).toHaveBeenCalledTimes(1)
+    // Linked: the check holds over the code, then the banner goes away on its own (no reload).
+    expect(screen.getByRole("status")).toHaveTextContent(/Linked/)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
     expect(screen.queryByText(LINK_TITLE)).toBeNull()
   })
 
-  it("shows the QR code directly on the Account page, and who linked it afterwards", async () => {
+  it("sends the request to the iPhone, shows the link code to compare, and links in place", async () => {
+    const server = { linked: false }
+    const { link, fetcher } = await startedLink(server)
+    const state = link.getState()
+    if (state.status !== "unlinked") throw new Error("expected unlinked")
+    const onLinked = vi.fn()
+    render(<LinkBrowserBanner accountId="acct_1" link={link} onLinked={onLinked} />)
+    fireEvent.click(screen.getByRole("button", { name: /Send to my iPhone/i }))
+    const code = await linkCode(state.identityKey)
+    expect(await screen.findByLabelText(`Link code ${code}`)).toBeInTheDocument()
+    expect(screen.getByText(/only if it shows this code/i)).toHaveTextContent("Chrome on macOS")
+    expect(fetcher.mock.calls.some(([url, init]) => String(url).endsWith("/link-request") && init?.method === "POST")).toBe(true)
+    expect(screen.getByRole("button", { name: /Send again in \d+s/i })).toBeDisabled()
+
+    server.linked = true
+    await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1), { timeout: 5_000 })
+    expect(screen.getAllByRole("status").some((node) => /Linked/.test(node.textContent ?? ""))).toBe(true)
+  })
+
+  it("falls back to the QR code when no iPhone can get the request", async () => {
+    const server = { linked: false }
+    const { link } = await startedLink(server)
+    vi.spyOn(link, "requestLink").mockResolvedValue({ ok: false, error: "no_phone" })
+    render(<LinkBrowserBanner accountId="acct_1" link={link} />)
+    fireEvent.click(screen.getByRole("button", { name: /Send to my iPhone/i }))
+    expect(await screen.findByRole("img", { name: /QR code/i })).toBeInTheDocument()
+    expect(screen.getByText(/No iPhone can get this yet/i)).toBeInTheDocument()
+  })
+
+  it("offers both ways on the Account page, and says who linked it afterwards", async () => {
     const server = { linked: false }
     const { link } = await startedLink(server)
     const { unmount } = render(<LinkBrowserSection accountId="acct_1" link={link} onLinked={() => undefined} />)
+    expect(screen.getByRole("button", { name: /Send to my iPhone/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Scan a QR code/i }))
     expect(screen.getByRole("img", { name: /QR code/i })).toBeInTheDocument()
     unmount()
 

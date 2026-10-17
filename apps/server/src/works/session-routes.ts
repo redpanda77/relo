@@ -1,13 +1,16 @@
 import {
-  workFinishRequestSchema,workPauseRequestSchema,workResumeRequestSchema,workStartRequestSchema,workUpdateRequestSchema,
+  workDeliverRequestSchema,workFinishRequestSchema,workHandoffRequestSchema,workPauseRequestSchema,workResumeRequestSchema,workStartRequestSchema,workUpdateRequestSchema,
 } from "@relo/notification-contracts";
+import { readSealedOutcome } from "./outcome-notification.js";
 import type { Context,Hono } from "hono";
 import type { z } from "zod";
 import type { ApiRouteContext } from "../api/route-context.js";
-import { END_TO_END_REQUIRED,endToEndRequired } from "../end-to-end-policy.js";
+import { refuseReadable } from "../content-policy.js";
+import { credentialCardActor } from "./card-actor.js";
 import { projectWorkCard } from "./card-projection.js";
+import { carriesReadable } from "./declared.js";
 import {
-  finishSessionWork,isRefusal,pauseSessionWork,readSessionState,resumeSessionWork,startSessionWork,updateSessionWork,
+  deliverSessionWork,finishSessionWork,handoffSessionWork,isRefusal,pauseSessionWork,readSessionState,resumeSessionWork,startSessionWork,updateSessionWork,
   type SessionOwner,type WorkOutcome,
 } from "./session-commands.js";
 import { activeCardFor,readSessionWork,serializeWork,workInternalId } from "./store.js";
@@ -27,7 +30,8 @@ const NOT_FOUND = { error: "not_found",message: "Work not found in this session.
  * computer share one API key, so this is a context guard, not a defence against a hostile local process.
  */
 export function registerSessionWorkRoutes(app: Hono,shared: ApiRouteContext): void {
-  const { db,apnsMode } = shared;
+  const { db,apnsMode,notificationContentCipher } = shared;
+  const outcomes = notificationContentCipher ? { apnsMode,contentCipher: notificationContentCipher } : undefined;
 
   function owner(context: Context): SessionOwner | Response {
     const auth = context.get("auth");
@@ -57,12 +61,9 @@ export function registerSessionWorkRoutes(app: Hono,shared: ApiRouteContext): vo
 
   /** Readable text on an account that requires end-to-end encryption is refused before any write. */
   async function readableRefused(context: Context,principalId: string,input: Record<string,unknown>): Promise<Response | null> {
-    const readable = ["goal","status","outcome"].some((key) => {
-      const value = input[key] as { readable?: string } | undefined;
-      return typeof value?.readable === "string";
-    }) || typeof (input.waiting as { reason?: { readable?: string } } | null | undefined)?.reason?.readable === "string";
-    if (readable && await endToEndRequired(db,principalId)) return context.json(END_TO_END_REQUIRED,409);
-    return null;
+    const readable = carriesReadable(input);
+    const refused = readable ? await refuseReadable(db,principalId) : null;
+    return refused ? context.json(refused,409) : null;
   }
 
   function target(context: Context): { workId: string } | null {
@@ -78,7 +79,7 @@ export function registerSessionWorkRoutes(app: Hono,shared: ApiRouteContext): vo
       return context.json(rest,status);
     }
     const actor = { kind: "credential" as const,principalId: caller.principalId,credentialId: caller.credentialId,sourceName: caller.sourceName };
-    for (const work of outcome.changed) await projectWorkCard(db,apnsMode,actor,work);
+    for (const work of outcome.changed) await projectWorkCard(db,apnsMode,credentialCardActor(db,actor),work);
     // The card may have just started: report it as it stands now.
     const card = outcome.changed.length ? await activeCardFor(db,outcome.changed.at(-1)!.id) : undefined;
     const body = card && outcome.body.work.card === null
@@ -155,7 +156,38 @@ export function registerSessionWorkRoutes(app: Hono,shared: ApiRouteContext): vo
     }
     const parsed = workFinishRequestSchema.safeParse(raw);
     if (!parsed.success) return context.json({ error: "invalid_request",message: parsed.error.issues.map((issue) => issue.message).join("; ") },400);
+    const badOutcome = readSealedOutcome(parsed.data);
+    if ("error" in badOutcome) return context.json({ error: badOutcome.error },422);
     const refused = await readableRefused(context,caller.principalId,parsed.data); if (refused) return refused;
-    return answer(context,caller,await finishSessionWork(db,caller,selected,parsed.data,idempotencyKey(context)));
+    return answer(context,caller,await finishSessionWork(db,caller,selected,parsed.data,idempotencyKey(context),outcomes));
+  });
+
+  app.post("/api/session/works/:workId/deliver",async (context) => {
+    const caller = owner(context); if (caller instanceof Response) return caller;
+    const selected = target(context); if (!selected) return context.json(NOT_FOUND,404);
+    let raw: unknown;
+    try { raw = await context.req.json(); } catch { raw = {}; }
+    if (raw && typeof raw === "object" && !("outcome" in raw)) {
+      return context.json({ error: "outcome_required",message: "Every deliver declares an outcome." },422);
+    }
+    const parsed = workDeliverRequestSchema.safeParse(raw);
+    if (!parsed.success) return context.json({ error: "invalid_request",message: parsed.error.issues.map((issue) => issue.message).join("; ") },400);
+    const badOutcome = readSealedOutcome(parsed.data);
+    if ("error" in badOutcome) return context.json({ error: badOutcome.error },422);
+    const refused = await readableRefused(context,caller.principalId,parsed.data); if (refused) return refused;
+    return answer(context,caller,await deliverSessionWork(db,caller,selected,parsed.data,idempotencyKey(context),outcomes));
+  });
+
+  // Handoff: the work stays open for a fresh session of this computer; the handle is shown once.
+  app.post("/api/session/works/:workId/handoff",async (context) => {
+    const caller = owner(context); if (caller instanceof Response) return caller;
+    const selected = target(context); if (!selected) return context.json(NOT_FOUND,404);
+    const input = await body(context,workHandoffRequestSchema); if (input instanceof Response) return input;
+    const refused = await readableRefused(context,caller.principalId,input); if (refused) return refused;
+    const outcome = await handoffSessionWork(db,caller,selected,input);
+    const answered = await answer(context,caller,outcome);
+    if (isRefusal(outcome) || !outcome.handoff) return answered;
+    context.header("Cache-Control","no-store");
+    return context.json({ ...(await answered.json()),handoff: outcome.handoff },outcome.status);
   });
 }

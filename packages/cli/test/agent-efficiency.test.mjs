@@ -1,12 +1,12 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseArgs, progressFraction } from "../src/args.mjs";
-import { EXIT, execute, run } from "../src/cli.mjs";
-import { NetworkError } from "../src/errors.mjs";
+import { parseArgs } from "../src/args.mjs";
+import { progressFraction, shortenText } from "../src/shared/validate.mjs";
+import { execute, run } from "../src/cli.mjs";
+import { VERSION } from "../src/version.mjs";
+import { EXIT, NetworkError } from "../src/shared/errors.mjs";
 import { closest, editDistance } from "../src/suggest.mjs";
-import { shortenText } from "../src/support.mjs";
-import { VERSION } from "../src/cli.mjs";
 import { cardDependencies, fakeCards, fakeHome } from "./fake-cards.mjs";
 
 const session = { CLAUDE_CODE_SESSION_ID: "session-eff-1" };
@@ -128,17 +128,17 @@ test("edit distance counts a swap as one edit and finds near candidates only", (
 });
 
 test("a mistyped option or command says what was meant", async () => {
-  assert.throws(() => parseArgs(["activity", "update", "--staus", "x"]), (error) => error.message === "Unknown option: --staus" && error.details.hint === "Did you mean --status?");
+  assert.throws(() => parseArgs(["activity", "end", "--staus", "x"]), (error) => error.message === "Unknown option: --staus" && error.details.hint === "Did you mean --status?");
   const far = await cli(["devices", "list", "--wat"], cardDependencies({}));
   assert.equal(far.line.error.hint, "Options for devices list: --page-size");
-  const many = await cli(["activity", "start", "--qqqqqqqqqq", "x"], cardDependencies({}));
+  const many = await cli(["activity", "end", "--qqqqqqqqqq", "x"], cardDependencies({}));
   assert.equal(many.line.error.hint, "Every flag: relo help all");
-  const command = await cli(["activity", "udpate", "--status", "x"], cardDependencies({}));
+  const command = await cli(["activity", "edn", "--status", "x"], cardDependencies({}));
   assert.equal(command.exitCode, EXIT.USAGE);
-  assert.equal(command.line.error.message, "Unknown command: activity udpate");
-  assert.equal(command.line.error.hint, "Did you mean activity update?");
-  assert.equal((await cli(["acitivity", "start"], cardDependencies({}))).line.error.hint, "Did you mean activity?");
-  assert.equal((await cli(["activity", "frobnicate"], cardDependencies({}))).line.error.hint, "activity takes: start, update, end, status, diagnose, get, list");
+  assert.equal(command.line.error.message, "Unknown command: activity edn");
+  assert.equal(command.line.error.hint, "Did you mean activity end?");
+  assert.equal((await cli(["acitivity", "end"], cardDependencies({}))).line.error.hint, "Did you mean activity?");
+  assert.equal((await cli(["activity", "frobnicate"], cardDependencies({}))).line.error.hint, "activity takes: end, status, diagnose, get, list");
   assert.match((await cli(["zzzzzzzz"], cardDependencies({}))).line.error.hint, /relo help all/u);
 });
 
@@ -150,17 +150,17 @@ test("a typo in the command is reported even when the CLI is not signed in", asy
 
 test("a missing topic is a short message and a hint with only the missing flags", async () => {
   const deps = cardDependencies(fakeCards().client);
-  const out = await cli(["activity", "start", "--title", "x", "--status", "y"], deps);
+  const out = await cli(["notify", "Done", "--title", "x"], deps);
   assert.equal(out.exitCode, EXIT.USAGE);
   assert.equal(out.line.error.message, 'Missing --topic: name the work the way the owner would (e.g. "Release 0.7.57").');
-  assert.equal(out.line.error.hint, 'relo activity start --title "x" --topic "<what this work is about>"');
+  assert.match(out.line.error.hint, /--topic "<what this work is about>"$/u);
   assert.deepEqual(out.line.error.details.missing, ["topic"]);
   assert.ok(out.stdout[0].length < 330, out.stdout[0]);
   const empty = cardDependencies(fakeCards().client, { identity: {} });
   const all = await cli(["notify", "Done"], empty);
   assert.equal(all.line.error.message, "Missing --source, --project, --topic: name the work the way the owner would (e.g. \"Release 0.7.57\").");
   assert.match(all.line.error.hint, /^relo notify "Done" --source "<your agent, e\.g\. Claude Code>" --project "<repository or product>" --topic /u);
-  const generic = await cli(["activity", "start", "--title", "x", "--status", "y", "--topic", "Task"], deps);
+  const generic = await cli(["notify", "Done", "--title", "x", "--topic", "Task"], deps);
   assert.match(generic.line.error.message, /^--topic "Task" is too generic/u);
   assert.doesNotMatch(generic.line.error.message, /Missing/u);
 });
@@ -226,7 +226,7 @@ const PHONE = "dev_abcdefghijkl";
 const verifiedConfig = async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), phoneTest: { verifiedAt: "2026-01-01T00:00:00Z", deviceId: PHONE } });
 
 test("doctor prints {ok:true} when healthy and only the failing checks otherwise", async () => {
-  const home = await fakeHome({ block: true, skillVersion: VERSION });
+  const home = await fakeHome({ block: true, skillVersion: VERSION, agents: [".claude"] });
   const withHome = (client) => ({ ...cardDependencies(client), home, loadConfig: verifiedConfig });
   const healthy = await cli(["doctor"], withHome(doctorClient()));
   assert.equal(healthy.exitCode, EXIT.OK);

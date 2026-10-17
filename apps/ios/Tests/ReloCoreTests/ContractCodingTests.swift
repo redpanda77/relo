@@ -586,6 +586,44 @@ final class ContractCodingTests: XCTestCase {
         XCTAssertEqual(roundTrip.presentation, presentation)
     }
 
+    private func tolerantContentState(identity: String, state: String, appearance: String) -> Data {
+        let json = #"{"generation":2,"updatedAt":1786060800,"header":"Relo","title":"Build","status":"Running","componentsJson":"[]","surfacesJson":"{\"compact_leading\":[],\"compact_trailing\":[],\"expanded_bottom\":[],\"expanded_leading\":[],\"expanded_trailing\":[],\"lock_screen\":[],\"minimal\":[]}","identityJson":"IDENTITY","stateJson":"STATE","behaviorType":"progress","appearanceJson":"APPEARANCE","privacy":"standard","sequence":1}"#
+        return Data(json.replacingOccurrences(of: "IDENTITY", with: identity)
+            .replacingOccurrences(of: "STATE", with: state)
+            .replacingOccurrences(of: "APPEARANCE", with: appearance).utf8)
+    }
+
+    func testIdentityIconLaptopDecodesAndUnknownIconFallsBackToProject() throws {
+        let state = #"{\"icon\":\"active\",\"kind\":\"active\",\"tone\":\"live\"}"#
+        let appearance = #"{\"roles\":{\"cardIdentity\":\"project\",\"componentIdentity\":\"thread\",\"statusEmphasis\":\"state\"},\"theme\":\"system\"}"#
+        func identity(_ icon: String) -> String {
+            ##"{\"direct\":false,\"project\":{\"color\":\"#A78BFA\",\"icon\":\""## + icon + ##"\",\"label\":\"Mac\",\"provenance\":\"generated\",\"revision\":1}}"##
+        }
+        let laptop = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self,
+            from: tolerantContentState(identity: identity("laptop"), state: state, appearance: appearance))
+        XCTAssertEqual(laptop.presentation.identity.project?.icon, .laptop)
+        XCTAssertEqual(LiveActivityPresentation.SemanticIcon.laptop.systemImageName, "laptopcomputer")
+
+        let unknown = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self,
+            from: tolerantContentState(identity: identity("spaceship"), state: state, appearance: appearance))
+        XCTAssertEqual(unknown.presentation.identity.project?.icon, .project)
+        XCTAssertEqual(unknown.presentation.identity.project?.label, "Mac")
+        XCTAssertEqual(unknown.presentation.state.icon, .active)
+    }
+
+    func testUnknownStateIconFallsBackToActiveAndMissingThemeDecodes() throws {
+        let state = #"{\"icon\":\"spaceship\",\"kind\":\"waiting\",\"tone\":\"live\"}"#
+        let appearance = #"{\"roles\":{\"cardIdentity\":\"project\",\"componentIdentity\":\"thread\",\"statusEmphasis\":\"state\"}}"#
+        let decoded = try JSONDecoder().decode(
+            ReloActivityAttributes.ContentState.self,
+            from: tolerantContentState(identity: #"{\"direct\":true}"#, state: state, appearance: appearance))
+        XCTAssertEqual(decoded.presentation.state.icon, .active)
+        XCTAssertEqual(decoded.presentation.state.kind, "waiting")
+        XCTAssertEqual(decoded.presentation.appearance.roles.cardIdentity, .project)
+    }
+
     func testContentStateDecodesStartedAtFromEpochOrISO8601AndToleratesItsAbsence() throws {
         let base = #"{"generation":2,"updatedAt":1786060800,"header":"Relo","title":"Build","status":"Running","componentsJson":"[]","surfacesJson":"{\"compact_leading\":[],\"compact_trailing\":[],\"expanded_bottom\":[],\"expanded_leading\":[],\"expanded_trailing\":[],\"lock_screen\":[],\"minimal\":[]}","identityJson":"{\"direct\":true}","stateJson":"{\"icon\":\"active\",\"kind\":\"active\",\"tone\":\"live\"}","behaviorType":"progress","appearanceJson":"{\"roles\":{\"cardIdentity\":\"project\",\"componentIdentity\":\"thread\",\"statusEmphasis\":\"state\"},\"theme\":\"system\"}","privacy":"standard","sequence":1"#
         let without = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: Data((base + "}").utf8))

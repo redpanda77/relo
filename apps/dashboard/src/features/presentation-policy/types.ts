@@ -7,9 +7,6 @@ export type PresentationPolicySource =
   "client" | "service" | "account" | "system"
 
 export const systemPresentationPolicy: LiveActivityPresentationPolicy = {
-  preset: "automatic",
-  theme: "system",
-  symbol: "automatic",
-  colorStrategy: "thread",
+  colorStrategy: "project",
   accentColor: "#5ED8B7",
 }

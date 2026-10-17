@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { resetAuthAttempts } from "./auth-throttle.js";
-import { createWebhookService } from "./services.js";
+import { createWebhookService } from "./webhooks/admin.js";
 import { createTransportTokenEncryption } from "./token-encryption.js";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
@@ -353,8 +353,8 @@ suite("server admin and registration (ADR 0004)", () => {
       const admin = await adminAndMode("open");
       expect((await signUp("guest")).status).toBe(200);
       const service = await createWebhookService(db,(await principalOf("guest"))!,"Guest service","http://127.0.0.1:8180");
-      const hook = new URL(service.webhookUrl).pathname;
-      const send = () => app.request(hook,{ method: "POST",headers: { "content-type": "application/json" },
+      const send = () => app.request("/hooks",{ method: "POST",
+        headers: { "content-type": "application/json",authorization: `Bearer ${service.secret}` },
         body: JSON.stringify({ title: "Build",body: "Done",context: { project: "Guest app",threadName: "Builds" } }) });
       expect((await send()).status).toBeLessThan(300);
       expect((await as(admin,"POST",`/api/dashboard/server/accounts/${await userId("guest")}/disable`,{})).status).toBe(200);

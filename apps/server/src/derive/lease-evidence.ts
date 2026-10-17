@@ -11,7 +11,9 @@ export function bindLeaseEvidence(leaseUntil: string | null,work: DeclaredWork):
     clock: { at: declared,source: "declared" },
     attention: () => null,
     liveness: (now) => declaredMoving(work,now) || (lease !== null && now < lease) ? "moving" : null,
-    turnStoppedAt: null,
+    turnStoppedAt: () => null,
+    sessionEnded: false,
+    quietCause: () => ({ reason: "no_update",since: declared }),
     freshUntil: lease !== null && lease > declared + T.fresh ? lease : null,
     instants: () => lease === null ? [] : [lease],
   };

@@ -72,7 +72,7 @@ private final class ScriptedClient: MobileAPIClient, @unchecked Sendable {
     private(set) var sent: [String] = []
     init(failures: [String: MobileAPIError]) { self.failures = failures }
 
-    func reportLiveActivityDismissed(credential: DeviceCredential, activityId: String) async throws {
+    func reportLiveActivityDismissed(credential: DeviceCredential, activityId: String, generation: Int) async throws {
         sent.append(activityId)
         if let failure = failures[activityId] { throw failure }
     }

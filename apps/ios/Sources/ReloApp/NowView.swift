@@ -27,7 +27,12 @@ struct NowView: View {
         var now: NowScreenInput
     }
 
-    private var isOffline: Bool { model.currentState?.connection == .offline }
+    /// One answer to "is Now current?" for the deck, the list and the connection sheet: offline
+    /// when either feed behind the screen (current work, or the Now summary) can't be reached.
+    private var isOffline: Bool {
+        if case .offline = model.syncState { return true }
+        return nowController.isOffline || model.currentState?.connection == .offline
+    }
 
     /// The current-state feed's server time when it can decide alone what is live: connected,
     /// clock verified and the whole inventory on hand.
@@ -58,7 +63,7 @@ struct NowView: View {
     }
 
     private var deckSync: ReloDeckFooter.Sync {
-        if model.currentState?.connection == .offline { return .offline }
+        if isOffline { return .offline(model.lastSyncedAt ?? model.nowSummary?.serverTime) }
         if model.currentState?.timeVerified != true { return .syncing }
         return .live(model.lastSyncedAt ?? model.currentTime)
     }
@@ -77,7 +82,8 @@ struct NowView: View {
             mix: shown.mix,
             satellites: shown.satellites,
             agentTime: agentTimeToday(derived),
-            sync: deckSync, pendingResponses: model.pendingResponseCount,
+            // While an answer is in flight its card says "Sending…"; the deck counts only answers left waiting.
+            sync: deckSync, pendingResponses: model.respondingNotificationID == nil ? model.pendingResponseCount : 0,
             connectionTrouble: connectionTrouble, topInset: topInset, bleed: bleed,
             showConnection: { sheet = .connection },
             director: model.deckDirector,
@@ -115,21 +121,10 @@ struct NowView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $sheet) { destination in
-            NavigationStack {
-                if destination == .signIn {
-                    SignInView(model: model)
-                } else {
-                    ScrollView {
-                        recovery.padding(ReloLayout.screenInset)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .reloScreenBackground()
-                    .navigationTitle("Connection")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } }
-                    }
-                }
+            if destination == .signIn {
+                NavigationStack { SignInView(model: model) }
+            } else {
+                ReloConnectionSheet(recovery: recovery, details: connectionDetails)
             }
         }
     }
@@ -151,7 +146,7 @@ struct NowView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     DeviceAccessNeedsYouRow(model: model)
-                    CurrentAttentionView(model: model, input: derived.now, offline: nowController.isOffline,
+                    CurrentAttentionView(model: model, input: derived.now, offline: isOffline,
                                          viewHistory: { tab = .history })
                 }
                 .padding(.horizontal, ReloLayout.screenInset)
@@ -191,7 +186,7 @@ struct NowView: View {
                     }
                     .environment(\.reloMotionPaused, !deckVisible)
                 DeviceAccessNeedsYouRow(model: model)
-                CurrentAttentionView(model: model, input: derived.now, offline: nowController.isOffline,
+                CurrentAttentionView(model: model, input: derived.now, offline: isOffline,
                                      viewHistory: { tab = .history })
             }
             .padding(.horizontal, ReloLayout.screenInset)
@@ -278,45 +273,56 @@ struct NowView: View {
     private var isUpdating: Bool { model.connectionStatus.updating }
     private var connectionSymbol: String { model.connectionStatus.symbol }
     private var connectionLabel: String { model.connectionStatus.label }
-    @ViewBuilder private var recovery: some View {
+    /// What the connection sheet leads with: the one state that matters most, and its fix.
+    private var recovery: ReloConnectionSheet.Recovery {
+        let attention = ReloHoloTheme.color(.attention)
         if model.requiresReauthentication {
-            Group {
-                ReloNotice(title: "Sign in again", detail: "Your saved history is available. Sign in to reconnect.",
-                           symbol: "person.crop.circle.badge.exclamationmark", actionTitle: "Sign in") { sheet = .signIn }
-            }
+            return .init(title: "Sign in again", detail: "Your saved history is still here. Sign in to reconnect.",
+                         symbol: "person.crop.circle.badge.exclamationmark", tint: attention,
+                         actionTitle: "Sign in") { sheet = .signIn }
         } else if model.accountState == .disabled {
-            Group {
-                ReloNotice(title: "Account needs attention", detail: "Open your dashboard to recover access.",
-                           symbol: "person.crop.circle.badge.exclamationmark", actionTitle: "Open dashboard") {
-                    UIApplication.shared.open(model.dashboardURL)
-                }
-            }
-        } else if case .offline = model.syncState {
-            Group {
-                ReloNotice(title: "You're offline", detail: model.lastSyncedAt.map {
-                    "Showing saved activity from \($0.formatted(date: .abbreviated, time: .shortened))."
-                } ?? "No saved activity yet. Connect to load your Inbox.",
-                           symbol: "wifi.slash", actionTitle: "Try again") { Task { _ = await model.refresh() } }
-            }
+            return .init(title: "Account needs attention", detail: "Open your dashboard to recover access.",
+                         symbol: "person.crop.circle.badge.exclamationmark", tint: attention,
+                         actionTitle: "Open dashboard") { UIApplication.shared.open(model.dashboardURL) }
+        } else if isOffline {
+            return .init(title: "You're offline", detail: model.lastSyncedAt == nil
+                            ? "No saved activity yet. Connect to load Now." : "Showing what was saved at the last sync.",
+                         symbol: "wifi.slash", tint: attention,
+                         actionTitle: "Try again") { Task { _ = await model.refresh() } }
         } else if case .failed = model.registrationState {
-            Group {
-                ReloNotice(title: "Connection needs attention", detail: "This iPhone could not register with your server.",
-                           symbol: "iphone.badge.exclamationmark", actionTitle: "Review connection") { sheet = nil; tab = .settings }
-            }
+            return .init(title: "Connection needs attention", detail: "This iPhone couldn't register with your server.",
+                         symbol: "iphone.badge.exclamationmark", tint: attention,
+                         actionTitle: "Review connection") { sheet = nil; tab = .settings }
         } else if model.isRegistered && (model.permission != .allowed || model.pushRegistrationError != nil || !model.liveActivitiesAuthorized) {
-            Group {
-                ReloNotice(title: "Notification settings", detail: "History is available. Review permissions to receive alerts and Live Activities.",
-                           symbol: "bell.badge", actionTitle: "Review settings") { sheet = nil; tab = .settings }
-            }
+            return .init(title: "Check notification settings", detail: "Now is current, but alerts or Live Activities may not reach you.",
+                         symbol: "bell.badge", tint: attention,
+                         actionTitle: "Review settings") { sheet = nil; tab = .settings }
         } else if !model.isRegistered {
-            ReloNotice(title: "Connecting this iPhone", detail: "Saved activity is available while Relo reconnects.",
-                       symbol: "iphone", actionTitle: "Review connection") { sheet = nil; tab = .settings }
-        } else {
-            ReloNotice(title: isUpdating ? "Updating notifications" : "Connected", detail: model.lastSyncedAt.map {
-                "Last updated \($0.formatted(date: .abbreviated, time: .shortened))."
-            } ?? "Relo is connected. New activity will appear in Now.",
-                       symbol: "checkmark.icloud", actionTitle: "Refresh") { Task { _ = await model.refresh() } }
+            return .init(title: "Connecting this iPhone", detail: "Saved activity stays available while Relo reconnects.",
+                         symbol: "iphone", tint: ReloHoloTheme.color(.running),
+                         actionTitle: "Review connection") { sheet = nil; tab = .settings }
         }
+        return .init(title: isUpdating ? "Syncing" : "Live", detail: "Now, alerts and Live Activities are up to date.",
+                     symbol: "checkmark.icloud", tint: ReloHoloTheme.color(.done),
+                     actionTitle: "Sync now") { Task { _ = await model.refresh() } }
+    }
+
+    private var connectionDetails: [ReloConnectionSheet.Detail] {
+        var rows: [ReloConnectionSheet.Detail] = [
+            .init(label: "Server", value: model.serverURL.host() ?? model.serverURL.absoluteString),
+            .init(label: "Last synced", value: model.lastSyncedAt.map {
+                Calendar.current.isDateInToday($0) ? $0.formatted(date: .omitted, time: .shortened)
+                    : $0.formatted(date: .abbreviated, time: .shortened)
+            } ?? "Not yet"),
+        ]
+        let alerts = model.permission == .allowed && model.pushRegistrationError == nil
+        rows.append(.init(label: "Notifications", value: alerts ? "On" : "Off", warning: !alerts))
+        rows.append(.init(label: "Live Activities", value: model.liveActivitiesAuthorized ? "On" : "Off",
+                          warning: !model.liveActivitiesAuthorized))
+        if model.pendingResponseCount > 0 {
+            rows.append(.init(label: "Sending", value: model.pendingResponseCount == 1 ? "1 answer" : "\(model.pendingResponseCount) answers"))
+        }
+        return rows
     }
 }
 
@@ -886,5 +892,79 @@ final class NowSummaryController {
         guard let summary = model.nowSummary, let refreshAt = summary.refreshAt else { return 60 }
         let wait = refreshAt.timeIntervalSince(summary.serverTime) + 1
         return wait > 0 && wait < 60 ? wait : 60
+    }
+}
+
+/// Opened from the deck's sync line: a half-height sheet that says where the data stands,
+/// the few facts behind it, and the one thing to do about it.
+struct ReloConnectionSheet: View {
+    struct Recovery {
+        var title: String
+        var detail: String
+        var symbol: String
+        var tint: Color
+        var actionTitle: String
+        var action: () -> Void
+    }
+
+    struct Detail: Identifiable {
+        var label: String
+        var value: String
+        var warning = false
+        var id: String { label }
+    }
+
+    let recovery: Recovery
+    let details: [Detail]
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                VStack(spacing: 10) {
+                    Image(systemName: recovery.symbol)
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(recovery.tint)
+                        .frame(width: 60, height: 60)
+                        .background(recovery.tint.opacity(0.14), in: Circle())
+                        .accessibilityHidden(true)
+                    Text(recovery.title).font(.title3.weight(.semibold))
+                    Text(recovery.detail)
+                        .font(.subheadline).foregroundStyle(Color.reloSecondaryText)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .combine)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(details.enumerated()), id: \.element.id) { index, row in
+                        if index > 0 { Divider().padding(.leading, 16) }
+                        HStack(spacing: 12) {
+                            Text(row.label).foregroundStyle(Color.reloSecondaryText)
+                            Spacer(minLength: 12)
+                            Text(row.value)
+                                .foregroundStyle(row.warning ? ReloHoloTheme.color(.attention) : Color.primary)
+                                .lineLimit(1).truncationMode(.middle)
+                        }
+                        .font(.subheadline)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 44)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .reloCard()
+
+                Button(action: recovery.action) {
+                    Text(recovery.actionTitle).font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 34)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large).tint(.reloInteractive)
+            }
+            .padding(.horizontal, ReloLayout.screenInset)
+            .padding(.top, 28).padding(.bottom, 16)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .reloScreenBackground()
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }

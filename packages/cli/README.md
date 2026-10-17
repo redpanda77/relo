@@ -6,7 +6,7 @@ agent keeps current, with approval and yes/no questions right on it. Notificatio
 outcomes and are used sparingly. Its source is licensed under PolyForm Noncommercial 1.0.0; install it
 from a reviewed checkout or owner-approved artifact.
 
-Node.js 22 or newer is required. `relo` and `reloctl` are the same executable.
+Node.js 22 or newer is required.
 
 ## The model
 
@@ -17,9 +17,9 @@ Node.js 22 or newer is required. `relo` and `reloctl` are the same executable.
 
 An agent reports its work with `relo work`: one goal, a plan of milestones it grows as it learns, a status,
 and an outcome. The CLI identifies the session from the harness (Claude Code `CLAUDE_CODE_SESSION_ID`, Codex
-`CODEX_THREAD_ID`; `RELO_SESSION=<stable id>` only outside a detected harness, such as a script), so every
+`CODEX_THREAD_ID`, OpenCode `OPENCODE_SESSION_ID`; `RELO_SESSION=<stable id>` only outside a detected harness, such as a script), so every
 command from one session addresses that session's work and nothing else: a session never sees another's.
-Harnesses without a session id (Gemini CLI, Cursor, OpenCode) get a handle from `relo work start`; later
+Harnesses without a session id (Gemini CLI, Cursor) get a handle from `relo work start`; later
 commands pass it as `--work <handle>`.
 Steps are the agent's own work; what the owner must do is a question or a note. Subagents run no relo
 commands: the orchestrating agent owns the work and counts them in one step.
@@ -64,13 +64,18 @@ and returns (`{"state":"pending","url",...}`); give the owner the link, then run
 
 ## Install and update
 
-A fresh machine installs a published release (GitHub Releases of `redpanda77/relo`, tag `cli-v<version>`),
-then checks itself:
+A fresh machine installs the CLI its Relo server hands out (the image packs it; Node.js 22 comes with it when
+missing), then checks itself:
 
 ```bash
-npm install --global https://github.com/redpanda77/relo/releases/download/cli-v<version>/relo-cli-<version>.tgz
+curl -fsSL https://relo.example.com/install.sh | sh                 # the CLI; then relo auth login
+curl -fsSL https://relo.example.com/install.sh | sh -s -- rci_…     # a code from Add a computer: signed in and set up
 relo doctor
 ```
+
+It lands in `~/.local/share/relo/cli/<version>` with a launcher in `~/.local/bin/relo` naming Node and the CLI by
+path. A published release (GitHub Releases of `redpanda77/relo`, tag `cli-v<version>`) installs with npm instead:
+`npm install --global https://github.com/redpanda77/relo/releases/download/cli-v<version>/relo-cli-<version>.tgz`.
 
 Each release carries `relo-cli-<version>.tgz` (the skill is bundled inside), `SHA256SUMS`, `sbom.cdx.json` and
 `manifest.json`. `relo update` is the owner's command; nothing updates by itself, and an agent runs it only after the
@@ -83,9 +88,11 @@ relo update --rollback   # back to the previous release, kept in ~/.local/share/
 relo update --version 0.10.0 --dry-run
 ```
 
-It downloads the tarball and `SHA256SUMS`, verifies the checksum, then runs `npm install --global` on the
-verified file; a mismatch installs nothing. `RELO_RELEASES_URL` points it at another releases API (a
-self-hoster's mirror). `relo doctor` compares your version with the latest release at most once a day (2 s timeout,
+Its source is the signed-in server when it hands out a CLI (`/cli/version`, `/cli/relo-cli.tgz`), else GitHub
+releases. It verifies the digest (the server's, or `SHA256SUMS`), then installs: behind the install script's
+launcher it unpacks the new version beside the old one and points the launcher at it, otherwise it runs
+`npm install --global` on the verified file; a mismatch installs nothing. `RELO_RELEASES_URL` points it at another
+releases API (a self-hoster's mirror). `relo doctor` compares your version with the latest release at most once a day (2 s timeout,
 cached in `~/.local/share/relo/update-check.json`, off with `RELO_NO_UPDATE_CHECK=1`) and shows
 `"warnings":{"update":{"state":"behind","latest":"0.10.1","hint":"relo update"}}`; it never changes `ready`, and that
 cache file is the only thing doctor writes.
@@ -137,42 +144,78 @@ command fails before sending anything.
 
 ## Service secrets
 
-For captured automation, write a new service's secret webhook URL straight to a new file:
+A service sends to `<origin>/hooks` with its secret in `Authorization: Bearer hook_…` (never in the URL).
+For captured automation, write a new service's secret straight to a new file:
 
 ```bash
-relo services create --title "Builds" --secret-file ./builds.webhook-url
+relo services create --title "Builds" --secret-file ./builds.secret
 ```
 
 The destination must not exist; the CLI reserves it as an owner-only `0600` file before contacting
-the server and returns only non-secret metadata. Without `--secret-file` the copy-once URL is printed
-for interactive use; never use that mode where output is captured.
+the server and returns only non-secret metadata (the endpoint included). Without `--secret-file` the
+copy-once secret is printed for interactive use; never use that mode where output is captured.
 
-## Optional session hooks
+## Supported harnesses
 
-Hooks are optional and off by default; without them Relo works fully. The owner installs them at a level for
-one settings file (the level is required):
+What `relo setup` writes for each harness it finds (`--agent NAME` picks one; `--dry-run` shows the plan
+first). The table is checked against the harness descriptors by `test/catalog.test.mjs`.
+
+<!-- harness-matrix:start -->
+| Harness | `--agent` | Instructions block | Skill | Hooks (`--level guide`) | MCP (`--mcp`) |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | `claude-code` | yes | yes | yes | yes |
+| Codex | `codex` | yes | yes | — | yes |
+| OpenCode | `opencode` | yes | yes | yes | — |
+| Gemini CLI | `gemini` | yes | yes | yes | yes |
+| Cursor | `cursor` | — | yes | — | yes |
+| GitHub Copilot | `copilot` | yes | yes | — | — |
+| Amp | `amp` | yes | yes | — | — |
+| Claude | `claude-desktop` | — | — | — | yes |
+| Agents | `agents` | — | yes | — | — |
+<!-- harness-matrix:end -->
+
+`Agents` is the shared `~/.agents/skills` folder other harnesses read. `relo setup --project` writes the block
+into this repository's `AGENTS.md` (and a `CLAUDE.md` that imports it) instead of each harness's global file.
+
+## Setup depths and session hooks
+
+`relo setup --level notify|track|guide|optimize` chooses how deep Relo plugs into the agents, once per computer.
+The depth is not stored anywhere: it is what is installed (the block's modules, named in its start marker, and the
+hook set), so setup without `--level` keeps it and never downgrades. At a terminal, a bare `relo setup` asks once.
+
+| Depth | Block modules | Skill | Hooks | The owner gets |
+| --- | --- | --- | --- | --- |
+| `notify` | notify | no | none | questions and notifications, no cards |
+| `track` (first install) | reporting, planning | yes | none | live cards with plans |
+| `guide` | + continuity | yes | presence | + continuity across requests, compaction and `/clear`; the Sessions view |
+| `optimize` | + efficiency | yes | presence | + lean context and right-sized subagents |
 
 ```bash
-relo setup --global --agent claude-code --hooks presence   # ~/.claude/settings.json ($CLAUDE_CONFIG_DIR); or --project (<repo>/.claude/settings.json)
-relo setup --global --agent gemini --hooks presence        # ~/.gemini/settings.json
-relo hooks status                                          # the installed level per settings file; read-only
-relo setup --hooks off                                     # (or relo hooks off) deletes only Relo's entries and the harness credential
-relo sessions [--live]                                     # the owner's Sessions view: harness, project, phase, waitingFor, lastSeenAt, card
+relo setup --level guide                 # block, skill and hooks: ~/.claude/settings.json ($CLAUDE_CONFIG_DIR), ~/.gemini/settings.json,
+                                         # ~/.config/opencode/relo-hooks.json + plugins/relo.js (OpenCode has no command hooks)
+relo setup --level guide --approvals on  # also answer permission prompts from the phone (the approvals hook set)
+relo setup --level guide --project       # this repository: the block in AGENTS.md or CLAUDE.md, hooks in .claude/settings.local.json (personal, uncommitted)
+relo setup --level track                 # the way back: deletes only Relo's hook entries, and revokes the harness credential
+relo setup --show [--level optimize]     # read-only: what is installed per harness (or what that depth would install), and the block
+relo setup --modules reporting,efficiency --level guide   # override the block's modules; hooks and the skill follow --level
+relo sessions [--live]                   # the owner's Sessions view: harness, project, phase, waitingFor, lastSeenAt, card
 ```
 
-- `reminders` (Claude Code) is local and sends nothing: a Stop reminder of an open or unrefreshed work and a
-  restore of what the session was doing after a restart or compaction.
-- `presence` adds the session's phase. A local state machine reduces hook events to phases (open, working,
-  waiting, stopped, ended; subagents roll up into their session), and only a change (plus a heartbeat at most
-  every 5 minutes while working) is queued in a durable outbox and sent in the background with a harness
-  credential that can write presence and nothing else. With Claude Code the snapshot also carries the
-  session's name (the title Claude Code shows), sealed for the owner's phones. `relo hook` never sends a prompt, tool name, tool
-  input or output, or transcript path, prints nothing and exits `0` always (`RELO_DEBUG=1` logs the reason to a
-  file).
+Hooks are optional: notify and track install none, and without them Relo works fully. The hook sets are `off`,
+`presence` and `approvals` (presence plus `PermissionRequest`; `--approvals on` at guide or optimize).
+
+- `presence` is local context for the agent (a restore of what the session was doing after a restart or
+  compaction, a reminder of an open or unrefreshed work) plus the session's phase. A local state machine reduces
+  hook events to phases (open, working, waiting, stopped, ended; subagents roll up into their session), and only
+  a change (plus a heartbeat at most every 5 minutes while working) is queued in a durable outbox and sent in the
+  background with a harness credential that can write presence and nothing else. With Claude Code the snapshot
+  also carries the session's name (the title Claude Code shows), sealed for the owner's phones. `relo hook` never
+  sends a prompt, tool name, tool input or output, or transcript path, prints nothing and exits `0` always
+  (`RELO_DEBUG=1` logs the reason to a file).
 - Hooks never start, change or end a work, plan or question; those are declared by the agent. Entries are
-  recognised by the `relo hook ` command prefix, so running setup again changes nothing and `off` leaves
-  everyone else's hooks and keys. Nothing but `relo setup --hooks` installs hooks, and `relo doctor` never
-  suggests them.
+  recognised by the `relo hook ` command prefix, so running setup again changes nothing and going back to track
+  leaves everyone else's hooks and keys. Nothing but `relo setup` installs hooks, and `relo doctor` never
+  suggests them. An older install's reminders-only set reads as custom, and `relo setup --refresh` upgrades it to presence.
 
 ## MCP server (optional)
 
@@ -182,12 +225,12 @@ Claude desktop and Cursor chat. Tools: `relo_work_start`, `relo_work_update`, `r
 notifications every ~15 s when the client asked for them. One work per connection.
 
 ```bash
-relo setup --mcp --agent claude-code --global     # claude-code | claude-desktop | cursor | codex | gemini | vscode
-relo setup --mcp --remove                         # deletes only Relo's entry
+relo setup --mcp                          # every harness here with an MCP config (user-level: works in every project)
+relo setup --mcp --agent claude-desktop   # only that one
 ```
 
-The entry lives in one config file per harness (`--move` relocates it, `--dry-run` previews); `relo doctor --full` lists it
-and never suggests it. Paths and formats: `skills/relo-notifications/references/install.md`.
+`relo uninstall --apply` removes it; `relo doctor --full` lists it and never suggests it. Paths and formats:
+`skills/relo-notifications/references/install.md`.
 
 ## Integrating an app
 

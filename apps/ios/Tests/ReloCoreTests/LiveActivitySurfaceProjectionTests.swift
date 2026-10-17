@@ -66,12 +66,12 @@ struct LiveActivitySurfaceProjectionTests {
         #expect(p.components.isEmpty)
     }
 
-    @Test("With steps, the island shows one number: the step position, never a card-wide percent")
+    @Test("With steps, the island shows one number: done of total, never a card-wide percent")
     func stepsOwnTheNumber() {
         let p = LiveActivitySurfaceProjection.make(
             presentation: presentation(components: [steps, progress]),
             surface: .compactTrailing, now: now)
-        #expect(p.fact == .stages(2, 3))
+        #expect(p.fact == .stages(1, 3))
         #expect(p.phase?.label == "Test")
         #expect(p.phase?.current == 2)
         #expect(p.phase?.completed == 1)
@@ -110,14 +110,16 @@ struct LiveActivitySurfaceProjectionTests {
         #expect(p.fact == .stages(0, 8))
     }
 
-    @Test("A step's own count wins: 6 of 9 inside step 2 of 8")
+    @Test("The island keeps the plan count, not the current step's own 6 of 9")
     func stepCountFromProgressLabel() {
         let counted = LiveActivityPresentation.Component.progressBar(
             id: "p", colorRole: .project, value: 0.67, label: "6 of 9")
         let p = LiveActivitySurfaceProjection.make(
             presentation: presentation(components: [steps, counted]),
             surface: .compactTrailing, now: now)
-        #expect(p.fact == .stages(6, 9))
+        #expect(p.fact == .stages(1, 3))
+        // The island never shows a percentage beside the plan's count (plan 14, workstream 7).
+        #expect(p.measuredProgress == nil)
         #expect(LiveActivitySurfaceProjection.stepCount("6/9")! == (6, 9))
     }
 

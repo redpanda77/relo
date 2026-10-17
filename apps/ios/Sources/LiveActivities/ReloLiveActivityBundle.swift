@@ -18,7 +18,8 @@ struct ReloLiveActivityBundle: WidgetBundle {
     var body: some Widget {
         WidgetBundleBuilder.buildBlock(
             WidgetBundleBuilder.buildOptional(watchCapable),
-            WidgetBundleBuilder.buildOptional(phoneOnly))
+            WidgetBundleBuilder.buildOptional(phoneOnly),
+            ReloSetupActivityWidget())
     }
 
     private var watchCapable: (any Widget & _LimitedAvailabilityWidgetMarker)? {

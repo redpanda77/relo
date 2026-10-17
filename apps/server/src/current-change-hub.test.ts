@@ -55,6 +55,22 @@ describe("bounded current change signals",()=>{
     expect(text).toContain('"subjectIds":[]');abort.abort();await reader.cancel();
     for(let i=0;i<16;i++)expect(hub.subscribe(actor.principalId,`principal:${actor.credentialId}`)).not.toBeNull();hub.close();
   });
+  test("a session change and a card change moments apart make one frame",async()=>{
+    const hub=new CurrentChangeHub(),app=new Hono(),principalId=randomUUID(),actor={principalId,credentialId:randomUUID(),credentialKind:"principal" as const,scopes:new Set(["inbox:read"])};
+    app.get("/",c=>{c.set("auth",actor);return currentStateStream(c,{query:async()=>({rows:[{allowed:true}]})} as never,hub,{keepaliveMs:5_000,reconcileMs:60_000,writeTimeoutMs:1_000,coalesceMs:60});});
+    const abort=new AbortController(),response=await app.request("/",{signal:abort.signal}),reader=response.body!.getReader(),decode=new TextDecoder();
+    expect(decode.decode((await reader.read()).value)).toContain("event: current");
+    const card=`act_${randomUUID()}`;
+    hub.receive({processId:0,channel:"x",payload:JSON.stringify({principalId,subjectId:null})});
+    await new Promise(resolve=>setTimeout(resolve,20));
+    hub.receive({processId:0,channel:"x",payload:JSON.stringify({principalId,subjectId:card})});
+    const frame=decode.decode((await reader.read()).value);
+    expect(frame).toContain("event: current");
+    // The next frame is the keepalive far away: nothing else was queued for the second change.
+    const next=await Promise.race([reader.read().then(r=>decode.decode(r.value)),new Promise<string>(resolve=>setTimeout(()=>resolve("quiet"),200))]);
+    expect(next).toBe("quiet");
+    abort.abort();await reader.cancel();hub.close();
+  });
   test("a client that stops reading cannot retain a stream slot indefinitely",async()=>{
     const hub=new CurrentChangeHub(),app=new Hono();
     app.get("/",c=>{c.set("auth",{principalId:"p",credentialId:"c",credentialKind:"principal",scopes:new Set(["inbox:read"])});return currentStateStream(c,{query:async()=>({rows:[{allowed:true}]})} as never,hub,{keepaliveMs:1,reconcileMs:1,writeTimeoutMs:15});});

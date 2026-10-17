@@ -15,9 +15,8 @@ import { currentTestPresentationRecord } from "./test-current-presentation.js";
 
 import { dashboardAuthSchema } from "@relo/notification-contracts/dashboard/auth";
 import { accountDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/account";
-import { documentationDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/docs";
+import { docsSiteBootstrapSchema } from "@relo/notification-contracts/dashboard/docs";
 import { connectionsDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/connections";
-import { projectsDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/projects";
 import { testLabBootstrapSchema } from "@relo/notification-contracts/dashboard/test-lab";
 import { inboxDashboardBootstrapSchema } from "@relo/notification-contracts/dashboard/inbox";
 
@@ -27,9 +26,8 @@ const suite = databaseUrl ? describe : describe.skip;
 const dashboardContracts: Record<string,{ parse(value: unknown): unknown }> = {
   auth: dashboardAuthSchema,
   account: accountDashboardBootstrapSchema,
-  docs: documentationDashboardBootstrapSchema,
+  docs: docsSiteBootstrapSchema,
   connections: connectionsDashboardBootstrapSchema,
-  projects: projectsDashboardBootstrapSchema,
   "test-lab": testLabBootstrapSchema,
   "inbox-overview": inboxDashboardBootstrapSchema,
   "notification-history": inboxDashboardBootstrapSchema,
@@ -192,7 +190,7 @@ suite("account web authentication", () => {
 
     const dashboard = await app().request("/dashboard", { headers: { cookie: cookie! } });
     expect(dashboard.status).toBe(200);
-    expect(await dashboard.text()).toContain("Inbox");
+    expect(await dashboard.text()).toContain("Now · Relo");
 
     const second = await app().request("/api/auth/sign-up/email", {
       method: "POST",
@@ -666,6 +664,8 @@ suite("account web authentication", () => {
        VALUES ($1,$2,$3,'relo_safe',ARRAY['notifications:send']) RETURNING id`,
       [owner.rows[0]!.id,`<b onclick="client()">Client</b>`,`f`.repeat(64)],
     );
+    // A raw insert skips the sign-in path that creates the login's computer (ADR 0011).
+    await db.query("INSERT INTO computers(principal_id,login_key_id) VALUES ($1,$2)",[owner.rows[0]!.id,credential.rows[0]!.id]);
     await db.query(
       `INSERT INTO notification_events(principal_id,source,title,body,idempotency_key)
        VALUES ($1,$2,$3,'body','dashboard-notification')`,
@@ -709,7 +709,11 @@ suite("account web authentication", () => {
     });
     expect(created.status).toBe(201);
     const service = await created.json() as any;
-    expect(service.webhookUrl).toMatch(/\/hooks\/hook_[A-Za-z0-9_-]{43}$/);
+    expect(service.endpoint).toBe("http://127.0.0.1:8180/hooks");
+    expect(service.secret).toMatch(/^hook_[A-Za-z0-9_-]{43}$/);
+    expect(service.service.prefix).toBe(service.secret.slice(0,13));
+    expect(service.endpoint).not.toContain(service.secret);
+    expect(service).not.toHaveProperty("webhookUrl");
     const updatedService = await application.request(`/api/dashboard/services/${service.service.id}`, {
       method: "PATCH", headers: { ...headers, "content-type": "application/json" },
       body: JSON.stringify({
@@ -722,8 +726,9 @@ suite("account web authentication", () => {
       id: service.service.id, title: `<iframe srcdoc="updated-service()">`, imageUrl: null,
       destinationUrl: "https://example.test/updated?from=dashboard&mode=default",
     } });
-    const webhook = await application.request(new URL(service.webhookUrl).pathname, {
-      method: "POST", headers: { "content-type": "application/json", "idempotency-key": "dashboard-webhook-1" },
+    const webhook = await application.request("/hooks", {
+      method: "POST", headers: { "content-type": "application/json", "idempotency-key": "dashboard-webhook-1",
+        authorization: `Bearer ${service.secret}` },
       body: JSON.stringify({ body: "Webhook body", title: "Webhook title" }),
     });
     expect(webhook.status).toBe(201);
@@ -769,7 +774,7 @@ suite("account web authentication", () => {
         secret,
         "a".repeat(64),
         registeredBody.credential.accessToken,
-        service.webhookUrl,
+        service.secret,
         "bootstrap_owner_token_abcdefghijklmnopqrstuvwxyz",
       ]) expect(payload).not.toContain(forbidden);
       expect(payload).not.toMatch(
@@ -778,7 +783,7 @@ suite("account web authentication", () => {
       return JSON.parse(payload);
     };
     const sectionPaths = [
-      "", "/inbox/notifications", "/inbox/delivery", "/connections", "/account", "/docs",
+      "", "/inbox/notifications", "/inbox/delivery", "/connections", "/account",
     ];
     const pages = new Map<string,string>();
     for (const suffix of sectionPaths) {
@@ -799,13 +804,13 @@ suite("account web authentication", () => {
     const workbenchHtml = await testLabResponse.text();
     pages.set("/testing",workbenchHtml);
     const html = [...pages.values()].join("\n");
-    for (const raw of ["<img", "<svg", "<b onclick", "<script>notify()", "<source", "<iframe", "<status>"]) expect(html).not.toContain(raw);
+    for (const raw of ["<img", "<svg/onload", "<b onclick", "<script>notify()", "<source", "<iframe", "<status>"]) expect(html).not.toContain(raw);
     expect(dashboardBootstrap(pages.get("/inbox/notifications")!).notifications).toEqual(
       expect.arrayContaining([expect.objectContaining({ title: "<script>notify()</script>" })]),
     );
     expect(dashboardBootstrap(pages.get("/")!)).toMatchObject({
       kind: "inbox-overview",
-      shell: { title: "Inbox",active: "inbox" },
+      shell: { title: "Now",active: "inbox" },
       summary: { pendingResponses: 0,pendingApprovals: 0,notifications: 2,deliveries: 1 },
     });
     expect(dashboardBootstrap(pages.get("/connections")!)).toMatchObject({
@@ -820,8 +825,8 @@ suite("account web authentication", () => {
         model: `<svg/onload='model()'>`,
         lastSeenAt: expect.any(String),
       })]),
-      clients: expect.arrayContaining([
-        expect.objectContaining({ label: '<b onclick="client()">Client</b>' }),
+      computers: expect.arrayContaining([
+        expect.objectContaining({ label: '<b onclick="client()">Client</b>',name: '<b onclick="client()">Client</b>' }),
       ]),
     });
     expect(dashboardBootstrap(pages.get("/inbox/delivery")!)).toMatchObject({
@@ -1598,8 +1603,17 @@ suite("account web authentication", () => {
 
     const rotated = await application.request(`/api/dashboard/services/${service.service.id}/rotate`, { method: "POST", headers });
     expect(rotated.status).toBe(200);
-    expect((await rotated.json() as any).webhookUrl).not.toBe(service.webhookUrl);
-    expect((await application.request(new URL(service.webhookUrl).pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body: "old" }) })).status).toBe(404);
+    const rotatedService = await rotated.json() as any;
+    expect(rotatedService.endpoint).toBe(service.endpoint);
+    expect(rotatedService.secret).toMatch(/^hook_[A-Za-z0-9_-]{43}$/);
+    expect(rotatedService.secret).not.toBe(service.secret);
+    const oldSecret = await application.request("/hooks", { method: "POST", headers: { "content-type": "application/json",
+      "idempotency-key": "dashboard-webhook-old", authorization: `Bearer ${service.secret}` }, body: JSON.stringify({ body: "old" }) });
+    expect(oldSecret.status).toBe(404);
+    expect(await oldSecret.json()).toMatchObject({ ok: false, error: "unknown_webhook" });
+    expect((await application.request("/hooks", { method: "POST", headers: { "content-type": "application/json",
+      "idempotency-key": "dashboard-webhook-new", authorization: `Bearer ${rotatedService.secret}` },
+      body: JSON.stringify({ body: "new" }) })).status).toBe(201);
     expect((await application.request(`/api/dashboard/devices/${registeredBody.device.deviceId}/revoke`, { method: "POST", headers })).status).toBe(200);
     expect((await application.request(`/api/dashboard/credentials/key_${credential.rows[0]!.id}/revoke`, { method: "POST", headers })).status).toBe(200);
     expect((await application.request(`/api/dashboard/services/${service.service.id}`, { method: "DELETE", headers })).status).toBe(200);
@@ -1640,9 +1654,15 @@ suite("account web authentication", () => {
            now()+(n*interval '1 second') FROM generate_series(1,26) n`,
       ),
     ]);
+    // Raw inserts skip the sign-in path that creates a login's computer (ADR 0011).
+    await db.query(
+      `INSERT INTO computers(principal_id,login_key_id) SELECT principal_id,id FROM principal_api_keys
+       WHERE principal_id=$1 AND kind='login' ON CONFLICT (login_key_id) DO NOTHING`,
+      [owner.id],
+    );
     const connections = dashboardBootstrap(await (await application.request("/dashboard/connections",{ headers })).text());
     expect(connections.phones).toHaveLength(26);
-    expect(connections.clients.length).toBeGreaterThanOrEqual(27);
+    expect(connections.computers.length).toBeGreaterThanOrEqual(27);
     expect(connections.services).toHaveLength(26);
     expect(connections.summary).toMatchObject({ phones: 26,services: 26 });
     for (const [path,item,total] of [
@@ -1720,6 +1740,10 @@ suite("account web authentication", () => {
     const first = await application.request("/dashboard/inbox/notifications",{ headers });
     const firstHtml = await first.text();
     expect(first.status).toBe(200);
+    // The page is History everywhere: the shell, the document title and the first frame's heading.
+    expect(dashboardBootstrap(firstHtml).shell.title).toBe("History");
+    expect(firstHtml).toContain("<title>History · Relo</title>");
+    expect(firstHtml).toContain('<h1 class="page-title">History</h1>');
     expect(dashboardBootstrap(firstHtml).pagination).toMatchObject({
       page: 1,pageCount: 2,total: 32,previousHref: null,
       nextHref: "/dashboard/inbox/notifications?page=2",
@@ -1732,13 +1756,21 @@ suite("account web authentication", () => {
       previousHref: "/dashboard/inbox/notifications?page=1",nextHref: null,
     });
     expect(JSON.stringify(secondBootstrap)).toContain(`ntf_${detailEvent.rows[0]!.id}`);
-    const filtered = await application.request("/dashboard/inbox/notifications?kind=question&state=active",{ headers });
+    const filtered = await application.request("/dashboard/inbox/notifications?kind=decision&state=answered",{ headers });
     const filteredHtml = await filtered.text();
     const filteredBootstrap = dashboardBootstrap(filteredHtml);
     expect(filteredBootstrap.notifications).toEqual([
       expect.objectContaining({ title: "Review this event" }),
     ]);
     expect(filteredBootstrap.pagination.total).toBe(1);
+    // Search reads titles and bodies literally; the source filter narrows to one sender.
+    const searched = dashboardBootstrap(await (await application.request(
+      "/dashboard/inbox/notifications?q=History%20body%2031",{ headers })).text());
+    expect(searched.notifications).toEqual([expect.objectContaining({ title: "History event 31" })]);
+    const bySource = dashboardBootstrap(await (await application.request(
+      "/dashboard/inbox/notifications?source=History%20service&kind=decision",{ headers })).text());
+    expect(bySource.pagination.total).toBe(1);
+    expect(bySource.filterOptions.sources).toEqual(["History service","History source"]);
 
     const detail = await application.request(`/dashboard/inbox/notifications/ntf_${detailEvent.rows[0]!.id}`,{ headers });
     const detailHtml = await detail.text();

@@ -113,7 +113,9 @@ final class E2EECurrentRowTests: XCTestCase {
             id: "ntf_00000000-0000-4000-8000-000000000010", kind: .liveActivity, sourceName: "Claude Code", title: "Encrypted card",
             detail: "Updating…", createdAt: Date(),
             activity: InboxCardDigest(state: "active", status: "Approved · Updating…", steps: .init(done: 1, total: 3, current: "Step 2"),
-                                      updates: 3, startedAt: Date()),
+                                      updates: 3, startedAt: Date(),
+                                      plan: [.init(id: "s1", state: "done", label: nil), .init(id: "s2", state: "current", label: nil),
+                                             .init(id: "s3", state: "open", label: nil)]),
             sealed: InboxSealedNotice(alert: card, content: card)
         )
         let opened = item.openingSealed(sealed.opener)
@@ -121,6 +123,10 @@ final class E2EECurrentRowTests: XCTestCase {
         XCTAssertEqual(opened.detail, "Testing")
         XCTAssertEqual(opened.activity?.status, "Approved · Testing")
         XCTAssertEqual(opened.activity?.steps?.current, "Test")
+        // Opening keeps the work's whole plan: the activity detail lists every step from it.
+        XCTAssertEqual(opened.activity?.plan?.map(\.id), ["s1", "s2", "s3"])
+        // Sealed plan labels open from the work's text, by plan position.
+        XCTAssertEqual(opened.activity?.plan?.map(\.label), ["Build", "Test", "Ship"])
         // The snapshot keeps the envelope through its history summary so the app can open it.
         XCTAssertEqual(item.historySummary().sealed, item.sealed)
     }

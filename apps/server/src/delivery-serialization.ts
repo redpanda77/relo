@@ -316,6 +316,8 @@ function interactionCategory(kind: ApnsRuntimeJob["interactionKind"]): string | 
 
 /** "New device/computer wants access" notices (device-approvals.ts): the phone shows Approve / Decline. */
 function deviceAccessCategory(payload: Record<string, unknown> | null | undefined): string | undefined {
+  // A browser asking to be linked has one action, Review: the owner compares the link code before approving.
+  if (plainObject(payload?.browserLink)) return "RELO_BROWSER_LINK";
   return plainObject(payload?.deviceApproval) || plainObject(payload?.computerApproval) ? "RELO_DEVICE_ACCESS" : undefined;
 }
 
@@ -400,10 +402,12 @@ function ordinaryCustomData(input: OrdinaryDeliveryIntent): Record<string, unkno
 /**
  * Spec 7 alert levels for ordinary notifications: a question (any interaction kind, including the
  * "answer in Relo" fallback notice) is time-sensitive; plain notify and device-access notices stay
- * active until 2.13 moves finishes to passive. Live Activity updates never carry a level.
+ * active; a work's outcome notification is passive unless it failed. Live Activity updates never carry a level.
  */
 export function ordinaryInterruptionLevel(input: OrdinaryDeliveryIntent, answerInApp: boolean): InterruptionLevel {
-  return input.interactionKind || answerInApp ? "time-sensitive" : "active";
+  if (input.interactionKind || answerInApp) return "time-sensitive";
+  // A work's outcome notification (works/outcome-notification.ts) names its own level: passive for delivered and finished.
+  return (input.payload as Record<string,unknown> | null | undefined)?.interruptionLevel === "passive" ? "passive" : "active";
 }
 
 /**
@@ -455,6 +459,8 @@ function ownerRelevance(command: Record<string, unknown>, operation: ActivityPro
  * budget questions need.
  */
 function deliveryPriority(command: Record<string, unknown>, operation: ActivityProjection["operation"]): 5 | 10 {
+  // A card restarted at the Live Activity limit is not news: the lowest allowed priority.
+  if (command.quietRestart === true) return 5;
   if (operation !== "update") return 10;
   const owner = commandOwner(command);
   if (!owner) return 5;

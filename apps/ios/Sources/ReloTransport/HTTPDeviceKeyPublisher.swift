@@ -1,7 +1,7 @@
 import Foundation
 import ReloCore
 
-/// End-to-end encryption key directory upload (docs/END-TO-END-ENCRYPTION.md, E2.1).
+/// End-to-end encryption key directory upload (docs/ENCRYPTION-PROTOCOL.md, E2.1).
 extension HTTPMobileAPIClient: DeviceKeyPublishing {
     public func publishDeviceKeys(credential: DeviceCredential, keys: ReloPublishedDeviceKeys) async throws {
         var request = request(path: "api/devices/self/keys", method: "PUT")

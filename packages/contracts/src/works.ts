@@ -1,12 +1,19 @@
 import { z } from "zod";
 import type { WorkLifecycle } from "./owner-state.js";
+import {
+  planProblems, WORK_PLAN_MAX_STEPS,
+  type PlanCommand as EnginePlanCommand, type PlanEntry, type PlanProgressWire, type PlanRound, type PlanStep, type StepProgress, type StepState, type WorkPlan,
+  type WorkResult,
+} from "./plan-engine.js";
+
+export * from "./plan-engine.js";
 
 /**
  * Works (STATE-SPEC v2 slice 2): declared state of one producer's goal. Cards are views of works.
  * This module holds the wire contract and the pure plan rules shared by the server and Dashboard.
  */
 
-export const WORK_PLAN_MAX_STEPS = 30;
+export const WORK_DETAIL_MAX = 200;
 export const WORK_LABEL_MAX = 80;
 export const WORK_GOAL_MAX = 120;
 export const WORK_STATUS_MAX = 120;
@@ -14,17 +21,14 @@ export const WORK_OUTCOME_MAX = 200;
 export const WORK_WAITING_MAX = 60;
 
 export const WORK_RESULTS = ["finished","failed","dropped"] as const;
-export type WorkResult = typeof WORK_RESULTS[number];
 export const STEP_STATES = ["open","current","done","skipped"] as const;
-export type StepState = typeof STEP_STATES[number];
-export const WORK_DISPOSITIONS = ["started","continuing","switched","updated","paused","resumed","finished"] as const;
+export const WORK_DISPOSITIONS = ["started","continuing","switched","updated","paused","resumed","finished","delivered","round_opened","handed_off","taken_over"] as const;
 export type WorkDisposition = typeof WORK_DISPOSITIONS[number];
 
 export const stepIdSchema = z.string().regex(/^s[1-9][0-9]{0,2}$/);
 const labelSchema = z.string().trim().min(1).max(WORK_LABEL_MAX);
 export const stepProgressSchema = z.object({ done: z.number().int().min(0),total: z.number().int().min(1) }).strict()
   .refine((value) => value.done <= value.total,"done cannot exceed total");
-export type StepProgress = z.infer<typeof stepProgressSchema>;
 
 export const planStepSchema = z.object({
   id: stepIdSchema,
@@ -32,89 +36,196 @@ export const planStepSchema = z.object({
   addedIn: z.number().int().positive(),
   label: labelSchema.optional(),
   progress: stepProgressSchema.optional(),
+  /** The step this one belongs to: same round, earlier in `steps`. Only leaves do the work. */
+  parent: stepIdSchema.optional(),
+  /** The round the step belongs to; absent means 1. Set on new steps whenever the plan has a `rounds` array. */
+  round: z.number().int().min(1).optional(),
+  detail: z.string().trim().min(1).max(WORK_DETAIL_MAX).optional(),
+  /** When the step became current / done or skipped (set by the engine when a write carries a clock). */
+  startedAt: z.string().optional(),
+  doneAt: z.string().optional(),
+  /** Set when the round's close skipped this open leaf; the next round carries it. */
+  dropped: z.boolean().optional(),
+  /** The round whose unfinished step this one continues. */
+  carriedFrom: z.number().int().min(1).optional(),
 }).strict();
-export type PlanStep = z.infer<typeof planStepSchema>;
+
+export const planRoundSchema = z.object({
+  n: z.number().int().min(1),
+  state: z.enum(["open","closed"]),
+  title: labelSchema.optional(),
+  outcome: z.string().trim().min(1).max(WORK_OUTCOME_MAX).optional(),
+  openedAt: z.string().optional(),
+  closedAt: z.string().optional(),
+}).strict();
 
 export const workPlanSchema = z.object({
   v: z.literal(1),
   next: z.number().int().positive(),
-  steps: z.array(planStepSchema).max(WORK_PLAN_MAX_STEPS),
+  steps: z.array(planStepSchema),
+  /** Absent means one open round 1. Rounds are numbered 1..k; at most one is open and it is the last. */
+  rounds: z.array(planRoundSchema).optional(),
 }).strict().superRefine((plan,context) => {
-  if (plan.steps.filter((step) => step.state === "current").length > 1) context.addIssue({ code: "custom",message: "at most one current step" });
-  const ids = new Set<string>();
-  for (const step of plan.steps) {
-    if (ids.has(step.id)) context.addIssue({ code: "custom",message: `duplicate step id ${step.id}` });
-    ids.add(step.id);
-    if (Number(step.id.slice(1)) >= plan.next) context.addIssue({ code: "custom",message: `step id ${step.id} not below next` });
-  }
+  for (const message of planProblems(plan as WorkPlan)) context.addIssue({ code: "custom",message });
 });
-export type WorkPlan = z.infer<typeof workPlanSchema>;
-export const EMPTY_WORK_PLAN: WorkPlan = { v: 1,next: 1,steps: [] };
 
-const planEntrySchema = z.object({ id: stepIdSchema.optional(),label: labelSchema.optional() }).strict();
+// The engine's hand-written types and these schemas must describe the same plan (a mismatch fails the build).
+type Same<A,B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+export const planTypesMatch: [Same<z.infer<typeof planStepSchema>,PlanStep>,Same<z.infer<typeof planRoundSchema>,PlanRound>,Same<z.infer<typeof workPlanSchema>,WorkPlan>,Same<z.infer<typeof stepProgressSchema>,StepProgress>] = [true,true,true,true];
+export const stepStateMatches: Same<typeof STEP_STATES[number],StepState> = true;
+export const workResultMatches: Same<typeof WORK_RESULTS[number],WorkResult> = true;
+
+const planEntrySchema: z.ZodType<PlanEntry> = z.lazy(() => z.object({
+  id: stepIdSchema.optional().describe("Id of an existing step to keep; leave out for a new step."),
+  label: labelSchema.optional().describe("What the step is, in a few words."),
+  detail: z.string().trim().min(1).max(WORK_DETAIL_MAX).optional().describe("One or two sentences of detail for the step."),
+  children: z.array(planEntrySchema).max(WORK_PLAN_MAX_STEPS).optional().describe("Sub-steps, in order; use only when a step cannot be finished in one go."),
+}).strict());
 export const planCommandSchema = z.discriminatedUnion("op",[
-  z.object({ op: z.literal("set"),steps: z.array(planEntrySchema).min(1).max(WORK_PLAN_MAX_STEPS) }).strict(),
-  z.object({ op: z.literal("add"),steps: z.array(planEntrySchema).min(1).max(20) }).strict(),
-  z.object({ op: z.literal("next") }).strict(),
-  z.object({ op: z.literal("step"),id: stepIdSchema }).strict(),
-  z.object({ op: z.literal("revise"),labels: z.array(labelSchema).min(1).max(WORK_PLAN_MAX_STEPS) }).strict(),
+  z.object({
+    op: z.literal("set").describe("Replaces the steps still to do in the open round with this list; done steps stay and unlisted ones are skipped."),
+    steps: z.array(planEntrySchema).min(1).max(WORK_PLAN_MAX_STEPS).describe("The steps still to do, in order; entries may nest."),
+  }).strict(),
+  z.object({
+    op: z.literal("add").describe("Appends steps to the end of the open round, as the last children of one step, or as siblings right after one step."),
+    steps: z.array(planEntrySchema).min(1).max(20).describe("The steps to append, in order; entries may nest."),
+    under: stepIdSchema.optional().describe("Id of the step the new steps go under; leave out to append at the end of the round."),
+    after: stepIdSchema.optional().describe("Id of the step the new steps follow, as its siblings; not together with under."),
+  }).strict(),
+  z.object({ op: z.literal("next").describe("Marks the current step done and moves to the next open one.") }).strict(),
+  z.object({
+    op: z.literal("step").describe("Makes one step (a step without sub-steps) the current one; the previous current step counts as done."),
+    id: stepIdSchema.describe("Id of the step to make current."),
+  }).strict(),
+  z.object({
+    op: z.literal("revise").describe("Lists the steps still to do by label; labels that match an existing step keep it."),
+    labels: z.array(labelSchema).min(1).max(WORK_PLAN_MAX_STEPS).describe("The labels of the steps still to do, in order."),
+  }).strict(),
+  z.object({
+    op: z.literal("round").describe("Opens the next round of the work; the last round must be closed."),
+    title: labelSchema.optional().describe("What the round is for, in a few words."),
+    steps: z.array(planEntrySchema).max(WORK_PLAN_MAX_STEPS).optional().describe("The round's steps, in order; entries may nest. Without steps the round carries the unfinished steps of the one before."),
+  }).strict(),
+  z.object({
+    op: z.literal("close").describe("Closes the open round: the current step counts as done; open steps are refused unless dropRest skips them."),
+    outcome: z.string().trim().min(1).max(WORK_OUTCOME_MAX).optional().describe("What the round delivered, in a line."),
+    dropRest: z.boolean().optional().describe("Close the round although steps are still open: they are skipped."),
+  }).strict(),
+  z.object({
+    op: z.literal("detail").describe("Sets the detail text of a step; an empty text clears it."),
+    id: stepIdSchema.optional().describe("Id of the step; leave out for the current step."),
+    detail: z.string().trim().max(WORK_DETAIL_MAX).describe("The detail text."),
+  }).strict(),
 ]);
-export type PlanCommand = z.infer<typeof planCommandSchema>;
+export const planCommandTypesMatch: Same<z.infer<typeof planCommandSchema>,EnginePlanCommand> = true;
 
 /** Readable text, or the fact that sealed text carries it (the server never sees it). */
 export const declaredTextSchema = (max: number) => z.union([
-  z.object({ readable: z.string().trim().min(1).max(max) }).strict(),
-  z.object({ sealed: z.literal(true) }).strict(),
+  z.object({ readable: z.string().trim().min(1).max(max).describe("The text itself.") }).strict(),
+  z.object({ sealed: z.literal(true).describe("True when the text travels in the sealed field instead.") }).strict(),
 ]);
 export type DeclaredText = { readable: string } | { sealed: true };
 
-export const workProgressSchema = z.object({ done: z.number().int().min(0),total: z.number().int().min(1).max(1_000_000) }).strict()
+/** Plan progress on a card and a Now item (plan UX U1, U2): the phone writes the plan line from it. */
+export const planProgressWireSchema = z.object({
+  done: z.number().int().min(0),
+  total: z.number().int().min(0),
+  currentId: stepIdSchema.nullable(),
+  sub: z.object({ done: z.number().int().min(0),total: z.number().int().min(1) }).strict().nullable(),
+  round: z.number().int().min(1),
+  rounds: z.number().int().min(1),
+  delivered: z.boolean(),
+  // Optional: a service sending `plan`, and a card stored before these fields, omit them.
+  current: z.number().int().min(1).nullable().optional(),
+  fill: z.number().min(0).max(1).nullable().optional(),
+  stepLabel: z.string().max(80).optional(),
+  subLabel: z.string().max(80).optional(),
+}).strict();
+export const planProgressWireTypesMatch: Same<z.infer<typeof planProgressWireSchema>,PlanProgressWire> = true;
+
+export const workProgressSchema = z.object({
+  done: z.number().int().min(0).describe("How many units are finished."),
+  total: z.number().int().min(1).max(1_000_000).describe("How many units there are in all."),
+}).strict()
   .refine((value) => value.done <= value.total,"done cannot exceed total");
 
 const sealedObject = z.record(z.string(),z.unknown());
 
 export const workStartRequestSchema = z.object({
-  goal: declaredTextSchema(WORK_GOAL_MAX),
-  status: declaredTextSchema(WORK_STATUS_MAX).optional(),
-  plan: planCommandSchema.optional(),
-  progress: workProgressSchema.optional(),
-  new: z.boolean().optional(),
-  context: z.record(z.string(),z.unknown()).optional(),
-  sealed: sealedObject.optional(),
-  producerSealed: sealedObject.optional(),
-}).strict();
+  goal: declaredTextSchema(WORK_GOAL_MAX).optional().describe("What the work is for, in the owner's words. Required unless `from` takes over a handed-off work."),
+  status: declaredTextSchema(WORK_STATUS_MAX).optional().describe("One line saying what is happening now."),
+  plan: planCommandSchema.optional().describe("A plan command that creates or changes the work's plan."),
+  progress: workProgressSchema.optional().describe("Counted progress, on the current step when the work has a plan, else on the work."),
+  round: declaredTextSchema(WORK_LABEL_MAX).optional().describe("Title of the next round, when the open work's last round is delivered."),
+  from: z.string().trim().min(1).max(200).optional().describe("A handoff handle: take over the work another session of this computer handed off, instead of starting one."),
+  new: z.boolean().optional().describe("Start a new work for a different goal instead of continuing the open one."),
+  context: z.record(z.string(),z.unknown()).optional().describe("Context fields shown with the work, such as the session's name."),
+  sealed: sealedObject.optional().describe("End-to-end sealed text of the work; readable fields are then omitted."),
+  producerSealed: sealedObject.optional().describe("Sealed content kept for the producer itself; the server stores it without reading it."),
+}).strict().refine((value) => value.goal !== undefined || value.from !== undefined,{ message: "goal is required unless from takes over a handed-off work",path: ["goal"] });
 export type WorkStartRequest = z.infer<typeof workStartRequestSchema>;
 
 export const workUpdateRequestSchema = z.object({
-  baseVersion: z.number().int().positive().optional(),
-  goal: declaredTextSchema(WORK_GOAL_MAX).optional(),
-  status: declaredTextSchema(WORK_STATUS_MAX).optional(),
-  plan: planCommandSchema.optional(),
+  baseVersion: z.number().int().positive().optional().describe("The work version this change builds on; refused as a conflict if the work has moved on since."),
+  goal: declaredTextSchema(WORK_GOAL_MAX).optional().describe("New goal, when it changes."),
+  status: declaredTextSchema(WORK_STATUS_MAX).optional().describe("One line saying what is happening now."),
+  plan: planCommandSchema.optional().describe("A plan command that changes the work's plan."),
   /** Counted progress: on the current step when the work has a plan, else on the work. */
-  progress: workProgressSchema.nullable().optional(),
-  waiting: z.object({ reason: declaredTextSchema(WORK_WAITING_MAX) }).strict().nullable().optional(),
+  progress: workProgressSchema.nullable().optional().describe("Counted progress, on the current step when the work has a plan, else on the work. Null clears it."),
+  waiting: z.object({ reason: declaredTextSchema(WORK_WAITING_MAX).describe("What the work is waiting on.") }).strict().nullable().optional().describe("What the work is waiting on, such as CI or a review. Null means it is no longer waiting."),
   /** Context fields to replace, e.g. the session's new name as `threadName` (merged into the work's context). */
-  context: z.record(z.string(),z.unknown()).optional(),
-  sealed: sealedObject.optional(),
-  producerSealed: sealedObject.optional(),
+  context: z.record(z.string(),z.unknown()).optional().describe("Context fields to replace, merged into the work's context, such as the session's new name as threadName."),
+  sealed: sealedObject.optional().describe("End-to-end sealed text of the work; readable fields are then omitted."),
+  producerSealed: sealedObject.optional().describe("Sealed content kept for the producer itself; the server stores it without reading it."),
 }).strict();
 export type WorkUpdateRequest = z.infer<typeof workUpdateRequestSchema>;
 
 export const workPauseRequestSchema = z.object({
-  status: declaredTextSchema(WORK_STATUS_MAX),
-  sealed: sealedObject.optional(),
-  producerSealed: sealedObject.optional(),
+  status: declaredTextSchema(WORK_STATUS_MAX).describe("Why the work is paused, in a line."),
+  sealed: sealedObject.optional().describe("End-to-end sealed text; readable fields are then omitted."),
+  producerSealed: sealedObject.optional().describe("Sealed content kept for the producer itself; the server stores it without reading it."),
 }).strict();
 export type WorkPauseRequest = z.infer<typeof workPauseRequestSchema>;
 
 export const workResumeRequestSchema = z.object({}).strict();
 
 export const workFinishRequestSchema = z.object({
-  result: z.enum(WORK_RESULTS),
-  outcome: declaredTextSchema(WORK_OUTCOME_MAX),
-  sealed: sealedObject.optional(),
+  result: z.enum(WORK_RESULTS).describe("How the work ended: finished, failed or dropped."),
+  outcome: declaredTextSchema(WORK_OUTCOME_MAX).describe("What happened, in the owner's words."),
+  sealed: sealedObject.optional().describe("End-to-end sealed text of the outcome; readable fields are then omitted."),
+  sealedOutcome: sealedObject.optional().describe("The outcome notification sealed to the owner's phones (kind notice: title and outcome); without it a sealed work's notification carries a placeholder."),
 }).strict();
 export type WorkFinishRequest = z.infer<typeof workFinishRequestSchema>;
+
+/**
+ * The owner ends a work from the phone or the Dashboard (12b-plan-ux 4.11). The body is empty: the server chooses the
+ * result (a delivered work finishes with its last round's outcome, anything else is dropped as "Ended by you").
+ */
+export const workEndRequestSchema = z.object({}).strict();
+export type WorkEndRequest = z.infer<typeof workEndRequestSchema>;
+/** The ended work; refusals are `work_running` (409, still moving), `work_finished` (409) and `not_found` (404). */
+export type WorkEndResponse = { work: WorkSummary };
+/** The readable outcome of a work the owner ended without a delivered round. */
+export const WORK_ENDED_BY_OWNER_OUTCOME = "Ended by you";
+
+export const workDeliverRequestSchema = z.object({
+  outcome: declaredTextSchema(WORK_OUTCOME_MAX).describe("What this round delivered, in the owner's words."),
+  sealed: sealedObject.optional().describe("End-to-end sealed text of the outcome; readable fields are then omitted."),
+  producerSealed: sealedObject.optional().describe("Sealed content kept for the producer itself; the server stores it without reading it."),
+  sealedOutcome: sealedObject.optional().describe("The outcome notification sealed to the owner's phones (kind notice: title and outcome); without it a sealed work's notification carries a placeholder."),
+  dropRest: z.boolean().optional().describe("Deliver although top-level steps are still open: they are skipped. Without it such a deliver is refused (open_steps)."),
+}).strict();
+export type WorkDeliverRequest = z.infer<typeof workDeliverRequestSchema>;
+
+export const workHandoffRequestSchema = z.object({
+  next: declaredTextSchema(WORK_STATUS_MAX).describe("The handoff note: what the next session should do, as the work's status line."),
+  sealed: sealedObject.optional().describe("End-to-end sealed text of the note; readable fields are then omitted."),
+  producerSealed: sealedObject.optional().describe("Sealed content kept for the producer itself; the server stores it without reading it."),
+}).strict();
+export type WorkHandoffRequest = z.infer<typeof workHandoffRequestSchema>;
+
+/** The handoff response adds the single-use handle (shown once; the server keeps only its hash). */
+export type WorkHandoffResponse = WorkResponse & { handoff: { handle: string; expiresAt: string } };
 
 export type WorkSummary = {
   id: string;
@@ -126,7 +237,7 @@ export type WorkSummary = {
   status: string | null;
   outcome: string | null;
   waiting: { reason: string | null; since: string } | null;
-  plan: { version: number; next: number; complete: boolean; steps: PlanStep[] };
+  plan: { version: number; next: number; complete: boolean; steps: PlanStep[]; rounds?: PlanRound[] };
   progress: { done: number; total: number } | null;
   startedAt: string;
   declaredAt: string;
@@ -146,160 +257,8 @@ export type WorkResponse = {
 export const WORK_REFUSAL_CODES = [
   "not_found","not_open","work_finished","version_conflict","outcome_required","text_refused","plan_too_long",
   "plan_ids_invalid","step_not_found","labels_sealed","idempotency_key_required","idempotency_conflict",
-  "end_to_end_required","session_key_required","owner_only","plan_invalid","invalid_request",
+  "end_to_end_required","session_key_required","owner_only","plan_invalid","invalid_request","work_running",
+  "round_required","round_closed","no_open_round","plan_too_deep","round_open","handoff_invalid","handoff_finished","open_steps",
 ] as const;
 export type WorkRefusalCode = typeof WORK_REFUSAL_CODES[number];
 
-// ---------------------------------------------------------------------------------------------
-// Pure plan rules. Ids come from `next` and are never reused; steps are never deleted (unlisted
-// open steps become skipped); at most one current; new steps never land before the current one.
-
-export type PlanResult =
-  | { ok: true; plan: WorkPlan; structural: boolean; complete: boolean }
-  | { ok: false; code: "plan_too_long" | "plan_ids_invalid" | "step_not_found" | "labels_sealed" | "plan_invalid"; message: string };
-
-const stepNumber = (id: string) => Number(id.slice(1));
-
-function refuse(code: Extract<PlanResult,{ ok: false }>["code"],message: string): PlanResult {
-  return { ok: false,code,message };
-}
-
-function finalize(plan: WorkPlan,before: WorkPlan): PlanResult {
-  if (plan.steps.length > WORK_PLAN_MAX_STEPS) {
-    return refuse("plan_too_long",`A plan holds at most ${WORK_PLAN_MAX_STEPS} steps (this one would hold ${plan.steps.length}).`);
-  }
-  if (!plan.steps.some((step) => step.state === "current")) {
-    const first = plan.steps.find((step) => step.state === "open");
-    if (first) first.state = "current";
-  }
-  const checked = workPlanSchema.safeParse(plan);
-  if (!checked.success) return refuse("plan_invalid",checked.error.issues.map((issue) => issue.message).join("; "));
-  const structure = (value: WorkPlan) => JSON.stringify(value.steps.map((step) => [step.id,step.state]));
-  return { ok: true,plan,structural: structure(plan) !== structure(before),complete: planComplete(plan) };
-}
-
-export function planComplete(plan: WorkPlan): boolean {
-  return plan.steps.length > 0 && !plan.steps.some((step) => step.state === "open" || step.state === "current");
-}
-
-function clonePlan(plan: WorkPlan): WorkPlan {
-  return { v: 1,next: plan.next,steps: plan.steps.map((step) => ({ ...step,...(step.progress ? { progress: { ...step.progress } } : {}) })) };
-}
-
-/** Assigns ids to new entries; a sealed entry carries the id the client predicted from `next`. */
-function newSteps(plan: WorkPlan,entries: Array<{ id?: string | undefined; label?: string | undefined }>,version: number,sealed: boolean)
-  : PlanStep[] | PlanResult {
-  const created: PlanStep[] = [];
-  for (const entry of entries) {
-    const id = `s${plan.next}`;
-    if (entry.id !== undefined && entry.id !== id) {
-      return refuse("plan_ids_invalid",`New step id ${entry.id} does not match the next id ${id}.`);
-    }
-    if (sealed && entry.label !== undefined) return refuse("labels_sealed","A sealed work carries no readable step labels.");
-    plan.next += 1;
-    created.push({ id,state: "open",addedIn: version,...(entry.label !== undefined ? { label: entry.label } : {}) });
-  }
-  return created;
-}
-
-export function applyPlanCommand(current: WorkPlan,command: PlanCommand,version: number,options: { sealed: boolean }): PlanResult {
-  const before = clonePlan(current);
-  const plan = clonePlan(current);
-  switch (command.op) {
-  case "set": {
-    const byId = new Map(plan.steps.map((step) => [step.id,step]));
-    const listed: PlanStep[] = [];
-    const pendingNew: Array<{ id?: string | undefined; label?: string | undefined }> = [];
-    const seen = new Set<string>();
-    for (const entry of command.steps) {
-      const existing = entry.id !== undefined ? byId.get(entry.id) : undefined;
-      if (existing) {
-        if (seen.has(existing.id)) return refuse("plan_ids_invalid",`Step ${existing.id} is listed twice.`);
-        seen.add(existing.id);
-        if (entry.label !== undefined) {
-          if (options.sealed) return refuse("labels_sealed","A sealed work carries no readable step labels.");
-          existing.label = entry.label;
-        }
-        if (existing.state === "skipped") existing.state = "open";
-        listed.push(existing);
-      } else {
-        const made = newSteps(plan,[entry],version,options.sealed);
-        if (!Array.isArray(made)) return made;
-        listed.push(...made);
-        pendingNew.push(entry);
-      }
-    }
-    const done = plan.steps.filter((step) => step.state === "done" && !seen.has(step.id));
-    const unlisted = plan.steps.filter((step) => step.state !== "done" && !seen.has(step.id))
-      .map((step) => ({ ...step,state: "skipped" as const }));
-    // Done steps stay listed first; the remaining order follows the command; unlisted become skipped.
-    const remaining = listed.filter((step) => step.state !== "done");
-    const listedDone = listed.filter((step) => step.state === "done");
-    const currentIndex = remaining.findIndex((step) => step.state === "current");
-    if (currentIndex > 0 && remaining.slice(0,currentIndex).some((step) => step.addedIn === version && !byId.has(step.id))) {
-      return refuse("plan_ids_invalid","New steps cannot land before the current step.");
-    }
-    plan.steps = [...done,...listedDone,...remaining,...unlisted];
-    return finalize(plan,before);
-  }
-  case "add": {
-    const made = newSteps(plan,command.steps,version,options.sealed);
-    if (!Array.isArray(made)) return made;
-    plan.steps.push(...made);
-    return finalize(plan,before);
-  }
-  case "next": {
-    const current = plan.steps.find((step) => step.state === "current");
-    if (current) current.state = "done";
-    const following = plan.steps.find((step) => step.state === "open");
-    if (following) following.state = "current";
-    return finalize(plan,before);
-  }
-  case "step": {
-    const target = plan.steps.find((step) => step.id === command.id);
-    if (!target) return refuse("step_not_found",`Step ${command.id} is not in this plan (${plan.steps.map((step) => step.id).join(", ") || "no steps"}).`);
-    if (target.state === "current") return finalize(plan,before);
-    const current = plan.steps.find((step) => step.state === "current");
-    if (current) current.state = "done";
-    target.state = "current";
-    return finalize(plan,before);
-  }
-  case "revise": {
-    if (options.sealed) return refuse("labels_sealed","A sealed work's labels are matched by the client; send set.");
-    return applyPlanCommand(current,revisePlanByLabels(current,command.labels),version,options);
-  }
-  }
-}
-
-/** Matches labels to existing steps (done steps excluded) and turns them into a `set` command. */
-export function revisePlanByLabels(plan: WorkPlan,labels: string[]): PlanCommand {
-  const available = plan.steps.filter((step) => step.state !== "done");
-  const used = new Set<string>();
-  const steps = labels.map((label) => {
-    const match = available.find((step) => !used.has(step.id) && step.label?.toLowerCase() === label.toLowerCase());
-    if (match) { used.add(match.id); return { id: match.id }; }
-    return { label };
-  });
-  return { op: "set",steps };
-}
-
-/** Finishing marks every open or current step skipped (spec 3.3), current counts as done on success. */
-export function closePlan(current: WorkPlan,result: WorkResult): WorkPlan {
-  const plan = clonePlan(current);
-  for (const step of plan.steps) {
-    if (step.state === "current") step.state = result === "finished" ? "done" : "skipped";
-    else if (step.state === "open") step.state = "skipped";
-  }
-  return plan;
-}
-
-export function setCurrentStepProgress(current: WorkPlan,progress: StepProgress | null): WorkPlan | null {
-  const plan = clonePlan(current);
-  const step = plan.steps.find((candidate) => candidate.state === "current");
-  if (!step) return null;
-  if (progress) step.progress = progress;
-  else delete step.progress;
-  return plan;
-}
-
-export { stepNumber as workStepNumber };

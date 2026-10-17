@@ -1,14 +1,10 @@
 import type { Database } from "./db.js";
 
 /**
- * Account-level "require end-to-end encryption" (docs/END-TO-END-ENCRYPTION.md, E6.1). When on,
- * producer credentials (CLI keys) must send sealed text: the server answers 409 end_to_end_required
- * to a readable notice, question or card text. Webhooks hold no keys and are unaffected.
+ * Account-level "require end-to-end encryption" (docs/ENCRYPTION-PROTOCOL.md, E6.1): the setting and its
+ * reading. Routes never decide on readable content here: they ask the content policy (content-policy.ts
+ * refuseReadable), which reads this for every producer type, webhook services included.
  */
-export async function endToEndRequired(db: Pick<Database,"query">,principalId: string): Promise<boolean> {
-  return (await endToEndPolicy(db,principalId)).required;
-}
-
 /**
  * The account's choice (true/false) or automatic (null): automatic requires sealing as soon as an
  * active phone of the account has published encryption keys, so encryption is on by default.

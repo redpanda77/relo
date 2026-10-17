@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest"
+import { MotionGlobalConfig } from "motion/react"
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -43,3 +44,6 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { value: () => un
 Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { value: () => false })
 Object.defineProperty(HTMLElement.prototype, "setPointerCapture", { value: () => undefined })
 Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", { value: () => undefined })
+
+// jsdom has no frames to animate: motion jumps to each end state, so exits remove at once.
+MotionGlobalConfig.skipAnimations = true

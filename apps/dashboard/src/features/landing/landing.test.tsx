@@ -19,15 +19,21 @@ const bootstrap = {
 describe("landing page", () => {
   test("a signed-out visitor sees the landing page, with sign-in and the source one click away", async () => {
     render(<DashboardApp bootstrap={{ ...bootstrap, view: "landing" }} />)
-    expect(await screen.findByRole("heading", { level: 1, name: /Every agent\.\s*One place\./ })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { level: 1, name: /Every agent\.\s*One place\./ }, { timeout: 5000 })).toBeInTheDocument()
     const signIn = screen.getAllByRole("link", { name: /Sign in/ })
     expect(signIn.length).toBeGreaterThan(0)
     for (const link of signIn) expect(link).toHaveAttribute("href", "/sign-in")
-    const github = screen.getAllByRole("link", { name: /GitHub|Get Relo|Install Relo/ })
-    expect(github.length).toBeGreaterThan(2)
-    for (const link of github) expect(link.getAttribute("href")).toMatch(new RegExp(`^${GITHUB_URL}(#install-relo)?$`))
-    expect(screen.getByRole("button", { name: "Pause motion" })).toBeInTheDocument()
+    // Creating an account is the call to action; the docs and the source stay one click away.
+    for (const link of screen.getAllByRole("link", { name: /Create account/ })) expect(link).toHaveAttribute("href", "/sign-in?mode=sign-up")
+    for (const link of screen.getAllByRole("link", { name: /^Docs$/ })) expect(link).toHaveAttribute("href", "/docs")
+    expect(screen.getAllByRole("link", { name: /^Docs$/ }).length).toBeGreaterThan(1)
+    const github = screen.getAllByRole("link", { name: /GitHub/ })
+    expect(github.length).toBeGreaterThan(1)
+    for (const link of github) expect(link.getAttribute("href")).toBe(GITHUB_URL)
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument()
+    // No paste line: the call to action is Create account.
+    expect(screen.queryByRole("button", { name: /Copy/ })).not.toBeInTheDocument()
+    expect(screen.queryByText(/install\.md/)).not.toBeInTheDocument()
   })
 
   test("the form view goes straight to sign-in, links to the source, and shows no server row", () => {

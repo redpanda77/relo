@@ -96,7 +96,7 @@ struct NativeReferenceSample {
             return sample(
                 title: "Build in progress", subtitle: "Compiling release 0.4.0", status: "Working",
                 components: [["id": "progress", "type": "progress_bar", "colorRole": "project",
-                              "value": 0.42, "label": "42%"]], behavior: "progress", theme: "dark"
+                              "value": 0.42, "label": "42%"]], behavior: "progress"
             )
         case "steps":
             return sample(
@@ -116,9 +116,6 @@ struct NativeReferenceSample {
                   "altText": "A Relo report preview", "contentMode": "fit"]])
         case "approval": return binarySample(kind: "approval")
         case "yes-no": return binarySample(kind: "yes_no")
-        case "appearance-light", "appearance-dark", "appearance-system":
-            return sample(title: "Appearance reference", subtitle: "Readable on the host surface", status: "Working",
-                          theme: String(name.dropFirst("appearance-".count)))
         case "long-text":
             return sample(title: "Preparing a release with a long title and essential context", subtitle: "Review the result in Relo", status: "In progress")
         case "mixed-identity":
@@ -167,7 +164,6 @@ struct NativeReferenceSample {
         status: String,
         components: [[String: Any]] = [],
         behavior: String = "informational",
-        theme: String = "system",
         interaction: LiveActivityContentInteraction? = nil,
         contextual: Bool = false
     ) -> NativeReferenceSample {
@@ -184,7 +180,7 @@ struct NativeReferenceSample {
         let state: [String: Any] = behavior == "approval" || behavior == "yes_no"
             ? ["kind": "needs_action", "tone": "attention", "icon": "needs_action"]
             : ["kind": "active", "tone": "live", "icon": "active"]
-        let appearance: [String: Any] = ["theme": theme, "roles": [
+        let appearance: [String: Any] = ["roles": [
             "cardIdentity": "project", "componentIdentity": "thread", "statusEmphasis": "state",
         ]]
         let primary: Any

@@ -208,6 +208,14 @@ export interface AlertSend extends CommonSendOptions {
   customData?: Record<string, unknown>;
 }
 
+/**
+ * A silent background push on the ordinary topic: `content-available` and the caller's data only, never
+ * an alert, sound or badge. Apple requires priority 5 for background pushes; 10 is refused here.
+ */
+export interface BackgroundSend extends CommonSendOptions {
+  customData: Record<string, unknown>;
+}
+
 export interface ActivitySend extends CommonSendOptions {
   operation: ActivityOperation;
   contentState: Record<string, unknown>;
@@ -745,7 +753,7 @@ class ConnectionPool {
 interface LogicalSend {
   recipient: RecipientResolver;
   topic: string;
-  pushType: "alert" | "liveactivity";
+  pushType: "alert" | "liveactivity" | "background";
   priority: ApnsPriority;
   expiration: number;
   validUntilMs?: number;
@@ -879,6 +887,26 @@ export class ApnsProviderCleanroom {
         topic: this.config.activityTopic,
         pushType: "liveactivity",
         body: serializePayload({ aps }),
+      });
+    } catch (error) {
+      return this.localFailure(error, input.apnsId);
+    }
+  }
+
+  async sendBackground(input: BackgroundSend): Promise<ApnsOutcome> {
+    try {
+      if (input.priority !== undefined && input.priority !== 5) {
+        throw validationError("background pushes must use priority 5");
+      }
+      const customData = requirePlainObject(input.customData, "customData");
+      if (Object.hasOwn(customData, "aps")) throw validationError("customData must not contain aps");
+      if (Object.keys(customData).length === 0) throw validationError("customData must not be empty");
+      assertJsonValue(customData, 0, new WeakSet<object>());
+      return await this.sendLogical({
+        ...commonLogical(input, this.uuid, 5),
+        topic: this.config.ordinaryTopic,
+        pushType: "background",
+        body: serializePayload({ ...customData, aps: { "content-available": 1 } }),
       });
     } catch (error) {
       return this.localFailure(error, input.apnsId);

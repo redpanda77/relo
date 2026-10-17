@@ -20,7 +20,7 @@ export class CurrentChangeSubscription {
   }
   take(): CurrentChangeHint {
     const hint={subjectIds:this.all?[]:[...this.ids],invalidateCounts:true};
-    this.ids.clear();this.all=false;return hint;
+    this.ids.clear();this.all=false;this.wake.clear();return hint;
   }
   wait(timeoutMs:number,signal?:AbortSignal) { return this.wake.wait(timeoutMs,signal); }
   close():void { if(this.closed)return;this.closed=true;this.wake.close(); }

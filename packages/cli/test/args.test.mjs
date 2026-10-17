@@ -1,7 +1,9 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { numberOption, parseArgs, parseDuration, requireText, validateHttpsUrl, validatePublicHttpsUrl } from "../src/args.mjs";
+import { numberOption, parseDuration, requireText } from "../src/shared/validate.mjs";
+import { parseArgs } from "../src/args.mjs";
+import { validateHttpsUrl, validatePublicHttpsUrl } from "../src/shared/urls.mjs";
 
 test("parses commands, repeatable values, and inline values", () => {
   const parsed = parseArgs([

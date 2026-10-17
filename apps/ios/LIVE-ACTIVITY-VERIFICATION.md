@@ -49,7 +49,7 @@ After the user has installed the dedicated reference host, launch it with Xcode 
 - Use `expiry-transition` to check a pending decision fifteen seconds after creation. Record whether ActivityKit invalidation visibly removes the actions at the deadline; an intent/server refusal alone does not pass the UI gate.
 - Use `stale-progress` to check the stale state (“Quiet”) independently of the interaction deadline and lifecycle.
 
-Existing cases: `information`, `progress-bar`, `steps`, `image-cache-miss`, `approval`, `yes-no`, `appearance-light`, `appearance-dark`, `appearance-system`, `long-text`, `mixed-identity`, `response-sending`, `response-queued`, `response-accepted`, `response-rejected`, `response-expired`.
+Existing cases: `information`, `progress-bar`, `steps`, `image-cache-miss`, `approval`, `yes-no`, `long-text`, `mixed-identity`, `response-sending`, `response-queued`, `response-accepted`, `response-rejected`, `response-expired`.
 
 Additional wire-tested cases: `max-text`, `many-components`, `all-pending`, `all-complete`, `zero-progress`, `full-progress`, `decision-with-progress`, `response-denied`, `response-canceled`, `stale-progress`, `expiry-transition`, `question-short`, `question-long`.
 

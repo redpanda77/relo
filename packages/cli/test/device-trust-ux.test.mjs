@@ -4,17 +4,18 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { runKeysCommand } from "../src/commands/keys.mjs";
-import { isSimulator, matchPhones, modelName, phoneHandle, phoneLabel } from "../src/device-names.mjs";
-import { approveDeviceSigningInput, b64u, generateKeyPair, keyId, linkSigningInput, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { loadKeyStore, saveKeyStore, trustKey } from "../src/keystore.mjs";
-import { sealCardRequest } from "../src/seal-card.mjs";
-import { sealNoticeRequest } from "../src/seal-notice.mjs";
-import { ensureTrust, trustNotices } from "../src/trust.mjs";
+import { runKeysCommand } from "../src/owner/keys.mjs";
+import { isSimulator, matchPhones, modelName, phoneHandle, phoneLabel } from "../src/crypto/device-names.mjs";
+import { approveDeviceSigningInput, b64u, generateKeyPair, keyId, linkSigningInput, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { loadKeyStore, saveKeyStore, trustKey } from "../src/crypto/keystore.mjs";
+import { sealCardRequest } from "../src/crypto/seal-card.mjs";
+import { sealNoticeRequest } from "../src/crypto/seal-notice.mjs";
+import { ensureTrust, trustNotices } from "../src/crypto/trust.mjs";
 
 // The device-trust flows a person meets: friendly names, notes that say what to do, `relo keys
 // approve` / `remove`, skipped phones named on cards, approvals from a linked browser, and simulators.
-const apiUrl = "https://relo.example";
+// A private server: strict mode is off unless a test turns it on (on a public address it defaults on).
+const apiUrl = "https://relo.internal";
 
 function endpoint(deviceId, { kind = "phone", name = "iPhone", model, createdAt = new Date().toISOString() } = {}) {
   const identity = generateKeyPair();
@@ -44,7 +45,7 @@ function approval(signer, target) {
 
 function harness({ inventory = [] } = {}) {
   const folder = mkdtempSync(join(tmpdir(), "relo-trust-ux-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   const printed = [];
   const state = { devices: [], inventory };
   const dependencies = { configPath: () => join(folder, "config.json"), env, now: () => Date.now(), stdinIsTTY: false,

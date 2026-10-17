@@ -6,7 +6,7 @@ import { hashToken } from "../auth.js";
 import { bootstrapOwner } from "../bootstrap.js";
 import { createAuthDatabase,createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
-import { createWebhookService } from "../services.js";
+import { createWebhookService } from "../webhooks/admin.js";
 import { currentTestPresentation } from "../test-current-presentation.js";
 import { pendingInteractionBadgeCount } from "../badge.js";
 import { admitOrdinaryEvent } from "./ordinary-admission.js";
@@ -35,18 +35,18 @@ suite("Ordinary admission across authenticated adapters",()=>{
     service=await createWebhookService(db,principalId,"Same visible name",origin);
   });
   const app=()=>createApp(db,{apnsMode:"sandbox",credentialDerivationSecret:secret});
-  const path=()=>new URL(service.webhookUrl).pathname;
+  const auth=(secret=service.secret)=>({authorization:`Bearer ${secret}`});
   const raw=(id:string)=>id.slice(4);
   const command=(kind:"notice"|"decision"="notice",generation=1,age=0):SubjectCommand=>({
     subjectKey:"same-visible-work",generation,revision:1,operation:"replace",
     occurredAt:new Date(Date.now()-age*1_000).toISOString(),
     policy:kind==="decision"?{kind,actionSeconds:30}:{kind},
   });
-  async function post(body:unknown,key=randomUUID(),route=path()){
-    const response=await app().request(route,{method:"POST",headers:{"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body)});
+  async function post(body:unknown,key=randomUUID(),secret=service.secret){
+    const response=await app().request("/hooks",{method:"POST",headers:{"content-type":"application/json","idempotency-key":key,...auth(secret)},body:JSON.stringify(body)});
     return {status:response.status,body:await response.json() as any};
   }
-  const notice=(relevance:unknown=command(),key=randomUUID(),route=path())=>post({body:"Still useful?",relevance},key,route);
+  const notice=(relevance:unknown=command(),key=randomUUID(),secret=service.secret)=>post({body:"Still useful?",relevance},key,secret);
   const ask=(relevance:unknown=command("decision"),key=randomUUID())=>post({body:"Ship this version?",response:{type:"yes_no",expiresInSeconds:30},relevance},key);
   async function answer(eventId:string,expectedSubject:unknown){
     const result=await app().request(`/api/notifications/${eventId}/interactions`,{method:"POST",headers:{authorization:`Bearer ${phone}`,"content-type":"application/json"},
@@ -73,7 +73,7 @@ suite("Ordinary admission across authenticated adapters",()=>{
   test("service authority is isolated even for identical names and subject keys",async()=>{
     const old=await notice();
     const other=await createWebhookService(db,principalId,"Same visible name",origin);
-    const independent=await notice(command(),randomUUID(),new URL(other.webhookUrl).pathname);
+    const independent=await notice(command(),randomUUID(),other.secret);
     const current=await notice(command("notice",2));
     expect(current.status).toBe(201);expect(independent.status).toBe(201);
     expect((await state(old.body.eventId)).relevance.supersededBy.generation).toBe(2);
@@ -88,7 +88,7 @@ suite("Ordinary admission across authenticated adapters",()=>{
     expect(first.status).toBe(201);expect(first.body.response.status).toBe("expired");expect(first.body.queued).toBe(0);
     expect((await state(first.body.eventId)).state).toBe("expired");
     expect(await pendingInteractionBadgeCount(db,deviceId)).toBe(0);
-    const status=await app().request(`${path()}/events/${first.body.eventId}`);
+    const status=await app().request(`/hooks/events/${first.body.eventId}`,{headers:auth()});
     expect(status.status).toBe(200);expect((await status.json() as any).event.response.status).toBe("expired");
   });
   test("replacement settles only its exact webhook decision and rejects the old phone action",async()=>{

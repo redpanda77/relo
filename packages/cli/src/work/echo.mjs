@@ -1,6 +1,6 @@
 // The echo every relo work command prints (plan 04 §2.5): what is open, what the owner sees, what next.
 // The owner line comes from the server's derived state (view.owner); the CLI never computes policy.
-import { position } from "./plan.mjs";
+import { currentPath, isDelivered, lastRound, openRound, planLine, position } from "./plan.mjs";
 
 export const shortId = (id) => (typeof id === "string" ? id.replace(/^(wrk_[0-9a-f]{8})[0-9a-f-]*$/u, "$1") : "wrk_?");
 const q = (text) => `"${String(text ?? "").replace(/"/gu, '\\"')}"`;
@@ -9,7 +9,7 @@ const q = (text) => `"${String(text ?? "").replace(/"/gu, '\\"')}"`;
 const waitingText = (waiting) => (waiting && typeof waiting === "object" ? waiting.reason ?? "something" : waiting);
 const waitingSince = (work) => (work?.waiting && typeof work.waiting === "object" ? work.waiting.since : work?.waitingSince ?? work?.lastWriteAt);
 
-export function hhmm(iso, now = new Date()) {
+function hhmm(iso, now = new Date()) {
   if (!iso) return "?";
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return "?";
@@ -17,14 +17,12 @@ export function hhmm(iso, now = new Date()) {
   return at.toDateString() === now.toDateString() ? time : `${at.toLocaleString("en-US", { month: "short" })} ${at.getDate()} ${time}`;
 }
 
-/** The Lock Screen line: same rule and fixture as contracts/src/card-line.ts (fixtures/card-line-v1.json). */
+/** The Lock Screen words (plan UX U2): one rule in the contracts plan engine, the same for the CLI, the phone and the Now row. */
 const countText = (p) => `${p.done} of ${p.total}${p.done >= p.total ? " ✓" : ""}`;
+const shorten = (text, length) => (text.length > length ? `${text.slice(0, Math.max(1, length - 1)).trimEnd()}…` : text);
 export function cardLine(work) {
-  const steps = work?.plan?.steps ?? [];
-  const pos = position(work?.plan);
-  if (steps.length && pos.current) {
-    return [`Step ${pos.index}`, `${pos.toGo} to go`, pos.current.label, pos.current.progress && countText(pos.current.progress)].filter(Boolean).join(" · ");
-  }
+  const line = planLine(work);
+  if (line) return line;
   const text = work?.waiting ? `Waiting on ${waitingText(work.waiting)}` : (work?.status || work?.goal || "");
   return work?.progress ? [text, countText(work.progress)].filter(Boolean).join(" · ") : text;
 }
@@ -34,24 +32,29 @@ export function stateLine(work, parked = []) {
   if (!work) line = "nothing open";
   else if (work.lifecycle === "paused") line = `paused: ${shortId(work.id)} ${q(work.goal)}`;
   else {
-    const pos = position(work.plan);
-    const steps = work.plan?.steps?.filter((s) => s.state !== "skipped") ?? [];
     line = `open: ${shortId(work.id)} ${q(work.goal)}`;
-    if (pos.current) line += `, step ${pos.index} of ${steps.length} ${q(pos.current.label ?? pos.current.id)}`;
+    const plan = planLine(work);
+    if (plan) line += `, ${plan}`;
   }
   return parked.length ? `${line}; parked: ${parked.length}` : line;
 }
 
-export function ownerSees(work, now = new Date()) {
+export function ownerSees(work, now = new Date(), disposition) {
   if (!work) return "Owner sees: (unknown: run relo state --sync)";
   const derived = work.owner?.state ?? work.owner?.kind ?? work.owner;
   if (work.lifecycle === "finished" || work.result) {
     const result = work.result ?? "finished";
     if (result === "failed") return `Owner sees: the final card for 60 min and an alert: ${q(work.outcome)}`;
     if (result === "dropped") return `Owner sees: nothing on the Lock Screen; History: ${q(work.outcome)}`;
-    return `Owner sees: the final card for 15 min and one quiet notification: ${q(work.outcome)}`;
+    return `Owner sees: the final card for 15 min and one notification: ${q(work.outcome)}`;
   }
-  if (work.lifecycle === "paused" || derived === "paused") return "Owner sees: nothing on the Lock Screen; Now › Paused";
+  if (isDelivered(work)) {
+    const round = lastRound(work.plan);
+    return disposition === "delivered"
+      ? `Owner sees: the round's final card and one quiet notification: ${q(round.outcome ?? work.outcome)}; then it's the owner's turn`
+      : `Owner sees: round ${round.n} delivered${round.outcome ? `: ${q(round.outcome)}` : ""}; it's the owner's turn (Now)`;
+  }
+  if (work.lifecycle === "paused" || derived === "paused") return `Owner sees: nothing on the Lock Screen; Now › Paused${planLine({ ...work, lifecycle: "paused" }) ? ` (${q(planLine({ ...work, lifecycle: "paused" }))})` : ""}`;
   if (derived === "needs_you") return "Owner sees: your question on top of the Lock Screen, as a time-sensitive alert";
   if (derived === "stale") return `Owner sees: the card dimmed since ${hhmm(work.owner?.since, now)} (no update for 20 min); any update brightens it`;
   if (derived === "no_signal" || derived === "stopped_responding") return "Owner sees: nothing on the Lock Screen (no update for 60 min); Now › Quiet. Any update brings the card back";
@@ -69,7 +72,7 @@ function questionLine(question, now) {
   return undefined;
 }
 
-export function nextLine(work) {
+function nextLine(work) {
   if (!work || work.lifecycle === "finished" || work.result) return 'Next: nothing open in this session. A new goal: relo work start --goal "…"';
   if (work.lifecycle === "paused") return 'Next: relo work resume  |  relo work finish --outcome "…"';
   const question = work.question;
@@ -79,18 +82,35 @@ export function nextLine(work) {
   if (work.waiting) return `Next: relo work update --not-waiting --status "…"  (when ${waitingText(work.waiting)} is back)`;
   const steps = work.plan?.steps ?? [];
   const pos = position(work.plan);
-  if (steps.length && pos.complete) return 'Next: relo work finish --outcome "…"  |  relo work update --add "…"';
+  if (isDelivered(work)) return 'Next: the round is delivered. A follow-up on this goal: relo work start --round "<the request in a few words>" --plan "…"  |  goal done: relo work finish --outcome "…"';
+  if (steps.length && pos.complete) return 'Next: done: relo work finish --outcome "…"  |  this request done, more of the goal to come: relo work deliver --outcome "…"  |  relo work update --add "…"';
   if (pos.current?.progress) return `Next: relo work update --progress ${Math.min(pos.current.progress.done + 1, pos.current.progress.total)}/${pos.current.progress.total}  |  relo work update --next-step`;
-  if (pos.current) return 'Next: relo work update --next-step  |  relo work finish --outcome "…"';
-  if (work.progress) return `Next: relo work update --progress ${Math.min(work.progress.done + 1, work.progress.total)}/${work.progress.total}  |  relo work finish --outcome "…"`;
-  return 'Next: relo work update --plan "…"  |  relo work finish --outcome "…"';
+  if (pos.current) return pos.toGo === 0 ? 'Next: relo work update --next-step  |  relo work deliver --outcome "…"' : 'Next: relo work update --next-step';
+  if (work.progress) return `Next: relo work update --progress ${Math.min(work.progress.done + 1, work.progress.total)}/${work.progress.total}  |  relo work deliver --outcome "…"`;
+  return 'Next: relo work update --plan "…"  |  relo work deliver --outcome "…"';
 }
 
 const MARK = { done: "[x]", current: "[>]", open: "[ ]", skipped: "[-]" };
 
-function stepLines(plan) {
-  const steps = plan?.steps ?? [];
+const roundOf = (step) => step.round ?? 1;
+const roundName = (round, goal) => {
+  const title = round.title ?? (round.n === 1 ? goal : undefined);
+  return `Round ${round.n}${title ? ` ${q(shorten(String(title), 40))}` : ""}`;
+};
+
+function stepLines(plan, goal) {
   const lines = [];
+  // Closed rounds fold to one line each: the round, its title and what it delivered.
+  for (const round of plan?.rounds ?? []) if (round.state === "closed") lines.push(`  [✓] ${roundName(round, goal)}${round.outcome ? `: ${round.outcome}` : ""}`);
+  const open = openRound(plan);
+  const steps = open && plan?.rounds ? (plan.steps ?? []).filter((s) => roundOf(s) === open.n) : open || !plan?.rounds ? plan?.steps ?? [] : [];
+  const nested = (plan?.rounds?.length ?? 0) >= 2 && open;
+  if (nested) lines.push(`  ${roundName(open, goal)}`);
+  const base = nested ? "    " : "  ";
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const depth = (step) => { let d = 0; for (let at = step; at?.parent && d < 4; at = byId.get(at.parent)) d += 1; return d; };
+  const onPath = new Set(currentPath(plan).map((s) => s.id));
+  const mark = (step) => (onPath.has(step.id) && step.state !== "done" && step.state !== "skipped" ? MARK.current : MARK[step.state] ?? "[ ]");
   let from = 0;
   if (steps.length > 12) {
     const ci = steps.findIndex((s) => s.state === "current");
@@ -98,7 +118,7 @@ function stepLines(plan) {
     const settled = steps.slice(0, fold).filter((s) => s.state === "done" || s.state === "skipped");
     if (settled.length === fold && fold > 1) {
       const done = settled.filter((s) => s.state === "done").length;
-      lines.push(`  [x] ${steps[0].id}–${steps[fold - 1].id}: ${done} done, ${fold - done} skipped`);
+      lines.push(`${base}[x] ${steps[0].id}–${steps[fold - 1].id}: ${done} done, ${fold - done} skipped`);
       from = fold;
     }
   }
@@ -107,21 +127,22 @@ function stepLines(plan) {
   for (const step of steps.slice(from)) {
     if (step.state === "skipped") { skipped.push(step); continue; }
     const label = step.label ? ` ${step.label}` : "";
-    const tail = step.progress ? `   (${step.progress.done}/${step.progress.total})` : "";
-    lines.push(`  ${MARK[step.state] ?? "[ ]"} ${step.id}${label}${tail}`);
+    const tail = step.progress && step.state !== "done" && step.state !== "skipped" ? `   (${step.progress.done}/${step.progress.total})` : "";
+    lines.push(`${base}${"  ".repeat(depth(step))}${mark(step)} ${step.id}${label}${tail}`);
+    if (step.detail && step.state === "current") lines.push(`${base}${"  ".repeat(depth(step) + 1)}${shorten(step.detail, 100)}`);
   }
-  if (skipped.length) lines.push(`  ${MARK.skipped} ${skipped.length} skipped: ${skipped.map((s) => s.label ? `${s.id} ${s.label}` : s.id).join(", ")}`);
+  if (skipped.length) lines.push(`${base}${MARK.skipped} ${skipped.length} skipped: ${skipped.map((s) => s.label ? `${s.id} ${s.label}` : s.id).join(", ")}`);
   return lines;
 }
 
 /** Inserts `--work <handle>` after `relo work <verb>` in every suggested command (unidentified callers). */
-export function withHandle(text, handle) {
+function withHandle(text, handle) {
   if (!handle) return text;
-  return text.replace(/relo work (update|pause|resume|finish)(?! --work)/gu, `relo work $1 --work ${handle}`);
+  return text.replace(/relo work (update|pause|resume|finish|deliver)(?! --work)/gu, `relo work $1 --work ${handle}`);
 }
 
 /** EDGE.3: a write that did not reach the server yet. */
-export const QUEUED_LINE = "Queued: sends with the next relo command";
+const QUEUED_LINE = "Queued: sends with the next relo command";
 
 function laneLines(lane, now) {
   const lines = [];
@@ -130,8 +151,14 @@ function laneLines(lane, now) {
   return lines;
 }
 
-export function renderEcho({ work, parked = [], disposition, notes = [], handle, dryRun = false, queued = false, lane, now = new Date() }) {
+/** A refused finish or deliver stays on every echo until an accepted one clears it. */
+export function refusedEarlier(refusal, now = new Date()) {
+  return `Refused earlier: ${refusal.what} (relo work ${refusal.verb}, ${hhmm(refusal.at, now)}). The card is still open. Next: ${refusal.next ?? `relo work ${refusal.verb} --outcome "…"`}`;
+}
+
+export function renderEcho({ work, parked = [], disposition, notes = [], handle, dryRun = false, queued = false, lane, pendingRefusal, now = new Date(), handoffLine, ownerLine, nextOverride }) {
   const lines = [];
+  if (pendingRefusal) lines.push(refusedEarlier(pendingRefusal, now));
   if (dryRun) lines.push("Dry run: nothing was sent.");
   if (!work) {
     lines.push("No open work in this session.");
@@ -143,20 +170,21 @@ export function renderEcho({ work, parked = [], disposition, notes = [], handle,
     // DOGFOOD #20: a finished work shows its outcome, never the last in-progress status.
     if (work.status && !work.result && !["finished", "failed", "dropped"].includes(lifecycle)) lines.push(`  Status: ${work.status}`);
     if (work.waiting) lines.push(`  Waiting on: ${waitingText(work.waiting)} since ${hhmm(waitingSince(work), now)}`);
-    lines.push(...stepLines(work.plan));
+    lines.push(...stepLines(work.plan, work.goal));
     if (work.progress && !(work.plan?.steps?.length)) lines.push(`  Progress: ${work.progress.done} of ${work.progress.total}`);
     if (work.outcome) lines.push(`  Outcome: ${work.outcome}`);
   }
   for (const note of notes) lines.push(`Note: ${note}`);
   if (queued) lines.push(QUEUED_LINE);
   lines.push(...laneLines(lane, now));
-  if (work) lines.push(dryRun ? "Owner sees: (not computed in a dry run)" : queued ? "Owner sees: the last change Relo received; this one shows once it is sent" : ownerSees(work, now));
+  if (handoffLine) lines.push(handoffLine);
+  if (work) lines.push(ownerLine ? ownerLine : dryRun ? "Owner sees: (not computed in a dry run)" : queued ? "Owner sees: the last change Relo received; this one shows once it is sent" : ownerSees(work, now, disposition));
   const question = work ? questionLine(work.question, now) : undefined;
   if (question) lines.push(question);
   for (const p of parked.slice(0, 3)) {
     lines.push(`Parked: ${shortId(p.id)} ${q(p.goal)} (${p.pausedReason === "parked" ? "parked" : "paused"}${p.pausedAt ?? p.declaredAt ?? p.lastWriteAt ? ` ${hhmm(p.pausedAt ?? p.declaredAt ?? p.lastWriteAt, now)}` : ""}) → relo work resume ${shortId(p.id)}  |  relo work finish --work ${shortId(p.id)} --outcome "…"`);
   }
   if (parked.length > 3) lines.push(`Parked: and ${parked.length - 3} more (relo state)`);
-  lines.push(work ? nextLine(work) : 'Next: relo work start --goal "…" [--plan "A,B,C"]');
+  lines.push(nextOverride ?? (work ? nextLine(work) : 'Next: relo work start --goal "…" [--plan "A,B,C"]'));
   return withHandle(lines.join("\n"), handle);
 }

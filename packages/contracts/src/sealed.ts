@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 /**
- * End-to-end sealed envelope (docs/END-TO-END-ENCRYPTION.md, E3): the one shape every surface carries
+ * End-to-end sealed envelope (docs/ENCRYPTION-PROTOCOL.md, E3): the one shape every surface carries
  * and the server stores as opaque JSON (it holds no key that opens it). The shape rules match
- * packages/cli/src/e2ee.mjs `validateEnvelopeShape` and ReloE2EE.validateShape. Pure (no Buffer), so
+ * packages/cli/src/crypto/e2ee.mjs `validateEnvelopeShape` and ReloE2EE.validateShape. Pure (no Buffer), so
  * the Dashboard and the server share it.
  */
 const B64U = /^[A-Za-z0-9_-]+$/;

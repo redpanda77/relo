@@ -1,10 +1,10 @@
 // Gemini CLI adapter (HA.2). Docs: geminicli.com/docs/hooks, geminicli.com/docs/hooks/reference.
 // Same settings shape as Claude Code (`hooks.<Event>[].hooks[]`) with timeouts in milliseconds; stdin JSON
 // carries session_id, hook_event_name, cwd; source on SessionStart; notification_type on Notification.
-// No subagent or tool ids are documented. Levels: off and presence (no reminders yet).
+// No subagent or tool ids are documented. Sets: off and presence.
 // No network here: adapters map events and render outcomes; the core owns state and transport.
-import { join } from "node:path";
-import { repositoryRoot } from "../../../setup.mjs";
+import { harnessPath, projectPath } from "../../paths.mjs";
+import descriptor from "./descriptor.mjs";
 
 const HOOK_LEVELS = Object.freeze(["off", "presence"]);
 const WAITING_NOTIFICATIONS = Object.freeze(["ToolPermission"]);
@@ -20,9 +20,9 @@ function wantedEntries(level) {
 }
 
 export default Object.freeze({
-  id: "gemini",
-  label: "Gemini CLI",
-  aliases: ["gemini-cli"],
+  id: descriptor.id,
+  label: descriptor.label,
+  aliases: descriptor.aliases,
   events: Object.freeze({
     SessionStart: "start",
     BeforeAgent: "prompt",
@@ -45,8 +45,8 @@ export default Object.freeze({
 
   install: Object.freeze({
     format: "json-hooks-map",
-    global: ({ home }) => join(home, ".gemini", "settings.json"),
-    project: ({ cwd }) => join(repositoryRoot(cwd), ".gemini", "settings.json"),
+    global: (probe) => harnessPath(descriptor, descriptor.hooks.global, probe),
+    project: (probe) => projectPath(descriptor.hooks.project, probe),
     levels: HOOK_LEVELS,
     recommended: "presence",
     sending: Object.freeze(["presence"]),

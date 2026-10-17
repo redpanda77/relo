@@ -1,16 +1,17 @@
 import { friendlyModelName } from "../device-models.js";
 import type { Handler } from "hono";
-import type { LiveActivityPresentationPolicy } from "@relo/notification-contracts";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
-import { listHarnessCredentials } from "../harness-credentials.js";
+import { listCiTokens } from "../credentials/login.js";
+import { loadComputerRecords } from "../computers/record.js";
+import { unlinkedHooks } from "../computers/summary.js";
 import {
   effectivePresentationPolicy,
   parsePresentationPolicy,
 } from "../presentation-policy.js";
-import { accountOrRedirect,isoDate,pageNumber,secureHtml } from "./http.js";
+import { accountOrRedirect,isoDate,pageNumber,secureHtml,dashboardDocumentOptions,type DashboardDocumentOptions } from "./http.js";
 import type { z } from "zod";
-import { connectionsDashboardBootstrapSchema,connectionsOverviewSchema,connectionsShellSchema } from "@relo/notification-contracts/dashboard/connections";
+import { connectionsDashboardBootstrapSchema,connectionsOverviewSchema,connectionsShellSchema,serviceScopeSchema,type ServiceScope } from "@relo/notification-contracts/dashboard/connections";
 
 const pageSize = 25;
 /** One page shows every connection a single-owner server realistically has; larger totals are disclosed, never hidden. */
@@ -36,60 +37,6 @@ type ConnectionsSummary = {
   deliveries: number;
 };
 
-type ConnectionsBootstrapBase = {
-  version: 1;
-  route: { path: string; page: number };
-  shell: DashboardConnectionsShell;
-  summary: Pick<ConnectionsSummary, "services" | "phones" | "clients">;
-  pagination: DashboardConnectionsPagination;
-};
-
-export type ConnectionsServicesBootstrap = ConnectionsBootstrapBase & {
-  kind: "connections-services";
-  services: Array<{
-    id: string;
-    title: string;
-    prefix: string;
-    imageUrl: string | null;
-    destinationUrl: string | null;
-    liveActivityPolicy: LiveActivityPresentationPolicy | null;
-    effectiveLiveActivityPolicy: LiveActivityPresentationPolicy;
-    liveActivityPolicySource: "service" | "account" | "system";
-    createdAt: string | null;
-  }>;
-};
-
-export type ConnectionsPhonesBootstrap = ConnectionsBootstrapBase & {
-  kind: "connections-phones";
-  phones: Array<{
-    id: string;
-    name: string;
-    model: string;
-    appVersion: string;
-    osVersion: string;
-    notificationAuthorization: string;
-    liveActivityAuthorization: string;
-    lastSeenAt: string | null;
-  }>;
-};
-
-export type ConnectionsClientsBootstrap = ConnectionsBootstrapBase & {
-  kind: "connections-clients";
-  clients: Array<{
-    id: string;
-    label: string;
-    prefix: string;
-    scopes: string[];
-    createdAt: string | null;
-    expiresAt: string | null;
-    lastUsedAt: string | null;
-    liveActivityPolicy: LiveActivityPresentationPolicy | null;
-    effectiveLiveActivityPolicy: LiveActivityPresentationPolicy;
-    liveActivityPolicySource: "client" | "account" | "system";
-    maxActiveCards: number | null;
-  }>;
-};
-
 
 export type ConnectionsOverviewBootstrap = z.input<typeof connectionsOverviewSchema>;
 export type ConnectionsDashboardBootstrap = z.input<typeof connectionsDashboardBootstrapSchema>;
@@ -104,7 +51,7 @@ type ConnectionsHandlerDependencies = {
   db: Database;
   releaseIdentity: string;
   getAccount(headers: Headers): Promise<ConnectionsDashboardAccount | null>;
-  renderDocument(bootstrap: ConnectionsDashboardBootstrap): Promise<string>;
+  renderDocument(bootstrap: ConnectionsDashboardBootstrap,options?: DashboardDocumentOptions): Promise<string>;
 };
 
 function number(value: unknown): number {
@@ -138,7 +85,7 @@ async function loadSummary(
     `SELECT
       (SELECT count(*)::int FROM webhook_services WHERE principal_id=$1 AND revoked_at IS NULL) AS services,
       (SELECT count(*)::int FROM devices WHERE principal_id=$1 AND revoked_at IS NULL) AS phones,
-      (SELECT count(*)::int FROM principal_api_keys WHERE principal_id=$1 AND revoked_at IS NULL
+      (SELECT count(*)::int FROM principal_api_keys WHERE principal_id=$1 AND kind='login' AND revoked_at IS NULL
         AND (expires_at IS NULL OR expires_at>now())) AS clients,
       (SELECT count(*)::int FROM interaction_requests WHERE principal_id=$1 AND state='pending'
         AND expires_at>now()) AS pending,
@@ -224,14 +171,20 @@ function common(input: {
   };
 }
 
+/** The stored scopes in registry order; anything the registry no longer knows is dropped, never shown. */
+function serviceScopes(value: unknown): ServiceScope[] {
+  const stored = new Set(Array.isArray(value) ? value.map(String) : []);
+  return serviceScopeSchema.options.filter((scope) => stored.has(scope));
+}
+
 async function loadServices(db: Database, principalId: string, accountPolicy: unknown, limit: number) {
   const result = await db.query<any>(
-    `SELECT id,title,secret_prefix,image_url,default_url,live_activity_policy,created_at
+    `SELECT id,title,secret_prefix,image_url,default_url,live_activity_policy,readable_allowed,scopes,last_used_at,created_at
     FROM webhook_services WHERE principal_id=$1 AND revoked_at IS NULL
     ORDER BY created_at DESC,id DESC LIMIT $2`,
     [principalId, limit],
   );
-  return result.rows.map((row): ConnectionsServicesBootstrap["services"][number] => {
+  return result.rows.map((row): ConnectionsOverviewBootstrap["services"][number] => {
     const resolved = effectivePresentationPolicy(row.live_activity_policy,accountPolicy,"service");
     return {
       id: publicId("svc", String(row.id)),
@@ -242,6 +195,9 @@ async function loadServices(db: Database, principalId: string, accountPolicy: un
       liveActivityPolicy: parsePresentationPolicy(row.live_activity_policy),
       effectiveLiveActivityPolicy: resolved.policy,
       liveActivityPolicySource: resolved.source as "service" | "account" | "system",
+      readableAllowed: row.readable_allowed === true,
+      scopes: serviceScopes(row.scopes),
+      lastUsedAt: isoDate(row.last_used_at),
       createdAt: isoDate(row.created_at),
     };
   });
@@ -255,7 +211,7 @@ async function loadPhones(db: Database, principalId: string, limit: number) {
     ORDER BY last_seen_at DESC,id DESC LIMIT $2`,
     [principalId, limit],
   );
-  return result.rows.map((row): ConnectionsPhonesBootstrap["phones"][number] => ({
+  return result.rows.map((row): ConnectionsOverviewBootstrap["phones"][number] => ({
     id: publicId("dev", String(row.id)),
     name: String(row.name),
     model: friendlyModelName(row.model,Boolean(row.is_simulator)) ?? "Unknown model",
@@ -267,18 +223,14 @@ async function loadPhones(db: Database, principalId: string, limit: number) {
   }));
 }
 
-async function loadClients(db: Database, principalId: string, accountPolicy: unknown, limit: number) {
-  const result = await db.query<any>(
-    `SELECT id,label,token_prefix,scopes,live_activity_policy,max_active_cards,created_at,expires_at,last_used_at
-    FROM principal_api_keys WHERE principal_id=$1 AND revoked_at IS NULL
-      AND (expires_at IS NULL OR expires_at>now())
-    ORDER BY created_at DESC,id DESC LIMIT $2`,
-    [principalId, limit],
-  );
-  return result.rows.map((row): ConnectionsClientsBootstrap["clients"][number] => {
+/** CI tokens that still work, newest first (an account holds at most twenty, so the overview limit never hides one). */
+async function loadCiTokens(db: Database, principalId: string, accountPolicy: unknown) {
+  const rows = await listCiTokens(db, principalId);
+  return rows.map((row): ConnectionsOverviewBootstrap["ciTokens"][number] => {
     const resolved = effectivePresentationPolicy(row.live_activity_policy,accountPolicy,"client");
     return {
       id: publicId("key", String(row.id)),
+      kind: "ci-token",
       label: String(row.label),
       prefix: String(row.token_prefix),
       scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
@@ -306,17 +258,18 @@ export function createDashboardConnectionsHandlers(
     const { base } = common({
       context, account, releaseIdentity, active: "connections",
       title: "Connections",
-      description: "Phones, CLI clients, and webhooks connected to this server.",
+      description: "Phones, computers, CI tokens and webhooks connected to this server.",
       summary, total: 0,
     });
-    const [phones, clients, harnessCredentials, services] = await Promise.all([
+    const [phones, computers, hooks, ciTokens, services] = await Promise.all([
       loadPhones(db, account.principalId, overviewLimit),
-      loadClients(db, account.principalId, accountPolicy, overviewLimit),
-      listHarnessCredentials(db, account.principalId),
+      loadComputerRecords(db, account.principalId, overviewLimit, accountPolicy),
+      unlinkedHooks(db, account.principalId, overviewLimit),
+      loadCiTokens(db, account.principalId, accountPolicy),
       loadServices(db, account.principalId, accountPolicy, overviewLimit),
     ]);
-    const bootstrap: ConnectionsOverviewBootstrap = { ...base, kind: "connections", phones, clients, harnessCredentials, services };
-    return secureHtml(context, await renderDocument(bootstrap));
+    const bootstrap: ConnectionsOverviewBootstrap = { ...base, kind: "connections", phones, computers, unlinkedHooks: hooks, ciTokens, services };
+    return secureHtml(context, await renderDocument(bootstrap,dashboardDocumentOptions(context)));
   };
 
   return { overview };

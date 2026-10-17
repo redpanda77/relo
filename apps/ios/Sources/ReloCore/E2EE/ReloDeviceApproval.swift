@@ -1,6 +1,6 @@
 import Foundation
 
-/// Approving a new phone from this trusted one (docs/END-TO-END-ENCRYPTION.md, "New devices are
+/// Approving a new phone from this trusted one (docs/ENCRYPTION-PROTOCOL.md, "New devices are
 /// approved on a trusted phone"). A phone that signs in after the first is pending: computers seal
 /// nothing to it until a phone they trust signs its identity key here.
 public enum ReloDeviceApproval {

@@ -188,7 +188,7 @@ struct HistoryView: View {
                     withAnimation(.snappy) { origin = nil }
                 }
                 ForEach(origins, id: \.self) { name in
-                    ReloFilterPill(title: name, symbol: "laptopcomputer", selected: origin == name) {
+                    ReloFilterPill(title: name, symbol: model.computerIcon(forOrigin: name).systemImageName, selected: origin == name) {
                         withAnimation(.snappy) { origin = origin == name ? nil : name }
                     }
                 }
@@ -230,7 +230,8 @@ struct HistoryView: View {
             HistoryRowView(row: row, showsSource: sourceID == nil, showsProject: projectID == nil,
                            responseStatus: model.responseFeedback(for: row.id)?.status,
                            serverOutcome: model.nowSummary?.allItems.first { $0.notificationId == row.id }
-                               .flatMap(HistoryServerOutcome.init(item:)))
+                               .flatMap(HistoryServerOutcome.init(item:)),
+                           computerIcon: model.computerIcon(forOrigin: row.origin))
         }.buttonStyle(.plain)
     }
 }

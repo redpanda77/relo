@@ -2,9 +2,9 @@ import { sealedEnvelopeSchema,type SealedEnvelope } from "@relo/notification-con
 import { z } from "zod";
 
 /**
- * End-to-end sealed content (docs/END-TO-END-ENCRYPTION.md, E3). The server checks only the
+ * End-to-end sealed content (docs/ENCRYPTION-PROTOCOL.md, E3). The server checks only the
  * envelope's shape and stores it as opaque JSON: it holds no key that opens it. The shape rules
- * match packages/cli/src/e2ee.mjs `validateEnvelopeShape` and ReloE2EE.validateShape.
+ * match packages/cli/src/crypto/e2ee.mjs `validateEnvelopeShape` and ReloE2EE.validateShape.
  */
 const b64u = (length?: number) => z.string().max(140_000).regex(/^[A-Za-z0-9_-]+$/).refine((value) => {
   const bytes = Buffer.from(value,"base64url");

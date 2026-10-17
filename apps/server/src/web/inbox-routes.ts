@@ -7,15 +7,24 @@ deliveryReconciliationActions,
 DeliveryReconciliationError,
 reconcileDeliveryJob,
 } from "../delivery-reconciliation.js";
-import { listAgentSessions } from "../agent-sessions.js";
 import { internalId,publicId } from "../ids.js";
 import { withdrawNotification } from "../notifications/commands.js";
+import { endWorkForOwner } from "../works/end-route.js";
 import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
 
 /** Dashboard inbox actions: reconcile deliveries, the live snapshot, read state and withdrawal. */
 export function registerInboxActionRoutes(app: Hono, shared: WebRouteContext): void {
-  const { db,accountAuth,dashboardMutationAccount,accountMutationAccount } = shared;
+  const { db,accountAuth,dashboardMutationAccount,accountMutationAccount,apnsMode } = shared;
+  // The owner's End (12b-plan-ux 4.11), the Dashboard's twin of POST /api/works/:workId/end on the phone credential.
+  app.post("/api/dashboard/works/:workId/end", async (context) => {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    let raw: unknown;
+    try { raw = await context.req.json(); } catch { raw = {}; }
+    const result = await endWorkForOwner(db,apnsMode,account.principalId,context.req.param("workId") ?? "",raw);
+    return context.json(result.body,result.status);
+  });
   app.post("/api/dashboard/deliveries/:deliveryId/reconcile", async (context) => {
     const account = await dashboardMutationAccount(context);
     if (account instanceof Response) return account;
@@ -50,7 +59,7 @@ export function registerInboxActionRoutes(app: Hono, shared: WebRouteContext): v
     const deviceIds = requestedIds("deviceId","dev");
     const clientIds = requestedIds("clientId","key");
     if (!deviceIds || !clientIds) return context.json({ error: "invalid_snapshot_selection" },400);
-    const [counts,devices,clients,sessions] = await Promise.all([
+    const [counts,devices,clients] = await Promise.all([
       db.query<any>(`SELECT
         (SELECT count(*)::int FROM notification_events WHERE principal_id=$1) AS notifications,
         (SELECT count(*)::int FROM delivery_jobs j JOIN notification_events e ON e.id=j.notification_event_id
@@ -68,14 +77,12 @@ export function registerInboxActionRoutes(app: Hono, shared: WebRouteContext): v
          AND (expires_at IS NULL OR expires_at>now()) AND id=ANY($2::uuid[])`,
         [account.principalId,clientIds],
       ) : Promise.resolve({ rows: [] }),
-      listAgentSessions(db,account.principalId),
     ]);
     context.header("cache-control","private, no-store");
     return context.json({
       revision: Date.now(), counts: counts.rows[0] ?? { notifications: 0,deliveries: 0,approvals: 0,devices: 0 },
       devices: devices.rows.map((row: any) => ({ id: publicId("dev",row.id),lastSeenAt: row.last_seen_at })),
       clients: clients.rows.map((row: any) => ({ id: publicId("key",row.id),lastUsedAt: row.last_used_at })),
-      sessions,
     });
   });
 

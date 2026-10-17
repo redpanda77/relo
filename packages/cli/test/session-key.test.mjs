@@ -10,8 +10,14 @@ import test from "node:test";
 import { adapterFor } from "../src/harness/adapters/index.mjs";
 import { processHook } from "../src/harness/core/process.mjs";
 import { queuedEntries } from "./hook-fixture.mjs";
-import { CALLER_TYPES, cardOwner, detectCaller, sessionKey, waitsShort } from "../src/caller.mjs";
-import { agentSession, cardKey, inAgentContext } from "../src/identity.mjs";
+import { CALLER_TYPES, cardOwner, detectCaller, waitsShort } from "../src/caller.mjs";
+import { sessionKey } from "../src/shared/session-key.mjs";
+import { cardKey } from "../src/messages/card-context.mjs";
+
+/** The card key the caller of `env` gets: its own card's owner comes from the caller (as its message port says). */
+const keyFor = ({ env = {}, ...rest }) => cardKey({ ...rest, env, owner: cardOwner(detectCaller(env)) });
+const ownerOf = (env) => cardOwner(detectCaller(env));
+
 
 const ID = "4d1e0c2a-7b9f-4e51-9a0d-2f6c8b3e1a77";
 
@@ -47,13 +53,13 @@ test("RELO_SESSION is ignored inside Claude Code, by the CLI and by the hook", a
   const claude = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: ID };
   const pinned = detectCaller({ ...claude, RELO_SESSION: "someone-else" }, { name: "my-card" });
   assert.deepEqual(pinned, agentSessionOf("claude-code", ID), "neither RELO_SESSION nor --name changes the type");
-  assert.equal(cardKey({ env: { ...claude, RELO_SESSION: "someone-else" } }), cardKey({ env: claude }));
+  assert.equal(keyFor({ env: { ...claude, RELO_SESSION: "someone-else" } }), keyFor({ env: claude }));
   assert.equal(await hookKey(ID, { RELO_SESSION: "someone-else" }), pinned.sessionKey);
   // A harness without a shell id (markers only) is unidentified rather than taking RELO_SESSION.
-  for (const [marker, agent] of [[{ CLAUDECODE: "1" }, "Claude Code"], [{ GEMINI_CLI: "1" }, "Gemini CLI"],
-    [{ CURSOR_AGENT: "1" }, "Cursor"], [{ OPENCODE: "1" }, "OpenCode"]]) {
+  for (const [marker, harness] of [[{ CLAUDECODE: "1" }, "claude-code"], [{ GEMINI_CLI: "1" }, "gemini"],
+    [{ CURSOR_AGENT: "1" }, "cursor"], [{ OPENCODE: "1" }, "opencode"]]) {
     const caller = detectCaller({ ...marker, RELO_SESSION: "someone-else" });
-    assert.deepEqual(caller, UNIDENTIFIED("no_session_id", { agent }));
+    assert.deepEqual(caller, UNIDENTIFIED("no_session_id", { harness }));
     assert.equal(cardOwner(caller), undefined);
     assert.equal(waitsShort(caller), true);
   }
@@ -73,19 +79,19 @@ test("a script is typed by RELO_SESSION or --name, only without a harness", () =
 test("nested Claude Code and Codex ids: unidentified, no shared session state, never another session's card", () => {
   const nested = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: ID, CODEX_THREAD_ID: "thread-9", RELO_SESSION: "s-1" };
   assert.deepEqual(detectCaller(nested), UNIDENTIFIED("nested_harnesses"));
-  assert.equal(agentSession(nested), null);
-  assert.equal(inAgentContext(nested), true, "still an agent shell: waits stay short");
+  assert.equal(ownerOf(nested), undefined);
+  assert.equal(waitsShort(detectCaller(nested)), true, "still an agent shell: waits stay short");
   const context = { providerName: "Claude Code", project: "relo", threadName: "Release" };
-  const key = cardKey({ env: nested, context });
+  const key = keyFor({ env: nested, context });
   assert.match(key, /^work-/u, "the keyless path: a card named by its topic");
   for (const one of [{ CLAUDE_CODE_SESSION_ID: ID }, { CODEX_THREAD_ID: "thread-9" }, { RELO_SESSION: "s-1" }]) {
-    assert.notEqual(key, cardKey({ env: one, context }), JSON.stringify(one));
+    assert.notEqual(key, keyFor({ env: one, context }), JSON.stringify(one));
   }
 });
 
 test("Codex keeps its own session as today", () => {
   assert.deepEqual(detectCaller({ CODEX_THREAD_ID: "thread-9", CODEX_CI: "1" }), agentSessionOf("codex", "thread-9"));
-  assert.match(cardKey({ env: { CODEX_THREAD_ID: "thread-9" } }), /^session-codex-[0-9a-f]{24}$/u);
+  assert.match(keyFor({ env: { CODEX_THREAD_ID: "thread-9" } }), /^session-codex-[0-9a-f]{24}$/u);
 });
 
 test("relo mcp: each connection is an agent session; a harness id or an owner's RELO_SESSION outside a harness wins", () => {

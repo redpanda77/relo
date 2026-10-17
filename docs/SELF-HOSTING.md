@@ -51,12 +51,13 @@ data. The iPhone signs in through the same web page, so registration and approva
 
 ## Content retention
 
-Set `RELO_CONTENT_RETENTION_HOURS` in `deploy/.env` to have the worker delete notification
-content automatically, then restart the worker. Every five minutes it deletes notifications, their
+`RELO_CONTENT_RETENTION_HOURS` in `deploy/.env` (10 in `deploy/.env.example`, Relo's default promise) has
+the worker delete ended content automatically; restart the worker after changing it, and `relo doctor` shows the
+window it runs with. Every five minutes it deletes notifications, their
 sealed bodies, questions, replies and delivery records once they are older than the window. A
 question still waiting for an answer, an active Live Activity, and the current item for a topic
-are kept until they settle. A value of `10` matches the window used by end-to-end encryption
-([plan](END-TO-END-ENCRYPTION.md)). Leave the variable empty to keep content until you run
+are kept until they settle. `10` matches the window end-to-end encryption assumes
+([encryption](site/concepts/encryption.md)). Leave the variable empty to keep content until you run
 `pnpm notification-retention` yourself.
 
 Deleted notifications also leave the History that the iPhone loads from the server. Until the
@@ -133,7 +134,7 @@ The iPhone signs in through the same browser pages, so the Access login appears 
 Leave Bot Fight Mode off for the hostname and bypass the cache. Event streams send a keepalive every
 15 seconds, inside Cloudflare's idle timeout. Keep registration **Closed** or **Approval** on a
 public address. Cloudflare terminates TLS: end-to-end sealed content stays opaque to it, while
-credentials in transit and metadata do not ([what stays readable](END-TO-END-ENCRYPTION.md)).
+credentials in transit and metadata do not ([what stays readable](site/concepts/encryption.md#what-cannot-be-end-to-end-encrypted)).
 
 ### Any reverse proxy: Caddy
 

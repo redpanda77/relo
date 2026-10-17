@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react"
 import { Sheet } from "@/components/ui/sheet"
 import { StatusDot } from "@/components/atoms/status-dot"
+import { toneFor } from "@/lib/status-tone"
 import { RunMonitor } from "@/components/organisms/run-monitor"
 import { NotificationPreview } from "@/components/organisms/notification-preview"
 import { Progress } from "@/components/ui/progress"
@@ -189,11 +190,13 @@ afterEach(() => {
 })
 
 describe("Test Lab contracts", () => {
-  it("uses the active semantic token without reusing success green", () => {
-    const { container } = render(<StatusDot state="active" active />)
-    expect(container.querySelector("span")?.textContent).toBe("")
-    expect(container.innerHTML).toContain("bg-[var(--status-active)]")
-    expect(container.innerHTML).not.toContain("bg-[var(--status-success)]")
+  it("paints a live state in running cyan, never success mint", () => {
+    const { container } = render(<StatusDot tone={toneFor("active")} live />)
+    const dot = container.querySelector("span")
+    expect(dot?.textContent).toBe("")
+    expect(dot?.className).toContain("tone-cyan")
+    expect(dot?.className).not.toContain("tone-mint")
+    expect(dot?.getAttribute("data-live")).toBe("true")
   })
 
   it("Zod-validates nullable bootstrap fields and treats hostile strings as data", () => {
@@ -632,8 +635,10 @@ describe("Test Lab contracts", () => {
         <RunMonitor runs={[run]} onSelect={() => undefined} />
       </Sheet>
     )
-    const row = container.querySelector(".test-row")
-    expect(row).toHaveAttribute("data-live", "true")
+    // The shared Row: its button opens the test's sheet; the dot says whether it is live.
+    const row = container.querySelector("button.row-hit")
+    expect(row).toHaveAttribute("aria-haspopup", "dialog")
+    expect(container.querySelector(".run-mark")).toHaveAttribute("data-live", "true")
     expect(row).toHaveTextContent("Warm launch")
     expect(row).toHaveTextContent("Waiting on Apple")
     expect(row?.className).not.toContain("animate-")
@@ -651,7 +656,7 @@ describe("Test Lab contracts", () => {
         />
       </Sheet>
     )
-    expect(container.querySelector(".test-row")).toHaveAttribute(
+    expect(container.querySelector(".run-mark")).toHaveAttribute(
       "data-live",
       "false"
     )

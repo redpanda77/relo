@@ -3,8 +3,11 @@ import "./hermetic-env.mjs";
 // never from the producer's say-so, and each producer type is served by its own module.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CALLER_TYPES, cardOwner, detectCaller, sessionKey, surfaceFor } from "../src/caller.mjs";
-import { guardOwnerOnly, guardWorkFlags, OWNER_ONLY } from "../src/agent/guards.mjs";
+import { CALLER_TYPES, cardOwner, detectCaller, surfaceFor } from "../src/caller.mjs";
+import { sessionKey } from "../src/shared/session-key.mjs";
+import { guardWorkFlags } from "../src/agent/guards.mjs";
+import { execute } from "../src/cli.mjs";
+import { COMMANDS } from "../src/registry.mjs";
 
 test("principle 11: the same id under another harness is another session", () => {
   assert.notEqual(sessionKey({ harness: "claude-code", id: "abc" }), sessionKey({ harness: "codex", id: "abc" }));
@@ -42,14 +45,14 @@ test("principle 12: each caller type is routed to its own producer module", () =
   assert.equal(surfaceFor(detectCaller({ RELO_SESSION: "s-1" })), "script");
 });
 
-test("principle 11: cross-session views are the owner's: every owner-only verb is refused to agent callers", () => {
-  const callers = [detectCaller({ CLAUDE_CODE_SESSION_ID: "c-1" }), detectCaller({ CLAUDECODE: "1" })];
-  for (const caller of callers) {
-    for (const key of OWNER_ONLY) {
-      const [group, action] = key.split(" ");
-      assert.throws(() => guardOwnerOnly({ group, action, caller }), (error) => error.code === "OWNER_ONLY" || /OWNER_ONLY/u.test(String(error.code ?? error.message)), key);
+test("principle 11: cross-session views and this computer's setup are the owner's: every owner-only verb is refused to agent callers", async () => {
+  const ownerOnly = COMMANDS.filter((entry) => entry.ownerOnly).map((entry) => entry.name);
+  assert.deepEqual(ownerOnly.sort(), ["activity diagnose", "activity get", "activity list", "activity status", "config", "listen", "sessions"]);
+  for (const env of [{ CLAUDE_CODE_SESSION_ID: "c-1" }, { CLAUDECODE: "1" }]) {
+    for (const name of ownerOnly) {
+      await assert.rejects(execute(name.split(" "), { env, loadConfig: async () => { throw new Error("never signs in"); } }),
+        (error) => error.code === "OWNER_ONLY", name);
     }
-    assert.doesNotThrow(() => guardOwnerOnly({ group: "work", action: "start", caller }));
   }
 });
 

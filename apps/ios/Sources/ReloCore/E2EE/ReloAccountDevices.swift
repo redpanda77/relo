@@ -81,3 +81,12 @@ public enum ReloAccessRequestNotification {
     /// Opens the request sheet.
     public static let reviewAction = "RELO_ACCESS_REVIEW"
 }
+
+/// "<browser> wants to read your Relo cards": one action, Review. A browser is never approved from a
+/// notification, since the owner must compare its link code first. The payload carries
+/// `relo.deepLink` = `relo://security/request/<brw_…>` and `browserLink: { browserId }`.
+public enum ReloBrowserLinkNotification {
+    public static let categoryIdentifier = "RELO_BROWSER_LINK"
+    /// Opens the request sheet.
+    public static let reviewAction = "RELO_BROWSER_LINK_REVIEW"
+}

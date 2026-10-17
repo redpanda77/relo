@@ -27,6 +27,13 @@ public struct HistoryRow: Equatable, Identifiable, Sendable {
         public let done: Int
         public let total: Int
         public let current: String?
+        /// The server's position of the current top-level step (from 1) and its fraction (0 to 1).
+        public let currentIndex: Int?
+        public let fill: Double?
+
+        public init(done: Int, total: Int, current: String?, currentIndex: Int? = nil, fill: Double? = nil) {
+            self.done = done; self.total = total; self.current = current; self.currentIndex = currentIndex; self.fill = fill
+        }
     }
 
     /// A question asked on the card, and what became of it.
@@ -80,7 +87,7 @@ public enum HistoryRowProjection {
         let startedAt = card?.startedAt ?? item.activitySummary?.createdAt
         let endedAt = card?.endedAt ?? item.activitySummary?.endedAt
         let duration = startedAt.flatMap { start in endedAt.map { $0.timeIntervalSince(start) } }.flatMap { $0 >= 0 ? $0 : nil }
-        let steps = card?.steps.map { HistoryRow.Steps(done: $0.done, total: $0.total, current: $0.current) }
+        let steps = card?.steps.map { HistoryRow.Steps(done: $0.done, total: $0.total, current: $0.current, currentIndex: $0.currentIndex, fill: $0.fill) }
         let asked = (item.interaction != nil ? nil : question)?.interaction ?? nil
         return HistoryRow(
             id: item.id, item: item,

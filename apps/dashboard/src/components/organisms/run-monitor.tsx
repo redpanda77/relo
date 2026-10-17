@@ -1,6 +1,5 @@
-import { ChevronRight } from "lucide-react"
-
 import { DeliveryTrail } from "@/components/molecules/delivery-chain"
+import { List, Row } from "@/components/list"
 import { SheetTrigger } from "@/components/ui/sheet"
 import {
   deliveryHeadline,
@@ -24,7 +23,52 @@ const markTone = {
   neutral: "bg-[var(--status-neutral)]/60",
 } as const
 
-/** The list of tests: one glass list, hairline rows, a delivery trail per row. */
+/**
+ * One test, as the shared Row: its state as a dot and words (both follow a change in 200 ms), the
+ * title, the phone and time, the delivery trail. It opens the test's sheet, which hands focus back.
+ */
+function RunRow({ run, onSelect }: { run: TestRun; onSelect: (run: TestRun) => void }) {
+  const stages = deliveryStages(run)
+  const headline = deliveryHeadline(run, stages)
+  const live = run.state === "active"
+  const time = relativeTime(run.updatedAt ?? run.createdAt)
+  return (
+    <Row
+      onClick={() => onSelect(run)}
+      hit={(element) => <SheetTrigger asChild>{element}</SheetTrigger>}
+      leading={
+        <span
+          className={cn("run-mark block size-2 rounded-full", markTone[headline.tone])}
+          data-live={live ? "true" : "false"}
+          aria-hidden="true"
+        />
+      }
+      title={run.title}
+      meta={
+        <>
+          <span className={cn("run-headline", headlineTone[headline.tone])}>{headline.text}</span>
+          {run.targetDeviceName ? <> · {run.targetDeviceName}</> : null}
+          {time ? (
+            <>
+              {" · "}
+              <time dateTime={run.updatedAt ?? run.createdAt ?? undefined}>{time}</time>
+            </>
+          ) : null}
+        </>
+      }
+      trailing={
+        <span className="hidden sm:block">
+          <DeliveryTrail stages={stages} />
+        </span>
+      }
+    />
+  )
+}
+
+/**
+ * The list of tests: the shared frosted List, a delivery trail per row. A new test rises in at the
+ * top and the rest make room; on a pointer one highlight glides between the rows.
+ */
 export function RunMonitor({
   runs,
   onSelect,
@@ -33,69 +77,8 @@ export function RunMonitor({
   onSelect: (run: TestRun) => void
 }) {
   return (
-    <ul
-      aria-label="Tests"
-      className="glass divide-y divide-border overflow-hidden rounded-2xl"
-    >
-      {runs.map((run) => {
-        const stages = deliveryStages(run)
-        const headline = deliveryHeadline(run, stages)
-        const live = run.state === "active"
-        const time = relativeTime(run.updatedAt ?? run.createdAt)
-        return (
-          <li key={run.id}>
-            <SheetTrigger asChild>
-              <button
-                type="button"
-                className="test-row group grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-3.5 text-left transition-colors hover:bg-accent focus-visible:bg-accent"
-                data-live={live ? "true" : "false"}
-                onClick={() => onSelect(run)}
-              >
-                <span
-                  className={cn("size-2 rounded-full", markTone[headline.tone])}
-                  aria-hidden="true"
-                />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-foreground">
-                    {run.title}
-                  </span>
-                  <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className={cn("shrink-0", headlineTone[headline.tone])}>
-                      {headline.text}
-                    </span>
-                    {run.targetDeviceName ? (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="truncate">{run.targetDeviceName}</span>
-                      </>
-                    ) : null}
-                    {time ? (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <time
-                          className="shrink-0"
-                          dateTime={run.updatedAt ?? run.createdAt ?? undefined}
-                        >
-                          {time}
-                        </time>
-                      </>
-                    ) : null}
-                  </span>
-                </span>
-                <span className="flex items-center gap-3">
-                  <span className="hidden sm:block">
-                    <DeliveryTrail stages={stages} />
-                  </span>
-                  <ChevronRight
-                    className="size-4 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5"
-                    aria-hidden="true"
-                  />
-                </span>
-              </button>
-            </SheetTrigger>
-          </li>
-        )
-      })}
-    </ul>
+    <List label="Tests" items={runs} getKey={(run) => run.id}>
+      {(run) => <RunRow run={run} onSelect={onSelect} />}
+    </List>
   )
 }

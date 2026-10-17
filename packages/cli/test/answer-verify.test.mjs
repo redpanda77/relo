@@ -5,9 +5,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { rememberQuestion, verifyAnswer } from "../src/answer-verify.mjs";
-import { answerSigningInput, b64u, generateKeyPair, keyId, questionAnswerSigningInput, signBytes } from "../src/e2ee.mjs";
-import { ensureIdentity, saveKeyStore, trustKey } from "../src/keystore.mjs";
+import { rememberQuestion, verifyAnswer } from "../src/crypto/answer-verify.mjs";
+import { answerSigningInput, b64u, generateKeyPair, keyId, questionAnswerSigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { ensureIdentity, saveKeyStore, trustKey } from "../src/crypto/keystore.mjs";
 
 const apiUrl = "https://relo.example";
 const deviceId = "dev_00000000-0000-4000-8000-00000000000a";
@@ -29,7 +29,7 @@ function signed(phone, { id = interactionId, state = "approved", value = "approv
 
 async function setup({ trust = true, level = "auto" } = {}) {
   const folder = mkdtempSync(join(tmpdir(), "relo-answer-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "state", "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   const phone = generateKeyPair();
   if (trust) {
     const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
@@ -54,7 +54,7 @@ test("without a trusted phone the answer passes through unchanged", async () => 
 test("an approval bound to the sealed question this CLI asked is accepted, also after a resume", async () => {
   const { phone, env, dependencies, client, cleanup } = await setup();
   try {
-    await rememberQuestion(env, { interactionId, questionContext: "ntf:question-1", askedAt });
+    await rememberQuestion({ env }, { interactionId, questionContext: "ntf:question-1", askedAt });
     const accepted = await verifyAnswer(signed(phone), client, dependencies, { interactionId });
     assert.equal(accepted.verified, true);
     // An unsealed question (the phone had no keys) is checked with the plain signature.
@@ -66,7 +66,7 @@ test("an approval bound to the sealed question this CLI asked is accepted, also 
 test("the review's attacks are refused: replays, re-targeted approvals, stale and pending-phone answers", async () => {
   const { phone, env, dependencies, client, cleanup } = await setup();
   try {
-    await rememberQuestion(env, { interactionId, questionContext: "ntf:question-1", askedAt });
+    await rememberQuestion({ env }, { interactionId, questionContext: "ntf:question-1", askedAt });
     const expected = { interactionId };
     // H1: yesterday's signed approval for another interaction, returned for this wait.
     await refused(verifyAnswer(signed(phone, { id: "int_00000000-0000-4000-8000-0000000000ff" }), client, dependencies, expected),

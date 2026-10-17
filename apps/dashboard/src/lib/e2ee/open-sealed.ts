@@ -1,12 +1,13 @@
 /**
  * Replaces the server's placeholders with the text a linked browser can open (docs/
- * END-TO-END-ENCRYPTION.md, "Linked browsers"). Walks a parsed Dashboard page: every object marked
+ * ENCRYPTION-PROTOCOL.md, "Linked browsers"). Walks a parsed Dashboard page: every object marked
  * `encrypted: true` gets its envelope by id, and handles (`p-…`, `t-…`, …) anywhere in the page
  * become the names the opened envelopes carry. Anything that cannot be opened stays locked.
  */
-import { rememberNames } from "@/lib/encrypted"
+import { carriedTitle, rememberNames, rememberSessionTitle } from "@/lib/encrypted"
 
 import type { SealedOpener } from "./browser-link"
+import { openPlanText } from "./open-plan-text"
 
 type Node = Record<string, unknown>
 
@@ -17,6 +18,14 @@ const FULL_HANDLE = /^[ptwca]-[a-z2-7]{16}$/u
 const KEEP_KEYS = /^(?:id|key|href|url|path|route|filterOptions|filters)$|(?:Id|Ids|Href|Url)$/u
 
 const isNode = (value: unknown): value is Node => typeof value === "object" && value !== null && !Array.isArray(value)
+/**
+ * A Now item (the server's derived summary) carries no `encrypted` flag: its contract is strict and
+ * shared with the phone, which opens its own `sealed` field. Its card id is the envelope to try; a
+ * card that was never sealed simply has no envelope and keeps its text.
+ */
+const isNowItem = (value: Node) => typeof value.id === "string" && value.id.startsWith("act_") && isNode(value.owner) && "title" in value
+/** The Now contract's length limits: opened text is clipped so the summary still parses. */
+const NOW_LIMITS: Record<string, number> = { title: 200, status: 160 }
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value : undefined)
 const envelopeId = (value: unknown) => (typeof value === "string" && ENVELOPE_ID.test(value) ? value : null)
 
@@ -38,11 +47,15 @@ function collect(tree: unknown) {
       (notification?.startsWith("ntf_") ? notification : null) ??
       (isNode(value.notification) ? envelopeId(value.notification.id) : null) ??
       context
-    if (value.encrypted === true) {
+    if (value.encrypted === true || isNowItem(value)) {
       const candidates = [own, notification, childContext].filter((id): id is string => Boolean(id))
       if (candidates.length) targets.push({ node: value, candidates: [...new Set(candidates)] })
     }
     if (own?.startsWith("ags_")) sessions.push(own)
+    // The page's `namesFrom`: sessions whose names envelopes name its handles (History, detail, Projects).
+    if (Array.isArray(value.namesFrom)) {
+      for (const id of value.namesFrom) if (envelopeId(id)?.startsWith("ags_")) sessions.push(id as string)
+    }
     for (const child of Object.values(value)) walk(child, childContext)
   }
   walk(tree, null)
@@ -86,13 +99,33 @@ function applyContent(node: Node, content: Node) {
       if (isNode(item) && text(steps[index])) item.label = steps[index]
     })
   }
+  // A plan (v2 text): labels, details and round titles by id, from the card's phases.
+  if (Array.isArray(node.plan)) openPlanText(content, node.plan, node.rounds)
   if (steps && isNode(node.steps) && typeof node.steps.current === "string") {
     const match = /^Step (\d+)$/u.exec(node.steps.current)
     const label = match ? text(steps[Number(match[1]) - 1]) : undefined
     if (label) node.steps.current = label
   }
+  if (isNowItem(node)) {
+    for (const [field, limit] of Object.entries(NOW_LIMITS)) {
+      if (typeof node[field] === "string") node[field] = (node[field] as string).slice(0, limit)
+    }
+    if (isNode(node.steps) && typeof node.steps.current === "string") node.steps.current = node.steps.current.slice(0, 80)
+    // No flags on a Now item: its strict schema has no field for them.
+    return
+  }
   node.encrypted = false
   node.opened = true
+}
+
+/** True while any item on the page is still sealed (a placeholder this browser has not opened). */
+export function hasLockedItems(tree: unknown): boolean {
+  const walk = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(walk)
+    if (!isNode(value)) return false
+    return value.encrypted === true || Object.values(value).some(walk)
+  }
+  return walk(tree)
 }
 
 function renameHandles(value: unknown, names: Map<string, string>): unknown {
@@ -131,6 +164,10 @@ export async function openSealedTree<T>(tree: T, opener: SealedOpener): Promise<
   const conflicts = new Set<string>()
   for (const content of contents.values()) namesIn(content, names, conflicts)
   for (const handle of conflicts) names.delete(handle)
+  for (const id of sessions) {
+    const title = carriedTitle(kinds.get(id) === "names" ? contents.get(id) : null)
+    if (title) rememberSessionTitle(id, title)
+  }
   let opened = 0
   for (const target of targets) {
     // A card shows only card text: never a parent notice's or question's text (review L4).

@@ -1,0 +1,7 @@
+For work longer than a couple of minutes, keep one Relo work current; ask on it before risky actions.
+- Before your first edit: `relo work start --goal "<the goal, in the owner's words>" --plan "A,B,C"`. A request done: `relo work deliver --outcome "<what it delivered>"`.
+- The owner reads the card, not this chat, so the card moves when you do: the moment a step is done, `relo work update --next-step --status "<what you do now>"`, before your next tool call (already past several: `--step "<the step you are on>"`).
+- A new request from the owner opens a round (`relo work start --round "<the request>"`); an answer, a check or "go on" continues the plan; another goal is `start --new`. `relo work finish --outcome "…"` only when the goal is done (`--failed` or `--dropped` if not).
+- Real words only: no placeholders, "Step 2", "todo", paths or secrets. Ending your turn while CI or a job runs: `--waiting "the deploy"`.
+- `relo ask "Deploy to production?" --approval`: only exit 0 with state `approved` is permission; anything else, a late answer included, means no. The deliver or finish outcome is the notification; `relo notify` only when no work is open.
+- Run each relo command alone and read all of its output: never `>/dev/null`, `tail`, `head`, `grep`, or `;` and `&&` with other commands. `Owner sees:` is what reached the phone. Lost track? `relo state`. Subagents run no relo commands. Details: the relo-notifications skill, or `relo help`.

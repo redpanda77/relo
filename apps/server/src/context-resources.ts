@@ -4,6 +4,7 @@ import type { AuthIdentity } from "./auth.js";
 import type { Database } from "./db.js";
 import { internalId,publicId } from "./ids.js";
 import { decodeCursor,encodeCursor } from "./cursor.js";
+import { visibilityDeviceId } from "./owner-overview.js";
 
 const resourceCursorSchema = z.tuple([
   z.literal("context-resources-v1"),
@@ -120,7 +121,8 @@ function pageValues(
   auth: AuthIdentity,
   page: { snapshotAt: string; firstSeenAt: string | null; id: string | null; limit: number },
 ): unknown[] {
-  return [auth.principalId,page.snapshotAt,page.firstSeenAt,page.id,page.limit+1,auth.deviceId ?? null];
+  // $6: the device whose delivery targets bound the listing (none for an overview device: owner-overview.ts).
+  return [auth.principalId,page.snapshotAt,page.firstSeenAt,page.id,page.limit+1,visibilityDeviceId(auth) ?? null];
 }
 
 export function registerContextResourceRoutes(app: Hono, db: Database): void {

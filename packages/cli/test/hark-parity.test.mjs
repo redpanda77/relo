@@ -2,7 +2,8 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { noRunningCards } from "./fake-cards.mjs";
-import { execute, run, EXIT } from "../src/cli.mjs";
+import { execute, run } from "../src/cli.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
 
 const token = "t".repeat(44);
 const identity = () => ({ providerName: "Codex",project: "Relo",threadName: "Release" });
@@ -76,9 +77,3 @@ test("questions carry a callback read from a token file and a correlation ID", a
   assert.equal(fake.calls.filter((call) => ["ask", "question"].includes(call.op)).at(-1).body.callback.url,"http://ci.internal:8080/relo");
 });
 
-test("activities accept the ring style and private mode", async () => {
-  const { bodies,deps } = capture();
-  await execute(["activity","start","--title","Deploy","--status","Building","--progress","0.4","--style","ring","--privacy","private"],deps);
-  assert.equal(bodies[0].body.style,"ring");
-  assert.equal(bodies[0].body.privacy,"private");
-});

@@ -1,6 +1,6 @@
 /**
- * relo.e2e.v1, OPEN side only, on WebCrypto (docs/END-TO-END-ENCRYPTION.md, "Linked browsers").
- * A byte-for-byte port of packages/cli/src/e2ee.mjs: RFC 9180 HPKE base mode with
+ * relo.e2e.v1, OPEN side only, on WebCrypto (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers").
+ * A byte-for-byte port of packages/cli/src/crypto/e2ee.mjs: RFC 9180 HPKE base mode with
  * DHKEM(P-256, HKDF-SHA256), HKDF-SHA256 and AES-256-GCM. The recipient prekey is a
  * non-extractable ECDH CryptoKey; the browser never seals anything.
  */
@@ -147,6 +147,39 @@ export function approveDeviceSigningInput({
   signedAt: string
 }): Bytes {
   return utf8([`${E2EE_VERSION} approve-device`, deviceId, identityKey, approverDeviceId, signedAt].join("\n"))
+}
+
+/** Bytes a phone signs to link a browser (the iPhone's `ReloBrowserLink.signingInput`). */
+export function linkSigningInput({
+  browserId,
+  identityKey,
+  phoneDeviceId,
+  signedAt,
+}: {
+  browserId: string
+  identityKey: string
+  phoneDeviceId: string
+  signedAt: string
+}): Bytes {
+  return utf8([`${E2EE_VERSION} link`, browserId, identityKey, phoneDeviceId, signedAt].join("\n"))
+}
+
+/**
+ * Bytes a phone, the Mac app or a linked browser signs to approve a computer once for every device
+ * (docs/ENCRYPTION-PROTOCOL.md, "Computers are approved once"; the server's and ReloCore's same input).
+ */
+export function approveComputerSigningInput({
+  clientId,
+  identityKey,
+  approverId,
+  signedAt,
+}: {
+  clientId: string
+  identityKey: string
+  approverId: string
+  signedAt: string
+}): Bytes {
+  return utf8([`${E2EE_VERSION} approve-computer`, clientId, identityKey, approverId, signedAt].join("\n"))
 }
 
 /** ECDSA P-256 / SHA-256 over raw r||s, as CryptoKit and the CLI produce. */

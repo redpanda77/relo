@@ -6,6 +6,9 @@ enum ReloLayout {
     static let itemSpacing: CGFloat = 12
     static let sectionSpacing: CGFloat = 20
     static let cardRadius: CGFloat = 20
+    static let buttonRadius: CGFloat = 14
+    /// Tracking for caps labels (ReloMonoLabel); the HUD keeps its own.
+    static let labelTracking: CGFloat = 1.4
 }
 
 extension View {

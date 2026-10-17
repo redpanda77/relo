@@ -42,6 +42,12 @@ export async function lockSessionWork(query: Queryable,scope: SessionScope,workI
     [scope.principalId,scope.sessionKey,workId])).rows[0];
 }
 
+/** Any work of the account, locked: agents run every work's lifecycle, whichever session declared it. */
+export async function lockAccountWork(query: Queryable,principalId: string,workId: string): Promise<WorkRow | undefined> {
+  return (await query.query<WorkRow>(`SELECT * FROM works WHERE principal_id=$1 AND id=$2 FOR NO KEY UPDATE`,
+    [principalId,workId])).rows[0];
+}
+
 export async function readSessionWork(query: Queryable,scope: SessionScope,workId: string): Promise<WorkRow | undefined> {
   return (await query.query<WorkRow>(`SELECT * FROM works WHERE ${SESSION_PREDICATE} AND id=$3`,
     [scope.principalId,scope.sessionKey,workId])).rows[0];
@@ -97,6 +103,39 @@ export async function saveWork(query: Queryable,row: WorkRow,options: { declared
     row.plan_version,row.progress_n,row.progress_m,options.declared,row.context ? JSON.stringify(row.context) : null])).rows[0]!;
 }
 
+/** Handoff (the working layer): the work row after it moved to another session of the same account and computer. */
+export async function moveWorkToSession(query: Queryable,workId: string,scope: SessionScope,harness: string): Promise<WorkRow> {
+  // The card follows its work: it is one card, now declared by the new session.
+  await query.query(`UPDATE live_activities SET session_key=$2 WHERE work_id=$1 AND producer_type='agent_session'`,[workId,scope.sessionKey]);
+  return (await query.query<WorkRow>(`UPDATE works SET session_key=$2,harness=$3,lifecycle='open',paused_reason=NULL,
+      version=version+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
+    WHERE id=$1 AND principal_id=$4 RETURNING *`,[workId,scope.sessionKey,harness,scope.principalId])).rows[0]!;
+}
+
+export type HandoffRow = {
+  id: string; work_id: string; account_id: string; credential_id: string; handle_hash: string;
+  created_at: Date; expires_at: Date; used_at: Date | null;
+};
+
+/** One live handoff per work: a new one replaces the old handle (which then matches nothing). */
+export async function replaceHandoff(query: Queryable,input: { workId: string; principalId: string; credentialId: string; handleHash: string; ttlMs: number })
+  : Promise<HandoffRow> {
+  return (await query.query<HandoffRow>(`INSERT INTO work_handoffs (work_id,account_id,credential_id,handle_hash,expires_at)
+    VALUES ($1,$2,$3,$4,statement_timestamp() + ($5 * interval '1 millisecond'))
+    ON CONFLICT (work_id) DO UPDATE SET account_id=EXCLUDED.account_id,credential_id=EXCLUDED.credential_id,
+      handle_hash=EXCLUDED.handle_hash,created_at=statement_timestamp(),expires_at=EXCLUDED.expires_at,used_at=NULL
+    RETURNING *`,[input.workId,input.principalId,input.credentialId,input.handleHash,input.ttlMs])).rows[0]!;
+}
+
+export async function lockHandoffByHash(query: Queryable,principalId: string,handleHash: string): Promise<HandoffRow | undefined> {
+  return (await query.query<HandoffRow>(`SELECT * FROM work_handoffs WHERE account_id=$1 AND handle_hash=$2 FOR UPDATE`,
+    [principalId,handleHash])).rows[0];
+}
+
+export async function markHandoffUsed(query: Queryable,id: string): Promise<void> {
+  await query.query(`UPDATE work_handoffs SET used_at=statement_timestamp() WHERE id=$1`,[id]);
+}
+
 export async function readOperation(query: Queryable,workId: string,key: string)
   : Promise<{ request_hash: string; response: unknown } | undefined> {
   return (await query.query(`SELECT request_hash,response FROM work_operations WHERE work_id=$1 AND idempotency_key=$2`,[workId,key])).rows[0];
@@ -136,7 +175,7 @@ export function serializeWork(row: WorkRow,card: { id: string; state: string } |
     status: row.status,
     outcome: row.outcome,
     waiting: row.waiting_since ? { reason: row.waiting_reason,since: row.waiting_since.toISOString() } : null,
-    plan: { version: row.plan_version,next: plan.next,complete: planComplete(plan),steps: plan.steps },
+    plan: { version: row.plan_version,next: plan.next,complete: planComplete(plan),steps: plan.steps,...(plan.rounds ? { rounds: plan.rounds } : {}) },
     progress: row.progress_m !== null ? { done: row.progress_n ?? 0,total: row.progress_m } : null,
     startedAt: row.created_at.toISOString(),
     declaredAt: row.declared_at.toISOString(),

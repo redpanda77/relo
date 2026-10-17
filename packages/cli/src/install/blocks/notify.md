@@ -1,0 +1,3 @@
+- Before a risky action: `relo ask "Deploy to production?" --approval`; only exit 0 with state `approved` is permission; anything else, a late answer included, means no.
+- When something the owner waits for finishes or fails: `relo notify "<what happened>"`. Real words only: no placeholders, paths or secrets.
+- Run each relo command alone and read all of its output: never `>/dev/null`, `tail`, `head` or `grep`. Details: `relo help`.

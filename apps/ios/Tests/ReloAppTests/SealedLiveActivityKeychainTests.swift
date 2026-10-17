@@ -64,7 +64,7 @@ final class SealedLiveActivityKeychainTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ReloActivityAttributes.ContentState.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(decoded.presentation.title, "Release 0.16")
         XCTAssertEqual(decoded.presentation.status, "Running the test suite")
-        guard case let .steps(_, _, items) = decoded.presentation.components[0] else { return XCTFail("steps") }
+        guard case let .steps(_, _, items, _) = decoded.presentation.components[0] else { return XCTFail("steps") }
         XCTAssertEqual(items.map(\.label), ["Build", "Test", "Ship"])
     }
 }

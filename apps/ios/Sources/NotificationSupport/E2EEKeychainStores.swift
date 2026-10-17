@@ -157,6 +157,66 @@ public extension ReloTrustedClients {
     }
 }
 
+/// The approvers this device trusts (ReloTrustedApprovers): their signatures over computers count here.
+public struct KeychainTrustedApproverStore: ReloTrustedApproverStore {
+    public static let account = "e2ee-trusted-approvers-v1"
+    private let service: String
+    private let accessGroup: String?
+
+    public init(service: String = "relo.e2ee", accessGroup: String?) {
+        self.service = service
+        self.accessGroup = accessGroup
+    }
+
+    public func load() throws -> [ReloPinnedApprover] {
+        var query = baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess else { throw CredentialStoreError.keychain(status) }
+        guard let data = result as? Data else { throw CredentialStoreError.invalidData }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([ReloPinnedApprover].self, from: data)
+    }
+
+    public func save(_ approvers: [ReloPinnedApprover]) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let attributes: [String: Any] = [
+            kSecValueData as String: try encoder.encode(approvers),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var insertion = baseQuery
+            attributes.forEach { insertion[$0.key] = $0.value }
+            let added = SecItemAdd(insertion as CFDictionary, nil)
+            guard added == errSecSuccess else { throw CredentialStoreError.keychain(added) }
+        } else if status != errSecSuccess {
+            throw CredentialStoreError.keychain(status)
+        }
+    }
+
+    private var baseQuery: [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: Self.account,
+        ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        return query
+    }
+}
+
+public extension ReloTrustedApprovers {
+    static func live(bundle: Bundle = .main) -> ReloTrustedApprovers {
+        ReloTrustedApprovers(store: KeychainTrustedApproverStore(accessGroup: ReloKeyRing.sharedAccessGroup(bundle: bundle)))
+    }
+}
+
 /// The replay ledger, shared by the app and the Notification Service Extension through the same
 /// Keychain group, so a replay is caught whichever process opens the envelope first.
 public struct KeychainReplayLedger: ReloReplayLedger {
@@ -296,7 +356,7 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
 }
 
 public enum ReloEncryptionState {
-    /// Signing out forgets what this phone learned for the account: trusted computers, linked
+    /// Signing out forgets what this phone learned for the account: trusted computers and approvers, linked
     /// browsers, names and the replay ledger are deleted (and no browser link is ever renewed again).
     /// The phone's own keys stay in the Secure Enclave, like WhatsApp keeping its keys on a phone that
     /// signs in again: computers recognise the same identity key under the new registration and keep
@@ -304,7 +364,7 @@ public enum ReloEncryptionState {
     public static func forget(bundle: Bundle = .main) {
         let group = ReloKeyRing.sharedAccessGroup(bundle: bundle)
         for account in [KeychainTrustedClientStore.account, KeychainNameBook.account,
-                        KeychainReplayLedger.account, KeychainLinkedBrowserStore.account] {
+                        KeychainReplayLedger.account, KeychainLinkedBrowserStore.account, KeychainTrustedApproverStore.account] {
             var query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: "relo.e2ee",

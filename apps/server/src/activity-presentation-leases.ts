@@ -82,13 +82,14 @@ export async function syncActivityPresentationLease(
        relevance_score=EXCLUDED.relevance_score,
        last_command_sequence=GREATEST(
          live_activity_presentation_leases.last_command_sequence,EXCLUDED.last_command_sequence
-       ),ended_at=EXCLUDED.ended_at,updated_at=now()`,
+       ),ended_at=EXCLUDED.ended_at,updated_at=now(),
+       presented_at=CASE WHEN $10::boolean THEN NULL ELSE live_activity_presentation_leases.presented_at END`,
     [input.activity.id,input.principalId,input.deviceId,scopeKey,
       terminal ? "ending" : tokenReady || restartRequired ? "background" : "pending_token",
       terminal ? "terminal_command_pending"
         : restartRequired ? "presentation_restart_pending"
         : tokenReady ? "selection_pending" : "activity_token_pending",
-      relevanceScore,Number(input.activity.sequence),terminal ? new Date() : null],
+      relevanceScore,Number(input.activity.sequence),terminal ? new Date() : null,restartRequired],
   );
   await query.query(
     `UPDATE live_activity_presentation_leases

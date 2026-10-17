@@ -221,12 +221,17 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
 
     public func reportLiveActivityDismissed(
         credential: DeviceCredential,
-        activityId: String
+        activityId: String,
+        generation: Int
     ) async throws {
         var request = request(
             path: "api/devices/self/live-activities/\(activityId)/dismissed",
             method: "POST"
         )
+        if var components = request.url.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) {
+            components.queryItems = [URLQueryItem(name: "generation", value: String(generation))]
+            request.url = components.url ?? request.url
+        }
         request.authorize(bearer: credential.accessToken)
         let (_, response) = try await data(for: request)
 
@@ -260,6 +265,34 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
             return
         case 400, 404:
             throw MobileAPIError.invalidRequest
+        case 401:
+            throw MobileAPIError.reauthenticationRequired
+        case 403:
+            throw MobileAPIError.forbidden
+        case 429:
+            throw MobileAPIError.rateLimited(retryAfterSeconds: Self.retryAfter(response))
+        default:
+            throw MobileAPIError.unavailable
+        }
+    }
+
+    /// Ends a work the owner no longer wants open (`POST api/works/{id}/end`, device bearer, body `{}`).
+    /// 409 `work_running`: it is moving again; 404: it is gone or not this account's.
+    public func endWork(credential: DeviceCredential, workId: String) async throws {
+        guard !workId.isEmpty, workId.count <= 80, workId.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" })
+        else { throw MobileAPIError.invalidRequest }
+        var request = request(path: "api/works/\(workId)/end", method: "POST")
+        request.authorize(bearer: credential.accessToken)
+        request.httpBody = Data("{}".utf8)
+        let (_, response) = try await data(for: request)
+
+        switch response.statusCode {
+        case 200, 204:
+            return
+        case 400, 404:
+            throw MobileAPIError.invalidRequest
+        case 409:
+            throw MobileAPIError.workRunning
         case 401:
             throw MobileAPIError.reauthenticationRequired
         case 403:

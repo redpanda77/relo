@@ -47,6 +47,7 @@ test("only transitions are queued: a turn is open → working → waiting → wo
   assert.deepEqual(box.sent.map((body) => body.phase), ["open", "working", "waiting", "working", "stopped", "ended"]);
   assert.deepEqual(box.sent.map((body) => body.seq), [1, 2, 3, 4, 5, 6]);
   assert.equal(JSON.stringify(box.sent).includes("permission"), false, "the notification text is never sent");
+  assert.deepEqual(box.sent.map((body) => body.endReason), [undefined, undefined, undefined, undefined, undefined, "hook"], "only the ended snapshot says how it ended");
 });
 
 test("a long tool sends its start time; a heartbeat goes at most every 5 minutes while working", async () => {
@@ -65,6 +66,35 @@ test("a long tool sends its start time; a heartbeat goes at most every 5 minutes
   await box.event("PostToolUse", "tool-end", { tool_use_id: "toolu_long" });
   assert.equal(box.sent.at(-1).openToolSince, null, "the tool finished");
   assert.equal(JSON.stringify(box.sent).includes("npm test"), false);
+});
+
+test("a background shell, monitor or workflow keeps the Stop working; a subagent tool or plain tool does not", async () => {
+  const box = await hookBox();
+  await box.event("UserPromptSubmit", "prompt");
+  await box.event("PostToolUse", "tool-end", { tool_use_id: "toolu_bg", tool_name: "Bash", tool_input: { command: "pnpm deploy:prod", run_in_background: true } });
+  await box.event("Stop", "stop");
+  assert.equal(box.sent.at(-1).phase, "working", "the deploy runs on: not the owner's turn");
+  assert.ok(box.sent.at(-1).openToolSince, "it counts as an open tool");
+  box.clock += 60_000;
+  await box.event("Stop", "stop");
+  assert.equal(box.sent.at(-1).phase, "stopped", "the turn woken by its result ends it");
+  assert.equal(JSON.stringify(box.entries).includes("deploy"), false, "the command is never queued");
+  for (const tool of [{ tool_name: "Monitor", tool_input: {} }, { tool_name: "Workflow", tool_input: {} }]) {
+    box.clock += 60_000;
+    await box.event("UserPromptSubmit", "prompt");
+    await box.event("PostToolUse", "tool-end", { tool_use_id: `toolu_${tool.tool_name}`, ...tool });
+    await box.event("Stop", "stop");
+    assert.equal(box.sent.at(-1).phase, "working", tool.tool_name);
+    box.clock += 60_000;
+    await box.event("Stop", "stop");
+  }
+  for (const tool of [{ tool_name: "Agent", tool_input: { run_in_background: true } }, { tool_name: "Bash", tool_input: { command: "ls" } }]) {
+    box.clock += 60_000;
+    await box.event("UserPromptSubmit", "prompt");
+    await box.event("PostToolUse", "tool-end", { tool_use_id: `toolu_${tool.tool_name}_plain`, ...tool });
+    await box.event("Stop", "stop");
+    assert.equal(box.sent.at(-1).phase, "stopped", tool.tool_name);
+  }
 });
 
 test("the observed lane keeps the latest snapshot per session while offline", async () => {
@@ -86,27 +116,34 @@ test("Notification is a wait only for a prompt that blocks on the owner", async 
   }
 });
 
-test("subagents roll up: their events never give them a session or a phase; after the parent's Stop they change nothing", async () => {
+test("subagents roll up: their events never give them a session or a phase; while one runs the session is not the owner's turn", async () => {
   const box = await hookBox();
+  // Snapshots also go out when the open-tool time changes; the phases are what this pins.
+  const phases = () => box.sent.map((body) => body.phase).filter((phase, i, all) => phase !== all[i - 1]);
   await box.event("UserPromptSubmit", "prompt");
   await box.event("SubagentStart", "subagent-start", { agent_id: "agent-1", agent_type: "Explore" });
   await box.event("PreToolUse", "tool-start", { agent_id: "agent-1", tool_use_id: "s1", tool_name: "Bash" });
   await box.event("SessionStart", "start", { agent_id: "agent-1" });
   await box.event("Stop", "stop", { agent_id: "agent-1" });
-  await box.event("SubagentStop", "subagent-stop", { agent_id: "agent-1" });
-  assert.deepEqual(box.sent.map((body) => body.phase), ["working"], "the session stayed working; nothing else was sent");
-  assert.ok(box.sent.every((body) => body.session === KEY), "always the parent's session");
+  assert.deepEqual(phases(), ["working"], "a subagent's own start and Stop are not the session's");
+  // A background subagent: the parent's turn ends while it runs.
   await box.event("Stop", "stop");
+  assert.deepEqual(phases(), ["working"], "not idle, not the owner's turn while its subagent runs");
+  await box.event("SubagentStop", "subagent-stop", { agent_id: "agent-1" });
+  assert.deepEqual(phases(), ["working", "stopped"], "the last subagent stopping is the owner's turn");
+  assert.ok(box.sent.every((body) => body.session === KEY), "always the parent's session");
   box.clock += 60_000;
   await box.event("PostToolUse", "tool-end", { agent_id: "agent-2", tool_use_id: "late" });
+  assert.deepEqual(phases(), ["working", "stopped"], "an uncounted subagent's activity changes nothing");
   await box.event("SubagentStart", "subagent-start", { agent_id: "agent-2" });
-  assert.deepEqual(box.sent.map((body) => body.phase), ["working", "stopped"], "a background subagent never revives the session");
+  assert.deepEqual(phases(), ["working", "stopped", "working"], "a subagent starting is work again");
   await box.event("SessionEnd", "end");
   await box.event("PostToolUse", "tool-end", { agent_id: "agent-2", tool_use_id: "later" });
-  assert.deepEqual(box.sent.map((body) => body.phase), ["working", "stopped", "ended"]);
+  await box.event("SubagentStart", "subagent-start", { agent_id: "agent-3" });
+  assert.deepEqual(phases(), ["working", "stopped", "working", "ended"], "nothing revives an ended session");
   await box.event("SessionStart", "start", { source: "resume" });
   await box.event("UserPromptSubmit", "prompt");
-  assert.deepEqual(box.sent.map((body) => body.phase), ["working", "stopped", "ended", "open", "working"], "a resume starts over");
+  assert.deepEqual(phases(), ["working", "stopped", "working", "ended", "open", "working"], "a resume starts over");
   const state = JSON.parse(await readFile(join(box.state, "observed", `${KEY.slice(0, 32)}.json`), "utf8"));
   assert.equal(JSON.stringify(state).includes("agent-2"), false, "even locally subagent ids are kept only as opaque keys");
 });

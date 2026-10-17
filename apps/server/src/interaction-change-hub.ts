@@ -11,6 +11,8 @@ export class ChangeSubscription {
   private waiter: ((result: ChangeWaitResult) => void) | undefined;
   constructor(private readonly onClose: () => void = () => {}) {}
   notify(): void { this.pending = true;this.waiter?.("changed"); }
+  /** The caller took everything queued so far: a wake that is already pending needs no second read. */
+  clear(): void { this.pending = false; }
   wait(timeoutMs: number,signal?: AbortSignal): Promise<ChangeWaitResult> {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error("Invalid change timeout");
     if (this.waiter) throw new Error("Change subscription already has a waiter");

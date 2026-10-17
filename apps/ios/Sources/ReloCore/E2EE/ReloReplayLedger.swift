@@ -1,6 +1,6 @@
 import Foundation
 
-/// Replay protection for sealed content (docs/END-TO-END-ENCRYPTION.md, E6.3). A server holds old
+/// Replay protection for sealed content (docs/ENCRYPTION-PROTOCOL.md, E6.3). A server holds old
 /// envelopes and could re-deliver one as a new notification; its signature would still verify. Every
 /// envelope is bound to its request `context`, so the phone remembers which item first carried each
 /// context and refuses the same context under a different item.

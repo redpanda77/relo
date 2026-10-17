@@ -10,7 +10,7 @@ import { loadNowSummary } from "./now-routes.js";
 import { caller,OWNER_TOKEN,resetOwner,SECRET,startWork } from "../works/works-fixture.js";
 
 /**
- * The phone's Now: its envelopes next to the placeholders (docs/END-TO-END-ENCRYPTION.md "Phone
+ * The phone's Now: its envelopes next to the placeholders (docs/ENCRYPTION-PROTOCOL.md "Phone
  * surfaces"), and the owner's dismissal of a missed question (STATE-SPEC 6.2).
  */
 const b64 = (bytes: number,fill = 7) => Buffer.alloc(bytes,fill).toString("base64url");

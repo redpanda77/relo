@@ -4,9 +4,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { b64u, fromB64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { ensureIdentity, saveKeyStore, trustKey } from "../src/keystore.mjs";
-import { fitAlert, sealablePhones, sealNotice, sealNoticeRequest, sealQuestion } from "../src/seal-notice.mjs";
+import { b64u, fromB64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { ensureIdentity, saveKeyStore, trustKey } from "../src/crypto/keystore.mjs";
+import { fitAlert, sealablePhones, sealNotice, sealNoticeRequest, sealQuestion } from "../src/crypto/seal-notice.mjs";
 
 const apiUrl = "https://relo.example";
 
@@ -80,7 +80,7 @@ test("alerts shrink to fit a push", () => {
 
 test("relo notify seals for the account's phones automatically, and stays readable only for older servers", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-seal-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   const device = phone("dev_00000000-0000-4000-8000-00000000000a");
   const dependencies = { configPath: () => join(folder, "config.json"), env, now: () => Date.parse("2026-10-13T17:00:00.000Z") };
   const client = { listDeviceKeys: async () => ({ devices: [device.resource] }), publishClientKey: async () => ({}) };
@@ -112,7 +112,7 @@ test("relo notify seals for the account's phones automatically, and stays readab
 
 test("questions are sealed for the account's phones automatically, with the prompt readable only on the phone", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-seal-question-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   const device = phone("dev_00000000-0000-4000-8000-00000000000a");
   const dependencies = { configPath: () => join(folder, "config.json"), env, now: () => 0 };
   const client = { listDeviceKeys: async () => ({ devices: [device.resource] }), publishClientKey: async () => ({}) };

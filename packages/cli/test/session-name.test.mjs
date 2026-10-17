@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
-import { ReloApiClient } from "../src/api-client.mjs";
-import { claudeSessionName, cleanSessionName, SESSION_NAME_MAX } from "../src/agent/session-name.mjs";
-import { b64u, generateKeyPair, keyId, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
+import { ReloApiClient } from "../src/shared/api-client.mjs";
+import { claudeSessionName, cleanSessionName, SESSION_NAME_MAX } from "../src/harness/adapters/claude-code/session-name.mjs";
+import { b64u, generateKeyPair, keyId, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
 
 const SESSION = "0f1e2d3c-4b5a-4969-8778-695a4b3c2d1e";
 const CWD = "/work/example-app";
@@ -160,7 +160,7 @@ test("on an end-to-end account the session's name goes as a handle, never readab
   const keys = phoneKeys(PHONE);
   const overrides = {
     env: { XDG_STATE_HOME: state, CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_CONFIG_DIR: home.root,
-      RELO_KEY_STORE_PATH: join(state, "e2ee.json"), RELO_SEALED_CARD_DIR: join(state, "cards") },
+      RELO_KEY_STORE_PATH: join(state, "e2ee.json") },
     cwd: CWD,
     identityDefaults: () => ({ providerName: "Claude Code", project: "example-app" }),
     loadConfig: async () => ({ apiUrl: "http://relo.test", token: "t".repeat(44) }),
@@ -190,6 +190,6 @@ test("on an end-to-end account the session's name goes as a handle, never readab
   assert.notEqual(patch.body.context.threadName, start.body.context.threadName);
   assert.ok(!JSON.stringify(patch.body).includes("Secret project"));
   // This computer keeps handle → name to resolve them; the phone gets the same map inside the sealed card.
-  const known = JSON.parse(readFileSync(join(state, "names.json"), "utf8"));
+  const known = JSON.parse(readFileSync(join(state, "relo", "names.json"), "utf8"));
   assert.equal(known[patch.body.context.threadName], "Secret project rollout");
 });

@@ -21,6 +21,9 @@ struct NowItemInput: Equatable, Identifiable, Sendable {
     var source: String
     var project: String?
     var computer: String?
+    var computerIcon: ComputerIcon? = nil
+    /// The session's own name ("Release review"), from the Sessions list.
+    var topic: String? = nil
     var state: NowOwnerState
     var reason: NowNeedsReason? = nil
     /// The server's evidence time (category A: rendered, never compared).
@@ -31,6 +34,13 @@ struct NowItemInput: Equatable, Identifiable, Sendable {
     var progress: Double? = nil
     /// The question a Needs-you row asks (`int_…`), for Dismiss on a missed question.
     var questionID: String? = nil
+    /// What the last closed round delivered, shown on a "Your turn" row in place of the card's status.
+    var roundOutcome: String? = nil
+    var roundNumber: Int? = nil
+    /// Why a Quiet work is quiet and since when (the server's words become the status line).
+    var quietReason: QuietReason? = nil
+    var quietSince: Date? = nil
+    var absence: Absence? = nil
 }
 
 struct NowSinceInput: Equatable, Sendable {
@@ -43,6 +53,7 @@ struct NowSessionInput: Equatable, Identifiable, Sendable {
     var id: String
     var title: String
     var computer: String?
+    var computerIcon: ComputerIcon? = nil
     /// nil: hooks off, only "last seen".
     var phase: Phase?
     var waitingFor: String?
@@ -51,6 +62,9 @@ struct NowSessionInput: Equatable, Identifiable, Sendable {
     var folded: Bool
     /// Tool and project ("Claude Code · relo") under the title when the session has a name of its own.
     var context: String? = nil
+    var contextPct: Int? = nil
+    var contextTokens: Int? = nil
+    var costUsd: Double? = nil
 }
 
 struct NowScreenInput: Equatable, Sendable {
@@ -83,9 +97,28 @@ struct NowRowModel: Equatable, Identifiable, Sendable {
     var progress: Double? = nil
     var reason: NowNeedsReason? = nil
     var questionID: String? = nil
+    /// Work cards (Waiting on you, Running) read like the card in History: where it runs, what it is,
+    /// how it stands, and its plan.
+    var card: NowCardModel? = nil
+    /// The owner may end this work from the row (swipe "End"): Quiet and Your turn.
+    var endable = false
 }
 
-enum NowFold: String, Sendable { case waitingOnYou, quiet, paused, idle }
+struct NowCardModel: Equatable, Sendable {
+    var origin: [String]
+    var at: Date
+    var badge: String?
+    var status: String?
+    var note: String?
+    var caption: String?
+    var computer: String?
+    var computerIcon: ComputerIcon? = nil
+    /// Set on settled and parked work (Since you looked, Quiet, Paused): the badge then reads and colors
+    /// as on History and the detail page (`HistoryServerOutcome`).
+    var ownerState: NowOwnerState? = nil
+}
+
+enum NowFold: String, Sendable { case quiet, paused, idle }
 
 struct NowSessionRowModel: Equatable, Identifiable, Sendable {
     var id: String
@@ -95,11 +128,19 @@ struct NowSessionRowModel: Equatable, Identifiable, Sendable {
     var tone: NowTone
     var notificationID: String?
     var context: String? = nil
+    /// When the session was last seen; closes the state line ("Idle · 11:42 PM").
+    var lastSeenAt: Date? = nil
+    /// "62% context · $4.10"; shown only when the owner opted in.
+    var usage: String? = nil
+    /// Context at 80% or more reads in the attention tone.
+    var heavyContext = false
 }
 
 struct NowSessionGroupModel: Equatable, Identifiable, Sendable {
     var id: String { title }
     var title: String
+    /// The group's computer icon: the first of its sessions that names one.
+    var icon: ComputerIcon? = nil
     var rows: [NowSessionRowModel]
     var idle: [NowSessionRowModel]
 }
@@ -110,9 +151,10 @@ struct NowSessionsBlock: Equatable, Sendable {
 }
 
 enum NowBlock: Equatable, Identifiable, Sendable {
-    case sinceYouLooked(line: String, accessibility: String, muted: Bool, recent: [NowRowModel], more: Int)
+    case sinceYouLooked(line: String?, accessibility: String?, recent: [NowRowModel], more: Int)
     case needsYou([NowRowModel])
     case fold(NowFold, count: Int, rows: [NowRowModel], open: Bool)
+    case waitingOnYou([NowRowModel])
     case running(title: String, rows: [NowRowModel])
     case sessions(NowSessionsBlock)
 
@@ -121,6 +163,7 @@ enum NowBlock: Equatable, Identifiable, Sendable {
         case .sinceYouLooked: "since"
         case .needsYou: "needs"
         case let .fold(fold, _, _, _): "fold-\(fold.rawValue)"
+        case .waitingOnYou: "waiting"
         case .running: "running"
         case .sessions: "sessions"
         }
@@ -138,27 +181,28 @@ enum NowScreenModel {
             items.filter { seen.insert($0.id).inserted }
         }
         let now = input.serverTime
+        let needs = unique(input.needsYou)
+        if !needs.isEmpty { blocks.append(.needsYou(needs.map { needsRow($0, locale: locale) })) }
+        let waiting = unique(input.waitingOnYou)
+        // The owner's turn is shown, never folded: it is the second question after "does anything need me".
+        if !waiting.isEmpty { blocks.append(.waitingOnYou(waiting.map { waitingRow($0, locale: locale) })) }
+        let running = unique(input.running)
+        if !running.isEmpty {
+            blocks.append(.running(title: isOffline ? "Last known" : "Running",
+                                   rows: running.map { runningRow($0, now: now, isOffline: isOffline) }))
+        }
         if let since = input.sinceYouLooked {
             let line = sinceLine(since, serverTime: now, calendar: calendar, locale: locale)
             let recent = unique(input.recent)
             let open = openFolds.contains("recent")
             let shown = open ? recent : Array(recent.prefix(3))
-            blocks.append(.sinceYouLooked(line: line.text, accessibility: line.spoken, muted: line.muted,
-                                          recent: shown.map { recentRow($0, locale: locale) },
-                                          more: recent.count - shown.count))
-        }
-        let needs = unique(input.needsYou)
-        if !needs.isEmpty { blocks.append(.needsYou(needs.map { needsRow($0, locale: locale) })) }
-        let waiting = unique(input.waitingOnYou)
-        if !waiting.isEmpty {
-            blocks.append(.fold(.waitingOnYou, count: waiting.count,
-                                rows: waiting.map { waitingRow($0, locale: locale) },
-                                open: openFolds.contains(NowFold.waitingOnYou.rawValue)))
-        }
-        let running = unique(input.running)
-        if !running.isEmpty {
-            blocks.append(.running(title: isOffline ? "Last known" : "Running",
-                                   rows: running.map { runningRow($0, now: now, isOffline: isOffline) }))
+            // A quiet stretch says nothing here: the deck's "Live · synced" already says the
+            // screen is current, so "Nothing new since…" only repeated it.
+            if line != nil || !shown.isEmpty {
+                blocks.append(.sinceYouLooked(line: line?.text, accessibility: line?.spoken,
+                                              recent: shown.map { recentRow($0, locale: locale) },
+                                              more: recent.count - shown.count))
+            }
         }
         let quiet = unique(input.quiet)
         if !quiet.isEmpty {
@@ -179,10 +223,10 @@ enum NowScreenModel {
 
     // MARK: Since you looked
 
-    struct SinceLine: Equatable { var text: String; var spoken: String; var muted: Bool }
+    struct SinceLine: Equatable { var text: String; var spoken: String }
 
     static func sinceLine(_ since: NowSinceInput, serverTime: Date, calendar: Calendar = .current,
-                          locale: Locale = .current) -> SinceLine {
+                          locale: Locale = .current) -> SinceLine? {
         let parts = [
             since.finished > 0 ? "\(since.finished) finished" : nil,
             since.failed > 0 ? "\(since.failed) failed" : nil,
@@ -202,12 +246,9 @@ enum NowScreenModel {
         } else {
             lead = "Since \(since.since.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)))"
         }
-        if parts.isEmpty {
-            let text = isDefault ? "Nothing new in the last 8 hours." : "Nothing new \(lead.prefix(1).lowercased())\(lead.dropFirst())."
-            return SinceLine(text: text, spoken: text, muted: true)
-        }
+        guard !parts.isEmpty else { return nil }
         let list = parts.joined(separator: ", ")
-        return SinceLine(text: "\(lead): \(list)", spoken: "\(lead), \(list)", muted: false)
+        return SinceLine(text: "\(lead): \(list)", spoken: "\(lead), \(list)")
     }
 
     // MARK: Rows
@@ -237,7 +278,16 @@ enum NowScreenModel {
         let line = item.state == .leftUnfinished
             ? "last update \(clock(item.evidenceAt, locale: locale))" : (item.status ?? "")
         return NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: chip, tone: tone,
-                           lines: [line, origin(item)].filter { !$0.isEmpty })
+                           lines: [line, origin(item)].filter { !$0.isEmpty },
+                           steps: item.steps, progress: item.progress, card: settledCard(item))
+    }
+
+    /// Settled and parked work on the shared card: how it stands (as History says it), when, and where its plan got to.
+    private static func settledCard(_ item: NowItemInput) -> NowCardModel {
+        var model = card(item, at: item.evidenceAt, badge: HistoryServerOutcome.make(state: item.state, standing: nil)?.label,
+                         note: nil, caption: stepsCaption(item.steps, standing: standing(of: item.state)))
+        model.ownerState = item.state
+        return model
     }
 
     static func needsRow(_ item: NowItemInput, locale: Locale = .current) -> NowRowModel {
@@ -261,12 +311,56 @@ enum NowScreenModel {
     }
 
     static func waitingRow(_ item: NowItemInput, locale: Locale = .current) -> NowRowModel {
-        NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: nil, tone: .attention,
-                    lines: ["Your turn · since \(clock(item.evidenceAt, locale: locale))", origin(item)].filter { !$0.isEmpty })
+        let since = "since \(clock(item.evidenceAt, locale: locale))"
+        return NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: nil, tone: .attention,
+                           lines: ["Your turn · \(since)", origin(item)].filter { !$0.isEmpty },
+                           steps: item.steps,
+                           // The header carries the time it became the owner's turn; the caption never repeats it.
+                           card: card(item.roundOutcome.map { delivered(item, outcome: $0) } ?? item, at: item.evidenceAt,
+                                      badge: "Your turn", note: nil,
+                                      // A delivered round shows its outcome instead of the plan line (4.3).
+                                      caption: item.roundOutcome == nil ? stepsCaption(item.steps) : nil),
+                           endable: WorkEnding.isOffered(for: item.state))
+    }
+
+    /// A row whose round was delivered says what the round delivered, not the card's last status.
+    private static func delivered(_ item: NowItemInput, outcome: String) -> NowItemInput {
+        var shown = item
+        shown.status = "\(item.roundNumber.map { "Round \($0) delivered" } ?? "Round delivered"): \(outcome)"
+        return shown
+    }
+
+    /// The one plan line (U2), as the Lock Screen and History read it: "2 of 10 · Run the migrations".
+    static func stepsCaption(_ steps: NowItem.Steps?, standing: PlanProgress.Standing = .moving) -> String? {
+        guard let steps, steps.total > 0 else { return nil }
+        // The server's position of the current top-level step makes the active line "Step 2 of 5".
+        let progress = PlanProgress(done: steps.done, total: steps.total, current: steps.currentIndex)
+        let finished = standing == .moving && steps.done >= steps.total
+        return progress.line(label: steps.current, standing: finished ? .done : standing)
+    }
+
+    /// How a settled work's plan reads: finished, stopped or paused.
+    static func standing(of state: NowOwnerState) -> PlanProgress.Standing {
+        switch state {
+        case .done: .done
+        case .failed, .dropped, .leftUnfinished: .stopped
+        case .paused: .paused
+        default: .moving
+        }
+    }
+
+    private static func card(_ item: NowItemInput, at: Date, badge: String?, note: String?, caption: String?) -> NowCardModel {
+        let topic = item.topic.flatMap { $0.isEmpty || $0 == item.title ? nil : $0 }
+        return NowCardModel(origin: [item.source, item.project, topic].compactMap { $0 }.filter { !$0.isEmpty },
+                            at: at, badge: badge, status: item.status.flatMap { $0.isEmpty ? nil : $0 }, note: note,
+                            caption: caption?.isEmpty == false ? caption : nil, computer: item.computer,
+                            computerIcon: item.computerIcon)
     }
 
     static func runningRow(_ item: NowItemInput, now: Date, isOffline: Bool) -> NowRowModel {
         let quietly = item.state == .workingQuietly
+        // The badge tells the truth (U4): work that declared it waits on something is Waiting, not Running.
+        let waiting = PlanWaiting.reason(status: item.status) != nil
         var lines = [item.status ?? ""]
         if quietly { lines.append("Working quietly · updated \(relative(item.evidenceAt, now: now))") }
         lines.append(origin(item))
@@ -275,7 +369,10 @@ enum NowScreenModel {
                            lines: lines.filter { !$0.isEmpty },
                            meta: "updated \(relative(item.evidenceAt, now: now))",
                            shimmer: item.state == .moving && !isOffline, startedAt: item.startedAt,
-                           steps: item.steps, progress: item.progress)
+                           steps: item.steps, progress: item.progress,
+                           card: card(item, at: item.startedAt ?? item.evidenceAt, badge: isOffline ? "Unconfirmed" : (waiting ? "Waiting" : nil),
+                                      note: quietly ? "Working quietly · updated \(relative(item.evidenceAt, now: now))" : nil,
+                                      caption: stepsCaption(item.steps)))
     }
 
     static func quietRow(_ item: NowItemInput, now: Date, locale: Locale = .current) -> NowRowModel {
@@ -285,14 +382,22 @@ enum NowScreenModel {
         case .noSignal: "No signal since \(clock(item.evidenceAt, locale: locale))"
         default: "Quiet · updated \(relative(item.evidenceAt, now: now))"
         }
+        var card = settledCard(item)
+        // The server said why it is quiet: that is the status line (U10), in place of the agent's last words.
+        let why = item.absence.flatMap { AbsenceWording.line($0, computer: item.computer, locale: locale) }
+            ?? QuietWording.line(reason: item.quietReason, since: item.quietSince ?? item.evidenceAt, locale: locale)
+        if let why { card.status = why }
         return NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: nil, tone: .secondary,
-                           lines: [line, origin(item)].filter { !$0.isEmpty })
+                           lines: [why ?? line, origin(item)].filter { !$0.isEmpty },
+                           steps: item.steps, progress: item.progress, card: card,
+                           endable: WorkEnding.isOffered(for: item.state))
     }
 
     static func pausedRow(_ item: NowItemInput, locale: Locale = .current) -> NowRowModel {
         NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: nil, tone: .secondary,
                     lines: ["Paused · \(item.status ?? "")", "paused \(clock(item.evidenceAt, locale: locale))", origin(item)]
-                        .filter { !$0.isEmpty && $0 != "Paused · " })
+                        .filter { !$0.isEmpty && $0 != "Paused · " },
+                    steps: item.steps, progress: item.progress, card: settledCard(item))
     }
 
     // MARK: Sessions
@@ -308,19 +413,22 @@ enum NowScreenModel {
         let workByID = Dictionary(work.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         func row(_ session: NowSessionInput) -> NowSessionRowModel {
             let (chip, tone): (String, NowTone) = switch session.phase {
-            case .working: ("working", .running)
-            case .waiting: (session.waitingFor == "input" ? "needs your input" : "your turn", .attention)
-            case .idle: ("idle", .secondary)
-            case .ended: ("ended", .secondary)
-            case nil: ("last seen \(relative(session.lastSeenAt, now: now))", .secondary)
+            case .working: ("Working", .running)
+            case .waiting: (session.waitingFor == "input" ? "Needs your input" : "Your turn", .attention)
+            case .idle: ("Idle", .secondary)
+            case .ended: ("Ended", .secondary)
+            case nil: ("Last seen \(relative(session.lastSeenAt, now: now))", .secondary)
             }
             let linked = session.workID.flatMap { workByID[$0] }
             return NowSessionRowModel(id: session.id, title: session.title, workTitle: linked?.title, chip: chip,
-                                      tone: tone, notificationID: linked?.notificationID, context: session.context)
+                                      tone: tone, notificationID: linked?.notificationID, context: session.context,
+                                      lastSeenAt: session.phase == nil ? nil : session.lastSeenAt,
+                                      usage: SessionUsage.line(contextPct: session.contextPct, contextTokens: session.contextTokens, costUsd: session.costUsd),
+                                      heavyContext: SessionUsage.isHeavy(contextPct: session.contextPct))
         }
         let groups = order.map { key in
             let members = byComputer[key] ?? []
-            return NowSessionGroupModel(title: key, rows: members.filter { !$0.folded }.map(row),
+            return NowSessionGroupModel(title: key, icon: members.lazy.compactMap(\.computerIcon).first, rows: members.filter { !$0.folded }.map(row),
                                         idle: members.filter(\.folded).map(row))
         }
         return NowSessionsBlock(working: sessions.filter { $0.phase == .working }.count, groups: groups)
@@ -330,7 +438,12 @@ enum NowScreenModel {
 extension NowScreenInput {
     /// The server's Now summary (`GET /api/now`), read as is.
     init(summary: NowSummary) {
+        // Each work's session names where it runs: the session's own name and its computer.
+        let sessionsByWork = Dictionary(summary.sessions.sessions.compactMap { row in row.workId.map { ($0, row) } },
+                                        uniquingKeysWith: { first, _ in first })
+        let sessionsByID = Dictionary(summary.sessions.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         func item(_ item: NowItem) -> NowItemInput {
+            let session = sessionsByWork[item.id] ?? item.sessionId.flatMap { sessionsByID[$0] }
             let reason: NowNeedsReason? = switch item.owner.needsYou {
             case .question?: .question
             case .missedQuestion?: .missedQuestion
@@ -338,10 +451,12 @@ extension NowScreenInput {
             default: nil
             }
             return NowItemInput(id: item.id, notificationID: item.notificationId, title: item.title, status: item.status,
-                                source: item.sourceName ?? "", project: item.project, computer: nil,
-                                state: item.owner.state, reason: reason, evidenceAt: item.owner.evidenceAt,
-                                startedAt: item.startedAt, expiresAt: nil, steps: item.steps, progress: nil,
-                                questionID: item.question?.id)
+                                source: item.sourceName ?? "", project: item.project, computer: session?.computer,
+                                computerIcon: item.computerIcon ?? session?.computerIcon,
+                                topic: session?.title, state: item.owner.state, reason: reason, evidenceAt: item.owner.evidenceAt,
+                                startedAt: item.startedAt, expiresAt: nil, steps: item.planSteps, progress: nil,
+                                questionID: item.question?.id, roundOutcome: item.roundOutcome, roundNumber: item.roundNumber,
+                                quietReason: item.quietWhy, quietSince: item.quietFrom, absence: item.owner.absence)
         }
         let since = summary.sinceYouLooked
         self.init(
@@ -369,8 +484,9 @@ extension NowScreenInput {
                 return NowSessionInput(
                     id: row.id,
                     title: row.title ?? origin,
-                    computer: row.computer, phase: phase, waitingFor: row.waitingFor, lastSeenAt: row.lastSeenAt,
-                    workID: row.workId, folded: row.isFoldedIdle, context: row.title == nil || origin.isEmpty ? nil : origin)
+                    computer: row.computer, computerIcon: row.computerIcon, phase: phase, waitingFor: row.waitingFor, lastSeenAt: row.lastSeenAt,
+                    workID: row.workId, folded: row.isFoldedIdle, context: row.title == nil || origin.isEmpty ? nil : origin,
+                    contextPct: row.contextPct, contextTokens: row.contextTokens, costUsd: row.costUsd)
             })
     }
 }
@@ -403,15 +519,42 @@ struct CurrentAttentionView: View {
     var offline = false
     var viewHistory: () -> Void = {}
     @AppStorage(ReloHistoryPreferences.clearedAtKey) private var clearedAt: Double = 0
+    @AppStorage(ReloSessionUsagePreferences.showKey) private var showsUsage = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Open folds, in memory only: closed again on relaunch.
     @State private var openFolds: Set<String> = []
+    /// The work the owner swiped "End" on, awaiting the confirmation.
+    @State private var endTarget: EndWorkTarget?
+    /// Questions just answered from here: the card stays a beat on "Sent" after the feed retires it,
+    /// then fades, so the answer is seen to land and the page never jumps under the thumb.
+    @State private var settling: [PendingCurrentDecision] = []
+
+    /// The live questions, then the ones settling, each once.
+    private func requests(_ screen: CurrentInboxPresentation) -> [PendingCurrentDecision] {
+        let live = Set(screen.needsMe.map(\.id))
+        return screen.needsMe + settling.filter { !live.contains($0.id) }
+    }
+
+    private func settle(from old: [PendingCurrentDecision], to new: [PendingCurrentDecision]) {
+        let remaining = Set(new.map(\.id))
+        let answered = old.filter {
+            !remaining.contains($0.id) && model.responseFeedback(for: $0.notificationId)?.phase == .accepted
+                && !settling.contains($0)
+        }
+        guard !answered.isEmpty else { return }
+        settling += answered
+        let ids = Set(answered.map(\.id))
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { settling.removeAll { ids.contains($0.id) } }
+        }
+    }
 
     private func blocks(_ screen: CurrentInboxPresentation) -> [NowBlock] {
         var blocks = NowScreenModel.make(input, isOffline: isOffline, openFolds: openFolds)
         // Live questions come from the decision feed (they carry the answer path): Needs you
         // shows whenever there is one, right after the since line.
-        if !screen.needsMe.isEmpty, !blocks.contains(where: { $0.id == "needs" }) {
+        if !requests(screen).isEmpty, !blocks.contains(where: { $0.id == "needs" }) {
             blocks.insert(.needsYou([]), at: blocks.first?.id == "since" ? 1 : 0)
         }
         return blocks
@@ -420,9 +563,9 @@ struct CurrentAttentionView: View {
     var body: some View {
         let screen = model.currentPresentation
         let blocks = blocks(screen)
-        let allClear = screen.needsMe.isEmpty && !blocks.contains {
+        let allClear = requests(screen).isEmpty && !blocks.contains {
             switch $0 {
-            case .needsYou, .running, .fold: true
+            case .needsYou, .waitingOnYou, .running, .fold: true
             case .sinceYouLooked, .sessions: false
             }
         }
@@ -430,23 +573,23 @@ struct CurrentAttentionView: View {
         // A plain stack: a handful of sections of very different heights. Lazily laid out, the
         // sections below the fold were measured only on arrival and the page jumped as they did.
         VStack(alignment: .leading, spacing: 28) {
+            // Offline is told once, by the deck's sync line ("OFFLINE · AS OF …"), not here too.
             persistenceWarning
-            if isOffline {
-                Label("Offline · showing Now as of \(input.serverTime.formatted(Date.FormatStyle(time: .shortened)))",
-                      systemImage: "wifi.slash")
-                    .font(.footnote.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
-            }
             ForEach(blocks) { block in
                 switch block {
-                case let .sinceYouLooked(line, spoken, muted, recent, more):
-                    sinceSection(line: line, spoken: spoken, muted: muted, recent: recent, more: more)
+                case let .sinceYouLooked(line, spoken, recent, more):
+                    sinceSection(line: line, spoken: spoken, recent: recent, more: more)
                 case let .needsYou(rows):
                     needsSection(screen: screen, rows: rows)
                 case let .fold(fold, count, rows, open):
                     foldSection(fold, count: count, rows: rows, open: open)
+                case let .waitingOnYou(rows):
+                    section("Waiting on you", count: rows.count, color: ReloHoloTheme.color(.attention)) {
+                        ForEach(rows) { row in workCard(row) }
+                    }
                 case let .running(title, rows):
                     section(title, count: rows.count, color: ReloHoloTheme.color(.running)) {
-                        ForEach(rows) { row in runningCard(row) }
+                        ForEach(rows) { row in workCard(row) }
                     }
                 case let .sessions(sessions):
                     sessionsSection(sessions)
@@ -462,8 +605,16 @@ struct CurrentAttentionView: View {
                 }
             }
         }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: screen.needsMe.map(\.id))
-        .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: blocks.map(\.id))
+        // One motion for the page: sections and cards fade in place as the lists change.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: requests(screen).map(\.id))
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: blocks.map(\.id))
+        .onChange(of: screen.needsMe) { old, new in settle(from: old, to: new) }
+        .endWorkConfirmation($endTarget, model: model)
+        .alert("Couldn't end the work", isPresented: Binding(
+            get: { model.endWorkError != nil && model.selectedNotificationID == nil },
+            set: { if !$0 { model.endWorkError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(model.endWorkError ?? "") }
     }
 
     // MARK: Persistence
@@ -500,7 +651,7 @@ struct CurrentAttentionView: View {
             NowSectionCaption(title: title, count: count, color: color)
             content()
         }
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .transition(.opacity)
     }
 
     private func toggle(_ key: String) {
@@ -511,18 +662,19 @@ struct CurrentAttentionView: View {
 
     // MARK: Since you looked
 
-    private func sinceSection(line: String, spoken: String, muted: Bool, recent: [NowRowModel], more: Int) -> some View {
+    private func sinceSection(line: String?, spoken: String?, recent: [NowRowModel], more: Int) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(line)
-                .font(.subheadline.weight(muted ? .regular : .medium))
-                .foregroundStyle(muted ? Color.reloSecondaryText : Color.primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel(spoken)
+            if let line {
+                Text(line)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(spoken ?? line)
+            }
             if !recent.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(Array(recent.enumerated()), id: \.element.id) { index, row in
                         if index > 0 { Divider().padding(.leading, 16) }
-                        listRow(row)
+                        foldedRow(row)
                     }
                     if more > 0 || openFolds.contains("recent") {
                         Divider().padding(.leading, 16)
@@ -538,9 +690,9 @@ struct CurrentAttentionView: View {
     // MARK: Needs you
 
     private func needsSection(screen: CurrentInboxPresentation, rows: [NowRowModel]) -> some View {
-        section("Needs you", count: (screen.actionableCount ?? screen.needsMe.count) + rows.count,
-                color: ReloHoloTheme.color(.needsYou)) {
-            ForEach(screen.needsMe) { item in requestCard(item) }
+        let count = (screen.actionableCount ?? screen.needsMe.count) + rows.count
+        return section("Needs you", count: count > 0 ? count : nil, color: ReloHoloTheme.color(.needsYou)) {
+            ForEach(requests(screen)) { item in requestCard(item).transition(.opacity) }
             ForEach(rows) { row in needsCard(row) }
             if let error = model.nowDismissError {
                 Text(error).font(.footnote).foregroundStyle(Color.reloErrorText)
@@ -567,9 +719,7 @@ struct CurrentAttentionView: View {
                 Text(line).font(.subheadline).foregroundStyle(Color.reloSecondaryText).lineLimit(4)
             }
             if row.reason == .missedQuestion, let id = row.notificationID {
-                if let feedback = model.responseFeedback(for: id) {
-                    Text(feedback.status).font(.footnote.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
-                } else if let decision = model.currentPresentation.needsMe.first(where: { $0.notificationId == id }) {
+                if let decision = model.currentPresentation.needsMe.first(where: { $0.notificationId == id }) {
                     CurrentDecisionButtons(model: model, decision: decision)
                 } else {
                     Button("Answer late") { Task { await model.openNotification(notificationID: id) } }
@@ -614,12 +764,7 @@ struct CurrentAttentionView: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens the full request")
-            if let feedback = model.responseFeedback(for: item.notificationId) {
-                Text(feedback.status).font(.footnote.weight(.medium)).foregroundStyle(Color.reloSecondaryText)
-            } else {
-                ReloAnswerCountdown(deadline: item.interaction.expiresAt)
-                CurrentDecisionButtons(model: model, decision: item)
-            }
+            CurrentDecisionButtons(model: model, decision: item)
         }
         .padding(16)
         .reloCard(tint: ReloHoloTheme.color(.needsYou))
@@ -629,7 +774,6 @@ struct CurrentAttentionView: View {
 
     private func foldTitle(_ fold: NowFold) -> String {
         switch fold {
-        case .waitingOnYou: "Waiting on you"
         case .quiet: "Quiet"
         case .paused: "Paused"
         case .idle: "Idle"
@@ -638,14 +782,14 @@ struct CurrentAttentionView: View {
 
     private func foldSection(_ fold: NowFold, count: Int, rows: [NowRowModel], open: Bool) -> some View {
         let title = foldTitle(fold)
-        let color = fold == .waitingOnYou ? ReloHoloTheme.color(.attention) : Color.reloSecondaryText
+        let color = Color.reloSecondaryText
         return VStack(spacing: 0) {
             foldLine(label: "\(title) (\(count))", color: color, open: open,
                      accessibility: "\(title), \(count) \(count == 1 ? "item" : "items")") { toggle(fold.rawValue) }
             if open {
                 ForEach(rows) { row in
                     Divider().padding(.leading, 16)
-                    listRow(row)
+                    foldedRow(row)
                 }
             }
         }
@@ -706,56 +850,44 @@ struct CurrentAttentionView: View {
         }
     }
 
+    /// A row inside a grouped card (Since you looked, folds): a work reads as the shared card, unframed.
     @ViewBuilder
-    private func runningCard(_ row: NowRowModel) -> some View {
-        let tone = row.tone.color
-        let body = VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(row.title).font(.headline).foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                if isOffline {
-                    Label("Unconfirmed", systemImage: "wifi.slash")
-                        .font(.caption.weight(.semibold)).foregroundStyle(Color.reloSecondaryText)
-                } else if row.notificationID != nil {
-                    ReloChevron()
-                }
-            }
-            ForEach(Array(row.lines.enumerated()), id: \.offset) { index, line in
-                Text(line).font(index == row.lines.count - 1 ? .footnote : .subheadline)
-                    .foregroundStyle(line.hasPrefix("Working quietly") ? tone : Color.reloSecondaryText).lineLimit(2)
-            }
-            if let steps = row.steps, steps.total > 0 {
-                LiveStepsBar(steps: steps, color: tone, shimmer: row.shimmer)
-            } else if let progress = row.progress, progress.isFinite {
-                LiveProgressBar(value: progress, color: tone, shimmer: row.shimmer)
-            }
-            HStack(spacing: 6) {
-                if let startedAt = row.startedAt {
-                    // The system ticks this timer; the card does not redraw once a second.
-                    HStack(spacing: 4) {
-                        Text("running")
-                        Text(timerInterval: startedAt...Date.distantFuture, countsDown: false)
-                            .monospacedDigit().multilineTextAlignment(.leading)
-                            .frame(maxWidth: 64, alignment: .leading)
-                    }
-                    .fixedSize()
-                    Text("·").accessibilityHidden(true)
-                }
-                if let meta = row.meta { Text(meta) }
-            }
-            .font(.system(.caption2, design: .monospaced)).foregroundStyle(Color.reloSecondaryText.opacity(0.85))
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .reloCard()
+    private func foldedRow(_ row: NowRowModel) -> some View {
+        if row.card != nil { workCard(row, framed: false) } else { listRow(row) }
+    }
+
+    /// One work card: the shared card History uses too (`ReloWorkCard`).
+    @ViewBuilder
+    private func workCard(_ row: NowRowModel, framed: Bool = true) -> some View {
+        let card = row.card
+        let outcome = card?.ownerState.flatMap { HistoryServerOutcome.make(state: $0, standing: nil) }
+        let color = outcome?.color ?? row.tone.color
+        let state = card?.badge.map { ReloCardState(label: $0, color: color,
+                                                     symbol: $0 == "Your turn" ? "hand.raised.fill" : $0 == "Waiting" ? "hourglass" : nil) }
+        // The session's name comes from the Sessions list; a session not listed there keeps the name its card carries.
+        let topic = card.flatMap { $0.origin.count > 2 ? $0.origin[2] : nil } ?? row.notificationID.flatMap { id in
+            (model.historyItems.first { $0.id == id } ?? model.items.first { $0.id == id })
+                .flatMap { HistoryRowProjection.row($0, now: model.attentionDate).topic }
+        }.flatMap { $0 == row.title ? nil : $0 }
+        let inner = ReloWorkCard(
+            origin: card.map { ReloCardOrigin(source: $0.origin.first ?? "", project: $0.origin.dropFirst().first,
+                                              projectColor: .reloSignalIndigo, topic: topic) },
+            at: card?.at, title: row.title, summary: outcome != nil ? card?.status : card?.status ?? row.lines.first,
+            steps: row.steps, progress: row.progress, color: color, shimmer: row.shimmer,
+            state: state, facts: [card?.note, card?.caption].compactMap { $0 },
+            runningSince: card?.badge == nil && outcome == nil ? row.startedAt : nil, computer: card?.computer,
+            computerIcon: card?.computerIcon)
+            .padding(16)
+        let body = Group { if framed { inner.reloCard() } else { inner } }
 
         if let notificationID = row.notificationID {
             Button { Task { await model.openNotification(notificationID: notificationID) } } label: { body }
                 .buttonStyle(ReloPressStyle())
                 .accessibilityElement(children: .combine).accessibilityHint("Opens details")
+                .swipeToEnd(enabled: row.endable) { endTarget = EndWorkTarget(id: row.id, title: row.title) }
         } else {
             body.accessibilityElement(children: .combine)
+                .swipeToEnd(enabled: row.endable) { endTarget = EndWorkTarget(id: row.id, title: row.title) }
         }
     }
 
@@ -766,8 +898,12 @@ struct CurrentAttentionView: View {
         section("Sessions", count: block.working, color: ReloHoloTheme.sessions) {
             ForEach(block.groups) { group in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(group.title).font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.0)
-                        .foregroundStyle(Color.reloSecondaryText).textCase(.uppercase)
+                    HStack(spacing: 5) {
+                        ComputerMark(icon: group.icon, tint: Color.reloSecondaryText).imageScale(.small)
+                        Text(group.title)
+                    }
+                    .font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.0)
+                    .foregroundStyle(Color.reloSecondaryText).textCase(.uppercase)
                     VStack(spacing: 0) {
                         ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
                             if index > 0 { Divider().padding(.leading, 16) }
@@ -793,21 +929,31 @@ struct CurrentAttentionView: View {
         }
     }
 
+    /// A session reads like a work card, one kind of fact per line: where it runs (tool as its logo,
+    /// project; the computer is the group's heading), its name, the work it holds, then how it stands
+    /// and when it was last seen.
     @ViewBuilder
     private func sessionRow(_ row: NowSessionRowModel) -> some View {
         let content = HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(row.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
                 if let context = row.context {
-                    Text(context).font(.caption).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                    // As on the work cards: tool · project › session name on one line, the work it holds under it.
+                    HStack(alignment: .center, spacing: 5) {
+                        sessionContext(context)
+                        Text("›").foregroundStyle(Color.reloSecondaryText.opacity(0.6)).accessibilityHidden(true)
+                        Text(row.title).truncationMode(.tail)
+                    }
+                    .font(.caption.weight(.medium)).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                    if let work = row.workTitle {
+                        Text(work).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                    }
+                } else {
+                    Text(row.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                    if let work = row.workTitle, work != row.title {
+                        Text(work).font(.footnote).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                    }
                 }
-                if let work = row.workTitle {
-                    Text(work).font(.footnote).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
-                }
-                HStack(spacing: 6) {
-                    Circle().fill(row.tone.color).frame(width: 6, height: 6).accessibilityHidden(true)
-                    Text(row.chip).font(.caption.weight(.medium)).foregroundStyle(row.tone.color).lineLimit(1)
-                }
+                sessionStanding(row).font(.caption)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if row.notificationID != nil { ReloChevron() }
@@ -821,6 +967,35 @@ struct CurrentAttentionView: View {
                 .accessibilityElement(children: .combine).accessibilityHint("Opens details")
         } else {
             content.accessibilityElement(children: .combine)
+        }
+    }
+
+    /// "● Working · 11:42 PM": the state in its color, then when the session was last seen.
+    private func sessionStanding(_ row: NowSessionRowModel) -> Text {
+        var text = (Text(Image(systemName: "circle.fill")).font(.system(size: 6)) + Text(" ") + Text(row.chip))
+            .foregroundColor(row.tone.color).fontWeight(.medium)
+        if let seen = row.lastSeenAt {
+            text = text + Text(" · ").foregroundColor(Color.reloSecondaryText)
+                + Text(seen, style: .time).foregroundColor(Color.reloSecondaryText).monospacedDigit()
+        }
+        if showsUsage, let usage = row.usage {
+            text = text + Text(" · ").foregroundColor(Color.reloSecondaryText)
+                + Text(usage).foregroundColor(row.heavyContext ? NowTone.attention.color : Color.reloSecondaryText).monospacedDigit()
+        }
+        return text
+    }
+
+    /// "Claude Code · relo" with the tool as its logo when it has one.
+    @ViewBuilder
+    private func sessionContext(_ context: String) -> some View {
+        let parts = context.components(separatedBy: " · ")
+        if let first = parts.first, SourceLogo(sourceName: first) != nil {
+            HStack(alignment: .center, spacing: 5) {
+                SourceMark(name: first, size: 14)
+                if parts.count > 1 { Text("· " + parts.dropFirst().joined(separator: " · ")) }
+            }
+        } else {
+            Text(context)
         }
     }
 
@@ -846,16 +1021,18 @@ struct CurrentAttentionView: View {
     }
 }
 
-/// Approve/Deny, Yes/No or a choice's options for a request in Needs you, with the sender's own labels.
+/// Approve/Deny, Yes/No or a choice's options for a request in Needs you, with the sender's own labels:
+/// the same answer area as the detail page, so a tap never reflows the card.
 private struct CurrentDecisionButtons: View {
     @Bindable var model: AppModel
     let decision: PendingCurrentDecision
 
-    private var actions: BinaryNotificationActionPresentation? {
+    private var choices: [ReloDecisionActions.Choice] {
+        if decision.interaction.type == .choice, let options = decision.interaction.options { return ReloDecisionActions.Choice.options(options) }
         if let item = model.items.first(where: { $0.id == decision.notificationId }),
            let labelled = BinaryNotificationActionPresentation(
             behavior: InboxPresentationProjection.presentation(for: item).behavior) {
-            return labelled
+            return ReloDecisionActions.Choice.binary(labelled)
         }
         let kind: InboxInteraction.Kind = switch decision.interaction.type {
         case .approval: .approval
@@ -863,123 +1040,35 @@ private struct CurrentDecisionButtons: View {
         case .text: .text
         case .choice: .choice
         }
-        return BinaryNotificationActionPresentation(kind: kind, style: "standard")
+        return BinaryNotificationActionPresentation(kind: kind, style: "standard").map(ReloDecisionActions.Choice.binary) ?? []
+    }
+
+    private var draft: CurrentDecisionDraft? { model.currentDecision(notificationID: decision.notificationId) }
+
+    private var phase: ReloDecisionActions.Phase {
+        let feedback = model.responseFeedback(for: decision.notificationId)
+        let availability = draft.map { model.decisionAvailability($0.identity) } ?? .unverified
+        if let answer = ReloDecisionActions.Phase.answer(
+            feedback, submitting: model.respondingNotificationID == decision.notificationId) {
+            if case .failed = answer, !availability.permitsSubmission {} else { return answer }
+        }
+        return .unavailable(availability)
     }
 
     var body: some View {
-        if decision.interaction.type == .choice, let options = decision.interaction.options,
-           let draft = model.currentDecision(notificationID: decision.notificationId),
-           model.decisionAvailability(draft.identity).permitsSubmission {
-            ChoiceOptionButtons(options: options) { send(.choose, draft.identity, optionID: $0.id) }
-                .disabled(model.respondingNotificationID != nil)
-        } else if let actions, let draft = model.currentDecision(notificationID: decision.notificationId),
-           model.decisionAvailability(draft.identity).permitsSubmission {
-            HStack(spacing: 12) {
-                Button { send(actions.secondaryAction, draft.identity) } label: {
-                    Text(actions.secondaryLabel).frame(maxWidth: .infinity, minHeight: 32)
-                }
-                .buttonStyle(.bordered).tint(.reloInteractive)
-                Button { send(actions.primaryAction, draft.identity) } label: {
-                    Text(actions.primaryLabel).frame(maxWidth: .infinity, minHeight: 32)
-                }
-                .buttonStyle(.borderedProminent).tint(.reloActionFill)
-            }
-            .disabled(model.respondingNotificationID != nil)
-        }
+        ReloDecisionActions(choices: choices, phase: phase,
+                            sent: model.responseFeedback(for: decision.notificationId)?.action,
+                            deadline: decision.interaction.expiresAt) { send($0) }
     }
 
-    private func send(_ action: NotificationInteractionAction, _ identity: CurrentDecisionIdentity, optionID: String? = nil) {
+    private func send(_ choice: ReloDecisionActions.Choice) {
+        guard let draft, model.respondingNotificationID == nil else { return }
         Task {
             NotificationResponseHaptics.decisionStarted()
-            await model.respond(to: identity, action: action, optionID: optionID)
+            await model.respond(to: draft.identity, action: choice.action, optionID: choice.optionID)
             if let feedback = model.responseFeedback(for: decision.notificationId) {
                 NotificationResponseHaptics.responseFinished(feedback.phase)
             }
         }
-    }
-}
-
-/// The sweep of light used on live meters. It is a mask, not an overlay: it is drawn only
-/// inside the shape it decorates (the filled part of a bar), so it never shows as a band over
-/// the track or the label. It moves by sliding the gradient's start and end points.
-private struct LiveSweep: View {
-    let active: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        if active && !reduceMotion {
-            // The shared clock: paused off screen, in Low Power Mode and when the device is hot.
-            ReloMotionClock(framesPerSecond: 24, still: 0) { time in
-                let cycle = 2.8
-                // Travels from just before the left edge to just past the right, then rests.
-                let phase = min(time.truncatingRemainder(dividingBy: cycle) / (cycle * 0.7), 1) * 1.6 - 0.3
-                LinearGradient(stops: [.init(color: .clear, location: 0),
-                                       .init(color: .white.opacity(0.55), location: 0.5),
-                                       .init(color: .clear, location: 1)],
-                               startPoint: UnitPoint(x: phase - 0.18, y: 0.5),
-                               endPoint: UnitPoint(x: phase + 0.18, y: 0.5))
-                    .blendMode(.plusLighter)
-            }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-    }
-}
-
-/// A flat bar for work that reports a fraction instead of steps; the sweep lives in the fill.
-private struct LiveProgressBar: View {
-    let value: Double
-    let color: Color
-    let shimmer: Bool
-
-    private var fraction: Double { value.isFinite ? min(max(value, 0), 1) : 0 }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.1))
-                    Capsule().fill(color)
-                        .overlay { LiveSweep(active: shimmer) }
-                        .clipShape(Capsule())
-                        .frame(width: max(4, proxy.size.width * fraction))
-                        .animation(.smooth(duration: 0.6), value: fraction)
-                }
-            }
-            .frame(height: 4)
-            Text(fraction, format: .percent.precision(.fractionLength(0)))
-                .font(.caption.weight(.medium).monospacedDigit()).foregroundStyle(Color.reloSecondaryText)
-        }
-        .accessibilityElement(children: .ignore).accessibilityLabel("Progress")
-        .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
-    }
-}
-
-/// Steps as segments: finished ones in the meaning color with the sweep running through them
-/// only (masked by their shapes), the current one a touch dimmer, pending ones faint track.
-private struct LiveStepsBar: View {
-    let steps: NowItem.Steps
-    let color: Color
-    let shimmer: Bool
-
-    private var done: Int { min(max(steps.done, 0), steps.total) }
-
-    private func segments(_ fill: @escaping (Int) -> Color) -> some View {
-        HStack(spacing: 3) {
-            ForEach(0..<max(steps.total, 1), id: \.self) { index in
-                Capsule().fill(fill(index)).frame(height: 4).frame(maxWidth: .infinity)
-            }
-        }
-    }
-
-    var body: some View {
-        segments { index in index < done ? color : Color.white.opacity(index == done ? 0.28 : 0.1) }
-            .overlay {
-                LiveSweep(active: shimmer)
-                    .mask(segments { index in index < done ? .black : .clear })
-            }
-            .frame(height: 4)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Step \(min(done + 1, steps.total)) of \(steps.total)\(steps.current.map { ": \($0)" } ?? "")")
     }
 }

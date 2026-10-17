@@ -77,10 +77,13 @@ final class AppModel {
     @ObservationIgnored private var settledQuestionIDs: Set<String> = []
     /// A short line when dismissing a missed question failed; the row is back.
     var nowDismissError: String?
+    /// Works being ended right now, and works this phone ended (the detail then says so).
+    private(set) var endingWorkIDs: Set<String> = []
+    private(set) var endedNotificationIDs: Set<String> = []
+    /// Why ending a work failed, and which work it was.
+    var endWorkError: String?
+    var endWorkErrorWorkID: String?
     /// Agent sessions from the last inbox snapshot (empty from older servers).
-    var agentSessions: [AgentSession] = []
-    /// When `agentSessions` was fetched; quiet times grow from the server's figure at that moment.
-    var agentSessionsFetchedAt = Date.now
     private(set) var historyLoadState: HistoryLoadState = .idle
     var syncState: SyncState = .idle
     var lastSyncedAt: Date?
@@ -94,10 +97,10 @@ final class AppModel {
     private(set) var deliveryTransportStatus: DeliveryTransportStatus?
     private(set) var deliveryTransportStatusError: String?
     private(set) var protectedRegistrationResetAvailable = false
-    /// Ticks each time something asks for Settings → Security (relo://settings/security, or the
+    /// Ticks each time something asks for Settings → Devices (relo://settings/security, or the
     /// "New device wants access" notification): the root view goes there and the list refreshes.
     private(set) var securitySettingsRequests = 0
-    /// Settings → Security was asked for and the Settings screen has not opened it yet.
+    /// Settings → Devices was asked for and the Settings screen has not opened it yet.
     var securitySettingsNavigationPending = false
     private(set) var selectedNotificationID: String? {
         didSet { if oldValue != selectedNotificationID { selectedNotificationDetail = nil } }
@@ -535,10 +538,18 @@ final class AppModel {
         )
         chosenServerOrigin = dependencies.chosenServerURL?.absoluteString
         encryptionKeys = dependencies.encryptionKeys
+        computerInviteStore = dependencies.computerInviteStore
         answerSigner = dependencies.answerSigner
+        devices.shareApproval = { [weak self] client in Task { await self?.shareComputerApproval(client) } }
     }
 
-    /// Why this phone's encryption keys could not be created or published, shown in Settings → Security.
+    /// The owner approved a computer here: sign it now, so it opens on the Mac app, other phones and browsers too.
+    func shareComputerApproval(_ client: ReloClientKey) async {
+        guard let credential, let encryptionKeys else { return }
+        await encryptionKeys.approve(client, credential: credential)
+    }
+
+    /// Why this phone's encryption keys could not be created or published, shown in Settings → Devices.
     var encryptionKeysProblem: String?
 
     static func encryptionKeysProblem(_ error: Error) -> String {
@@ -577,7 +588,7 @@ final class AppModel {
     @ObservationIgnored var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)?
 
     /// End-to-end encryption keys: rotated and published beside the heartbeat. A failure never
-    /// affects registration; the next heartbeat retries (docs/END-TO-END-ENCRYPTION.md, E2.1).
+    /// affects registration; the next heartbeat retries (docs/ENCRYPTION-PROTOCOL.md, E2.1).
     @ObservationIgnored var encryptionKeys: E2EEKeyMaintenance?
 
     func maintainEncryptionKeys(credential: DeviceCredential) async {
@@ -800,7 +811,8 @@ final class AppModel {
     }
 
     /// Opens the server's sign-in page in the system browser (PKCE) and exchanges the returned code.
-    func signInWithBrowser() async -> Bool {
+    /// `signUp` opens the sign-up form ("Create account"); a new account is then offered the Connect a computer wizard.
+    func signInWithBrowser(signUp: Bool = false) async -> Bool {
         guard !isAuthenticating else { return false }
         authenticationError = nil
         signOutError = nil
@@ -815,7 +827,7 @@ final class AppModel {
             return false
         }
         let flow = BrowserSignIn()
-        guard let url = flow.authorizationURL(origin: serverURL) else {
+        guard let url = flow.authorizationURL(origin: serverURL, signUp: signUp) else {
             authenticationError = authenticationMessage(for: MobileAPIError.invalidRequest)
             return false
         }
@@ -856,6 +868,7 @@ final class AppModel {
             // it is registered: ask now, as part of signing in, rather than leaving it to Settings.
             await updatePermission()
             if permission == .allowed { await registerDevice(force: true) } else { await requestNotifications() }
+            computerSetupOfferPending = true
             return accountSession != nil
         } catch {
             accountState = credential == nil ? .signedOut : .reauthenticationRequired
@@ -1107,9 +1120,10 @@ final class AppModel {
                 expectedScope == currentSyncScopeIdentity
             else { return false }
             items = snapshot.items.filter { $0.withdrawnAt == nil }
+            // Questions answered elsewhere (or withdrawn) that still sit in Notification Center leave it.
+            let settled = SettledNotifications.ids(in: snapshot.items)
+            Task { await SettledNotifications.remove(settled) }
             inboxReadWatermark = snapshot.readWatermark
-            agentSessions = snapshot.sessions ?? []
-            agentSessionsFetchedAt = snapshot.lastSuccessfulSyncAt ?? .now
             unreadCount = snapshot.unread?.account ?? items.filter { $0.readAt == nil }.count
             unreadByProject = snapshot.unread?.projects ?? [:]
             historySnapshot = InboxHistorySnapshot(items: snapshot.items, cursor: nil, hasMore: false,
@@ -1331,6 +1345,39 @@ final class AppModel {
         }
     }
 
+    /// Ends a Quiet, Paused or Your-turn work from the phone (plan 12b, 4.11). The work leaves Now at once;
+    /// the server decides the outcome (a delivered work ends as finished, anything else as dropped). A refusal
+    /// because it is moving again, or any failure, leaves the work where it was with a short line.
+    func endWork(workID: String) async {
+        guard let credential, !endingWorkIDs.contains(workID) else { return }
+        endWorkError = nil
+        endWorkErrorWorkID = nil
+        endingWorkIDs.insert(workID)
+        defer { endingWorkIDs.remove(workID) }
+        do {
+            try await apiClient.endWork(credential: credential, workId: workID)
+            if let notificationID = nowSummary?.item(id: workID)?.notificationId { endedNotificationIDs.insert(notificationID) }
+            nowSummary = nowSummary?.removingWork(workID)
+            nowRefetchRequest += 1
+            _ = await refresh()
+        } catch MobileAPIError.workRunning {
+            endWorkError = WorkEnding.runningRefusal
+            endWorkErrorWorkID = workID
+            nowRefetchRequest += 1
+        } catch MobileAPIError.invalidRequest {
+            // Gone already: Now refetches and the row leaves with it.
+            endWorkError = "This work is no longer there."
+            endWorkErrorWorkID = workID
+            nowRefetchRequest += 1
+        } catch MobileAPIError.reauthenticationRequired {
+            endWorkError = "Couldn't end the work: sign in again."
+            endWorkErrorWorkID = workID
+        } catch {
+            endWorkError = "Couldn't end the work. Check your connection and try again."
+            endWorkErrorWorkID = workID
+        }
+    }
+
     func withdrawNotification(_ notificationID: String) async {
         guard let accountSession, withdrawingNotificationID == nil else { return }
         interactionError = nil
@@ -1507,6 +1554,27 @@ final class AppModel {
         interactionError = nil
     }
 
+    // MARK: Connect a computer (docs/internal/product/plan/13-onboarding-wizard.md, journey E)
+
+    /// The wizard sheet, opened from Settings, the Live Activity (relo://setup) or the first sign-in of an account.
+    var presentsComputerSetup = false
+    /// A fresh sign-in asked for the wizard once the account's computers are known and there are none.
+    var computerSetupOfferPending = false
+    /// The code the wizard showed and its bind half, in the Keychain for the code's 30 minutes.
+    @ObservationIgnored var computerInviteStore: any ComputerInviteStoring = InMemoryComputerInviteStore()
+    @ObservationIgnored lazy var computerSetup = ConnectComputerModel(app: self)
+
+    func openComputerSetup() { presentsComputerSetup = true }
+
+    /// After a first sign-in: an account with no computer opens the wizard, once.
+    func offerComputerSetupIfNew() async {
+        guard computerSetupOfferPending, credential != nil else { return }
+        await refreshDevices()
+        guard case .ready = devices.phase else { return }
+        computerSetupOfferPending = false
+        if devices.computers.isEmpty, !computerSetup.hasPending { presentsComputerSetup = true }
+    }
+
     func openSecuritySettings() {
         securitySettingsRequests += 1
         securitySettingsNavigationPending = true
@@ -1516,8 +1584,16 @@ final class AppModel {
 
     /// Phones and computers of this account, and what waits for the owner's approval here.
     @ObservationIgnored let devices = EncryptionSecurityModel()
-    /// The request sheet on screen: a `dev_…` phone or `key_…` computer id.
+    /// The request sheet on screen: a `dev_…` phone, `key_…` computer or `brw_…` browser id.
     var presentedAccessRequestID: String?
+
+    /// The icon of the computer a History origin label names ("MacBook Pro" or "MacBook Pro · Work"): the
+    /// account's computers by name, else a laptop. Names come from the same login the cards were sent with.
+    func computerIcon(forOrigin label: String?) -> ComputerIcon {
+        guard let label, !label.isEmpty else { return .laptop }
+        let known = devices.computers.map(\.client).filter { $0.name == label || label.hasPrefix($0.name + " · ") }
+        return known.max { $0.name.count < $1.name.count }?.icon ?? .laptop
+    }
 
     func refreshDevices() async {
         await devices.refresh(credential: credential, client: apiClient)
@@ -1543,7 +1619,8 @@ final class AppModel {
         }
         guard let stored else { return (false, nil) }
         await devices.refresh(credential: stored, client: apiClient)
-        guard let request = devices.request(id: id) else { return (false, nil) }
+        // A browser is approved only on screen, after comparing its link code.
+        guard let request = devices.request(id: id), !request.isBrowser else { return (false, nil) }
         let approved = await devices.approve(request, credential: stored, approver: apiClient as? any DeviceApproving,
                                              signer: answerSigner?())
         return (approved, request.name)
@@ -2301,8 +2378,6 @@ final class AppModel {
                 let snapshot = try await cache.load()
                 guard ownsRegistration() else { return }
                 items = snapshot.items
-                agentSessions = snapshot.sessions ?? []
-                agentSessionsFetchedAt = snapshot.lastSuccessfulSyncAt ?? .now
                 useCachedHistory(snapshot.items)
                 await updateApplicationBadge()
                 guard ownsRegistration() else { return }

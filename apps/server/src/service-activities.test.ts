@@ -3,7 +3,7 @@ import { createApp } from "./app.js";
 import { createDatabase, type Database } from "./db.js";
 import { publicId } from "./ids.js";
 import { migrate } from "./migrate.js";
-import { createWebhookService } from "./services.js";
+import { createWebhookService } from "./webhooks/admin.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -42,16 +42,36 @@ suite("secret-bound service Live Activities", () => {
 
   afterAll(async () => db.end());
 
-  function hookPath(service: typeof serviceA, suffix: string): string {
-    return `${new URL(service.webhookUrl).pathname}${suffix}`;
-  }
-
   function request(service: typeof serviceA, suffix: string, init?: RequestInit): Promise<Response> {
-    return createApp(db,{ apnsMode: "sandbox" }).request(hookPath(service,suffix), {
+    return createApp(db,{ apnsMode: "sandbox" }).request(`/hooks${suffix}`, {
       ...init,
-      headers: { "content-type": "application/json", ...init?.headers },
+      headers: { "content-type": "application/json", authorization: `Bearer ${service.secret}`, ...init?.headers },
     });
   }
+
+  test("the secret travels only in a header, never in the URL", async () => {
+    const app = createApp(db,{ apnsMode: "sandbox" });
+    const body = JSON.stringify({ title: "Build done",body: "Release 7 is ready" });
+    const viaHeader = await app.request("/hooks",{ method: "POST", body,
+      headers: { "content-type": "application/json","idempotency-key": "secret-header","x-relo-webhook-secret": serviceA.secret } });
+    expect(viaHeader.status,await viaHeader.clone().text()).toBe(201);
+    expect(await viaHeader.json()).toMatchObject({ ok: true,idempotent: false });
+
+    const inPath = await app.request(`/hooks/${serviceA.secret}`,{ method: "POST", body,
+      headers: { "content-type": "application/json","idempotency-key": "secret-path" } });
+    expect(inPath.status).toBe(404);
+    const inPathBody = await inPath.json() as any;
+    expect(inPathBody).toMatchObject({ ok: false,error: "secret_in_url" });
+    expect(inPathBody.message).toEqual(expect.any(String));
+    expect(JSON.stringify(inPathBody)).not.toContain(serviceA.secret);
+
+    const noSecret = await app.request("/hooks",{ method: "POST", body,
+      headers: { "content-type": "application/json","idempotency-key": "secret-missing" } });
+    expect(noSecret.status).toBe(404);
+    expect(await noSecret.json()).toMatchObject({ ok: false,error: "unknown_webhook" });
+    expect((await db.query<{ count: number }>(
+      "SELECT count(*)::int AS count FROM notification_events WHERE principal_id=$1",[principalId])).rows[0]!.count).toBe(1);
+  });
 
   test("ordinary webhook withdrawal is service-scoped and idempotent", async () => {
     const sent = await request(serviceA,"",{
@@ -160,11 +180,9 @@ suite("secret-bound service Live Activities", () => {
 
   test("resolves and snapshots a service policy when appearance is omitted",async () => {
     const accountPolicy = {
-      preset: "steps",theme: "system",symbol: "automatic",
       colorStrategy: "fixed",accentColor: "#F2A65A",
     };
     const servicePolicy = {
-      preset: "terminal",theme: "dark",symbol: "build",
       colorStrategy: "fixed",accentColor: "#63B3FF",
     };
     await db.query("UPDATE owner_principals SET live_activity_policy=$2::jsonb WHERE id=$1",[
@@ -183,7 +201,7 @@ suite("secret-bound service Live Activities", () => {
     });
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({
-      activity: { style: "terminal",symbol: "build",accentColor: "#63B3FF" },
+      activity: { style: "standard",accentColor: "#63B3FF" },
     });
     const stored = (await db.query<any>(
       "SELECT presentation_policy,presentation_policy_source FROM live_activities WHERE start_idempotency_key=$1",
@@ -407,13 +425,13 @@ suite("secret-bound service Live Activities", () => {
       method: "POST", headers: { "idempotency-key": "rate-ordinary-2" }, body: ordinary,
     });
     expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ ok: false, error: "rate_limited" });
+    expect(await limited.json()).toMatchObject({ error: "rate_limited", scope: "account" });
     expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
 
     const accountLimited = await request(serviceB,"",{
       method: "POST", headers: { "idempotency-key": "rate-other-service" }, body: ordinary,
     });
     expect(accountLimited.status).toBe(429);
-    expect(await accountLimited.json()).toEqual({ ok: false, error: "rate_limited" });
+    expect(await accountLimited.json()).toMatchObject({ error: "rate_limited", scope: "account", retryAfterSeconds: expect.any(Number) });
   });
 });

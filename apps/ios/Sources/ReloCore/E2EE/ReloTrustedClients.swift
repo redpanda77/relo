@@ -1,6 +1,6 @@
 import Foundation
 
-/// Computers (CLI identity keys) this phone accepts sealed content from (docs/END-TO-END-ENCRYPTION.md).
+/// Computers (CLI identity keys) this phone accepts sealed content from (docs/ENCRYPTION-PROTOCOL.md).
 /// Like WhatsApp and Signal, the computers present when the phone first signs in are trusted
 /// automatically ("auto"); a computer that appears after that waits ("pending") until the owner approves
 /// it on this phone, the way a linked device is approved on the phone (docs/HARDENING.md, gap 3). A
@@ -12,15 +12,22 @@ public struct ReloClientKey: Codable, Equatable, Sendable, Identifiable {
     public var keyId: String
     public var publicKey: String
     public var changedAt: String
+    /// The icon the owner chose or the server guessed; nil from a server that does not send one.
+    public var icon: ComputerIcon?
+    /// Signed approvals of this key by the account's approvers (ReloComputerApproval); nil from an older server.
+    public var approvals: [ReloComputerApprovalSignature]?
 
     public var id: String { clientId }
 
-    public init(clientId: String, name: String, keyId: String, publicKey: String, changedAt: String) {
+    public init(clientId: String, name: String, keyId: String, publicKey: String, changedAt: String, icon: ComputerIcon? = nil,
+                approvals: [ReloComputerApprovalSignature]? = nil) {
         self.clientId = clientId
         self.name = name
         self.keyId = keyId
         self.publicKey = publicKey
         self.changedAt = changedAt
+        self.icon = icon
+        self.approvals = approvals
     }
 }
 
@@ -29,8 +36,10 @@ public struct ReloTrustedClient: Codable, Equatable, Sendable {
         public var at: Date
         /// The replaced key for a "security code changed" notice; absent for a new computer.
         public var previousKeyId: String?
-        /// "security_code_changed" or "new_computer"; absent in notices saved before this field existed.
+        /// "security_code_changed", "new_computer" or "approved_elsewhere"; absent in notices saved before this field existed.
         public var kind: String?
+        /// For "approved_elsewhere": the approver's name ("iPhone 18 Pro Max").
+        public var approver: String?
     }
 
     public var clientId: String
@@ -91,27 +100,52 @@ public struct ReloTrustedClients: Sendable {
     }
 
     /// Trust on first use: pins the computers present at first contact, holds any later computer as
-    /// pending, and re-pins a trusted computer's changed key with a notice.
+    /// pending, and re-pins a trusted computer's changed key with a notice. A pending or new computer whose
+    /// current key an approver pinned on this device signed (`approvers`: id → X9.63 key; ReloTrustedApprovers)
+    /// is trusted: approved once on any device, it opens on every one (docs/ENCRYPTION-PROTOCOL.md).
     @discardableResult
-    public func autoTrust(_ clients: [ReloClientKey], now: Date = Date()) throws -> Bool {
+    public func autoTrust(_ clients: [ReloClientKey], approvers: [String: Data] = [:], approverNames: [String: String] = [:],
+                          now: Date = Date()) throws -> Bool {
         var pinned = try store.load()
         var changed = false
         // The first computers are trusted silently; any computer after them waits for approval.
         let firstContact = pinned.isEmpty
+        let approvedNotice = { (approver: String) in
+            ReloTrustedClient.Notice(at: now, previousKeyId: nil, kind: "approved_elsewhere", approver: approverNames[approver])
+        }
         for client in clients {
             guard let key = try? ReloE2EE.data(base64URL: client.publicKey, length: 65, field: "client_key"),
                   ReloE2EE.keyID(publicKeyX963: key) == client.keyId else { continue }
+            let approvedBy = approvers.isEmpty ? nil : ReloComputerApproval.approver(of: client, pinned: approvers)
             let existing = pinned.firstIndex { $0.clientId == client.clientId }
-            if let existing, pinned[existing].publicKey == client.publicKey { continue }
+            if let existing, pinned[existing].publicKey == client.publicKey {
+                // Approved on another device: it opens here too. A computer declined here stays declined.
+                if pinned[existing].level == "pending", let approvedBy {
+                    pinned[existing].level = "auto"
+                    pinned[existing].verifiedAt = now
+                    pinned[existing].notice = approvedNotice(approvedBy)
+                    changed = true
+                }
+                continue
+            }
             let previous = existing.map { pinned[$0] }
             // A trusted computer's new key stays trusted (WhatsApp's "security code changed"); a new key
-            // behind a computer that was never approved still waits.
-            let trusted = previous.map(\.isTrusted) ?? firstContact
+            // behind a computer that was never approved still waits, unless an approver signed it.
+            let declined = previous?.level == "declined"
+            let trusted = !declined && ((previous.map(\.isTrusted) ?? firstContact) || approvedBy != nil)
+            let notice: ReloTrustedClient.Notice?
+            if let previous, previous.isTrusted {
+                notice = .init(at: now, previousKeyId: previous.keyId, kind: "security_code_changed")
+            } else if let approvedBy, trusted {
+                notice = approvedNotice(approvedBy)
+            } else if let previous {
+                notice = .init(at: now, previousKeyId: previous.keyId, kind: "new_computer")
+            } else {
+                notice = firstContact ? nil : .init(at: now, previousKeyId: nil, kind: "new_computer")
+            }
             let entry = ReloTrustedClient(
                 clientId: client.clientId, name: client.name, keyId: client.keyId, publicKey: client.publicKey,
-                verifiedAt: now, level: trusted ? "auto" : "pending",
-                notice: previous.map { .init(at: now, previousKeyId: $0.keyId, kind: trusted ? "security_code_changed" : "new_computer") }
-                    ?? (firstContact ? nil : .init(at: now, previousKeyId: nil, kind: "new_computer"))
+                verifiedAt: now, level: declined ? "declined" : trusted ? "auto" : "pending", notice: notice
             )
             if let existing { pinned[existing] = entry } else { pinned.append(entry) }
             changed = true

@@ -1,27 +1,25 @@
-import { Copy, KeyRound, Plus, Save, Webhook } from "lucide-react"
+import { Plus, Save, Webhook } from "lucide-react"
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Empty, Section } from "@/components/page"
+import { AnimatedHeight } from "@/components/atoms/animated-height"
+import { IconTile } from "@/components/atoms/icon-tile"
+import { ActionButton } from "@/components/molecules/action-button"
+import { OneTimeSecretPanel, type OneTimeSecret } from "@/components/molecules/one-time-secret-panel"
+import { Empty, List, Section } from "@/components/list"
 import {
-  ConnectionDisclosure,
-  ConnectionList,
   ConfirmationAction,
   DestructiveAction,
-  OperationStatus,
-} from "@/features/connections/components"
+} from "@/components/molecules/confirmation-action"
+import { OperationStatus } from "@/components/molecules/operation-status"
+import { DisclosureRow } from "@/features/connections/components"
 import type { ConnectionService } from "@/features/connections/types"
-import { formatConnectionDate } from "@/features/connections/utils"
-import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
+import { ReadableChip, ServiceAccessControl } from "@/features/connections/service-access"
+import { SERVICE_SCOPES } from "@/features/connections/types"
+import { relativeTime } from "@/lib/format"
+import { ColorAppearance } from "@/features/presentation-policy/color-appearance"
 import { systemPresentationPolicy } from "@/features/presentation-policy/types"
 import type {
   ConnectionsService,
@@ -59,7 +57,7 @@ function ServiceFields({
           defaultValue={service?.title}
           maxLength={80}
           placeholder="Service name"
-          className="min-h-11"
+         
           disabled={disabled}
           required
         />
@@ -73,7 +71,7 @@ function ServiceFields({
           inputMode="url"
           defaultValue={service?.imageUrl ?? ""}
           placeholder="https://…"
-          className="min-h-11"
+         
           disabled={disabled}
         />
       </div>
@@ -86,7 +84,7 @@ function ServiceFields({
           inputMode="url"
           defaultValue={service?.destinationUrl ?? ""}
           placeholder="https://…"
-          className="min-h-11"
+         
           disabled={disabled}
         />
       </div>
@@ -94,87 +92,23 @@ function ServiceFields({
   )
 }
 
-function OneTimeSecret({
-  value,
-  onDismiss,
-}: {
-  value: string
-  onDismiss(): void
-}) {
-  const fallbackRef = React.useRef<HTMLInputElement>(null)
-  const [status, setStatus] = React.useState("")
-  const [manualCopy, setManualCopy] = React.useState(false)
+/** What a service sends with: the endpoint (not secret) and the secret, which goes in a header and is shown once. */
+type IssuedCredential = { endpoint: string; secret: string }
 
-  async function copy() {
-    setManualCopy(false)
-    try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard API unavailable")
-      await navigator.clipboard.writeText(value)
-      setStatus("Webhook URL copied.")
-      return
-    } catch {
-      setManualCopy(true)
-      setStatus(
-        "Automatic clipboard access is unavailable. Select the URL below and copy it now."
-      )
-      window.requestAnimationFrame(() => fallbackRef.current?.select())
-    }
+function serviceSecret(value: IssuedCredential): OneTimeSecret {
+  return {
+    title: "One-time service secret",
+    hint: (
+      <>
+        Your service sends to the endpoint with this secret in a header:{" "}
+        <code className="font-mono text-xs">Authorization: Bearer hook_…</code>.
+      </>
+    ),
+    fields: [
+      { label: "Endpoint", value: value.endpoint },
+      { label: "Secret", value: value.secret, secret: true },
+    ],
   }
-
-  return (
-    <Card role="region" aria-labelledby="service-secret-heading">
-      <CardHeader>
-        <CardTitle
-          id="service-secret-heading"
-          className="flex items-center gap-2"
-        >
-          <KeyRound className="size-4" aria-hidden="true" />
-          One-time webhook URL
-        </CardTitle>
-        <CardDescription>
-          This value exists only in this browser session. Copy it before
-          dismissing; Relo cannot show it again.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button type="button" className="min-h-11" onClick={copy}>
-            <Copy aria-hidden="true" />
-            Copy secret URL
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={onDismiss}
-          >
-            Dismiss and clear
-          </Button>
-        </div>
-        {manualCopy ? (
-          <div className="space-y-2">
-            <Label htmlFor="one-time-service-url">Copy manually</Label>
-            <Input
-              ref={fallbackRef}
-              id="one-time-service-url"
-              value={value}
-              readOnly
-              className="min-h-11 font-mono text-xs"
-              onFocus={(event) => event.currentTarget.select()}
-            />
-          </div>
-        ) : null}
-        <p
-          className="text-sm text-muted-foreground"
-          role="status"
-          aria-live="polite"
-        >
-          {status}
-        </p>
-      </CardContent>
-    </Card>
-  )
 }
 
 function ServiceRow({
@@ -188,7 +122,7 @@ function ServiceRow({
   api: ConnectionsService
   onChange(service: ConnectionService): void
   onDelete(id: string): void
-  onSecret(value: string): void
+  onSecret(value: IssuedCredential): void
 }) {
   const [pending, setPending] = React.useState<
     "save" | "rotate" | "delete" | null
@@ -210,18 +144,15 @@ function ServiceRow({
     }
   }
 
+  const lastUsed = service.lastUsedAt ? `Last used ${relativeTime(service.lastUsedAt)}` : "Never used"
   return (
-    <li aria-busy={pending !== null}>
-      <div className="flex min-w-0 items-center gap-3 px-4 py-3.5">
-        <Webhook className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{service.title}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {service.destinationUrl ? `Opens ${service.destinationUrl}` : `Created ${formatConnectionDate(service.createdAt)}`}
-          </p>
-        </div>
-      </div>
-      <ConnectionDisclosure label="Manage">
+    <DisclosureRow
+      busy={pending !== null}
+      leading={<IconTile icon={Webhook} />}
+      title={service.title}
+      meta={service.destinationUrl ? `${lastUsed} · Opens ${service.destinationUrl}` : lastUsed}
+      badge={service.readableAllowed ? <ReadableChip /> : null}
+    >
         <div className="space-y-5">
           <form
             className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_auto] lg:items-end"
@@ -240,18 +171,37 @@ function ServiceRow({
             }}
           >
             <ServiceFields service={service} disabled={pending !== null} />
-            <Button
+            <ActionButton
               type="submit"
               variant="outline"
-              className="min-h-11"
               disabled={pending !== null}
+              pending={pending === "save"}
+              failed={Boolean(error)}
+              pendingLabel="Saving…"
+              successLabel="Saved"
             >
               <Save aria-hidden="true" />
-              {pending === "save" ? "Saving…" : "Save defaults"}
-            </Button>
+              Save defaults
+            </ActionButton>
           </form>
-          <PresentationPolicyControl
-            scopeLabel={service.title}
+          <ServiceAccessControl
+            service={service}
+            onSave={async (change) => {
+              const result = await api.editService(service.id, {
+                title: service.title,
+                imageUrl: service.imageUrl,
+                destinationUrl: service.destinationUrl,
+                ...change,
+              })
+              onChange({
+                ...service,
+                readableAllowed: result.service.readableAllowed,
+                scopes: result.service.scopes,
+              })
+            }}
+          />
+          <ColorAppearance
+            icon="cloud"
             initialPolicy={service.effectiveLiveActivityPolicy}
             initialSource={service.liveActivityPolicySource}
             canInherit
@@ -266,7 +216,7 @@ function ServiceRow({
               error={error}
               pendingLabel={
                 pending === "rotate"
-                  ? "Rotating secret URL…"
+                  ? "Rotating the secret…"
                   : pending === "delete"
                     ? "Deleting service…"
                     : "Saving service defaults…"
@@ -274,24 +224,31 @@ function ServiceRow({
             />
             <div className="ml-auto flex flex-col gap-2 sm:flex-row">
               <ConfirmationAction
-                label="Rotate URL"
-                title={`Rotate the secret URL for ${service.title}?`}
-                description="The previous webhook URL will stop working immediately. Copy the replacement before dismissing it."
-                pending={pending !== null}
+                label="Rotate secret"
+                title={`Rotate the secret for ${service.title}?`}
+                description="The previous secret stops working immediately. Copy the new one before dismissing it."
+                pending={pending === "rotate"}
+                disabled={pending !== null}
+                failed={Boolean(error)}
+                pendingLabel="Rotating…"
+                successLabel="Rotated"
                 variant="outline"
                 onConfirm={() =>
                   void run("rotate", async () => {
                     const result = await api.rotateService(service.id)
                     onChange({ ...service, prefix: result.service.prefix })
-                    onSecret(result.webhookUrl)
+                    onSecret({ endpoint: result.endpoint, secret: result.secret })
                   })
                 }
               />
               <DestructiveAction
                 label="Delete"
                 title={`Delete ${service.title}?`}
-                description="The webhook service and its current secret URL will stop working. This cannot be undone."
-                pending={pending !== null}
+                description="The webhook service and its current secret stop working. This cannot be undone."
+                pending={pending === "delete"}
+                disabled={pending !== null}
+                failed={Boolean(error)}
+                pendingLabel="Deleting…"
                 onConfirm={() =>
                   void run("delete", async () => {
                     await api.deleteService(service.id)
@@ -302,8 +259,7 @@ function ServiceRow({
             </div>
           </div>
         </div>
-      </ConnectionDisclosure>
-    </li>
+    </DisclosureRow>
   )
 }
 
@@ -318,13 +274,15 @@ export function WebhooksSection({
 }) {
   const [services, setServices] = React.useState(initial)
   const [creating, setCreating] = React.useState(false)
-  const [secret, setSecret] = React.useState<string | null>(null)
+  const [secret, setSecret] = React.useState<IssuedCredential | null>(null)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   return (
     <Section
+      id="webhooks"
       title="Webhooks"
+      count={services.length || undefined}
       action={
         <Button size="sm" variant="secondary" onClick={() => setCreating((value) => !value)}>
           <Plus aria-hidden="true" /> New webhook
@@ -332,11 +290,9 @@ export function WebhooksSection({
       }
     >
       <div className="space-y-4">
-        {secret ? (
-          <OneTimeSecret value={secret} onDismiss={() => setSecret(null)} />
-        ) : null}
-        {creating ? (
-          <div className="glass rounded-2xl p-4 sm:p-5">
+        <OneTimeSecretPanel value={secret ? serviceSecret(secret) : null} onDismiss={() => setSecret(null)} />
+        <AnimatedHeight show={creating}>
+          <div className="glass rounded-card p-4 sm:p-5">
             <form
               aria-busy={pending}
               className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_auto] lg:items-end"
@@ -367,11 +323,14 @@ export function WebhooksSection({
                           result.service.liveActivityPolicySource ??
                           services[0]?.liveActivityPolicySource ??
                           "system",
+                        readableAllowed: result.service.readableAllowed ?? false,
+                        scopes: result.service.scopes ?? [...SERVICE_SCOPES],
+                        lastUsedAt: null,
                         createdAt: new Date().toISOString(),
                       },
                       ...current,
                     ])
-                    setSecret(result.webhookUrl)
+                    setSecret({ endpoint: result.endpoint, secret: result.secret })
                     setCreating(false)
                     form.reset()
                   })
@@ -384,37 +343,37 @@ export function WebhooksSection({
               }}
             >
               <ServiceFields disabled={pending} />
-              <Button type="submit" className="min-h-11" disabled={pending}>
+              <ActionButton type="submit" pending={pending} failed={Boolean(error)} pendingLabel="Creating…" successLabel={null}>
                 <Webhook aria-hidden="true" />
-                {pending ? "Creating…" : "Create webhook"}
-              </Button>
+                Create webhook
+              </ActionButton>
             </form>
             <div className="mt-3">
               <OperationStatus
                 pending={pending}
                 error={error}
-                pendingLabel="Creating service and issuing its secret URL…"
+                pendingLabel="Creating the service and issuing its secret…"
               />
             </div>
           </div>
-        ) : null}
+        </AnimatedHeight>
 
-        {services.length ? (
-          <ConnectionList ariaLabel="Webhooks">
-            {services.map((service) => (
-              <ServiceRow
-                key={service.id}
-                service={service}
-                api={api}
-                onChange={(next) => setServices((current) => current.map((item) => (item.id === next.id ? next : item)))}
-                onDelete={(id) => setServices((current) => current.filter((item) => item.id !== id))}
-                onSecret={setSecret}
-              />
-            ))}
-          </ConnectionList>
-        ) : creating ? null : (
-          <Empty title="No webhooks yet" description="Create one to let a service send notifications with a secret URL." />
-        )}
+        <List
+          label="Webhooks"
+          items={services}
+          getKey={(service) => service.id}
+          empty={creating ? null : <Empty icon={<Webhook />} title="No webhooks yet" description="Create one to let a service send notifications, questions and cards with its own secret." />}
+        >
+          {(service) => (
+            <ServiceRow
+              service={service}
+              api={api}
+              onChange={(next) => setServices((current) => current.map((item) => (item.id === next.id ? next : item)))}
+              onDelete={(id) => setServices((current) => current.filter((item) => item.id !== id))}
+              onSecret={setSecret}
+            />
+          )}
+        </List>
       </div>
       {total > initial.length ? (
         <p className="mt-3 text-xs text-muted-foreground">Showing {initial.length} of {total}.</p>

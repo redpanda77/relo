@@ -54,7 +54,7 @@ afterEach(() => {
 })
 
 describe("DevicesSection", () => {
-  it("lists phones, computers and browsers with a plain encryption status", async () => {
+  it("lists phones and browsers with a plain encryption status", async () => {
     const service = fakeService({ devices: devices(), twoFactorEnabled: false })
     const { link } = await fakeLink({ status: "linked", browserId: "brw_this", identityKey: "A".repeat(87), linkedBy: "Owner iPhone" })
     render(<DevicesSection accountId="acct_1" service={service} link={link} />)
@@ -64,7 +64,8 @@ describe("DevicesSection", () => {
     expect(within(phones).getByText("Owner iPhone").closest("li")).toHaveTextContent("Can read your encrypted cards")
     expect(within(phones).getByText("iPhone Air").closest("li")).toHaveTextContent("Simulator")
     expect(within(phones).getByText("Test iPad").closest("li")).toHaveTextContent("Waiting for approval")
-    expect(within(screen.getByRole("list", { name: "Computers" })).getByText("Sends encrypted cards")).toBeInTheDocument()
+    expect(screen.queryByRole("list", { name: "Computers" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Add a computer" })).toBeNull()
     const browsers = screen.getByRole("list", { name: "Browsers" })
     expect(within(browsers).getByText("Chrome on macOS").closest("li")).toHaveTextContent("This browser")
     expect(within(browsers).getByText("Safari on macOS").closest("li")).toHaveTextContent("Not linked — can't read encrypted content")
@@ -98,7 +99,8 @@ describe("DevicesSection", () => {
     const row = (await screen.findByText("Test iPad")).closest("li")!
     expect(within(row).queryByRole("button", { name: "Approve" })).toBeNull()
     expect(within(row).getByRole("link", { name: "Link this browser from your iPhone first" })).toHaveAttribute("href", "#linked-browser")
-    expect(screen.getByRole("img", { name: "QR code to link this browser" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Send to my iPhone/ })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Scan a QR code/ })).toBeInTheDocument()
   })
 
   it("removes after a clear confirmation, and Decline removes a pending phone", async () => {
@@ -116,6 +118,16 @@ describe("DevicesSection", () => {
     fireEvent.click(within(pending).getByRole("button", { name: "Decline" }))
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Decline" }))
     await waitFor(() => expect(service.remove).toHaveBeenCalledWith(expect.objectContaining({ id: "dev_new" })))
+  })
+
+  it("lists computers on their own, with Add a computer, and no phones or browsers", async () => {
+    const service = fakeService({ devices: devices(), twoFactorEnabled: false })
+    render(<DevicesSection accountId="acct_1" service={service} link={null} scope="computers" />)
+    const computers = await screen.findByRole("list", { name: "Computers" })
+    expect(within(computers).getByText("Studio Mac")).toBeInTheDocument()
+    expect(screen.queryByRole("list", { name: "Phones" })).toBeNull()
+    expect(screen.queryByRole("list", { name: "Browsers" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Add a computer" })).toBeInTheDocument()
   })
 
   it("stays hidden on a server without the Devices route", async () => {

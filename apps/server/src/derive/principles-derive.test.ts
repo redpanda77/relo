@@ -51,3 +51,124 @@ describe("ADR 0008 principle invariants over derive()",() => {
     }
   });
 });
+
+describe("working layer: a delivered work (open, last round closed)",() => {
+  const delivered = { ...base,work: { ...base.work,lifecycle: "open" as const,finishedAt: null,seenAt: null,roundClosedAt: base.work.lastDeclaredAt } };
+  const run = (minutes: number,evidence: OwnerStateInput["evidence"] = { producer: "agent_session",session: null }) =>
+    deriveOwnerState({ ...delivered,evidence,now: at(minutes) });
+
+  test("it is the owner's turn: attention-free, not moving, not stale, on the Lock Screen as your turn",() => {
+    const result = run(1);
+    expect(result).toMatchObject({ state: "waiting_on_you",needsYou: null,lockScreen: "your_turn",now: "waiting_on_you" });
+    expect(result.nextChangeAt).not.toBeNull();
+    // The Lock Screen line lasts T_fresh; Now keeps "your turn" until the window ends.
+    expect(run(25)).toMatchObject({ state: "waiting_on_you",lockScreen: "none",now: "waiting_on_you" });
+  });
+
+  test("it never reads as moving or stale, for every producer type, the whole window",() => {
+    for (const evidence of evidences) {
+      for (let minutes = 0; minutes < 60; minutes += 5) expect(run(minutes,evidence).state).toBe("waiting_on_you");
+    }
+  });
+
+  test("it is your turn for 1 hour, then History as delivered, off Lock Screen and Now, and stays retired",() => {
+    expect(run(59)).toMatchObject({ state: "waiting_on_you",now: "waiting_on_you" });
+    for (const minutes of [60,61,8 * 60,12 * 60,24 * 60]) {
+      expect(run(minutes)).toMatchObject({ state: "done",lockScreen: "none",now: null });
+    }
+  });
+
+  test("a pending question still needs the owner; a write into a new round (round open again) moves it back",() => {
+    const asked = deriveOwnerState({ ...delivered,now: at(1),question: { standing: "pending",askedAt: at(0),openedAt: null } });
+    expect(asked.state).toBe("needs_you");
+    const reopened = deriveOwnerState({ ...base,work: { ...base.work,roundClosedAt: null },now: at(1) });
+    expect(reopened.state).toBe("moving");
+  });
+
+  test("nextChangeAt is where the output changes",() => {
+    const result = run(1);
+    const after = deriveOwnerState({ ...delivered,evidence: { producer: "agent_session",session: null },now: result.nextChangeAt! });
+    expect([after.state,after.lockScreen]).not.toEqual([result.state,result.lockScreen]);
+  });
+});
+
+describe("retiring and left open (12b-plan-ux 4.11)",() => {
+  const session = (phase: "working" | "stopped" | "ended",sinceMinutes: number) => ({
+    producer: "agent_session" as const,
+    session: { phase,phaseSince: at(sinceMinutes),lastSeenAt: at(sinceMinutes),openToolSince: null },
+  });
+  const open = { ...base,work: { ...base.work,lifecycle: "open" as const,finishedAt: null,seenAt: null,roundClosedAt: null } };
+  const delivered = { ...open,work: { ...open.work,roundClosedAt: at(0) } };
+  const run = (input: OwnerStateInput,minutes: number,evidence?: OwnerStateInput["evidence"]) =>
+    deriveOwnerState({ ...input,...(evidence ? { evidence } : {}),now: at(minutes) });
+
+  test("delivered: your turn at 59 minutes, History as delivered at 60",() => {
+    expect(run(delivered,59)).toMatchObject({ state: "waiting_on_you",now: "waiting_on_you" });
+    expect(run(delivered,60)).toMatchObject({ state: "done",now: null,lockScreen: "none" });
+  });
+
+  test("delivered with the session ended: the final card only, not in Now, then History",() => {
+    const ended = session("ended",1);
+    expect(run(delivered,5,ended)).toMatchObject({ state: "waiting_on_you",lockScreen: "your_turn",now: null });
+    // Like a finished item: the final card for T_done (15 minutes), then History.
+    expect(run(delivered,14,ended)).toMatchObject({ state: "waiting_on_you",lockScreen: "your_turn",now: null });
+    expect(run(delivered,16,ended)).toMatchObject({ state: "done",lockScreen: "none",now: null });
+    expect(run(delivered,21,ended)).toMatchObject({ state: "done",lockScreen: "none",now: null });
+  });
+
+  test("left open: the turn ended 4 minutes ago is still your turn, 6 minutes ago it is Quiet and dimmed (session idle)",() => {
+    const stopped = session("stopped",10);
+    expect(run(open,14,stopped)).toMatchObject({ state: "waiting_on_you",now: "waiting_on_you" });
+    expect(run(open,14,stopped).quietReason).toBeUndefined();
+    const quiet = run(open,16,stopped);
+    expect(quiet).toMatchObject({ state: "stale",lockScreen: "dimmed",now: "quiet",quietReason: "session_idle",quietSince: at(10) });
+    expect(quiet.nextChangeAt).toBe(at(70));
+    // Off the Lock Screen after an hour quiet, History after the existing history window.
+    expect(run(open,71,stopped)).toMatchObject({ state: "no_signal",lockScreen: "none",now: "quiet",quietReason: "session_idle" });
+    expect(run(open,10 + 8 * 60,stopped)).toMatchObject({ state: "left_unfinished",now: "since_you_looked" });
+    expect(run(open,10 + 8 * 60,stopped).quietReason).toBeUndefined();
+  });
+
+  test("a declared wait is not left open; a pending question is Needs you, not Quiet",() => {
+    const stopped = session("stopped",10);
+    const waiting = { ...open,work: { ...open.work,waitingSince: at(10) } };
+    expect(run(waiting,30,stopped)).toMatchObject({ state: "moving",now: "running" });
+    const asked = deriveOwnerState({ ...open,evidence: stopped,now: at(30),question: { standing: "pending",askedAt: at(10),openedAt: null } });
+    expect(asked).toMatchObject({ state: "needs_you",needsYou: "question" });
+    expect(asked.quietReason).toBeUndefined();
+  });
+
+  test("session ended with the round open: Quiet at once with session_ended, a finished item's final card for T_done, then History only",() => {
+    const ended = session("ended",1);
+    expect(run(open,2,ended)).toMatchObject({ state: "stale",lockScreen: "dimmed",now: "quiet",quietReason: "session_ended",quietSince: at(1) });
+    expect(run(open,2,ended).nextChangeAt).toBe(at(16));
+    expect(run(open,15,ended)).toMatchObject({ state: "stale",lockScreen: "dimmed",now: "quiet" });
+    // The 60-minute dimmed card is gone: after T_done it leaves the Lock Screen and Now, whatever the hour.
+    for (const minutes of [16,17,62,5 * 60,9 * 60]) {
+      expect(run(open,minutes,ended)).toMatchObject({ state: "no_signal",lockScreen: "none",now: null,quietReason: "session_ended" });
+    }
+  });
+
+  test("an ended session never writes the work: a work with a declared wait still reads as ended, a question still needs the owner",() => {
+    const ended = session("ended",1);
+    const waiting = { ...open,work: { ...open.work,waitingSince: at(1) } };
+    expect(run(waiting,30,ended)).toMatchObject({ state: "no_signal",now: null });
+    const asked = deriveOwnerState({ ...open,evidence: ended,now: at(30),question: { standing: "pending",askedAt: at(10),openedAt: null } });
+    expect(asked).toMatchObject({ state: "needs_you",needsYou: "question" });
+  });
+
+  test("without hooks the 20-minute rule stands, with no_update since the last write",() => {
+    expect(run(open,19,{ producer: "agent_session",session: null }).quietReason).toBeUndefined();
+    expect(run(open,21,{ producer: "agent_session",session: null }))
+      .toMatchObject({ state: "stale",lockScreen: "dimmed",now: "quiet",quietReason: "no_update",quietSince: at(0) });
+    for (const producer of ["script","service"] as const) {
+      expect(run(open,25,{ producer,leaseUntil: null })).toMatchObject({ state: "stale",quietReason: "no_update" });
+    }
+  });
+
+  test("a running turn is never quiet",() => {
+    const working = session("working",19);
+    expect(run(open,20,working).state).toBe("working_quietly");
+    expect(run(open,20,working).quietReason).toBeUndefined();
+  });
+});

@@ -1,10 +1,11 @@
 /**
- * This Dashboard as a linked browser (docs/END-TO-END-ENCRYPTION.md, "Linked browsers"): keeps its
+ * This Dashboard as a linked browser (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers"): keeps its
  * keys, registers them, learns whether a trusted phone linked it, trusts the account's computers on
  * first use, and fetches the envelopes sealed to it. Plaintext never leaves this module's callers.
  */
+import { signAnswer, type AnswerAction, type AnswerSignature } from "./answer"
 import { b64u, copy, fromB64u, type Bytes } from "./bytes"
-import { approveDeviceSigningInput, keyId, openEnvelope } from "./envelope"
+import { approveComputerSigningInput, approveDeviceSigningInput, keyId, linkSigningInput, openEnvelope, verifyBytes } from "./envelope"
 import {
   ensureBrowserKeys,
   indexedDbStore,
@@ -25,7 +26,49 @@ export type BrowserLinkState =
 
 type Fetcher = typeof fetch
 
-export type TrustedClient = { keyId: string; publicKey: string; name: string }
+const LINK_REQUEST_ERRORS = ["no_phone", "too_soon", "already_linked", "browser_not_found"] as const
+export type LinkRequestError = (typeof LINK_REQUEST_ERRORS)[number] | "not_ready" | "failed"
+export type LinkRequestResult = { ok: true; phones: number } | { ok: false; error: LinkRequestError }
+
+/**
+ * The browser's link code: the first three groups of its identity key's fingerprint, the same Signal-style chunks
+ * the phones and the CLI use (5200 rounds of SHA-512). Both screens show it; the owner approves when they match.
+ */
+export async function linkCode(identityKey: string): Promise<string> {
+  const key = fromB64u(identityKey)
+  let hash = concat(new Uint8Array(2), key)
+  for (let i = 0; i < 5200; i += 1) hash = new Uint8Array(await crypto.subtle.digest("SHA-512", concat(hash, key)))
+  const groups: string[] = []
+  for (let offset = 0; offset < 15; offset += 5) {
+    let value = 0
+    for (const byte of hash.subarray(offset, offset + 5)) value = value * 256 + byte
+    groups.push(String(value % 100_000).padStart(5, "0"))
+  }
+  return groups.join(" ")
+}
+
+function concat(a: Uint8Array, b: Uint8Array) {
+  const out = new Uint8Array(a.length + b.length)
+  out.set(a, 0)
+  out.set(b, a.length)
+  return out
+}
+
+/**
+ * A computer this browser knows. `level` "pending": it signed in after this browser's first contact and nobody this
+ * browser trusts approved it yet; absent (from before levels) means trusted.
+ */
+export type TrustedClient = { keyId: string; publicKey: string; name: string; level?: "auto" | "pending" | "declined"; approvedBy?: string }
+/** An approver this browser trusts: its signatures over computers count here (docs/ENCRYPTION-PROTOCOL.md). */
+type PinnedApprover = { id: string; name: string; identityKey: string }
+type ListedApproval = { approverId: string; signedAt: string; signature: string }
+type ListedComputer = { clientId: string; keyId: string; publicKey: string; name: string; approvals: ListedApproval[] }
+type ListedApprover = {
+  id: string; name: string; identityKey: string
+  vouchedBy: { approverId: string; signedAt: string; signature: string; statement: string } | null
+}
+/** A browser's link counts this long after the phone signed it (the CLI's LINK_DAYS). */
+const LINK_LIFETIME_MS = 14 * 86_400_000
 
 const SEALED_IDS_PER_REQUEST = 100
 const ROTATION_CHECK_MS = 3_600_000
@@ -87,6 +130,11 @@ export class BrowserLink {
 
   getState = (): BrowserLinkState => this.state
 
+  /** What the iPhone calls this browser ("Chrome on macOS"). */
+  get displayName(): string {
+    return this.name
+  }
+
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
     return () => {
@@ -110,6 +158,8 @@ export class BrowserLink {
   start(): Promise<void> {
     this.started ??= this.refreshKeys().catch((cause: unknown) => {
       this.setState({ status: "error", message: cause instanceof Error ? cause.message : "Browser keys are unavailable." })
+      // A failed start (a dropped request right after linking) is not remembered: the next caller retries.
+      this.started = null
     })
     return this.started
   }
@@ -191,7 +241,25 @@ export class BrowserLink {
   }
 
   /**
-   * Approves a new phone the way a trusted phone does (docs/END-TO-END-ENCRYPTION.md, "Approving
+   * Asks the account's trusted phones to approve this browser (docs/ENCRYPTION-PROTOCOL.md, "Linking (approval on
+   * the iPhone)"): a notification opens the request there, and the owner approves when both show the link code.
+   */
+  async requestLink(): Promise<LinkRequestResult> {
+    if (!this.keys) return { ok: false, error: "not_ready" }
+    const response = await this.fetcher(`/api/dashboard/browser/${encodeURIComponent(this.keys.browserId)}/link-request`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { accept: "application/json" },
+    })
+    const payload = await readJson(response)
+    if (response.ok) return { ok: true, phones: typeof payload?.phones === "number" ? payload.phones : 1 }
+    const error = payload?.error
+    if (error === "already_linked") void this.checkLinked().catch(() => undefined)
+    return { ok: false, error: (LINK_REQUEST_ERRORS as readonly unknown[]).includes(error) ? (error as LinkRequestError) : "failed" }
+  }
+
+  /**
+   * Approves a new phone the way a trusted phone does (docs/ENCRYPTION-PROTOCOL.md, "Approving
    * from a linked browser"): this browser's non-extractable identity key signs the phone's id and
    * identity key, with this browser's id as the approver. Only a linked browser signs.
    */
@@ -202,6 +270,35 @@ export class BrowserLink {
     const message = approveDeviceSigningInput({ ...target, approverDeviceId: this.keys.browserId, signedAt })
     const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, this.keys.identity.privateKey, message)
     return { browserId: this.keys.browserId, identityKey: target.identityKey, signedAt, signature: b64u(copy(signature)) }
+  }
+
+  /**
+   * Signs an answer the way a phone does (docs/ENCRYPTION-PROTOCOL.md, "Answering from a linked
+   * browser"), with this browser's id as the answering device. `question` is the context of the sealed
+   * question this browser opened (openQuestion). Only a linked browser signs.
+   */
+  async signAnswer(
+    target: { interactionId: string; notificationId: string; action: AnswerAction; optionId?: string; question?: string },
+    now = this.now()
+  ): Promise<{ browserId: string; signature: AnswerSignature }> {
+    await this.start()
+    if (!this.keys || !this.isLinked()) throw new Error("Link this browser from your iPhone first.")
+    const signature = await signAnswer({ identity: this.keys.identity, browserId: this.keys.browserId, ...target, now })
+    return { browserId: this.keys.browserId, signature }
+  }
+
+  /**
+   * Opens a sealed question's envelope (by its notification id) for this browser: its text and the
+   * context an answer binds to. Null when this browser cannot read it: then it cannot answer it.
+   */
+  async openQuestion(notificationId: string): Promise<{ context: string; content: Record<string, unknown> } | null> {
+    const opener = await this.opener()
+    if (!opener) return null
+    const envelope = (await opener.fetchEnvelopes([notificationId]))[notificationId]
+    if (!envelope || typeof envelope !== "object" || (envelope as { kind?: unknown }).kind !== "question") return null
+    const content = await opener.open(envelope)
+    if (!content || typeof content !== "object") return null
+    return { context: String((envelope as { context: unknown }).context), content: content as Record<string, unknown> }
   }
 
   /** Content envelopes by id; a 403 means this browser is no longer linked. */
@@ -227,39 +324,177 @@ export class BrowserLink {
   }
 
   /**
-   * The account's computers, trusted on first use and remembered. A changed key for the same
-   * computer is accepted, with a note in the console.
+   * The account's computers (docs/ENCRYPTION-PROTOCOL.md, "Computers are approved once"): the ones present at this
+   * browser's first contact are trusted; a later one opens only once an approver this browser trusts signed its
+   * current key, or the owner approves it here. A trusted computer's changed key stays trusted, noted in the console.
    */
   async trustedSenders(): Promise<Map<string, Bytes>> {
+    const clients = await this.refreshComputers()
+    return new Map(Object.values(clients).filter((client) => (client.level ?? "auto") === "auto")
+      .map((client) => [client.keyId, fromB64u(client.publicKey, { length: 65 })]))
+  }
+
+  /** Computers waiting for approval in this browser: approving one here also opens it on every other device. */
+  async pendingComputers(): Promise<Array<{ clientId: string; name: string }>> {
+    const clients = await this.refreshComputers()
+    return Object.entries(clients).filter(([, client]) => client.level === "pending").map(([clientId, client]) => ({ clientId, name: client.name }))
+  }
+
+  /** The owner approves a waiting computer in this browser: it opens here, and this browser's signature opens it elsewhere. */
+  async approveComputer(clientId: string): Promise<void> {
+    const storeKey = `clients:${this.accountId}`
+    const clients = (await this.store.get<Record<string, TrustedClient>>(storeKey)) ?? {}
+    const client = clients[clientId]
+    if (!client) throw new Error("This computer is no longer listed.")
+    clients[clientId] = { ...client, level: "auto", approvedBy: undefined }
+    await this.store.set(storeKey, clients)
+    await this.signComputerApproval({ clientId, publicKey: client.publicKey })
+  }
+
+  private signedApprovals = new Set<string>()
+
+  /**
+   * Approves a computer whose key the caller already verified out of band (the Connect a computer wizard checks the
+   * code's binding). `not_linked` when this browser cannot sign; a repeat or a 409 (key changed, already approved) is
+   * `approved` without a second request, never an error.
+   */
+  async approveBoundComputer(clientId: string, identityKey: string): Promise<"approved" | "not_linked" | "failed"> {
+    if (!this.keys || !this.isLinked()) return "not_linked"
+    return (await this.signComputerApproval({ clientId, publicKey: identityKey })) ? "approved" : "failed"
+  }
+
+  /** Signs and sends this browser's approval of a computer's current key; only a linked browser approves. */
+  private async signComputerApproval(client: { clientId: string; publicKey: string }): Promise<boolean> {
+    if (!this.keys || !this.isLinked()) return false
+    const marker = `${client.clientId}|${client.publicKey}`
+    if (this.signedApprovals.has(marker)) return true
+    this.signedApprovals.add(marker)
+    const signedAt = new Date(this.now()).toISOString()
+    const message = approveComputerSigningInput({ clientId: client.clientId, identityKey: client.publicKey, approverId: this.keys.browserId, signedAt })
+    const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, this.keys.identity.privateKey, message)
+    try {
+      const response = await this.fetcher(`/api/dashboard/computers/${encodeURIComponent(client.clientId)}/approve`, {
+        method: "POST", credentials: "same-origin",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ browserId: this.keys.browserId, identityKey: client.publicKey, signedAt, signature: b64u(copy(signature)) }),
+      })
+      if (response.status >= 500) { this.signedApprovals.delete(marker); return false }
+      // 409: the key changed or is already approved; any other refusal (403 approver_not_allowed, 400) is not an approval.
+      return response.ok || response.status === 409
+    } catch {
+      this.signedApprovals.delete(marker)
+      return false
+    }
+  }
+
+  private async fetchJson(path: string): Promise<Record<string, unknown> | null> {
+    const response = await this.fetcher(path, { credentials: "same-origin", headers: { accept: "application/json" } })
+    return response.ok ? await readJson(response) : null
+  }
+
+  /**
+   * Approvers this browser trusts: at its first contact, itself and the approvers then listed; after that, one more
+   * only when an approver already pinned vouched for its current key (a device approval, or a phone's link).
+   */
+  private async pinApprovers(listed: ListedApprover[]): Promise<Map<string, Bytes>> {
+    const storeKey = `approvers:${this.accountId}`
+    let pinned = (await this.store.get<PinnedApprover[]>(storeKey)) ?? []
+    const before = JSON.stringify(pinned)
+    if (pinned.length === 0) {
+      pinned = listed.map(({ id, name, identityKey }) => ({ id, name, identityKey }))
+    } else {
+      for (let grew = true; grew;) {
+        grew = false
+        for (const approver of listed) {
+          if (pinned.some((entry) => entry.id === approver.id && entry.identityKey === approver.identityKey)) continue
+          const voucher = approver.vouchedBy
+          const by = voucher ? pinned.find((entry) => entry.id === voucher.approverId) : undefined
+          if (!voucher || !by || voucher.approverId === approver.id) continue
+          if (voucher.statement === "link" && !(this.now() - Date.parse(voucher.signedAt) < LINK_LIFETIME_MS)) continue
+          const message = voucher.statement === "approve-device"
+            ? approveDeviceSigningInput({ deviceId: approver.id, identityKey: approver.identityKey, approverDeviceId: voucher.approverId, signedAt: voucher.signedAt })
+            : voucher.statement === "link"
+              ? linkSigningInput({ browserId: approver.id, identityKey: approver.identityKey, phoneDeviceId: voucher.approverId, signedAt: voucher.signedAt })
+              : null
+          if (!message || !(await verifies(by.identityKey, message, voucher.signature))) continue
+          pinned = [...pinned.filter((entry) => entry.id !== approver.id), { id: approver.id, name: approver.name, identityKey: approver.identityKey }]
+          grew = true
+        }
+      }
+    }
+    if (this.keys && !pinned.some((entry) => entry.id === this.keys!.browserId && entry.identityKey === this.keys!.identity.publicKey)) {
+      pinned = [...pinned.filter((entry) => entry.id !== this.keys!.browserId), { id: this.keys.browserId, name: "This browser", identityKey: this.keys.identity.publicKey }]
+    }
+    if (JSON.stringify(pinned) !== before) await this.store.set(storeKey, pinned)
+    const keys = new Map<string, Bytes>()
+    for (const entry of pinned) {
+      try {
+        keys.set(entry.id, fromB64u(entry.identityKey, { length: 65 }))
+      } catch {
+        // A malformed pin opens nothing.
+      }
+    }
+    return keys
+  }
+
+  /** Lists the account's computers and approvers and updates what this browser trusts; offline keeps what it knew. */
+  private async refreshComputers(): Promise<Record<string, TrustedClient>> {
     const storeKey = `clients:${this.accountId}`
     const remembered = (await this.store.get<Record<string, TrustedClient>>(storeKey)) ?? {}
-    let next = { ...remembered }
+    let listed: ListedComputer[]
+    let approvers: ListedApprover[]
     try {
-      const response = await this.fetcher("/api/dashboard/client-keys", { credentials: "same-origin", headers: { accept: "application/json" } })
-      const payload = response.ok ? await readJson(response) : null
-      if (Array.isArray(payload?.clients)) {
-        // Trust on first use: a computer stays trusted once seen; the list only adds or updates keys.
-        next = { ...remembered }
-        for (const client of payload.clients as Array<Record<string, unknown>>) {
-          if (typeof client.clientId !== "string" || typeof client.keyId !== "string" || typeof client.publicKey !== "string") continue
-          let publicKey: Bytes
-          try {
-            publicKey = fromB64u(client.publicKey, { length: 65 })
-          } catch {
-            continue
-          }
-          if ((await keyId(publicKey)) !== client.keyId) continue
-          const name = typeof client.name === "string" ? client.name : client.clientId
-          const known = remembered[client.clientId]
-          if (known && known.publicKey !== client.publicKey) console.info(`Relo: the security code for ${name} changed; its new key is trusted.`)
-          next[client.clientId] = { keyId: client.keyId, publicKey: client.publicKey, name }
-        }
-        await this.store.set(storeKey, next)
-      }
+      const [clients, approverList] = await Promise.all([this.fetchJson("/api/dashboard/client-keys"), this.fetchJson("/api/dashboard/approvers")])
+      if (!Array.isArray(clients?.clients)) return remembered
+      listed = (clients.clients as Array<Record<string, unknown>>).flatMap((client) =>
+        typeof client.clientId === "string" && typeof client.keyId === "string" && typeof client.publicKey === "string"
+          ? [{ clientId: client.clientId, keyId: client.keyId, publicKey: client.publicKey,
+            name: typeof client.name === "string" ? client.name : client.clientId,
+            approvals: Array.isArray(client.approvals) ? client.approvals as ListedApproval[] : [] }]
+          : [])
+      approvers = Array.isArray(approverList?.approvers) ? approverList.approvers as ListedApprover[] : []
     } catch {
       // Offline or an older server: the computers remembered earlier still open what they sealed.
+      return remembered
     }
-    return new Map(Object.values(next).map((client) => [client.keyId, fromB64u(client.publicKey, { length: 65 })]))
+    const pinned = await this.pinApprovers(approvers)
+    const firstContact = Object.keys(remembered).length === 0
+    const next = { ...remembered }
+    for (const client of listed) {
+      let publicKey: Bytes
+      try {
+        publicKey = fromB64u(client.publicKey, { length: 65 })
+      } catch {
+        continue
+      }
+      if ((await keyId(publicKey)) !== client.keyId) continue
+      let approvedBy: string | undefined
+      for (const approval of client.approvals) {
+        const key = pinned.get(approval.approverId)
+        const message = approveComputerSigningInput({ clientId: client.clientId, identityKey: client.publicKey, approverId: approval.approverId, signedAt: approval.signedAt })
+        if (key && await verifies(b64u(key), message, approval.signature)) {
+          approvedBy = approvers.find((approver) => approver.id === approval.approverId)?.name ?? approval.approverId
+          break
+        }
+      }
+      const known = remembered[client.clientId]
+      if (known && known.publicKey === client.publicKey) {
+        if (known.level === "pending" && approvedBy) next[client.clientId] = { ...known, level: "auto", approvedBy }
+        continue
+      }
+      const knownTrusted = known ? (known.level ?? "auto") === "auto" : false
+      if (known && knownTrusted) console.info(`Relo: the security code for ${client.name} changed; its new key is trusted.`)
+      const level = known?.level === "declined" ? "declined" : knownTrusted || (!known && firstContact) || approvedBy ? "auto" : "pending"
+      next[client.clientId] = { keyId: client.keyId, publicKey: client.publicKey, name: client.name, level, ...(approvedBy ? { approvedBy } : {}) }
+    }
+    await this.store.set(storeKey, next)
+    // Every computer this browser trusts counts on the account's other devices too: sign the ones not signed yet.
+    for (const client of listed) {
+      if ((next[client.clientId]?.level ?? "auto") !== "auto" || next[client.clientId]?.publicKey !== client.publicKey) continue
+      if (this.keys && client.approvals.some((approval) => approval.approverId === this.keys!.browserId)) continue
+      void this.signComputerApproval(client)
+    }
+    return next
   }
 
   /** An opener for the sealed-content transform, or null while this browser is not linked. */
@@ -286,6 +521,15 @@ export type SealedOpener = {
   fetchEnvelopes(ids: string[]): Promise<Record<string, unknown>>
   /** The opened content, or null when this browser cannot open it. */
   open(envelope: unknown): Promise<unknown>
+}
+
+/** A raw r||s signature (b64u) over `message` by an X9.63 public key (b64u). */
+async function verifies(publicKey: string, message: Bytes, signature: string): Promise<boolean> {
+  try {
+    return await verifyBytes(fromB64u(publicKey, { length: 65 }), message, fromB64u(signature, { length: 64 }))
+  } catch {
+    return false
+  }
 }
 
 let current: BrowserLink | null = null

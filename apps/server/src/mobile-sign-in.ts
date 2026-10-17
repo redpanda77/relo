@@ -157,7 +157,9 @@ export function registerMobileSignInRoutes(app: Hono, db: Database, accountAuth:
     const account = await getOwnerAccount(db, accountAuth, context.req.raw.headers);
     if (!account) {
       const next = `/mobile/sign-in${new URL(context.req.url).search}`;
-      return context.redirect(`/sign-in?next=${encodeURIComponent(next)}`);
+      // "Create account" in the app arrives as mode=sign-up: the Dashboard's sign-in page opens its sign-up form.
+      const signUp = context.req.query("mode") === "sign-up" ? "&mode=sign-up" : "";
+      return context.redirect(`/sign-in?next=${encodeURIComponent(next)}${signUp}`);
     }
     return securePage(context, approvalPage(request.data, account.user, origin));
   });

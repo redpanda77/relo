@@ -26,9 +26,14 @@ test("principle 4: an empty plan is never complete (no placeholder counts as pro
   assert.equal(planComplete(EMPTY_WORK_PLAN),false);
 });
 
-test("principle 2: the producer may jump to any step; the current one is marked done",() => {
+test("principle 2: the producer may jump to any step; the current one and the open steps passed are marked done",() => {
   const plan = run([{ op: "set",steps: [{ label: "Read" },{ label: "Change" },{ label: "Check" }] },{ op: "step",id: "s3" }]);
-  assert.equal(shape(plan),"s1:done s2:open s3:current");
+  assert.equal(shape(plan),"s1:done s2:done s3:current");
+});
+
+test("principle 2: jumping back to redo a step leaves the one left behind open, never done",() => {
+  const plan = run([{ op: "set",steps: [{ label: "Read" },{ label: "Change" },{ label: "Check" }] },{ op: "step",id: "s3" },{ op: "step",id: "s2" }]);
+  assert.equal(shape(plan),"s1:done s2:current s3:open");
 });
 
 test("principle 2: next past the last step completes the plan",() => {

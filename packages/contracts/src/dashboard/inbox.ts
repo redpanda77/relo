@@ -1,9 +1,15 @@
 import { z } from "zod"
 import { deliveryEvidenceItemSchema } from "../delivery-evidence.js"
-import { agentSessionListSchema } from "../agent-sessions.js"
-import { nowSummarySchema } from "../owner-state.js"
+import { absenceSchema,nowSummarySchema } from "../owner-state.js"
 
 const nullableDate = z.string().nullable()
+
+/**
+ * Agent sessions (`ags_…`) whose sealed names envelopes name the handles on this page. Ids only: a
+ * linked browser opens them (GET /api/dashboard/sealed) to show names where the page's own
+ * envelopes carry none; the server never sends a sealed name in the page.
+ */
+export const namesFromSchema = z.array(z.string().regex(/^ags_[A-Za-z0-9-]{1,64}$/)).max(20).optional()
 
 export const inboxShellSchema = z.object({
   title: z.string(),
@@ -79,10 +85,12 @@ const activitySummarySchema = z.object({
   // Card digest, additive: matches what the iPhone History row shows.
   outcome: z.enum(["completed", "failed"]).nullable().optional(),
   steps: z
-    .object({ done: z.number(), total: z.number(), current: z.string().nullable() })
+    .object({ done: z.number(), total: z.number(), current: z.string().nullable(), currentIndex: z.number().optional(), fill: z.number().optional() })
     .nullable()
     .optional(),
   updates: z.number().nullable().optional(),
+  /** Why the work left the screen or dimmed (the server's derivation); absent for work that needs none. Words: `absenceText`. */
+  absence: absenceSchema.optional(),
 })
 
 const questionSchema = z.object({
@@ -208,9 +216,9 @@ export const inboxOverviewSchema = z.object({
   approvalPagination: paginationSchema,
   recentNotifications: z.array(notificationSummarySchema),
   runningActivities: z.array(notificationSummarySchema).optional(),
-  sessions: agentSessionListSchema.optional(),
   /** The derived Now (`/dashboard?since=<ISO>`), the same summary phones read from GET /api/now (no sealed names). */
   now: nowSummarySchema.optional(),
+  namesFrom: namesFromSchema,
 })
 
 export const notificationHistorySchema = z.object({
@@ -219,25 +227,26 @@ export const notificationHistorySchema = z.object({
   route: z.object({
     path: z.string(),
     page: z.number(),
+    /**
+     * History's filters, applied on the server across every page. Kinds and states are the owner's
+     * words (as on the iPhone); `q` searches only readable fields (sealed items match by source).
+     */
     filters: z.object({
-      kind: z
-        .enum(["notification", "approval", "question", "live_activity"])
-        .nullable(),
+      kind: z.enum(["message", "decision", "live_activity", "response"]).nullable(),
       state: z
-        .enum([
-          "active",
-          "recorded",
-          "ended",
-          "responded",
-          "expired",
-          "replaced",
-          "canceled",
-        ])
+        .enum(["running", "done", "failed", "stopped", "answered", "missed"])
         .nullable(),
       project: z.string().nullable(),
+      source: z.string().nullable().default(null),
+      computer: z.string().nullable().default(null),
+      q: z.string().nullable().default(null),
     }),
   }),
-  filterOptions: z.object({ projects: z.array(z.string()) }),
+  filterOptions: z.object({
+    projects: z.array(z.string()),
+    sources: z.array(z.string()).default([]),
+    computers: z.array(z.string()).default([]),
+  }),
   shell: inboxShellSchema,
   unread: z.object({
     total: z.number(),
@@ -245,6 +254,7 @@ export const notificationHistorySchema = z.object({
   }).optional(),
   notifications: z.array(notificationSummarySchema),
   pagination: paginationSchema,
+  namesFrom: namesFromSchema,
 })
 
 export const deliveryHistorySchema = z.object({
@@ -289,6 +299,34 @@ export const notificationDetailSchema = z.object({
   activity: activitySummarySchema
     .extend({
       stepItems: z.array(z.object({ label: z.string(), state: z.string() })).optional(),
+      // The work's plan as the phone reads it (plan 12b): steps with parents and rounds, and the rounds.
+      // Absent on a card that is not a plan; labels are absent when sealed (opened by step id from the card text).
+      plan: z
+        .array(
+          z.object({
+            id: z.string(),
+            state: z.enum(["open", "current", "done", "skipped"]),
+            label: z.string().optional(),
+            parent: z.string().optional(),
+            round: z.number().int().positive().optional(),
+            detail: z.string().optional(),
+            startedAt: z.string().optional(),
+            doneAt: z.string().optional(),
+          })
+        )
+        .optional(),
+      rounds: z
+        .array(
+          z.object({
+            n: z.number().int().positive(),
+            state: z.enum(["open", "closed"]),
+            title: z.string().optional(),
+            outcome: z.string().optional(),
+            openedAt: z.string().optional(),
+            closedAt: z.string().optional(),
+          })
+        )
+        .optional(),
       threadHistory: z.array(
         z.object({
           id: z.string(),
@@ -361,6 +399,8 @@ export const notificationDetailSchema = z.object({
     .nullable(),
   interaction: z
     .object({
+      /** The question's id (`int_…`), so a linked browser can answer it. */
+      id: z.string().optional(),
       kind: z.string(),
       encrypted: z.boolean().optional(),
       state: z.string(),
@@ -384,6 +424,7 @@ export const notificationDetailSchema = z.object({
       createdAt: nullableDate,
     })
   ),
+  namesFrom: namesFromSchema,
 })
 
 export const inboxDashboardBootstrapSchema = z.discriminatedUnion("kind", [

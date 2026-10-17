@@ -18,27 +18,51 @@ struct NotificationDetailView: View {
         return model.decisionAvailability(draft.identity).permitsSubmission
             && !model.responseIsQueued(for: item.id) && !model.responseIsAccepted(for: item.id)
     }
+    /// The item's row in the Now summary: the server's state for it.
+    private var nowItem: NowItem? { model.nowSummary?.allItems.first { $0.notificationId == currentItem.id } }
     /// Stale only when the server says so (the item's owner state in the Now summary), never by the local clock.
-    private var stale: Bool {
-        model.nowSummary?.allItems.first { $0.notificationId == currentItem.id }?.owner.state == .stale
-    }
+    private var stale: Bool { nowItem?.owner.state == .stale }
     /// A sealed item this iPhone could not open says why, instead of an empty body.
     private var messageText: String? { currentItem.content?.body ?? presentation.subtitle ?? currentItem.unreadableLine }
-    /// What the header does not already say; empty means no About section.
-    private var aboutRows: [(label: String, value: String, monospaced: Bool)] {
+    /// Where and when, below the work itself: the reference facts, one per row.
+    private var detailRows: [(label: String, value: String, monospaced: Bool)] {
         let context = InboxHierarchyProjection.context(for: currentItem)
+        let row = HistoryRowProjection.row(currentItem, now: model.attentionDate)
         var rows: [(label: String, value: String, monospaced: Bool)] = []
-        if let task = context?.taskTitle, !task.isEmpty { rows.append(("Task", task, false)) }
-        if let computer = context?.computer, !computer.isEmpty { rows.append(("Computer", computer, false)) }
         if let interaction = currentItem.interaction, interaction.state == .pending {
             rows.append(("Respond by", interaction.expiresAt.formatted(date: .omitted, time: .shortened), false))
         }
+        if let task = context?.taskTitle, !task.isEmpty, task != presentation.title { rows.append(("Task", task, false)) }
+        if let topic = row.topic { rows.append(("Session", topic, false)) }
+        rows.append(("Source", row.source.name, false))
+        if let project = row.project { rows.append(("Project", project.name, false)) }
+        if let computer = context?.computer ?? row.origin, !computer.isEmpty { rows.append(("Computer", computer, false)) }
+        let started = row.startedAt ?? currentItem.createdAt
+        rows.append(("Started", started.formatted(date: .abbreviated, time: .shortened), false))
+        if let duration = row.duration { rows.append(("Took", ReloMissionTimeline.format(duration), true)) }
+        if let updates = row.updates, updates > 1 { rows.append(("Updates", "\(updates)", false)) }
+        if currentItem.kind != .liveActivity { rows.append(("Type", row.type, false)) }
         return rows
     }
 
     private var asksNow: Bool { currentItem.interaction?.state == .pending }
 
-    private var statusLine: String? { currentItem.kind == .liveActivity ? (stale ? "Update overdue" : presentation.status) : nil }
+    /// A Quiet work says why and since when (`Session idle since 3:12 PM`); else the card's own status.
+    private var statusLine: String? {
+        guard currentItem.kind == .liveActivity else { return nil }
+        if let why = nowItem?.quietLine() { return why }
+        return stale ? "Update overdue" : presentation.status
+    }
+
+    /// The work the owner may end from here: Quiet, Paused or Your turn, per the server's state.
+    private var endTarget: EndWorkTarget? {
+        guard currentItem.kind == .liveActivity, model.credential != nil, let nowItem, WorkEnding.isOffered(for: nowItem.owner.state)
+        else { return nil }
+        return EndWorkTarget(id: nowItem.id, title: presentation.title)
+    }
+
+    /// Shown after this phone ended the work: the item has left Now, so the button gives way to a line.
+    private var endedHere: Bool { currentItem.kind == .liveActivity && model.endedNotificationIDs.contains(currentItem.id) }
 
     private var measuredProgress: Double? {
         if let value = currentItem.activitySummary?.progress { return value }
@@ -46,11 +70,82 @@ struct NotificationDetailView: View {
         return nil
     }
 
+    /// The digest that carries the work's whole plan (the detail endpoint carries none; the History row of the same item does).
+    private var planDigest: InboxCardDigest? {
+        [currentItem.activity, item.activity, model.historyItems.first { $0.id == currentItem.id }?.activity]
+            .lazy.compactMap { $0 }.first { $0.plan != nil }
+    }
+
+    /// The plan's steps with their text resolved: the server's label, else the one opened from the sealed
+    /// text by step id, else the one this phone already showed, else "Step n". Nil without a whole plan.
+    private var planEntries: [PlanOutline.Entry]? {
+        guard let plan = planDigest?.plan else { return nil }
+        let work = currentItem.work ?? currentItem.activity?.work
+        // The card's own window of steps, by plan position: the labels this phone already opened.
+        let shown = presentation.timelineSteps(for: currentItem)
+        let before = presentation.stepWindow.before
+        let details = Dictionary((work?.steps ?? []).compactMap { step in step.detail.map { (step.id, $0) } },
+                                 uniquingKeysWith: { first, _ in first })
+        return plan.enumerated().map { index, step in
+            let placeholder = "Step \(index + 1)"
+            let windowLabel = shown.indices.contains(index - before) ? shown[index - before].label : nil
+            let opened = step.label.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
+                ?? work?.steps.first { $0.id == step.id }?.label.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
+                ?? windowLabel.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
+            // A label this phone cannot open is not "Step n": the row says so (U8).
+            let label = opened ?? placeholder
+            let state: LiveActivityDisplayPresentation.Step.State = switch step.state {
+            case "done", "complete": .complete
+            case "current": .current
+            case "skipped": .skipped
+            default: .pending
+            }
+            return PlanOutline.Entry(id: step.id, label: label, state: state, detail: step.detail ?? details[step.id],
+                                     parent: step.parent, round: step.round ?? 1, readable: opened != nil,
+                                     startedAt: step.startedAt, doneAt: step.doneAt, carriedFrom: step.carriedFrom)
+        }
+    }
+
+    /// The plan as rounds and nested steps; round titles and outcomes the server withheld come from the sealed text.
+    private var planOutline: PlanOutline? {
+        guard let entries = planEntries else { return nil }
+        let work = currentItem.work ?? currentItem.activity?.work
+        var titles: [Int: String] = [:], outcomes: [Int: String] = [:]
+        for phase in work?.phases ?? [] {
+            guard phase.id.hasPrefix("r"), let n = Int(phase.id.dropFirst()) else { continue }
+            if let title = phase.title { titles[n] = title }
+            if let outcome = phase.outcome { outcomes[n] = outcome }
+        }
+        return PlanOutline.make(entries: entries, rounds: planDigest?.rounds, titles: titles, outcomes: outcomes)
+    }
+
+    /// The work's whole plan when the server sent it (the card carries only a window of a long one),
+    /// with sealed labels opened by step id; else the card's own steps and the count of those it hides.
+    private var planSteps: (steps: [LiveActivityDisplayPresentation.Step], window: LiveActivityDisplayPresentation.StepWindow) {
+        if let entries = planEntries {
+            return (entries.map { .init(id: $0.id, label: $0.label, state: $0.state) },
+                    // The whole plan is drawn, but the count is still the server's when the card carries it.
+                    .init(progress: presentation.stepWindow.progress))
+        }
+        return (presentation.timelineSteps(for: currentItem), presentation.stepWindow)
+    }
+
+    /// The work's card updates sent while `stepID` was current: from the History events of this work.
+    private func stepUpdates(for stepID: String) -> [PlanStepUpdate] {
+        let work = currentItem.activity?.work ?? currentItem.work
+        return PlanStepUpdates.updates(stepID: stepID, workID: work?.id, in: model.historyItems + [currentItem])
+    }
+
     @ViewBuilder private var progressSection: some View {
-        if currentItem.kind == .liveActivity {
+        let (steps, window) = planSteps
+        // Nothing to measure: the status in the header already says how it stands.
+        if currentItem.kind == .liveActivity, !steps.isEmpty || measuredProgress != nil {
             VStack(alignment: .leading, spacing: 16) {
-                ReloMissionTimeline(item: currentItem, steps: presentation.timelineSteps(for: currentItem), progress: measuredProgress,
-                                    status: presentation.status, now: model.attentionDate)
+                ReloMissionTimeline(item: currentItem, steps: steps, window: window, outline: planOutline,
+                                    progress: measuredProgress, status: presentation.status, now: model.attentionDate,
+                                    serverOutcome: nowItem.flatMap(HistoryServerOutcome.init(item:)),
+                                    waiting: currentItem.isDeclaredWaiting,
+                                    updates: { stepUpdates(for: $0) })
                 ReloActivityVisual(item: currentItem, accountID: model.credential?.accountId, mediaOnly: true)
             }
             .reloEntrance(1)
@@ -66,7 +161,7 @@ struct NotificationDetailView: View {
                 }
                 if let imageURL = currentItem.validatedSourceImageURL {
                     ReloRemoteImage(url: imageURL, accountID: model.credential?.accountId, altText: "Image from \(currentItem.sourceName)")
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous))
                 }
                 if let url = currentItem.validatedDestinationURL {
                     Link(destination: url) {
@@ -83,7 +178,7 @@ struct NotificationDetailView: View {
                         }
                         .foregroundStyle(Color.reloInteractive)
                         .padding(12).frame(minHeight: 44)
-                        .background { RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.reloInteractive.opacity(0.10)) }
+                        .background { RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous).fill(Color.reloInteractive.opacity(0.10)) }
                     }
                 }
             }
@@ -98,8 +193,9 @@ struct NotificationDetailView: View {
         let kind = ReloMessageKind(item: currentItem, stale: stale)
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                ReloIdentityHeader(item: currentItem, title: presentation.title, kind: kind,
-                                   status: statusLine, now: model.attentionDate)
+                ReloIdentityHeader(item: currentItem, title: presentation.title, kind: kind, status: statusLine,
+                                   serverOutcome: nowItem.flatMap(HistoryServerOutcome.init(item:)),
+                                   now: model.attentionDate)
                     .reloEntrance(0)
                 // A question leads with the question; the work it belongs to follows.
                 if asksNow {
@@ -118,15 +214,19 @@ struct NotificationDetailView: View {
                     }
                     .reloEntrance(3)
                 }
-                if !aboutRows.isEmpty {
-                    ReloDetailSection(title: "About") {
-                        ReloAboutRows(rows: aboutRows)
-                    }
-                    .reloEntrance(4)
+                ReloDetailSection(title: "Details") {
+                    ReloAboutRows(rows: detailRows, computerIcon: model.computerIcon(forOrigin: detailRows.first { $0.label == "Computer" }?.value))
+                }
+                .reloEntrance(4)
+                if endedHere {
+                    EndWorkSection(model: model, target: EndWorkTarget(id: currentItem.id, title: presentation.title), ended: true)
+                        .reloEntrance(5)
+                } else if let target = endTarget {
+                    EndWorkSection(model: model, target: target, ended: false).reloEntrance(5)
                 }
             }
             .padding(.horizontal, ReloLayout.screenInset)
-            .padding(.top, 8).padding(.bottom, 32)
+            .padding(.top, 8).padding(.bottom, 72) // clears the floating tab bar (U9)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(alignment: .top) {
@@ -159,9 +259,12 @@ struct NotificationDetailView: View {
                 }
             }
         }
-        .confirmationDialog("Remove this notification?", isPresented: $confirmsWithdrawal, titleVisibility: .visible) {
-            Button("Remove notification", role: .destructive) { Task { await model.withdrawNotification(currentItem.id) } }
-        } message: { Text("It will disappear from Now. You can still find it in History.") }
+        .reloConfirmation(isPresented: $confirmsWithdrawal) {
+            ReloConfirmSpec(
+                title: "Remove this notification?", message: "It will disappear from Now. You can still find it in History.",
+                symbol: "trash", actionTitle: "Remove notification",
+                action: { await model.withdrawNotification(currentItem.id) })
+        }
     }
 }
 
@@ -179,7 +282,6 @@ struct ActivityPresentationPalette {
 
     init(
         presentation: LiveActivityDisplayPresentation,
-        hostColorScheme: ColorScheme = .dark,
         usesSystemSurfaces: Bool = false
     ) {
         // The host owns reading surfaces, even when sender appearance disagrees.
@@ -219,7 +321,7 @@ struct ActivityPresentationVisual: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label ?? "Progress")
             .accessibilityValue("\(Int((value * 100).rounded())) percent")
-        case let .steps(items):
+        case let .steps(items, _):
             VStack(alignment: .leading, spacing: surface == .detail ? 9 : 6) {
                 HStack(spacing: 6) {
                     ForEach(items) { item in

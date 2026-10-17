@@ -117,7 +117,7 @@ await scenario("no-hooks session shows last seen from its own relo commands", as
   for (const row of rows) { assert.equal(row.observed, false); assert.ok(row.lastSeenAt, "last seen from relo commands"); }
 });
 
-await scenario("script surface: relo work refused for a script, relo activity still its own", async () => {
+await scenario("script surface: relo work needs a producer key for a script", async () => {
   refused(relo({}, "work", "start", "--goal", "Nightly backup"), "NOT_AVAILABLE|not available|PRODUCER_REQUIRED|--producer", "script work");
 });
 

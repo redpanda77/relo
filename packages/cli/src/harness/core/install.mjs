@@ -1,7 +1,7 @@
 // The `json-hooks-map` settings editor (plan 05 §3.1): reconciles one settings file to exactly the
 // adapter's entries for a level. Relo's entries are those whose command starts with `relo hook `;
 // everyone else's hooks, keys and order are untouched.
-import { UsageError } from "../../errors.mjs";
+import { UsageError } from "../../shared/errors.mjs";
 
 export const HOOK_COMMAND_PREFIX = "relo hook ";
 
@@ -53,8 +53,10 @@ const signature = (groups) => JSON.stringify(Object.keys(groups).sort().map((eve
   [event, groups[event].map((g) => [g.matcher ?? null, g.hooks.map((h) => canonical(h))])]));
 
 /**
- * { level: <one of the adapter's levels> | legacy | custom, outdated: string[] }. legacy: Relo entries
- * that use none of the commands of the adapter's first level (an install from an older CLI).
+ * { level: <one of the adapter's levels> | legacy | custom, outdated: string[], nearest? }. legacy: Relo
+ * entries that use none of the commands of the adapter's first level (an install from an older CLI).
+ * nearest: for a custom set, the lowest level that runs all of its hook commands (options drifted, or an
+ * older smaller set), which relo setup --refresh rewrites it to.
  */
 export function inferLevel(settings, adapter) {
   const { levels, entries } = adapter.install;
@@ -65,7 +67,14 @@ export function inferLevel(settings, adapter) {
   const first = levels.find((level) => level !== "off");
   const anchors = new Set(Object.values(entries(first)).flatMap((gs) => gs.flatMap((g) => g.hooks.map(roleOf))));
   const legacy = ![...roles].some((role) => anchors.has(role));
-  return { level: legacy ? "legacy" : "custom", outdated: Object.keys(mine).sort() };
+  // A level that runs every command found: the same set with drifted options, or a smaller older set (the
+  // retired reminders level is the local half of presence), which refresh rewrites to the lowest such level.
+  const same = (level) => {
+    const wanted = new Set(Object.values(entries(level)).flatMap((gs) => gs.flatMap((g) => g.hooks.map(roleOf))));
+    return [...roles].every((role) => wanted.has(role));
+  };
+  const nearest = legacy ? undefined : levels.find((level) => level !== "off" && same(level));
+  return { level: legacy ? "legacy" : "custom", outdated: Object.keys(mine).sort(), ...(nearest ? { nearest } : {}) };
 }
 
 /** { action: created|updated|unchanged|removed, level, content?, empty?, changes: {before, after} } */

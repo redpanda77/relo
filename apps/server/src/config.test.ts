@@ -7,7 +7,7 @@ describe("APP_URL", () => {
       "http://192.168.1.20:8180", "http://10.0.0.5", "http://172.20.0.2", "http://[::1]:8180", "http://[fd00::1]"]) {
       expect(secureOrPrivateOrigin(url), url).toBe(true);
     }
-    for (const url of ["http://relo.example.com", "http://203.0.113.7:8180", "http://172.32.0.1", "ftp://relo.example.com"]) {
+    for (const url of ["http://relo.example.com", "http://8.8.8.8:8180", "http://172.32.0.1", "ftp://relo.example.com"]) {
       expect(secureOrPrivateOrigin(url), url).toBe(false);
     }
   });

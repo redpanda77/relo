@@ -1,0 +1,70 @@
+[
+  { "title": "Overview", "pages": ["/docs", "/docs/how-it-works", "/docs/privacy"] },
+  {
+    "title": "Get started",
+    "path": "/docs/get-started",
+    "pages": [
+      "/docs/get-started/with-an-agent",
+      "/docs/get-started/server",
+      "/docs/get-started/iphone",
+      "/docs/get-started/cli",
+      "/docs/get-started/first-card",
+      "/docs/get-started/agents"
+    ]
+  },
+  {
+    "title": "Concepts",
+    "path": "/docs/concepts",
+    "pages": [
+      "/docs/concepts/work",
+      "/docs/concepts/cards",
+      "/docs/concepts/questions",
+      "/docs/concepts/notifications",
+      "/docs/concepts/sessions",
+      "/docs/concepts/state",
+      "/docs/concepts/encryption"
+    ]
+  },
+  {
+    "title": "Guides",
+    "path": "/docs/guides",
+    "groups": [
+      { "title": "Agents", "pages": ["/docs/guides/agents", "/docs/guides/hooks", "/docs/guides/mcp", "/docs/agents"] },
+      { "title": "Scripts and apps", "pages": ["/docs/guides/scripts", "/docs/guides/asking", "/docs/guides/apps"] },
+      { "title": "This computer", "pages": ["/docs/guides/servers", "/docs/guides/profiles", "/docs/guides/update"] },
+      { "title": "Your server", "pages": ["/docs/guides/origin", "/docs/guides/accounts", "/docs/guides/keys", "/docs/guides/hardening"] }
+    ]
+  },
+  {
+    "title": "Reference",
+    "path": "/docs/reference",
+    "groups": [
+      {
+        "title": "CLI",
+        "pages": [
+          "/docs/reference/cli",
+          "/docs/reference/cli/work",
+          "/docs/reference/cli/questions",
+          "/docs/reference/cli/notify",
+          "/docs/reference/cli/setup",
+          "/docs/reference/cli/account",
+          "/docs/reference/cli/keys",
+          "/docs/reference/cli/admin",
+          "/docs/reference/cli/machine"
+        ]
+      },
+      {
+        "title": "Facts",
+        "pages": [
+          "/docs/reference/exit-codes",
+          "/docs/reference/environment",
+          "/docs/reference/files",
+          "/docs/reference/harnesses",
+          "/docs/reference/limits"
+        ]
+      },
+      { "title": "HTTP", "pages": ["/docs/reference/api", "/docs/reference/callbacks"] }
+    ]
+  },
+  { "title": "Help", "pages": ["/docs/troubleshooting"] }
+]

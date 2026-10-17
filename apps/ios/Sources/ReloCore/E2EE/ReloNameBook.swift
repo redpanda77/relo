@@ -1,6 +1,6 @@
 import Foundation
 
-/// Opaque project, topic, task, computer and account names (docs/END-TO-END-ENCRYPTION.md, E2.5).
+/// Opaque project, topic, task, computer and account names (docs/ENCRYPTION-PROTOCOL.md, E2.5).
 /// The CLI sends keyed handles ("p-…", "t-…", "w-…", "c-…", "a-…") to the server and the real names inside sealed envelopes; the phone
 /// remembers handle → name and puts the names back wherever server data arrives.
 public protocol ReloNameBook: Sendable {
@@ -99,10 +99,10 @@ public extension LiveActivityPresentation {
         }
         let resolvedComponents = components.map { component -> Component in
             switch component {
-            case let .steps(id, role, items):
+            case let .steps(id, role, items, window):
                 return .steps(id: id, colorRole: role, items: items.map {
                     LiveActivityDisplayPresentation.Step(id: $0.id, label: text($0.label), state: $0.state)
-                })
+                }, window: window)
             case let .progressBar(id, role, value, label):
                 return .progressBar(id: id, colorRole: role, value: value, label: label.map(text))
             case .image:

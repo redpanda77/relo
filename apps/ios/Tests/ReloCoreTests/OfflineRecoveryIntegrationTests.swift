@@ -29,7 +29,6 @@ struct OfflineRecoveryIntegrationTests {
         #expect(offline.actionableCount == nil)
         #expect(CurrentInboxPresentation.availability(for: expiredIdentity, state: state, now: reconnected) == .expired)
         #expect(CurrentInboxPresentation.availability(for: validIdentity, state: state, now: reconnected) == .unverified)
-        #expect(CurrentInboxPresentation.freshnessLabel(for: progress, now: reconnected) == "Out of date")
 
         let latest = subject(3, time: reconnected, revision: 31)
         try recovered.apply(page([independent, latest], at: reconnected, actionable: 1))

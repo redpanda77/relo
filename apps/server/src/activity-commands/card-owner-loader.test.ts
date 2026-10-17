@@ -28,7 +28,7 @@ suite("card owner from the owner-state loader",() => {
   test("without hooks: declared evidence only, never an observed state",async () => {
     await startWork(call);
     const input = await cardOwnerInput(db,await card(),"update");
-    expect(input.evidence).toEqual({ producer: "agent_session",session: null });
+    expect(input.evidence).toMatchObject({ producer: "agent_session",session: null });
     expect(deriveOwnerState(input).state).toBe("moving");
   });
 
@@ -40,11 +40,23 @@ suite("card owner from the owner-state loader",() => {
     expect(deriveOwnerState(input)).toMatchObject({ state: "needs_you",needsYou: "permission" });
   });
 
+  test("a started card carries its work's identity from its first insert",async () => {
+    await startWork(call);
+    const row = await card();
+    expect(row.producer_type).toBe("agent_session");
+    expect(row.session_key).toEqual(expect.any(String));
+    expect(row.session_key).not.toBeNull();
+    expect(row.work_id).not.toBeNull();
+    // One change signal per start-time write: the card is never patched after its insert.
+    const first = await cardOwnerInput(db,row,"start");
+    expect(first.evidence.producer).toBe("agent_session");
+  });
+
   test("another session's observed state never reaches this card",async () => {
     await startWork(call);
     await hook("sessionOTHERxxxxxxxxxxxxxxxxxxxx","waiting");
     const input = await cardOwnerInput(db,await card(),"update");
-    expect(input.evidence).toEqual({ producer: "agent_session",session: null });
+    expect(input.evidence).toMatchObject({ producer: "agent_session",session: null });
   });
 
   test("the work's declared waiting reaches the pushed state; an end clears it",async () => {

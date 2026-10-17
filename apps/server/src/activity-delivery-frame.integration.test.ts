@@ -99,6 +99,18 @@ suite("durable current ActivityKit frames", () => {
     expect((await db.query("SELECT payload FROM notification_events WHERE id=$1",[job.event_id])).rows[0].payload.liveActivity.operation).toBe("update");
   });
 
+  test("a replacement start at a new generation is sent as push-to-start while the old generation's update token exists", async () => {
+    await revision(0,"start");
+    const first = await claim();
+    await prepare(first);
+    await finalizeDeliveryClaim(db,first,{ kind: "accepted" });
+    await token(1);
+    await revision(1,"start",2);
+    const job = await claim();
+    expect(await prepare(job)).toMatchObject({ kind: "ready",transport: "live_activity_start" });
+    expect(projections.at(-1)).toMatchObject({ operation: "start" });
+  });
+
   test("terminal burst replaces progress, waits only for the next real second, and never starts an ended activity", async () => {
     await revision(0,"start");
     const started = await claim();

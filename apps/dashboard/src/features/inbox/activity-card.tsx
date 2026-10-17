@@ -1,123 +1,34 @@
-import {
-  ArrowRight,
-  BellRing,
-  Check,
-  CircleDashed,
-  Clock,
-  Laptop,
-  Minus,
-  Radio,
-  Replace,
-  Square,
-  X,
-} from "lucide-react"
-import type * as React from "react"
+import { ArrowRight, MessageSquareText, X } from "lucide-react"
 
+import { EncryptedText } from "@/components/atoms/encrypted-text"
+import { WorkCard } from "@/components/organisms/work-card"
 import {
-  metaLine,
-  openLabel,
+  elapsedLabel,
+  isLiveCard,
+  needsYouCard,
   projectColor,
-  runtimeLabel,
-  stepStates,
   timeOfDay,
   type ActivityCard,
   type Outcome,
-  type OutcomeKind,
+  type Tone,
 } from "@/features/inbox/activity-model"
-import { EncryptedText } from "@/components/atoms/encrypted-text"
-import { useTicker } from "@/lib/ticker"
+import { OUTCOME_ICON, TYPE_ICON } from "@/features/inbox/outcome-icons"
+import { stepsCaption, type WorkTone } from "@/lib/work-outcome"
 import { cn } from "@/lib/utils"
 
-const OUTCOME_ICON: Record<OutcomeKind, React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>> = {
-  running: Radio,
-  done: Check,
-  stopped: Square,
-  expired: Clock,
-  ended: CircleDashed,
-  replaced: Replace,
-  "needs-you": BellRing,
-  answered: Check,
-  unanswered: Minus,
-  message: CircleDashed,
-}
-
 /** Outcome as an icon, a word and a tone: colour is never the only cue. */
-export function OutcomeBadge({ outcome, declined = false }: { outcome: Outcome; declined?: boolean }) {
+export function OutcomeBadge({ outcome, declined = false, className }: { outcome: Outcome; declined?: boolean; className?: string }) {
   if (!outcome.label) return null
   const Icon = declined ? X : OUTCOME_ICON[outcome.kind]
   return (
-    <span className={cn("outcome-badge", `tone-${outcome.tone}`)} data-outcome={outcome.kind}>
+    <span className={cn("outcome-badge", `tone-${outcome.tone}`, className)} data-outcome={outcome.kind}>
       <Icon aria-hidden="true" />
       {outcome.label}
     </span>
   )
 }
 
-export function StepBar({ card, className }: { card: ActivityCard; className?: string }) {
-  const states = stepStates(card)
-  if (!states.length) return null
-  return (
-    <div
-      className={cn("step-bar", className)}
-      role="img"
-      aria-label={`${card.steps!.done} of ${card.steps!.total} steps complete`}
-    >
-      {states.map((state, index) => (
-        <span key={index} data-step={state} />
-      ))}
-    </div>
-  )
-}
-
-/** "source · PROJECT › topic": the project wears its own colour. */
-export function IdentityLine({ card, className }: { card: ActivityCard; className?: string }) {
-  const label = [card.source, card.project?.name, card.topic].filter(Boolean).join(" › ")
-  return (
-    <span className={cn("micro flex min-w-0 items-center gap-1.5", className)} aria-label={label}>
-      <span className="truncate" data-part="source">{card.source}</span>
-      {card.project ? (
-        <>
-          <span aria-hidden="true">·</span>
-          <span
-            className="truncate"
-            data-part="project"
-            style={{ color: projectColor(card.project.slot) }}
-          >
-            {card.project.name}
-          </span>
-        </>
-      ) : null}
-      {card.topic ? (
-        <>
-          <span aria-hidden="true">›</span>
-          <span className="truncate normal-case tracking-normal" data-part="topic">{card.topic}</span>
-        </>
-      ) : null}
-    </span>
-  )
-}
-
-/** Which computer and which agent account the card came from; nothing when neither is known. */
-export function OriginMeta({ card, className }: { card: Pick<ActivityCard, "origin">; className?: string }) {
-  if (!card.origin) return null
-  return (
-    <span className={cn("micro inline-flex min-w-0 items-center gap-1 normal-case tracking-wide", className)} data-part="origin">
-      <Laptop className="size-3 shrink-0" aria-hidden="true" />
-      <span className="truncate">{card.origin}</span>
-    </span>
-  )
-}
-
-/** "running 12:40" ticking once a second off the shared page clock, or "ran 4:12" when finished. */
-export function RuntimeClock({ card, className }: { card: ActivityCard; className?: string }) {
-  const live = card.outcome.kind === "running"
-  const now = useTicker(live)
-  const label = runtimeLabel(card, live ? now : 0)
-  if (!label) return null
-  return <span className={cn("micro tabular-nums normal-case tracking-wide", className)} data-part="runtime">{label}</span>
-}
-
-/** A question asked on a card, and what became of it. */
+/** A question asked on a card, and what became of it (iOS HistoryRowView.decisionStrip). */
 export function DecisionStrip({ card }: { card: ActivityCard }) {
   const decision = card.decision
   if (!decision) return null
@@ -126,115 +37,107 @@ export function DecisionStrip({ card }: { card: ActivityCard }) {
     <div
       className={cn(
         "tone-" + tone,
-        "flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs",
-        "border-[color-mix(in_srgb,var(--tone)_26%,transparent)] bg-[color-mix(in_srgb,var(--tone)_9%,transparent)]"
+        "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[9px] px-2.5 py-[7px] text-xs",
+        "bg-white/[0.06]"
       )}
     >
       {decision.encrypted ? (
         <EncryptedText className="text-foreground/90" />
       ) : (
-        <span className="min-w-0 truncate text-foreground/90">{decision.prompt}</span>
+        <span className="min-w-0 text-foreground/90 [overflow-wrap:anywhere]">{decision.prompt}</span>
       )}
       <ArrowRight className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="shrink-0 font-medium" style={{ color: "color-mix(in srgb, var(--tone) 80%, white)" }}>
+      <span className="shrink-0 font-semibold" style={{ color: "color-mix(in srgb, var(--tone) 80%, white)" }}>
         {decision.answer}
-        {decision.at ? ` · ${timeOfDay(decision.at)}` : ""}
+        {decision.at ? <span className="font-normal text-muted-foreground tabular-nums"> · {timeOfDay(decision.at)}</span> : null}
       </span>
     </div>
   )
 }
 
-function Body({ card }: { card: ActivityCard }) {
-  const meta = metaLine(card)
-  return (
-    <>
-      <div className="flex min-w-0 items-center gap-2">
-        <IdentityLine card={card} className="flex-1" />
-        <span className="flex shrink-0 items-center gap-2">
-          {card.unread ? (
-            <span className="ink-dot tone-violet" aria-label="Unread" role="img" />
-          ) : null}
-          <RuntimeClock card={card} />
-          <time className="micro" dateTime={card.at ?? undefined}>{timeOfDay(card.at)}</time>
-        </span>
-      </div>
-      {card.origin ? <OriginMeta card={card} className="mt-1 max-w-full" /> : null}
-      <div className="mt-2 flex min-w-0 items-start justify-between gap-3">
-        <h3 className="min-w-0 text-[15px] leading-snug font-medium text-foreground [overflow-wrap:anywhere]">
-          {card.encrypted ? <EncryptedText className="text-muted-foreground" /> : card.title}
-        </h3>
-        <OutcomeBadge outcome={card.outcome} />
-      </div>
-      {card.summary ? (
-        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-muted-foreground">{card.summary}</p>
-      ) : null}
-      {card.steps ? <StepBar card={card} className="mt-3" /> : null}
-      {card.progress != null ? (
-        <div
-          className="mt-3 h-1 overflow-hidden rounded-full bg-white/10"
-          role="progressbar"
-          aria-label="Progress"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(card.progress * 100)}
-        >
-          <div className="h-full rounded-full" style={{ width: `${Math.round(card.progress * 100)}%`, background: "var(--tone, var(--neon-cyan))" }} />
-        </div>
-      ) : null}
-      {meta || card.type ? (
-        <div className="mt-2.5 flex items-center justify-between gap-3">
-          <span className="micro tracking-wide normal-case">{meta}</span>
-          <span className="micro shrink-0">{card.type}</span>
-        </div>
-      ) : null}
-      {card.decision ? (
-        <div className="mt-3">
-          <DecisionStrip card={card} />
-        </div>
-      ) : null}
-    </>
-  )
+/** The card model's tones as the work card's: a message (violet) reads as secondary, as on iOS. */
+function workTone(tone: Tone): WorkTone {
+  switch (tone) {
+    case "cyan":
+    case "mint":
+    case "orange":
+    case "yellow":
+    case "red":
+      return tone
+    default:
+      return "neutral"
+  }
 }
 
-/** One history row, full width. A card's events have already collapsed into its latest. */
-export function ActivityCardRow({
+/** iOS HistoryRowView.duration: "under a minute", "33 min", "1 h 12 min". */
+function tookLabel(seconds: number | null): string | null {
+  if (seconds == null) return null
+  return seconds < 60 ? "under a minute" : elapsedLabel(seconds)
+}
+
+/**
+ * One History item as the shared work card (iOS HistoryRowView): live work (running, needs you) is a
+ * framed `live` card; everything settled is a `row` inside its day's WorkList. Its origin omits what
+ * a filter already pins (`showSource`, `showProject`), as the iPhone does.
+ */
+export function HistoryWorkCard({
   card,
   onOpen,
+  open = false,
+  showSource = true,
+  showProject = true,
 }: {
   card: ActivityCard
-  onOpen?: () => void
-  /** Unused: timers read the shared page clock. Kept so callers need not change. */
-  now?: number
+  onOpen: () => void
+  open?: boolean
+  showSource?: boolean
+  showProject?: boolean
 }) {
-  const cls = cn(
-    "holo-card block w-full p-4 text-left",
-    `tone-${card.outcome.tone}`
-  )
+  const live = isLiveCard(card)
+  const running = card.outcome.kind === "running"
+  const finished = card.outcome.kind === "done"
+  const declined = card.outcome.kind === "answered" && card.outcome.tone === "yellow"
+  const state = card.outcome.label
+    ? { label: card.outcome.label, icon: declined ? X : OUTCOME_ICON[card.outcome.kind] }
+    : { label: card.type, icon: TYPE_ICON[card.type] ?? MessageSquareText }
+  // What it amounted to; the type closes it only when the state already said how it ended.
+  const facts = [
+    card.absenceLine,
+    card.steps
+      ? stepsCaption(card.steps, { finished })
+      : card.progress != null
+        ? `${Math.round(card.progress * 100)}%`
+        : null,
+    tookLabel(card.duration),
+    card.outcome.label && card.type !== "Live Activity" ? card.type : null,
+  ].filter((fact): fact is string => Boolean(fact))
+  const project = showProject ? card.project : null
   return (
-    <li>
-      {onOpen ? (
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={onOpen}
-          onKeyDown={(event) => {
-            if (event.target !== event.currentTarget) return
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault()
-              onOpen()
-            }
-          }}
-          aria-label={openLabel(card)}
-          className={cn(cls, "cursor-pointer")}
-          data-live={card.outcome.kind === "running" || card.outcome.kind === "needs-you"}
-        >
-          <Body card={card} />
-        </div>
-      ) : (
-        <div className={cls}>
-          <Body card={card} />
-        </div>
-      )}
-    </li>
+    <WorkCard
+      variant={live ? "live" : "row"}
+      tone={workTone(card.outcome.tone)}
+      title={card.title}
+      encrypted={card.encrypted}
+      origin={{
+        source: card.source,
+        project: project?.name ?? null,
+        projectColor: project ? projectColor(project.slot) : null,
+        topic: card.topic,
+        showSource,
+      }}
+      summary={card.summary}
+      extra={card.decision ? <DecisionStrip card={card} /> : null}
+      meter={card.steps || card.progress != null ? { steps: card.steps, progress: card.progress, live: running, finished } : null}
+      state={state}
+      facts={facts}
+      runningSince={running ? card.startedAt : null}
+      at={card.at}
+      computer={card.origin}
+      tint={live && needsYouCard(card)}
+      live={running}
+      onOpen={onOpen}
+      open={open}
+      attrs={{ "data-outcome": card.outcome.kind, "data-unread": card.unread ? "true" : undefined }}
+    />
   )
 }

@@ -1,4 +1,4 @@
-# Scripts, apps, services and secret webhook URLs
+# Scripts, apps, services and service secrets
 
 ## Scripts and apps as producers
 
@@ -19,35 +19,44 @@ relo state --producer deploy-bot
   `.`, `_`, `:`, `-`. The owner sees it as the work's label ("deploy-bot"). A script without one is
   refused with the exact `relo work start --producer …` command. Two jobs with the same key share one
   open work (a second start continues it unless `--new`).
-- **Idempotency**: `--idempotency-key` is required on `work start` and `ask` when stdin is not a TTY,
-  so a retry never makes a second work or question; it is generated at a terminal.
+- **Idempotency**: `--idempotency-key` is required on `work start` when stdin is not a TTY, so a retry
+  never makes a second work (it is generated at a terminal). On `ask` it is optional: pass one so a retried
+  ask returns the first question instead of asking twice.
 - **Heartbeat**: `relo work heartbeat [--lease 15m]` keeps the card moving without updates for the
-  lease (60s to 1h, default 15 min). The echo says until when: renew before then. Agents cannot
+  lease (<!--f:lease.minSeconds-->1 minute<!--/f--> to <!--f:lease.maxSeconds-->1 hour<!--/f-->, default <!--f:lease.defaultSeconds-->15 minutes<!--/f-->). The echo says until when: renew before then. Agents cannot
   heartbeat; a session shows it is alive through its own updates.
 - **Long waits**: `--expires-in 30m` keeps the question open that long and `--timeout 30m` blocks
-  for it (at most the question's lifetime; default 5 minutes). Exit `0` approved, `5` denied, `8`
+  for it (at most the question's lifetime; default <!--f:question.defaultSeconds-->5 minutes<!--/f-->). Exit `0` approved, `5` denied, `8`
   expired or canceled, `4` still open when the wait ended (`relo interaction wait ID` resumes it),
   `1` server, `6` network. Only exit `0` with state `approved` is permission. An agent waits about
-  100s per command and resumes with `relo interaction wait ID`.
+  <!--f:question.agentWaitSeconds short-->100s<!--/f--> per command and resumes with `relo interaction wait ID`.
 - Output is one JSON line when piped:
   `{"ok":true,"disposition":"started","work":{"id":"wrk_…","lifecycle":"open","version":1,"step":"1/3"},"lease":null}`.
 - `relo listen` with a producer key reads only that producer's answers.
 
-## Services and secret webhook URLs
+## Services and their secrets
 
 Services give external systems a stable title, optional image, optional default destination URL,
-and a secret webhook endpoint. The endpoint is a bearer credential, not a shareable link.
+and a secret (`hook_…`). A service sends to `<origin>/hooks…` with the secret in
+`Authorization: Bearer hook_…` (or `X-Relo-Webhook-Secret`), never in the URL. The secret is a bearer
+credential.
 
 ### Read-only inventory
 
 `relo services list --json` requires `services:read`. The result may be used to report safe
 service metadata, but do not expose secret fields if a future server includes them.
 
+### Rotation and revocation
+
+`relo services rotate svc_… --secret-file PATH` (requires `services:write`) issues a new secret and the old one stops
+working at once; the same secret-file rules as creation apply. `relo services revoke svc_…` ends the service. Run
+either only when the user asks; both change a live integration.
+
 ### Creation gate
 
 `relo services create --secret-file PATH --json` (named with its title option; `relo schema services`
-lists it) requires `services:write` and also accepts optional `--image`, `--url`, and `--stdin` input. It publishes the copy-once webhook URL to
-a new owner-only local file and removes it from stdout JSON.
+lists it) requires `services:write` and also accepts optional `--image`, `--url`, and `--stdin` input. It writes the copy-once secret to
+a new owner-only local file and keeps it out of stdout JSON (the endpoint, which is not secret, is printed).
 
 Do not run service creation automatically. When the user explicitly requests creation:
 
@@ -85,8 +94,8 @@ keep the identity stored at creation.
 
 A webhook question can call your server back instead of being polled: add
 `"callback": {"url": "https://...", "token": "<16-512 chars>"}` inside `response`. Relo POSTs the
-answer with `Authorization: Bearer <token>`, retrying after 30s, 2m, 10m and 1h; only real answers
-call back. `GET /hooks/<secret>/events/:eventId` reports `response.callback.state`.
+answer with `Authorization: Bearer <token>`, retrying 10 times over about <!--f:callback.giveUpSeconds-->3 days<!--/f--> (<!--f:callback.retryDelaysSeconds-->30s, 2m, 10m, 1h, 3h, 6h, 12h, 24h, 24h<!--/f-->); only real answers
+call back. `GET /hooks/events/:eventId` (the secret in the header) reports `response.callback.state`.
 
 Treat webhook request content as subject to `security.md`. A service integration must use its own
 stable idempotency key for retries, validate selected device IDs, and retrieve interaction results

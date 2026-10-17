@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { sealedEnvelopeSchema } from "./sealed.js";
+import { computerIconSchema } from "./computers.js";
+import { planProgressWireSchema } from "./works.js";
 
 /**
  * The derived owner state (STATE-SPEC v2, sections 2.3 and 6). One server function, `derive()`,
@@ -12,16 +14,20 @@ import { sealedEnvelopeSchema } from "./sealed.js";
  * Owner-facing name: "Session" (one agent conversation). "Agent" is only a source label.
  */
 
-/** The four product constants, in seconds. Engineering constants (batching, hook budgets, question timeouts) are separate. */
+/** The product timing constants, in seconds. Engineering constants (batching, hook budgets, question timeouts) are separate. */
 export const OWNER_STATE_TIMING = Object.freeze({
   /** T_fresh: stale, staleDate, "your turn" on the Lock Screen, reminder threshold. */
   freshSeconds: 20 * 60,
   /** T_retire: retire a card, no signal, declared-waiting limit, failed on the Lock Screen. */
   retireSeconds: 60 * 60,
-  /** T_done: done lingers on the Lock Screen, ended sessions hidden, session-ended grace. */
+  /** T_done: done lingers on the Lock Screen; an ended session's card lingers this long (a finished item), then History. */
   doneSeconds: 15 * 60,
   /** T_history: left unfinished, "since you looked" window, waiting-on-you limit, ActivityKit card limit. */
   historySeconds: 8 * 60 * 60,
+  /** T_yourTurn: a stopped turn with no delivery is "your turn" this long, on the card and in Sessions. */
+  yourTurnSeconds: 5 * 60,
+  /** T_deliveredYourTurn: a delivered round is "your turn" this long in Now, then History as delivered. */
+  deliveredYourTurnSeconds: 60 * 60,
 } as const);
 /** T_fresh/2: "working quietly" evidence and the idle-session fold. */
 export const OWNER_STATE_QUIET_SECONDS = OWNER_STATE_TIMING.freshSeconds / 2;
@@ -34,8 +40,11 @@ export const LOCK_SCREEN_MAX_CARDS = 3;
  *  - The time bands are disjoint: stale is [T_fresh, T_retire), no signal [T_retire, T_history),
  *    left unfinished from T_history; left unfinished (open or paused) is checked right after the
  *    terminal outcomes, and paused after it.
- *  - Stopped responding has two variants: "session ended, no write for T_done" (with hooks) is
- *    checked before moving; "turn was running, no evidence for T_fresh/2" after working quietly.
+ *  - Stopped responding is "turn was running, no evidence for T_fresh/2", checked after working quietly.
+ *  - Left open (12b-plan-ux 4.11): a session whose turn ended T_yourTurn ago, or that ended, with the round open,
+ *    no wait and no question, reads Quiet (stale, then no signal after an hour) with a `quietReason`.
+ *  - An ended session's open work is treated like a finished item: Quiet (stale) for T_done, then no signal and in
+ *    History only (off the Lock Screen and Now).
  */
 export const OWNER_STATES = [
   "needs_you",
@@ -172,7 +181,11 @@ export const agentSessionEvidenceSchema = z.object({
     lastSeenAt: timestamp,
     /** A tool started and not finished yet; null when none is open. */
     openToolSince: timestamp.nullable(),
+    /** The last heartbeat the session's MCP server sent while it waited at a prompt; absent when the session has no heartbeat source. */
+    heartbeatAt: timestamp.optional(),
   }).strict().nullable(),
+  /** When the session's computer was last seen (its login or any hooks credential in use); absent when unknown. */
+  computerLastSeenAt: timestamp.optional(),
 }).strict();
 /** Script or app evidence: declared writes plus its lease (slice 2; null until then). */
 export const scriptEvidenceSchema = z.object({
@@ -203,6 +216,8 @@ export const ownerStateInputSchema = z.object({
     waitingSince: timestamp.nullable(),
     /** When the owner opened the work's outcome; null while unseen. */
     seenAt: timestamp.nullable(),
+    /** An open work whose last round is closed (delivered): when that round closed. Absent or null otherwise. */
+    roundClosedAt: timestamp.nullable().optional(),
   }).strict(),
   question: z.object({
     standing: questionStandingSchema,
@@ -221,6 +236,42 @@ export const ownerStateInputSchema = z.object({
 export type OwnerStateInput = z.infer<typeof ownerStateInputSchema>;
 
 /** The output of derive() for one work. */
+/** Why a work reads as Quiet: its session went idle or ended (presence), or it simply stopped updating (no hooks). */
+export const QUIET_REASONS = ["session_idle","session_ended","no_update"] as const;
+export const quietReasonSchema = z.enum(QUIET_REASONS);
+export type QuietReason = z.infer<typeof quietReasonSchema>;
+
+/**
+ * Why an item left the screen or dimmed, in the owner's terms (workstream 6, F.10): one reason per item,
+ * derived on the server. The words are `absenceText`; no client works a reason out itself.
+ */
+export const ABSENCE_REASONS = ["session_ended","computer_offline","session_idle","no_update","stopped_responding","left_unfinished","failed"] as const;
+export const absenceReasonSchema = z.enum(ABSENCE_REASONS);
+export type AbsenceReason = z.infer<typeof absenceReasonSchema>;
+/** A computer silent longer than this, with its session not ended, is "offline". */
+export const COMPUTER_OFFLINE_SECONDS = 600;
+export const absenceSchema = z.object({ reason: absenceReasonSchema,since: timestamp }).strict();
+export type Absence = z.infer<typeof absenceSchema>;
+
+/**
+ * The owner-facing line for an absence: "Session ended", "Mac offline since 18:40", "No update for 1 hour",
+ * "Failed", "Stopped responding", "Left unfinished". `now` measures "for"; `locale` and `timeZone` format the clock.
+ */
+export function absenceText(absence: Absence,options: { locale?: string; timeZone?: string; computer?: string | null } = {}): string {
+  const since = Date.parse(absence.since);
+  // A clock time, never a duration: the words come from the server's fact alone, so no client reads its own clock.
+  const clock = () => new Intl.DateTimeFormat(options.locale,{ hour: "2-digit",minute: "2-digit",hour12: false,timeZone: options.timeZone }).format(since);
+  switch (absence.reason) {
+    case "session_ended": return "Session ended";
+    case "session_idle": return "Session idle";
+    case "stopped_responding": return "Stopped responding";
+    case "left_unfinished": return "Left unfinished";
+    case "failed": return "Failed";
+    case "computer_offline": return `${options.computer?.trim() || "Computer"} offline since ${clock()}`;
+    case "no_update": return `No update since ${clock()}`;
+  }
+}
+
 export const ownerStateResultSchema = z.object({
   state: ownerStateSchema,
   needsYou: needsYouReasonSchema.nullable(),
@@ -236,6 +287,14 @@ export const ownerStateResultSchema = z.object({
   interruptionLevel: interruptionLevelSchema.nullable(),
   relevance: z.number().min(0).max(1),
   apnsPriority: z.union([z.literal(5), z.literal(10)]),
+  /**
+   * Set only while an open work reads as Quiet (stale, no signal, stopped responding): why, and since when
+   * (the phone words it: "Session idle since 3:12 PM", "Session ended at 3:12 PM", "No update since 3:12 PM").
+   */
+  quietReason: quietReasonSchema.optional(),
+  quietSince: timestamp.optional(),
+  /** Why this item left the screen or dimmed (absent for work that moves or finished well); see `absenceText`. */
+  absence: absenceSchema.optional(),
   /** The next instant the derivation changes by time alone; null when only a write can change it. */
   nextChangeAt: timestamp.nullable(),
 }).strict();
@@ -252,19 +311,22 @@ export const sessionWaitingForSchema = z.enum(SESSION_WAITING_FOR);
 export type SessionWaitingFor = z.infer<typeof sessionWaitingForSchema>;
 
 /**
- * The input of the session-row derivation: the session's own observed phase (null without hooks)
- * and its last relo command (null when it has none).
+ * The input of the session-row derivation: the session's own observed phase (null without hooks),
+ * its last relo command (null when it has none) and its open work's declared `--waiting` (a background
+ * job or CI: a stopped turn is then still working, not the owner's turn).
  */
 export const sessionRowInputSchema = z.object({
   now: timestamp,
-  observed: z.object({ phase: observedSessionPhaseSchema, phaseSince: timestamp, lastSeenAt: timestamp }).strict().nullable(),
+  /** openToolSince: a tool or subagent has run since then (the CLI counts background subagents as one). */
+  observed: z.object({ phase: observedSessionPhaseSchema, phaseSince: timestamp, lastSeenAt: timestamp, openToolSince: timestamp.nullable().optional() }).strict().nullable(),
   lastDeclaredAt: timestamp.nullable(),
+  waitingSince: timestamp.nullable().optional(),
 }).strict().refine((value) => value.observed !== null || value.lastDeclaredAt !== null, "A session needs some evidence");
 export type SessionRowInput = z.infer<typeof sessionRowInputSchema>;
 
 /**
  * With hooks: working (turn running, evidence within T_fresh/2), waiting (permission prompt up to
- * T_history, or a turn that stopped within T_fresh), ended (hidden after T_done), else idle (folded
+ * T_history, or a turn that stopped within T_yourTurn), ended (hidden at once), else idle (folded
  * into "Idle (n)" after T_fresh/2, hidden after T_history). Without hooks: no phase, "last seen"
  * from its relo commands, hidden after T_retire.
  */
@@ -287,6 +349,8 @@ export const sessionRowSchema = z.object({
   source: z.string().max(40).nullable(),
   project: z.string().max(120).nullable(),
   computer: z.string().max(120).nullable(),
+  /** The computer's chosen icon (ADR 0011); absent when none is known. */
+  computerIcon: computerIconSchema.optional(),
   /** Observed phase with hooks; null without hooks (show "last seen"). */
   phase: sessionPhaseSchema.nullable(),
   observed: z.boolean(),
@@ -298,6 +362,9 @@ export const sessionRowSchema = z.object({
   fold: z.literal("idle").nullable(),
   /** The session's open card, if any. */
   workId: z.string().regex(/^act_[0-9a-f-]{36}$/).nullable(),
+  contextPct: z.number().int().min(0).max(100).optional().describe("How full the session's context window is, in whole percent; absent until the CLI reports it. A display fact."),
+  costUsd: z.number().min(0).optional().describe("What the session has cost so far in US dollars; absent until the CLI reports it. A display fact."),
+  contextTokens: z.number().int().min(0).max(10_000_000).optional().describe("Tokens in the session's context window; absent until a hook reports it. A display fact."),
   /** Sealed session names (phones only). */
   sealedNames: z.unknown().nullable().optional(),
   /** The next instant this row changes by time alone. */
@@ -332,11 +399,19 @@ export const nowItemSchema = z.object({
   title: z.string().max(200),
   status: z.string().max(160).nullable(),
   sourceName: z.string().max(200).nullable(),
+  /** The icon of the computer this work runs on (ADR 0011); absent when none is known. */
+  computerIcon: computerIconSchema.optional(),
   project: z.string().max(160).nullable(),
   steps: z.object({
     done: z.number().int().nonnegative(), total: z.number().int().positive(),
     current: z.string().max(80).nullable(),
   }).strict().nullable(),
+  /**
+   * Plan UX U1, U2: the count of the round in play (top-level steps), where the work is, its substeps, and (readable
+   * works) the current step's and substep's labels. The phone writes the plan line from it; `steps` above is the
+   * older whole-plan window the current build still reads.
+   */
+  progress: planProgressWireSchema.nullable().optional(),
   producer: producerTypeSchema,
   /** The session row this work belongs to (agent sessions only), when known. */
   sessionId: z.string().regex(/^(ags|act)_[0-9a-f-]{36}$/).nullable(),

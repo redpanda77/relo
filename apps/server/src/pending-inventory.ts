@@ -5,8 +5,11 @@ import { z } from "zod";
 import type { Database } from "./db.js";
 import { publicId } from "./ids.js";
 import { actorCursorScope,decodeCursor,encodeCursor } from "./cursor.js";
+import { askedCopySql } from "./browser-answers.js";
+import { readsAccount,type DeviceReader } from "./owner-overview.js";
 
-export type InboxActor = { principalId: string; deviceId?: string };
+/** A phone-scoped reader: its device, and whether it reads the whole account (owner-overview.ts). */
+export type InboxActor = { principalId: string } & DeviceReader;
 export type PendingCursor = { urgencyRank: 0; expiresAt: string; id: string };
 export type PendingInteractionSummary = {
   subjectId: string;
@@ -125,7 +128,9 @@ export async function loadPendingInteractions(
       LEFT JOIN devices d ON d.id=$2 AND d.principal_id=e.principal_id AND d.revoked_at IS NULL
       CROSS JOIN clock
       WHERE r.principal_id=$1 AND ($2::uuid IS NULL OR d.id IS NOT NULL)
-        AND ${pendingDecisionPredicate("clock.at",`$2::uuid IS NULL OR (${pendingDeviceVisibility})`)}
+        AND ${pendingDecisionPredicate("clock.at",`$2::uuid IS NULL OR $6::boolean OR (${pendingDeviceVisibility})`)}
+        -- An overview device has no copy of its own: it lists, and answers, the copy the asker waits on.
+        AND (NOT $6::boolean OR r.id=${askedCopySql("r","e")})
     ), metadata AS (
       SELECT count(*)::int AS total,min(effective_expiry) AS next_expiry_at FROM eligible
     ), page AS (
@@ -146,7 +151,8 @@ export async function loadPendingInteractions(
     LEFT JOIN live_activities activity_row ON activity_row.principal_id=e.principal_id
       AND e.payload#>>'{liveActivity,activityId}'='act_'||activity_row.id::text
     ORDER BY page.expires_at,page.id`,
-  [actor.principalId,actor.deviceId ?? null,input.after?.expiresAt ?? null,input.after?.id ?? null,input.limit+1]);
+  [actor.principalId,actor.deviceId ?? null,input.after?.expiresAt ?? null,input.after?.id ?? null,input.limit+1,
+    readsAccount(actor)]);
   const metadata = result.rows[0]!;
   const candidates = result.rows.filter((row): row is PendingRow & { id: string } => row.id !== null);
   const hasMore = candidates.length > input.limit;

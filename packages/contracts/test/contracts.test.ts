@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
-  apiTokenScopeSchema,
+  loginScopeSchema,
   inboxPageSchema,
   inboxLiveActivitySchema,
   inboxHistoryPageSchema,
@@ -47,9 +47,9 @@ test("delivery evidence vocabulary and golden fixture remain versioned and stric
 });
 
 test("agent scopes use the stable least-privilege vocabulary", () => {
-  assert.equal(apiTokenScopeSchema.parse("notifications:send"), "notifications:send");
-  assert.equal(apiTokenScopeSchema.parse("services:read"), "services:read");
-  assert.equal(apiTokenScopeSchema.safeParse("notifications:write").success, false);
+  assert.equal(loginScopeSchema.parse("notifications:send"), "notifications:send");
+  assert.equal(loginScopeSchema.parse("services:read"), "services:read");
+  assert.equal(loginScopeSchema.safeParse("notifications:write").success, false);
 });
 
 test("service and interaction result envelopes are strict and safe", () => {
@@ -69,7 +69,8 @@ test("service and interaction result envelopes are strict and safe", () => {
       createdAt: "2026-08-07T00:00:00.000Z",
       updatedAt: "2026-08-07T00:00:00.000Z",
     },
-    webhookUrl: "https://relo.example/hooks/hook_secret",
+    endpoint: "https://relo.example/hooks",
+    secret: `hook_${"s".repeat(43)}`,
   });
   interactionResultResponseSchema.parse({ interaction: {
     id: "int_123456789012",
@@ -440,6 +441,15 @@ test("observed session snapshots accept only a phase, times, a seq and bounded l
   const ok = { session: "a".repeat(64), harness: "claude-code", phase: "working", phaseSince: at, lastSeenAt: at,
     openToolSince: null, seq: 1 };
   assert.equal(agentSessionObservedRequestSchema.safeParse(ok).success, true);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, contextPct: 42, costUsd: 1.25 }).success, true);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, contextPct: 101 }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, contextPct: 4.5 }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, costUsd: -1 }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, contextTokens: 282_000 }).success, true);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, contextTokens: 10_000_001 }).success, false);
+  for (const endReason of ["hook", "gone", "mcp"]) assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, phase: "ended", endReason }).success, true);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, phase: "ended", endReason: "timeout" }).success, false);
+  assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, contextTokens: 1.5 }).success, false);
   assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, phase: "tool" }).success, false, "no raw event names");
   assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, event: "prompt" }).success, false);
   assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, prompt: "hello" }).success, false);
@@ -449,9 +459,11 @@ test("observed session snapshots accept only a phase, times, a seq and bounded l
   assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, openToolSince: undefined }).success, false);
   assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, session: "short" }).success, false);
   assert.equal(agentSessionObservedRequestSchema.safeParse({ ...ok, project: "x".repeat(121) }).success, false);
-  assert.equal(apiTokenScopeSchema.safeParse("sessions:write").success, false, "declared credentials never write observed state");
+  assert.equal(loginScopeSchema.safeParse("sessions:write").success, false, "declared credentials never write observed state");
   const snapshot = inboxSnapshotResponseSchema.parse({
     items: [], total: 0, serverTime: new Date().toISOString(), readWatermark: null, unread: { account: 0, projects: {} },
   });
-  assert.equal(snapshot.sessions, undefined);
+  // Sessions reach the phone only through the Now summary (the server's session-row derivation).
+  assert.equal("sessions" in snapshot, false);
+  assert.equal(inboxSnapshotResponseSchema.safeParse({ ...snapshot, sessions: [] }).success, false);
 });

@@ -31,6 +31,7 @@ public enum LocalStoreSchema {
     public static let pushToken = 1
     public static let registrationAttempt = 1
     public static let signOutProgress = 1
+    public static let computerInvite = 1
     public static let inboxCache = 2
     public static let liveActivityLedger = 1
     public static let pendingResponses = 1

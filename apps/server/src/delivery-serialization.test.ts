@@ -62,6 +62,12 @@ describe("current delivery serialization", () => {
     expect(deliveryProjection(job())).not.toHaveProperty("category");
   });
 
+  test("a browser link request names the RELO_BROWSER_LINK category", () => {
+    expect(deliveryProjection(job({ deepLink: "relo://security/request/brw_1",
+      payload: { privacy: "standard",browserLink: { browserId: "brw_11111111-1111-4111-8111-111111111111" } } })))
+      .toMatchObject({ category: "RELO_BROWSER_LINK",customData: { relo: { deepLink: "relo://security/request/brw_1" } } });
+  });
+
   test("standard alerts carry the account label in safe context", () => {
     const projection = deliveryProjection(job({
       payload: { privacy: "standard",context: { computer: "Mac",account: "work" } },
@@ -264,11 +270,12 @@ describe("current delivery serialization", () => {
   });
 
   test("keeps request runtimes off the legacy payload builder", async () => {
-    const [app,services] = await Promise.all([
+    const webhooks = ["index.ts","auth.ts","cards.ts","notices.ts","works.ts","admin.ts","schemas.ts"];
+    const [app,...services] = await Promise.all([
       readFile(new URL("app.ts",import.meta.url),"utf8"),
-      readFile(new URL("services.ts",import.meta.url),"utf8"),
+      ...webhooks.map((file) => readFile(new URL(`webhooks/${file}`,import.meta.url),"utf8")),
     ]);
     expect(app).not.toContain('from "./apns.js"');
-    expect(services).not.toContain('from "./apns.js"');
+    for (const source of services) expect(source).not.toContain('from "../apns.js"');
   });
 });

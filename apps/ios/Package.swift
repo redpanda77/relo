@@ -12,7 +12,8 @@ let package = Package(
         .library(name: "ReloCore", targets: ["ReloCore"]),
         .library(name: "ReloRuntime", targets: ["ReloRuntime"]),
         .library(name: "ReloPersistence", targets: ["ReloPersistence"]),
-        .library(name: "ReloTransport", targets: ["ReloTransport"])
+        .library(name: "ReloTransport", targets: ["ReloTransport"]),
+        .library(name: "ReloNotificationSupport", targets: ["ReloNotificationSupport"])
     ],
     targets: [
         .target(name: "ReloRuntime", dependencies: ["ReloCore"], path: "Sources/ReloRuntime", swiftSettings: [.swiftLanguageMode(.v6)]),

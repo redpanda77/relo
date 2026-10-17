@@ -1,7 +1,7 @@
 import { inboxHistorySummarySchema,inboxSnapshotResponseSchema,safeContextSchema,type InboxSnapshotResponse } from "@relo/notification-contracts";
-import { agentSessionRowsSql,mapAgentSessionRows } from "../agent-sessions.js";
 import type { Database } from "../db.js";
 import type { InboxActor } from "../pending-inventory.js";
+import { visibilityDeviceId } from "../owner-overview.js";
 
 const contextFields = {
   providerName: 80,computer: 120,account: 40,project: 120,providerThreadId: 200,providerWorkItemId: 200,threadName: 160,taskTitle: 160,
@@ -22,15 +22,16 @@ const contextProjection = `jsonb_strip_nulls(jsonb_build_object(
 export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promise<InboxSnapshotResponse> {
   const result = await db.query<{
     items: unknown[]; total: number; unread: InboxSnapshotResponse["unread"];
-    server_time: Date; latest_at: string | null; latest_id: string | null; sessions: any[];
+    server_time: Date; latest_at: string | null; latest_id: string | null;
   }>(`WITH clock AS MATERIALIZED (SELECT statement_timestamp() AS at),
   visible AS MATERIALIZED (
     SELECT e.id,e.created_at,e.project_resource_id,e.read_at,e.withdrawn_at
     FROM notification_events e
     WHERE e.principal_id=$1
       AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM devices d WHERE d.id=$2 AND d.principal_id=$1 AND d.revoked_at IS NULL))
-      AND ($2::uuid IS NULL OR e.target_mode='broadcast' OR EXISTS (
-        SELECT 1 FROM notification_event_targets t WHERE t.notification_event_id=e.id AND t.device_id=$2))
+      -- $3: the device whose delivery targets bound the snapshot (owner-overview.ts); $2 the reader's own.
+      AND ($3::uuid IS NULL OR e.target_mode='broadcast' OR EXISTS (
+        SELECT 1 FROM notification_event_targets t WHERE t.notification_event_id=e.id AND t.device_id=$3))
   ), retained AS MATERIALIZED (
     SELECT id,created_at FROM visible ORDER BY created_at DESC,id DESC LIMIT 250
   ), unread AS (
@@ -74,8 +75,26 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
         'status',CASE WHEN private.is_private THEN NULL ELSE NULLIF(left(activity.status,160),'') END,
         'progress',CASE WHEN activity.progress BETWEEN 0 AND 1 THEN activity.progress END,
         'steps',CASE WHEN steps.total>0 THEN jsonb_build_object('done',steps.done,'total',steps.total,
-          'current',CASE WHEN private.is_private THEN NULL ELSE NULLIF(left(steps.current,80),'') END) END,
+          'current',CASE WHEN private.is_private THEN NULL ELSE NULLIF(left(steps.current,80),'') END,
+          'currentIndex',steps.current_index,'fill',steps.fill) END,
         'updates',GREATEST(activity.sequence,0)+1,
+        'plan',(SELECT jsonb_agg(jsonb_build_object('id',plan_step.step->>'id','state',plan_step.step->>'state',
+            'label',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE left(plan_step.step->>'label',120) END)
+            || jsonb_strip_nulls(jsonb_build_object('parent',plan_step.step->'parent','round',plan_step.step->'round',
+              'detail',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(plan_step.step->>'detail',200)) END))
+            ORDER BY plan_step.position)
+          FROM jsonb_array_elements(CASE WHEN jsonb_typeof(work.plan->'steps')='array' THEN work.plan->'steps' ELSE '[]'::jsonb END)
+            WITH ORDINALITY plan_step(step,position)
+          WHERE plan_step.step->>'state' IN ('open','current','done','skipped')),
+        'rounds',CASE WHEN jsonb_typeof(work.plan->'rounds')='array' THEN (SELECT jsonb_agg(
+            jsonb_strip_nulls(jsonb_build_object('n',r.round->'n','state',r.round->'state',
+              'title',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(r.round->>'title',80)) END,
+              'outcome',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(r.round->>'outcome',200)) END,
+              'openedAt',r.round->'openedAt','closedAt',r.round->'closedAt')) ORDER BY r.position)
+          FROM jsonb_array_elements(work.plan->'rounds') WITH ORDINALITY r(round,position)) END,
+        'roundOutcome',CASE WHEN NOT (private.is_private OR work.sealed_text) AND work.lifecycle='open'
+            AND jsonb_typeof(work.plan->'rounds')='array' AND work.plan->'rounds'->-1->>'state'='closed'
+          THEN left(work.plan->'rounds'->-1->>'outcome',200) END,
         'startedAt',activity.created_at,'endedAt',activity.ended_at) END,
       -- End-to-end sealed text for this phone (its own alert envelope and the shared content).
       'sealed',CASE WHEN jsonb_typeof(COALESCE(e.payload->'sealed',activity.sealed)->'alerts')='array' THEN jsonb_build_object(
@@ -96,12 +115,34 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     LEFT JOIN live_activities activity ON e.kind='live_activity' AND activity.principal_id=e.principal_id
       AND activity.id=CASE WHEN e.payload#>>'{liveActivity,activityId}' ~ '^act_[0-9a-f-]{36}$'
         THEN substring(e.payload#>>'{liveActivity,activityId}' from 5)::uuid END
+    LEFT JOIN works work ON work.id=activity.work_id AND work.principal_id=activity.principal_id
     LEFT JOIN LATERAL (
-      SELECT count(*)::int AS total,count(*) FILTER (WHERE step->>'state'='complete')::int AS done,
-        (array_agg(step->>'label') FILTER (WHERE step->>'state'='current'))[1] AS current
-      FROM jsonb_array_elements(COALESCE((SELECT component->'items' FROM jsonb_array_elements(
+      -- The card's plan wire carries the count (top-level steps of the round in play); a card from before it
+      -- counts the shown steps instead (a long plan's card shows a window: before/after count the hidden ones).
+      SELECT COALESCE(max(window_counts.wire_total),
+          count(*)::int+COALESCE(max(window_counts.before),0)+COALESCE(max(window_counts.after),0)) AS total,
+        COALESCE(max(window_counts.wire_done),
+          count(*) FILTER (WHERE step->>'state'='complete')::int+COALESCE(max(window_counts.before),0)) AS done,
+        COALESCE(max(window_counts.wire_label), (array_agg(step->>'label') FILTER (WHERE step->>'state'='current'))[1]) AS current,
+        max(window_counts.wire_current) AS current_index,max(window_counts.wire_fill) AS fill
+      FROM (SELECT component FROM jsonb_array_elements(
         CASE WHEN jsonb_typeof(activity.presentation->'components')='array' THEN activity.presentation->'components' ELSE '[]'::jsonb END) component
-        WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1),'[]'::jsonb)) step
+        WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1) steps_component
+      CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(steps_component.component->'before')='number'
+          THEN (steps_component.component->>'before')::int END AS before,
+        CASE WHEN jsonb_typeof(steps_component.component->'after')='number'
+          THEN (steps_component.component->>'after')::int END AS after,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'total')='number' AND jsonb_typeof(steps_component.component->'plan'->'done')='number'
+          THEN (steps_component.component->'plan'->>'total')::int END AS wire_total,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'total')='number' AND jsonb_typeof(steps_component.component->'plan'->'done')='number'
+          THEN (steps_component.component->'plan'->>'done')::int END AS wire_done,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'stepLabel')='string'
+          THEN steps_component.component->'plan'->>'stepLabel' END AS wire_label,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'current')='number'
+          THEN (steps_component.component->'plan'->>'current')::int END AS wire_current,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'fill')='number'
+          THEN (steps_component.component->'plan'->>'fill')::float8 END AS wire_fill) window_counts
+      CROSS JOIN LATERAL jsonb_array_elements(steps_component.component->'items') step
     ) steps ON true
     LEFT JOIN resource_sources source ON source.id=e.source_resource_id AND source.principal_id=e.principal_id
     LEFT JOIN resource_projects project ON project.id=e.project_resource_id AND project.principal_id=e.principal_id
@@ -121,9 +162,8 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
       'projects',COALESCE((SELECT jsonb_object_agg(COALESCE('prj_'||project_resource_id::text,'direct'),count) FROM unread),'{}'::jsonb)) AS unread,
     clock.at AS server_time,
     (SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_at,
-    (SELECT id FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_id,
-    ${agentSessionRowsSql("$1::uuid")} AS sessions
-  FROM clock`, [actor.principalId,actor.deviceId ?? null]);
+    (SELECT id FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_id
+  FROM clock`, [actor.principalId,actor.deviceId ?? null,visibilityDeviceId(actor) ?? null]);
   const row = result.rows[0]!;
   const items = row.items.map(raw => {
     const value = raw as Record<string,unknown>;
@@ -141,6 +181,6 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     if (!parsed.success) console.warn("inbox snapshot: skipped an unreadable item", value.id, parsed.error.issues.map(issue => issue.path.join(".")).join(","));
     return parsed.success;
   });
-  return inboxSnapshotResponseSchema.parse({items,sessions:mapAgentSessionRows(row.sessions,{ withSealedNames: true,now: row.server_time }),total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
+  return inboxSnapshotResponseSchema.parse({items,total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
     readWatermark:row.latest_at && row.latest_id ? Buffer.from(JSON.stringify([row.latest_at,row.latest_id])).toString("base64url") : null});
 }

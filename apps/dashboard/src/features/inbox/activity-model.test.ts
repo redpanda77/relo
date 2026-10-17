@@ -17,6 +17,9 @@ import {
   signalOf,
   todayActivity,
   stepStates,
+  historyLine,
+  historySegments,
+  isLiveCard,
 } from "@/features/inbox/activity-model"
 import type { NotificationSummary } from "@/features/inbox/types"
 
@@ -51,12 +54,12 @@ describe("activity card model", () => {
     expect(card.type).toBe("Live Activity")
   })
 
-  it("says Done / Stopped from the outcome and counts every step", () => {
+  it("says Done / Failed from the outcome and counts every step", () => {
     const done = cardFor(summary({ activity: activity({ state: "ended", outcome: "completed", steps: { done: 4, total: 4, current: null }, endedAt: "2026-08-07T12:30:00Z" }) }), now)
     expect(done.outcome.label).toBe("Done")
-    expect(metaLine(done)).toBe("All 4 steps · 6 updates")
+    expect(metaLine(done)).toBe("4 of 4 done · 6 updates")
     const stopped = cardFor(summary({ activity: activity({ state: "ended", outcome: "failed" }) }), now)
-    expect(stopped.outcome).toMatchObject({ label: "Stopped", tone: "red" })
+    expect(stopped.outcome).toMatchObject({ label: "Failed", tone: "red" })
     expect(stepStates(stopped)[2]).toBe("stopped")
   })
 
@@ -71,7 +74,7 @@ describe("activity card model", () => {
     )
     expect(onCard.outcome.label).toBe("Done")
     expect(onCard.decision).toMatchObject({ prompt: "Fix 3 broken links?", answer: "You approved", pending: false })
-    expect(cardFor(summary({ kind: "approval", question: { ...pending, expiresAt: "2026-08-07T12:00:00Z" } }), now).outcome.label).toBe("No answer")
+    expect(cardFor(summary({ kind: "approval", question: { ...pending, expiresAt: "2026-08-07T12:00:00Z" } }), now).outcome.label).toBe("Missed")
   })
 
   it("labels a choice question and names the option picked", () => {
@@ -157,7 +160,7 @@ describe("origin, runtime and agent time", () => {
     expect(agentTimeLabel(5)).toBe("0m")
   })
 
-  it("hides a sealed card's placeholders and names its handles without showing them", () => {
+  it("hides a sealed card's placeholders and leaves out the names it cannot read", () => {
     const sealedContext = {
       ...context, project: "p-abcdefghijklmnop", threadName: "t-abcdefghijklmnop",
       computer: "c-abcdefghijklmnop", account: "a-abcdefghijklmnop",
@@ -173,14 +176,45 @@ describe("origin, runtime and agent time", () => {
     expect(card.title).toBe("End-to-end encrypted · open on iPhone to read")
     expect(card.summary).toBeNull()
     expect(card.steps).toEqual({ done: 1, total: 3, current: null })
-    expect(card.project?.name).toBe("Encrypted project")
-    expect(card.topic).toBe("Encrypted topic")
-    expect(card.origin).toBe("Encrypted computer · Encrypted account")
+    // Names this browser has not learned tell the owner nothing: identity leaves them out.
+    expect(card.project).toBeNull()
+    expect(card.topic).toBeNull()
+    expect(card.origin).toBeNull()
     expect(card.decision).toMatchObject({ encrypted: true, prompt: "End-to-end encrypted · open on iPhone to read", pending: true })
     expect(card.outcome.kind).toBe("running")
 
     const readable = cardFor(summary({ activity: activity({}) }), now)
     expect(readable.encrypted).toBe(false)
     expect(readable.title).toBe("Ship build")
+  })
+})
+
+describe("History rows", () => {
+  it("keeps live work as cards and folds settled runs into one list each, in order", () => {
+    const pending = { kind: "approval", prompt: "Ship it?", state: "pending", respondedAt: null, expiresAt: "2026-08-07T13:00:00Z" }
+    const cards = [
+      cardFor(summary({ id: "a", kind: "notification", state: "recorded" }), now),
+      cardFor(summary({ id: "b", activity: activity({ state: "ended", outcome: "completed" }) }), now),
+      cardFor(summary({ id: "c", activity: activity({}) }), now),
+      cardFor(summary({ id: "d", kind: "approval", question: pending }), now),
+      cardFor(summary({ id: "e", kind: "notification", state: "recorded" }), now),
+    ]
+    expect(cards.map(isLiveCard)).toEqual([false, false, true, true, false])
+    expect(historySegments(cards).map((segment) =>
+      segment.kind === "live" ? segment.card.id : segment.cards.map((card) => card.id).join("+")
+    )).toEqual(["a+b", "c", "d", "e"])
+  })
+
+  it("says what was decided, else the summary, else the card's metadata", () => {
+    const answered = cardFor(
+      summary({ activity: activity({ state: "ended", outcome: "completed", status: "Shipped" }),
+        question: { kind: "approval", prompt: "Ship?", state: "approved", respondedAt: "2026-08-07T12:08:00Z", expiresAt: null } }),
+      now
+    )
+    expect(historyLine(answered)).toMatch(/^You approved .+ · Shipped$/)
+    const quiet = cardFor(summary({ activity: activity({ state: "ended", outcome: "completed", status: "", endedAt: "2026-08-07T12:01:12Z",
+      steps: { done: 4, total: 4, current: null } }) }), now)
+    expect(historyLine(quiet)).toBe("4 of 4 done · 6 updates · ran 04:12")
+    expect(historyLine(cardFor(summary({ kind: "notification", state: "recorded", body: "" }), now))).toBeNull()
   })
 })

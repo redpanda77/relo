@@ -37,7 +37,7 @@ describe("PendingDevicesNotice", () => {
 
     const notice = await screen.findByRole("status", { name: "New devices waiting for approval" })
     expect(notice).toHaveTextContent("Test iPad (iPad Pro 11-inch (M4)) wants to read your Relo cards, signed in 5 minutes ago.")
-    expect(notice).toHaveTextContent("Approve or decline it in Devices or in Relo on your iPhone → Settings → Security.")
+    expect(notice).toHaveTextContent("Approve or decline it in Devices or in Relo on your iPhone → Settings → Devices.")
     expect(screen.getByRole("link", { name: "Approve or decline it in Devices" })).toHaveAttribute("href", "/dashboard/account#devices")
     expect(fetchMock).toHaveBeenCalledWith(PENDING_DEVICES_PATH, expect.objectContaining({ credentials: "same-origin" }))
   })

@@ -32,7 +32,7 @@ command. Run the `Next` command (fill in the `…`); do not retry the refused on
 - `the work changed twice while this command ran` (code `VERSION_CONFLICT`): another relo command in
   this session raced it; run the same command again.
 
-## Step names unreadable here (R-21)
+## Step names unreadable here
 
 `Refused: this computer cannot read this work's step names (it was started elsewhere), so steps can't
 be matched by name.` The account seals work text and this computer has no copy of the labels. Steps
@@ -44,7 +44,11 @@ still work by id: the `State:` line lists `s1 (done), s2 (current), s3 (open)`; 
 `Refused: relo sessions shows every session; it is for the owner, not for an agent inside a session.`
 (exit `2`, code `OWNER_ONLY`). Inside an agent session `relo sessions`, `relo listen` and the
 card lookups (`list`, `get`, `status`, `diagnose`) are refused. Use `relo state` for this session's
-own work. The owner runs those commands in a terminal outside the agent.
+own work. When the owner asks you for help across sessions (a hanging or test card), use the admin
+surface: `relo admin works` lists every open and paused work (hanging or moving), `relo admin finish
+wrk_… --dropped --outcome "…"` ends a hanging one (paused, or quiet <!--f:card.freshSeconds-->20 minutes<!--/f-->; a moving one is refused:
+`WORK_RUNNING`), and `relo admin sessions` / `relo admin activity …` run the owner's views. Never use
+`relo admin` unless the owner asked.
 
 ## No session id (Gemini CLI, Cursor, OpenCode)
 
@@ -79,7 +83,7 @@ the prerequisite. Do not claim delivery and do not allow a protected action.
 ## Unanswered question
 
 Exit `4` with state `timeout` ("No answer yet; the question is still open"): the wait ended before the
-question did (about 100s in a session). Run the hint, `relo interaction wait ID --timeout 100s`,
+question did (about <!--f:question.agentWaitSeconds short-->100s<!--/f--> in a session). Run the hint, `relo interaction wait ID --timeout 100s`,
 as often as needed until the question closes. Exit `8` with state `expired` or `canceled` ("closed
 … Do not act"): treat it as no. The work stays as it was; keep updating it. An answer that shows up
 later in an echo is marked late and is never permission: ask again. Never ask again just to extend the wait. `question_pending` means the
@@ -97,7 +101,7 @@ Run `next.run` for the first unmet step, in this order, and ask the owner at mos
 `login` (signed in and server reachable), `phone` (a phone with Live Activities on: `relo devices list`),
 `test` (`relo test`, once). A healthy but unready setup exits `0`; real failures keep their exit codes.
 `next.step` `skill` is a warning only (`ready` stays `true`): the skill is missing or not at the CLI's version,
-the owner reinstalls it, see [install.md](install.md). A `warnings.update` of `behind` means a newer CLI release exists: tell the owner once; `relo update` runs only with their go-ahead. Agents do not run installers mid-task. Whether an
+the owner reinstalls it, see [install.md](install.md). A `warnings.update` of `behind` means a newer CLI release exists. A CLI from the install script updates itself; when a relo reply says the CLI is behind your server's, run `relo update`. Whether an
 instruction-file block exists is the owner's choice and never a step (`relo doctor --full` mentions it).
 
 ## Sign-in through an agent shell

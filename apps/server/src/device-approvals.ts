@@ -3,14 +3,17 @@ import { z } from "zod";
 import type { ApnsMode } from "./activities.js";
 import type { Database } from "./db.js";
 import { friendlyModelName,simulatorSql } from "./device-models.js";
+import { ownerOverviewSql } from "./owner-overview.js";
 import { internalId,publicId } from "./ids.js";
 import { createNotification } from "./notifications/commands.js";
+import type { CreateNotificationResult } from "./notifications/types.js";
 import { prepareNotificationContent } from "./notification-content.js";
 import type { NotificationContentCipher } from "./notification-content.js";
 import { purgeUnreadableContent } from "./unreadable-content.js";
+import { revokeDeviceCredentials } from "./credentials/device.js";
 
 /**
- * New devices are approved on a trusted phone (docs/END-TO-END-ENCRYPTION.md). The server lists the
+ * New devices are approved on a trusted phone (docs/ENCRYPTION-PROTOCOL.md). The server lists the
  * account's newer phones that no phone has approved for their current identity key, stores the
  * approving phone's signature, and tells the other phones a device is waiting. It never decides
  * trust: computers check the signature against the phones they already trust.
@@ -39,7 +42,9 @@ export type PendingDevice = {
  * older phone: a new device cannot "decline" the phone that is already trusted.
  *
  * Simulators never vouch for a real phone: a real phone is pending only behind an older real phone,
- * and a simulator caller sees only simulators.
+ * and a simulator caller sees only simulators. An owner overview device (the Mac's notch app) vouches
+ * for no device at all: it sees nothing to approve and holds no device back, so the iPhone is never
+ * stuck pending behind a Mac.
  */
 export async function pendingDevices(db: Pick<Database,"query">,principalId: string,callerDeviceId?: string): Promise<PendingDevice[]> {
   const result = await db.query<any>(
@@ -48,11 +53,12 @@ export async function pendingDevices(db: Pick<Database,"query">,principalId: str
      LEFT JOIN devices caller ON caller.id=$2::uuid
      WHERE d.principal_id=$1 AND d.revoked_at IS NULL
        AND ($2::uuid IS NULL OR (d.id<>$2::uuid AND d.registered_at>caller.registered_at
-         AND (NOT ${simulatorSql("caller")} OR ${simulatorSql("d")})))
+         AND (NOT ${simulatorSql("caller")} OR ${simulatorSql("d")}) AND NOT ${ownerOverviewSql("caller")}))
        AND NOT EXISTS (SELECT 1 FROM device_approvals a WHERE a.device_id=d.id AND a.identity_key=k.public_key)
        AND EXISTS (SELECT 1 FROM devices other JOIN device_identity_keys ok ON ok.device_id=other.id
          WHERE other.principal_id=d.principal_id AND other.revoked_at IS NULL AND other.id<>d.id
-           AND other.registered_at<d.registered_at AND (NOT ${simulatorSql("other")} OR ${simulatorSql("d")}))
+           AND other.registered_at<d.registered_at
+           AND (NOT ${simulatorSql("other")} OR ${simulatorSql("d")}) AND NOT ${ownerOverviewSql("other")})
      ORDER BY d.registered_at DESC LIMIT 16`,
     [principalId,callerDeviceId ?? null],
   );
@@ -63,12 +69,13 @@ export async function pendingDevices(db: Pick<Database,"query">,principalId: str
   }));
 }
 
-/** The signing input a phone or linked browser signs to approve a device (packages/cli/src/e2ee.mjs). */
+/** The signing input a phone or linked browser signs to approve a device (packages/cli/src/crypto/e2ee.mjs). */
 export function approveDeviceSigningInput(input: { deviceId: string; identityKey: string; approverDeviceId: string; signedAt: string }): Buffer {
   return Buffer.from(["relo.e2e.v1 approve-device",input.deviceId,input.identityKey,input.approverDeviceId,input.signedAt].join("\n"));
 }
 
-function verifyP256(identityKey: string,message: Buffer,signature: string): boolean {
+/** Verifies a raw r||s ECDSA P-256 signature against a b64u X9.63 public key. */
+export function verifyP256(identityKey: string,message: Buffer,signature: string): boolean {
   const raw = Buffer.from(identityKey,"base64url");
   if (raw.length !== 65 || raw[0] !== 0x04) return false;
   try {
@@ -86,10 +93,10 @@ export async function approveDevice(
   const target = internalId("dev",input.deviceId);
   if (!target || target === callerDeviceId) return { ok: false,error: "device_not_found" };
   const current = await db.query<{ public_key: string; refused: boolean }>(
-    `SELECT k.public_key,(${simulatorSql("caller")} AND NOT ${simulatorSql("d")}) AS refused
+    `SELECT k.public_key,(${simulatorSql("caller")} AND NOT ${simulatorSql("d")} OR ${ownerOverviewSql("caller")}) AS refused
      FROM devices d JOIN device_identity_keys k ON k.device_id=d.id JOIN devices caller ON caller.id=$3
      WHERE d.id=$1 AND d.principal_id=$2 AND d.revoked_at IS NULL`,[target,principalId,callerDeviceId]);
-  // A simulator never approves a real phone.
+  // A simulator never approves a real phone; an overview device approves nothing.
   if (!current.rows[0] || current.rows[0].refused) return { ok: false,error: "device_not_found" };
   if (current.rows[0].public_key !== input.identityKey) return { ok: false,error: "identity_mismatch" };
   await db.query(
@@ -112,7 +119,7 @@ export const browserApprovalSchema = z.object({
 }).strict();
 export type BrowserApproval = z.infer<typeof browserApprovalSchema>;
 
-/** A browser's link counts this long after the phone signed it (packages/cli/src/trust.mjs, LINK_DAYS). */
+/** A browser's link counts this long after the phone signed it (packages/cli/src/crypto/trust.mjs, LINK_DAYS). */
 export const BROWSER_LINK_DAYS = 14;
 const SIGNED_AT_SKEW_MS = 10 * 60_000;
 
@@ -120,7 +127,7 @@ export type BrowserApprovalError =
   | "device_not_found" | "identity_mismatch" | "already_approved" | "browser_not_linked" | "invalid_signature";
 
 /**
- * A linked browser approves a pending phone (docs/END-TO-END-ENCRYPTION.md, "Approving from a linked
+ * A linked browser approves a pending phone (docs/ENCRYPTION-PROTOCOL.md, "Approving from a linked
  * browser"). The browser's own non-extractable identity key signs the same input a phone signs, with
  * the browser's id as the approver; the server checks the signature against the browser's published
  * key so only that browser can approve, and computers check it again against the browser they trust.
@@ -175,7 +182,7 @@ export async function declineDevice(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query("UPDATE device_credentials SET revoked_at=now() WHERE device_id=$1 AND revoked_at IS NULL",[target]);
+    await revokeDeviceCredentials(client,target);
     await client.query(
       `UPDATE devices SET revoked_at=now(),apns_token=NULL,live_activity_push_to_start_token=NULL,
          credential_version=credential_version+1 WHERE id=$1 AND principal_id=$2`,[target,principalId]);
@@ -193,7 +200,7 @@ export async function declineDevice(
 
 /**
  * Once per device and identity key: a plain notice to the account's other phones ("New device wants
- * access"), opening Settings → Security. Only the device's name and time; nothing sealed is involved.
+ * access"), opening Devices. Only the device's name and time; nothing sealed is involved.
  */
 export async function requestDeviceApproval(
   db: Database,principalId: string,deviceId: string,apnsMode: ApnsMode,contentCipher: NotificationContentCipher | null,
@@ -201,16 +208,17 @@ export async function requestDeviceApproval(
   const pending = await pendingDevices(db,principalId);
   const device = pending.find((entry) => entry.deviceId === publicId("dev",deviceId));
   if (!device) return false;
+  // Before the claim: while no older phone can show a notice, the next pass asks again.
+  const others = await db.query<{ id: string }>(
+    `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
+     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND d.id<>$2 AND d.registered_at<(SELECT registered_at FROM devices WHERE id=$2)
+       AND NOT ${simulatorSql("d")} AND ${notifiableSql("d")}`,
+    [principalId,deviceId]);
+  if (!others.rowCount) return false;
   const claimed = await db.query(
     `UPDATE device_identity_keys SET approval_requested_at=now()
      WHERE device_id=$1 AND public_key=$2 AND approval_requested_at IS NULL`,[deviceId,device.identityKey]);
   if (!claimed.rowCount) return false;
-  const others = await db.query<{ id: string }>(
-    `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
-     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND d.id<>$2 AND d.registered_at<(SELECT registered_at FROM devices WHERE id=$2)
-       AND NOT ${simulatorSql("d")}`,
-    [principalId,deviceId]);
-  if (!others.rowCount) return false;
   const idempotencyKey = `device-approval:${deviceId}:${device.keyId}`;
   try {
     await sendApprovalNotice(db,principalId,device,others.rows.map((row) => row.id),idempotencyKey,apnsMode,contentCipher);
@@ -226,7 +234,7 @@ async function sendApprovalNotice(
   db: Database,principalId: string,device: PendingDevice,targets: string[],idempotencyKey: string,
   apnsMode: ApnsMode,contentCipher: NotificationContentCipher | null,
 ): Promise<void> {
-  await createNotification(db,{ kind: "owner",principalId },{
+  noticeSent(await createNotification(db,{ kind: "owner",principalId },{
     idempotencyKey,
     requestHash: createHash("sha256").update(idempotencyKey).digest("hex"),
     sourceName: "Relo",
@@ -236,28 +244,37 @@ async function sendApprovalNotice(
     payload: { deviceApproval: { deviceId: device.deviceId } },
     deviceIds: targets,
     originHash: null,
-  },{ apnsMode,contentCipher });
+  },{ apnsMode,contentCipher }));
+}
+
+/** A notice the phones can show: notifications allowed. One phone that can't would refuse the whole notice. */
+const notifiableSql = (alias: string) => `${alias}.notification_authorization IN ('authorized','provisional')`;
+
+/** A refused notice is a failure, never a silent success: the caller logs it and the claim is released. */
+function noticeSent(result: CreateNotificationResult): void {
+  if (result.kind !== "created" && result.kind !== "replayed") throw new Error(`approval_notice_not_sent:${result.kind}`);
 }
 
 /**
  * A computer's first key on an account that already has one: the phones hold it as pending until the
- * owner approves it in Settings → Security (docs/HARDENING.md, gap 3), so tell them once. The first
+ * owner approves it in Devices (docs/HARDENING.md, gap 3), so tell them once. The first
  * computer is trusted on first contact and needs no notice.
  */
 export async function announceNewComputer(
   db: Database,principalId: string,apiKeyId: string,keyId: string,apnsMode: ApnsMode,contentCipher: NotificationContentCipher | null,
 ): Promise<boolean> {
   const computer = await db.query<{ label: string; others: boolean }>(
-    `SELECT k.label,EXISTS (SELECT 1 FROM client_identity_keys c JOIN principal_api_keys o ON o.id=c.api_key_id
+    `SELECT COALESCE(comp.display_name,k.label) AS label,EXISTS (SELECT 1 FROM client_identity_keys c JOIN principal_api_keys o ON o.id=c.api_key_id
        WHERE c.principal_id=$1 AND c.api_key_id<>$2 AND o.revoked_at IS NULL) AS others
-     FROM principal_api_keys k WHERE k.id=$2 AND k.principal_id=$1`,[principalId,apiKeyId]);
+     FROM principal_api_keys k LEFT JOIN computers comp ON comp.login_key_id=k.id
+     WHERE k.id=$2 AND k.principal_id=$1`,[principalId,apiKeyId]);
   if (!computer.rows[0]?.others) return false;
   const phones = await db.query<{ id: string }>(
     `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
-     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND NOT ${simulatorSql("d")}`,[principalId]);
+     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND NOT ${simulatorSql("d")} AND ${notifiableSql("d")}`,[principalId]);
   if (!phones.rowCount) return false;
   const idempotencyKey = `computer-approval:${apiKeyId}:${keyId}`;
-  await createNotification(db,{ kind: "owner",principalId },{
+  noticeSent(await createNotification(db,{ kind: "owner",principalId },{
     idempotencyKey,
     requestHash: createHash("sha256").update(idempotencyKey).digest("hex"),
     sourceName: "Relo",
@@ -267,8 +284,39 @@ export async function announceNewComputer(
     payload: { computerApproval: { clientId: publicId("key",apiKeyId) } },
     deviceIds: phones.rows.map((row) => row.id),
     originHash: null,
-  },{ apnsMode,contentCipher });
+  },{ apnsMode,contentCipher }));
   return true;
+}
+
+/**
+ * A browser asked for approval (docs/ENCRYPTION-PROTOCOL.md, "Linking (approval on the iPhone)"): tell the
+ * trusted phones. Returns how many phones got the notice; 0 means none could show it. The notice has no
+ * Approve action: the owner must compare the link code first.
+ */
+export async function announceBrowserLinkRequest(
+  db: Database,principalId: string,browser: { id: string; name: string; requestedAt: Date },
+  apnsMode: ApnsMode,contentCipher: NotificationContentCipher | null,
+): Promise<number> {
+  const waiting = new Set((await pendingDevices(db,principalId)).map((device) => device.deviceId));
+  const phones = await db.query<{ id: string }>(
+    `SELECT d.id FROM devices d JOIN device_identity_keys k ON k.device_id=d.id
+     WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND NOT ${simulatorSql("d")} AND ${notifiableSql("d")}`,[principalId]);
+  const targets = phones.rows.map((row) => row.id).filter((id) => !waiting.has(publicId("dev",id)));
+  if (!targets.length) return 0;
+  const browserId = publicId("brw",browser.id);
+  const idempotencyKey = `browser-link:${browser.id}:${browser.requestedAt.getTime()}`;
+  noticeSent(await createNotification(db,{ kind: "owner",principalId },{
+    idempotencyKey,
+    requestHash: createHash("sha256").update(idempotencyKey).digest("hex"),
+    sourceName: "Relo",
+    title: `${browser.name} wants to read your Relo cards`,
+    content: prepareNotificationContent({ body: "Approve it in Devices if the code matches the one in your browser." }),
+    imageUrl: null,deepLink: `relo://security/request/${browserId}`,
+    payload: { browserLink: { browserId } },
+    deviceIds: targets,
+    originHash: null,
+  },{ apnsMode,contentCipher }));
+  return targets.length;
 }
 
 /** The worker's pass: devices already waiting before this existed (or whose notice failed) get theirs. */

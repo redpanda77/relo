@@ -71,9 +71,12 @@ struct DiagnosticsView: View {
                       defaultFilename: "relo-diagnostics") { result in
             if case .failure = result { exportFailed = true }
         }
-        .alert("Export unavailable", isPresented: $exportFailed) {
-            Button("OK", role: .cancel) {}
-        } message: { Text("The diagnostic file could not be saved. Your responses and current state are unchanged.") }
+        .reloConfirmation(isPresented: $exportFailed) {
+            ReloConfirmSpec(
+                title: "Export unavailable",
+                message: "The diagnostic file could not be saved. Your responses and current state are unchanged.",
+                actionTitle: "OK", destructive: false, cancelTitle: nil, action: {})
+        }
     }
 
     private func prepareExport() async {

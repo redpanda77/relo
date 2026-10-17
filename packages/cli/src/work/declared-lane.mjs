@@ -4,16 +4,16 @@
 // command succeeds locally. A queued write replays with its first key, so a write that did reach the
 // server before the network failed answers with the first result instead of applying twice.
 //
-// An entry body is { v: 1, harness, seal, readable, sealedForm?, opaque?, withContext?, card?, copy? } (sealed when it is sent,
+// An entry body is { v: 1, harness, seal, readable, sealedForm?, opaque?, withContext?, named?, card?, copy?, outcomeNotice? } (sealed when it is sent,
 // for the phones trusted then) or { v: 1, harness, final } (already sealed; replayed byte for byte).
-import { EXIT, NetworkError } from "../errors.mjs";
-import { enqueue, flush, outboxDirectory, pending, serverOrigin } from "../outbox/index.mjs";
-import { sealingUnavailable } from "../seal-notice.mjs";
-import { workSealer } from "./seal-work.mjs";
+import { EXIT, NetworkError } from "../shared/errors.mjs";
+import { declaredQueue, flush, outboxDirectory, pending, serverOrigin } from "../outbox/index.mjs";
+import { sealingUnavailable } from "../crypto/seal-notice.mjs";
+import { workSealer } from "../crypto/seal-work.mjs";
 import { worksClient } from "./works-client.mjs";
+import { T_RETIRE_MS } from "./state-file.mjs";
 
-export const QUEUED_NOTE = "Queued: sends with the next relo command";
-export const DRAIN_BUDGET_MS = 3_000;
+const DRAIN_BUDGET_MS = 3_000;
 
 const withoutBase = (body) => {
   if (!body || body.baseVersion === undefined) return body;
@@ -21,12 +21,13 @@ const withoutBase = (body) => {
   return rest;
 };
 
-export function declaredDirectory(dependencies) {
-  if (dependencies?.outboxDirectory) return dependencies.outboxDirectory;
-  const env = dependencies?.env ?? process.env;
-  // An injected env without a state folder falls back to the process's (tests keep theirs isolated there).
-  const state = env.XDG_STATE_HOME?.trim() ? env : { ...env, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
-  return outboxDirectory({ env: state, ...(dependencies?.home ? { home: dependencies.home } : {}) });
+function declaredDirectory(dependencies) {
+  return dependencies?.outboxDirectory ?? outboxDirectory({ env: dependencies?.env ?? process.env, ...(dependencies?.home ? { home: dependencies.home } : {}) });
+}
+
+/** The server asked to wait (429): the write is fine, so it is queued and sent once the wait is over. */
+export function rateLimited(error) {
+  return error?.status === 429 || error?.details?.status === 429;
 }
 
 /** A failure that says nothing about the write itself: the server was not reached. */
@@ -48,18 +49,24 @@ export async function materialize(form, sealer) {
     if (form.seal === "always") throw sealingUnavailable("this work is end-to-end encrypted and no trusted phone has a current key");
     return form.readable;
   }
-  // Project, topic and computer go as handles; their names ride the sealed card to the phone.
+  // Project, topic and computer go as handles; their names ride the sealed card to the phone. `named` is
+  // the work's whole context, so every card envelope of a work (start, update, pause, finish) carries the
+  // same handle → name map, not only the first: a reader that sees one later envelope still names them.
   const identity = form.opaque ? await sealing.opaque(form.opaque) : undefined;
+  const card = form.card && form.named ? await sealing.opaque(form.named) : undefined;
+  const names = { ...card?.names, ...identity?.names };
   return {
     ...form.sealedForm,
     ...(identity && form.withContext ? { context: identity.context } : {}),
-    ...(form.card ? { sealed: sealing.seal(form.card, identity?.names) } : {}),
+    ...(form.card ? { sealed: sealing.seal(form.card, names) } : {}),
     ...(form.copy ? { producerSealed: sealing.self(form.copy) } : {}),
+    // The outcome notification's own text (a deliver or finish); without it the server shows a placeholder.
+    ...(form.outcomeNotice ? { sealedOutcome: sealing.outcome(form.outcomeNotice) } : {}),
   };
 }
 
 /** The server a command's writes are for: its config's API origin (the client's when no config is given). */
-export function declaredServer({ config, client }) {
+function declaredServer({ config, client }) {
   return serverOrigin(config?.apiUrl) ?? serverOrigin(client?.apiUrl);
 }
 
@@ -94,15 +101,16 @@ export function declaredLane({ client, config, dependencies, identity, sealer, b
   let queued = false;
   // A write sealed and sent before the network failed replays byte for byte (same key, same body). One
   // never sent is sealed when it goes, and drops baseVersion: the writes queued before it change the version.
-  const put = (form, final) => enqueue({
-    directory, lane: "declared",
+  const put = (form, final) => declaredQueue.enqueue({
+    directory,
     entry: {
       server, route: form.route.path, method: form.route.method, idempotencyKey: form.key, credential: "cli", sessionKey: identity.sessionKey,
       body: final ? { v: 1, harness: identity.harness, final } : {
         v: 1, harness: identity.harness, seal: form.seal, readable: withoutBase(form.readable),
         ...(form.sealedForm ? { sealedForm: withoutBase(form.sealedForm) } : {}),
         ...(form.opaque ? { opaque: form.opaque, withContext: Boolean(form.withContext) } : {}),
-        ...(form.card ? { card: form.card } : {}), ...(form.copy ? { copy: form.copy } : {}),
+        ...(form.named ? { named: form.named } : {}), ...(form.card ? { card: form.card } : {}), ...(form.copy ? { copy: form.copy } : {}),
+        ...(form.outcomeNotice ? { outcomeNotice: form.outcomeNotice } : {}),
       },
     },
   });
@@ -117,7 +125,7 @@ export function declaredLane({ client, config, dependencies, identity, sealer, b
       queued = left.declared > 0;
       return { sent, pending: left.declared };
     },
-    /** form: { route, key, seal, readable, sealedForm?, opaque?, withContext?, card?, copy? }. */
+    /** form: { route, key, seal, readable, sealedForm?, opaque?, withContext?, named?, card?, copy?, outcomeNotice? }. */
     async write(form) {
       if (queued) { await put(form); return null; }
       let body;
@@ -128,7 +136,7 @@ export function declaredLane({ client, config, dependencies, identity, sealer, b
         return null;
       }
       try { return await api.send(form.route, body, form.key); } catch (error) {
-        if (!offline(error)) throw error;
+        if (!offline(error) && !rateLimited(error)) throw error;
         queued = true;
         await put(form, body);
         return null;
@@ -157,6 +165,6 @@ export async function drainDeclared({ client, config, dependencies, budgetMs = D
 export async function laneSummary(dependencies, now = Date.now()) {
   const summary = await pending({ directory: declaredDirectory(dependencies) }).catch(() => undefined);
   if (!summary) return { declared: 0, oldestAt: null, refused: [] };
-  const refused = (summary.dead ?? []).filter((item) => item.lane === "declared" && now - Date.parse(item.at) < 3600_000);
+  const refused = (summary.dead ?? []).filter((item) => item.lane === "declared" && now - Date.parse(item.at) < T_RETIRE_MS);
   return { declared: summary.declared, oldestAt: summary.declared ? summary.oldestAt : null, refused };
 }

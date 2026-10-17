@@ -6,7 +6,7 @@ import { bootstrapOwner } from "./bootstrap.js";
 import { hashToken } from "./auth.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
-import { createWebhookService } from "./services.js";
+import { createWebhookService } from "./webhooks/admin.js";
 import { respondToInteraction } from "./interactions/commands.js";
 import { CALLBACK_MAX_ATTEMPTS,dispatchDueInteractionCallbacks } from "./interaction-callbacks.js";
 import { createTransportTokenEncryption } from "./token-encryption.js";
@@ -45,9 +45,9 @@ suite("Interaction answer callbacks",() => {
   });
   const app = () => createApp(db,{ apnsMode: "sandbox",credentialDerivationSecret: secret });
 
-  async function ask(body: Record<string,unknown>,path = "/api/interactions") {
+  async function ask(body: Record<string,unknown>,path = "/api/interactions",token = owner) {
     const response = await app().request(path,{ method: "POST",
-      headers: { authorization: `Bearer ${owner}`,"content-type": "application/json","idempotency-key": randomUUID() },
+      headers: { authorization: `Bearer ${token}`,"content-type": "application/json","idempotency-key": randomUUID() },
       body: JSON.stringify(body) });
     expect(response.status,await response.clone().text()).toBe(201);
     const { eventId } = await response.json() as { eventId: string };
@@ -121,14 +121,15 @@ suite("Interaction answer callbacks",() => {
   });
 
   test("webhook prompts accept a callback and report its state on the event route",async () => {
-    const path = new URL(service.webhookUrl).pathname;
+    const path = "/hooks";
     const request = await ask({ body: "Deploy commit 8e7fc2a?",context: identity,
       response: { type: "approval",correlationId: "deploy-184",
-        callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } } },path);
+        callback: { url: "https://ci.example.com/relo",token: "private-callback-token-0123" } } },path,service.secret);
     await answer(request,"approve");
     const send = (async () => 200) as any;
     await dispatchDueInteractionCallbacks(db,{ encryption,send,resolve: publicResolve });
-    const event = await app().request(`${path}/events/ntf_${request.notification_event_id}`);
+    const event = await app().request(`${path}/events/ntf_${request.notification_event_id}`,
+      { headers: { authorization: `Bearer ${service.secret}` } });
     const body = await event.json() as any;
     expect(body.event.response).toMatchObject({ status: "approved",correlationId: "deploy-184",
       callback: { state: "delivered",attempts: 1 } });

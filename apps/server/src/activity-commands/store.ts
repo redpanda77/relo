@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { FACTS } from "@relo/notification-contracts";
 import { resolveActivityReplay } from "../activity-lifecycle-domain.js";
 import { publicId } from "../ids.js";
 import type { persistedPresentationColumns } from "../presentation-runtime.js";
@@ -73,15 +74,16 @@ export async function updateCommandActivity(tx: SubjectTransaction,actor: Activi
         FROM activity_mutation_freshness WHERE activity_id=$1 AND sequence=$2 AND accepted_at=$3`,
       [current.id,current.sequence,current.updated_at])).rows[0];
       const base=prior?.base??current.updated_at;
-      previousStaleSeconds=current.stale_at?Math.max(0,Math.min(28_800,Math.round((current.stale_at.getTime()-base.getTime())/1000))):14_400;
+      previousStaleSeconds=current.stale_at?Math.max(0,Math.min(FACTS.card.maxSeconds,Math.round((current.stale_at.getTime()-base.getTime())/1000))):14_400;
     }
     return (await tx.query<ActivityRow>(`UPDATE live_activities SET
       title=$3,status=$4,detail=$5,progress=$6,symbol=$7,privacy=$8,accent_color=$9,style=$10,presentation=$11,presentation_sha256=$12,
       context=CASE WHEN $13::jsonb IS NULL THEN context ELSE COALESCE(context,'{}'::jsonb)||$13::jsonb END,
-      stale_after_seconds=$14::integer,stale_at=LEAST(LEAST(statement_timestamp(),COALESCE($17::timestamptz,statement_timestamp()))+($14::integer*interval '1 second'),expires_at),sequence=sequence+1,updated_at=statement_timestamp(),declared_at=statement_timestamp()
+      stale_after_seconds=$14::integer,stale_at=CASE WHEN $18::boolean THEN stale_at ELSE LEAST(LEAST(statement_timestamp(),COALESCE($17::timestamptz,statement_timestamp()))+($14::integer*interval '1 second'),expires_at) END,sequence=sequence+1,updated_at=statement_timestamp(),
+      declared_at=CASE WHEN $18::boolean THEN declared_at ELSE statement_timestamp() END
       WHERE id=$1 AND principal_id=$2 AND state='active'
         AND requester_credential_id IS NOT DISTINCT FROM $15::uuid AND requester_service_id IS NOT DISTINCT FROM $16::uuid RETURNING *`,
-    [...values,command.input.context??null,command.input.staleAfterSeconds??previousStaleSeconds,owner.credentialId,owner.serviceId,command.input.occurredAt??null])).rows[0];
+    [...values,command.input.context??null,command.input.staleAfterSeconds??previousStaleSeconds,owner.credentialId,owner.serviceId,command.input.occurredAt??null,command.appearanceOnly===true])).rows[0];
   }
   const terminalActor=actor.kind==="service"?"service":command.input.lifecycle?`provider:${command.input.lifecycle.provider}`:"credential";
   return (await tx.query<ActivityRow>(`UPDATE live_activities SET state='ended',

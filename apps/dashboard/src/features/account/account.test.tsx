@@ -41,10 +41,7 @@ const initial: AccountDashboardBootstrap = {
     serverOrigin: "https://relo.example",
     authentication: "Better Auth email/password session",
     liveActivityPolicy: {
-      preset: "automatic",
-      theme: "system",
-      symbol: "automatic",
-      colorStrategy: "thread",
+      colorStrategy: "project",
       accentColor: "#5ED8B7",
     },
     liveActivityPolicySource: "system",
@@ -132,14 +129,14 @@ describe("Account feature contracts", () => {
     vi.stubGlobal("navigator", { clipboard: { writeText } })
     render(<AccountPage initial={initial} service={service()} />)
 
-    expect(screen.getByLabelText("Login command")).toHaveValue(
-      'relo auth login --api-url "https://relo.example" --json'
+    expect(screen.getByLabelText("Install and sign in")).toHaveValue(
+      'curl -fsSL https://relo.example/install.sh | sh && ~/.local/bin/relo auth login --api-url "https://relo.example"'
     )
     fireEvent.click(screen.getByRole("button", { name: "Copy command" }))
 
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(
-        'relo auth login --api-url "https://relo.example" --json'
+        'curl -fsSL https://relo.example/install.sh | sh && ~/.local/bin/relo auth login --api-url "https://relo.example"'
       )
     )
     expect(await screen.findByText("Login command copied.")).toBeVisible()
@@ -150,7 +147,7 @@ describe("Account feature contracts", () => {
       clipboard: { writeText: vi.fn().mockRejectedValue(new Error("blocked")) },
     })
     render(<AccountPage initial={initial} service={service()} />)
-    const command = screen.getByLabelText("Login command")
+    const command = screen.getByLabelText("Install and sign in")
 
     fireEvent.click(screen.getByRole("button", { name: "Copy command" }))
 
@@ -163,7 +160,7 @@ describe("Account feature contracts", () => {
     expect(command).toHaveProperty("selectionStart", 0)
     expect(command).toHaveProperty(
       "selectionEnd",
-      'relo auth login --api-url "https://relo.example" --json'.length
+      'curl -fsSL https://relo.example/install.sh | sh && ~/.local/bin/relo auth login --api-url "https://relo.example"'.length
     )
   })
 

@@ -290,13 +290,13 @@ private struct PreviewMobileAPIClient: MobileAPIClient {
     func signOutAccount(sessionToken: String) async throws { throw MobileAPIError.unavailable }
     func deleteAccount(sessionToken: String, password: String, confirmation: String) async throws { throw MobileAPIError.unavailable }
 }
-#endif
 
 private extension PreviewNotificationReceiptStore {
     func pending(scope: ReceiptScope, limit: Int) async throws -> NotificationReceiptBatch { .init(records: []) }
     func remove(records: Set<NotificationReceiptRecord>) async throws {}
     func retire(scope: ReceiptScope) async throws {}
 }
+#endif
 
 #if DEBUG
 extension AppModel {
@@ -342,21 +342,6 @@ extension AppModel {
              "createdAt": at(-6), "urgencyRank": 1,
              "interaction": ["id": "int_" + uuid(12), "type": "text", "state": "pending", "expiresAt": at(52)]],
         ]
-        agentSessionsFetchedAt = now
-        agentSessions = clear ? [] : [
-            AgentSession(id: "ags_" + uuid(21), harness: "codex", computer: "MacBook Pro", account: "Work", project: "relo",
-                         startedAt: now.addingTimeInterval(-38 * 60), lastSeenAt: now.addingTimeInterval(-60),
-                         card: .init(id: "act_" + uuid(1), state: "active", quietForSeconds: 60), presence: .working),
-            AgentSession(id: "ags_" + uuid(22), harness: "claude-code", computer: "MacBook Pro", account: "Work", project: "design-archive",
-                         startedAt: now.addingTimeInterval(-95 * 60), lastSeenAt: now.addingTimeInterval(-14 * 60),
-                         card: .init(id: "act_" + uuid(2), state: "active", quietForSeconds: 840), presence: .quiet),
-            AgentSession(id: "ags_" + uuid(23), harness: "gemini", computer: "Mac mini", account: nil, project: "website",
-                         startedAt: now.addingTimeInterval(-12 * 60), lastSeenAt: now.addingTimeInterval(-2 * 60),
-                         presence: .noCard),
-            AgentSession(id: "ags_" + uuid(24), harness: "opencode", computer: "Mac mini", account: nil, project: "docs",
-                         startedAt: now.addingTimeInterval(-50 * 60),
-                         lastSeenAt: now.addingTimeInterval(-20 * 60), presence: .ended, phase: .ended),
-        ]
         let response: [String: Any] = [
             "items": subjects, "retired": [], "total": subjects.count, "hasMore": false,
             "counts": ["actionable": pending.count, "currentUnread": subjects.count], "serverTime": at(0)]
@@ -379,6 +364,36 @@ extension AppModel {
             previewAcceptCurrentState(state)
         } catch {
             assertionFailure("Preview current work did not decode: \(error)")
+        }
+    }
+}
+
+extension AppModel {
+    /// Capture only: the preview working activity as a Quiet work (session idle since 3:12 PM) in the Now summary,
+    /// so its detail offers End work.
+    func seedPreviewQuietWork(reason: String = "session_idle", now: Date = .now) {
+        let iso = ISO8601DateFormatter()
+        func at(_ minutes: Double) -> String { iso.string(from: now.addingTimeInterval(minutes * 60)) }
+        let item: [String: Any] = [
+            "id": "act_previewquiet", "title": "Preparing the build", "status": "Running the unit tests",
+            "sourceName": "Build CI", "producer": "agent_session", "notificationId": "ntf_previewworking",
+            "startedAt": at(-95), "declaredAt": at(-48), "quietReason": reason, "quietSince": at(-41),
+            "steps": ["done": 2, "total": 5, "current": "Run the unit tests"],
+            "owner": ["state": "stale", "evidenceAt": at(-48), "evidenceSource": "declared", "staleDate": at(-28),
+                      "lockScreen": "dimmed", "now": "quiet", "relevance": 0.1, "apnsPriority": 5]]
+        let summary: [String: Any] = [
+            "serverTime": at(0), "refreshAt": at(30),
+            "sinceYouLooked": ["since": at(-120), "finished": 0, "failed": 0, "waitingOnYou": 0,
+                               "stoppedWithoutFinishing": 0, "needsYou": 0],
+            "needsYou": [], "recent": [], "waitingOnYou": [], "running": [], "quiet": [item], "paused": [],
+            "folds": ["waitingOnYou": 0, "quiet": 1, "paused": 0],
+            "lockScreen": ["cards": [], "needsYouCount": 0],
+            "sessions": ["sessions": [], "folds": ["idle": 0]]]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: summary)
+            receiveNowSummary(try ReloWireJSON.decoder().decode(NowSummary.self, from: data))
+        } catch {
+            assertionFailure("Preview quiet work did not decode: \(error)")
         }
     }
 }

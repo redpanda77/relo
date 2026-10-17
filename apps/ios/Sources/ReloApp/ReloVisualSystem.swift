@@ -22,9 +22,10 @@ extension Color {
     /// Filled buttons: a deeper coral so white labels stay above 4.5:1.
     static let reloActionFill = Color(hex: 0xC8432F)
     static let reloOnAction = Color.white
-    static let reloAccent = reloInteractive
-    static let reloBackground = reloCanvas
-    static let detailBackground = reloCanvas
+    /// Semantic: something needs the owner (HUD needs-you orange). Use instead of `ReloHoloTheme.orange`.
+    static let reloAttention = ReloHoloTheme.orange
+    /// Semantic: a destructive or failed outcome, as text and quiet borders; never system red.
+    static let reloDestructive = reloErrorText
     /// Brand gradient stops (`--brand-gradient`).
     static let reloCoral = Color(hex: 0xFF6B57)
     static let reloMagenta = Color(hex: 0xD65CF0)
@@ -37,17 +38,6 @@ extension Color {
     static let reloWarning = Color(hex: 0xFBBF24)
     /// The dark lens behind the orb count.
     static let reloOrbCore = reloCanvas
-
-    static let reloBrandGradient = LinearGradient(colors: [.reloCoral, .reloMagenta, .reloIndigo],
-                                                  startPoint: .topLeading, endPoint: .bottomTrailing)
-
-    static func presentationHex(_ value: String) -> Color? {
-        guard value.count == 7, value.first == "#",
-              let rgb = UInt32(value.dropFirst(), radix: 16) else { return nil }
-        return Color(red: Double((rgb >> 16) & 255) / 255,
-                     green: Double((rgb >> 8) & 255) / 255,
-                     blue: Double(rgb & 255) / 255)
-    }
 }
 
 /// Dashboard `.glass`: white 4% over the gradient field, a hairline border, a lit top edge and

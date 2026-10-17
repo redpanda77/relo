@@ -5,9 +5,11 @@ import {
 } from "@relo/notification-contracts";
 import {
   ApnsProviderCleanroom,
+  type ActivitySend,
   type ApnsOutcome,
   type ApnsProviderConfig,
   type ApnsTransport,
+  type BackgroundSend,
   type RecipientResolver,
 } from "./apns-provider-cleanroom.js";
 import {
@@ -65,8 +67,7 @@ export function apnsPriorityForJob(input: {
   requesterCredentialId: string | null;
   requesterServiceId: string | null;
 }): 5 | 10 {
-  void input;
-  return 10;
+  return input.command?.quietRestart === true ? 5 : 10;
 }
 
 export class ApnsOutcomePersistenceError extends Error {
@@ -144,6 +145,16 @@ export class CleanroomApnsRuntime {
       throw new ApnsOutcomePersistenceError(result);
     }
     return result;
+  }
+
+  /** A silent push on the same provider pool (notifications/settle-pushes.ts owns its ledger). */
+  async sendBackground(input: BackgroundSend): Promise<ApnsOutcome> {
+    return await this.provider.sendBackground(input);
+  }
+
+  /** The wizard's Live Activity push (computer-invite-activity.ts owns its ledger); the activity's own token is the recipient. */
+  async sendInviteActivity(input: ActivitySend): Promise<ApnsOutcome> {
+    return await this.provider.sendActivity(input);
   }
 
   async close(): Promise<void> {

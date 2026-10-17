@@ -1,0 +1,327 @@
+/* history: owned by one area (History, its delivery log and the notification detail); imported at
+   the end of index.css so it can refine the base rules.
+
+   History mirrors the iPhone: each day is one WorkList of work-card rows (components/organisms/
+   work-card.tsx); only live work (running, needs you) keeps a framed card, in place. */
+
+/* ---------- Toolbar: search, then one row of filters that scrolls sideways ---------- */
+
+.history-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+/* Wide: search on its own full row above the filters, both on the list's left edge. */
+@container history (min-width: 700px) {
+  .history-toolbar { gap: 12px; margin-bottom: 24px; }
+  .history-toolbar-search { max-width: 26rem; }
+  .history-toolbar-filters { flex-wrap: wrap; margin-inline: 0; padding-inline: 0; overflow: visible; }
+}
+.history-toolbar-search { position: relative; min-width: 0; }
+.history-search { position: relative; }
+.history-search input {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px 0 34px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.03);
+  color: var(--foreground);
+  font-size: 14px;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+.history-search input::placeholder { color: var(--muted-foreground); }
+.history-search input:hover { border-color: var(--hairline-strong); }
+.history-search input:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ring) 70%, transparent);
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 22%, transparent);
+}
+.history-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  width: 15px;
+  height: 15px;
+  translate: 0 -50%;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+/* The search's privacy note appears while the owner is searching; it is always its description. */
+.history-search-hint {
+  display: none;
+  margin-top: 6px;
+  padding-inline: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.history-toolbar-search:focus-within .history-search-hint,
+.history-toolbar-search:has(input:not(:placeholder-shown)) .history-search-hint { display: block; }
+
+.history-toolbar-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline: calc(var(--page-gutter) * -1);
+  padding: 2px var(--page-gutter) 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: var(--page-gutter);
+}
+.history-toolbar-filters > * { flex-shrink: 0; }
+.history-toolbar-rule {
+  width: 1px;
+  height: 20px;
+  margin-inline: 2px;
+  background: var(--hairline);
+}
+/* Clear all: a round ✕ first in the row, as on the iPhone. */
+.history-clear { width: 32px; justify-content: center; padding: 0; }
+@media (pointer: coarse) { .history-clear { width: 44px; } }
+
+/* The Delivery log, a quiet link beside the title rather than a filter. */
+.history-secondary-link {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.history-secondary-link:hover,
+.history-secondary-link:focus-visible { color: var(--foreground); }
+
+.history-matches {
+  margin: -6px 0 14px;
+  padding-inline: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Frame ---------- */
+
+/* A log reads best as one column: title, search, filters and the list share one left edge and one
+   width on every screen (the same measure as Now). */
+.page-frame:has(.history) { max-width: 920px; }
+
+/* ---------- Days ---------- */
+
+.history { container: history / inline-size; }
+
+.history-days { display: flex; flex-direction: column; gap: 36px; }
+
+.history-day { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; }
+/* A day: its name on the left, what happened that day on the right of one hairline-ruled line. */
+.history-day-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 16px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.history-day-title { font-size: 15px; font-weight: 600; color: var(--foreground); }
+.history-day-counts {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.history-day-counts > span { white-space: nowrap; }
+.history-day-counts > span + span::before { content: "·"; margin-inline: 6px; }
+.history-day-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* A live card in the log is as tall as its content (the shared card fills a grid cell on Now). */
+.history-day-body > .work-card { height: auto; }
+
+/* ---------- Under the list: pages and coverage ---------- */
+
+.history-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+}
+.history-pages { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; width: 100%; }
+.history-page-link {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-lg);
+  background: var(--control-fill);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--foreground);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.history-page-link:hover { background: var(--control-fill-hover); }
+@media (pointer: coarse) { .history-page-link { min-height: 44px; border-radius: 12px; } }
+.history-load-older { flex: 1 1 16rem; max-width: 28rem; }
+.history-coverage { font-size: 12px; color: var(--muted-foreground); text-align: center; }
+
+/* ---------- Delivery log ---------- */
+
+.delivery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px 14px 56px;
+}
+.delivery-evidence {
+  padding: 0 16px 6px 56px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Notification detail ---------- */
+
+/* One column in the side sheet; on a wide page a main column and a ~300px side of facts (iOS order:
+   header, the pending question first, plan, message; Details and Delivery beside). */
+.detail { display: flex; flex-direction: column; min-width: 0; }
+.detail[data-variant="page"] { container: detail / inline-size; gap: 28px; }
+.detail[data-variant="panel"] { min-height: 100%; }
+
+.detail-header { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.detail[data-variant="panel"] .detail-header {
+  padding: 24px 56px 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+/* source · project, then the computer; the session (thread) sits on its own line under it. */
+.detail-origin { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.detail-origin-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.detail-origin-path { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
+.detail-origin-path > [data-part="source"] { flex-shrink: 0; }
+.detail-origin-path > [data-part="project"] { flex-shrink: 0; font-weight: 600; }
+.detail-origin-topic { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--foreground); overflow-wrap: anywhere; }
+.detail-origin-computer { display: inline-flex; min-width: 0; align-items: center; gap: 4px; }
+.detail-origin-computer > svg { width: 13px; height: 13px; flex-shrink: 0; }
+.detail-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.detail-timer { font-size: 12px; color: var(--muted-foreground); }
+.detail-status { font-size: 14px; line-height: 20px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.detail-sealed { font-size: 14px; }
+
+.detail-columns { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+.detail[data-variant="panel"] .detail-columns { flex: 1; padding: 24px; }
+.detail-main,
+.detail-side { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+
+@container detail (min-width: 760px) {
+  .detail-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    column-gap: 48px;
+    align-items: start;
+  }
+  /* The facts stay in view beside a long plan. */
+  .detail-side { position: sticky; top: var(--page-top, 24px); }
+}
+
+.detail-section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.detail-message {
+  font-size: 15px;
+  line-height: 28px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The pending question leads, washed in its meaning colour. */
+.detail-question {
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--tone) 26%, var(--hairline));
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--tone) 6%, transparent);
+}
+.detail-question > .micro { color: color-mix(in srgb, var(--tone) 80%, white); }
+.detail-prompt { font-size: 15px; line-height: 26px; overflow-wrap: anywhere; }
+
+/* Details: one fact per row, label left, value right (iOS ReloAboutRows). */
+.detail-facts {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  background: rgb(255 255 255 / 0.025);
+}
+.detail-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.detail-fact + .detail-fact { border-top: 1px solid var(--divider); }
+.detail-fact > dt { flex-shrink: 0; color: var(--muted-foreground); }
+.detail-fact > dd { min-width: 0; text-align: right; color: var(--foreground); overflow-wrap: anywhere; }
+
+.detail-fold {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: rgb(255 255 255 / 0.025);
+  font-size: 14px;
+}
+.detail-fold > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 14px;
+  list-style: none;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  user-select: none;
+}
+.detail-fold > summary::-webkit-details-marker { display: none; }
+.detail-fold > summary:hover { color: var(--foreground); }
+.detail-fold-body { display: flex; flex-direction: column; gap: 16px; padding: 14px; border-top: 1px solid var(--border); }
+
+/* The answer and the actions stay reachable at the bottom while the work scrolls (iOS safe-area inset). */
+.detail-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--popover, #0b0d13) 86%, transparent);
+  backdrop-filter: blur(16px);
+}
+.detail[data-variant="panel"] .detail-footer { padding: 16px 24px; background: var(--popover); }
+.detail[data-variant="page"] .detail-footer { margin-inline: -4px; padding-inline: 4px; }
+/* Phones: the footer rests above the floating tab bar, never under it. */
+@media (max-width: 767px) {
+  .detail[data-variant="page"] .detail-footer { bottom: var(--tab-bar-space); }
+}

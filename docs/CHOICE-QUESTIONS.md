@@ -40,6 +40,24 @@ choice and never receive one:
   targets, so an old build never receives one. New builds also skip any item whose kind they do not
   know instead of failing the page.
 
+### Device capabilities
+
+| Capability | Meaning |
+|---|---|
+| `choice_questions` | The build can show and answer a choice question; only such phones are targeted with one. |
+| `owner_overview` | Reads the whole account's Now; never a delivery target. |
+
+`owner_overview` is for an owner surface that is not a phone, such as the Mac's notch app (the iPhone
+never declares it). Delivery stays strict: cards, questions and alerts still target only phones with
+Live Activities authorized, so an overview device is never a target. Visibility for it is account-level,
+like the Dashboard's: `/api/now`, `/api/inbox/current`, `/api/inbox/pending`, `/api/inbox/events` hints and
+`GET /api/inbox/:id` skip the delivery-target filter, while sealed envelopes are still returned only when
+the device is a recipient (computers seal cards and questions to it as a reader, never as an alerted
+phone). It may answer a question on the copy the asking computer waits on (the copy a linked browser
+answers); another copy is refused with `409 {"error":"not_asked_copy"}`. Its pending list shows that copy
+only. It never approves another device, and a phone is never pending behind it. An overview build sees
+every question kind, so it must decode them all (it declares `choice_questions` too).
+
 ## Card (Live Activity)
 
 Presentation behavior: `{"type":"choice","options":[{"id","label"}…]}`. ActivityKit content state

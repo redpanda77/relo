@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { choiceOptionsSchema } from "@relo/notification-contracts";
+import { FACTS,choiceOptionsSchema } from "@relo/notification-contracts";
 
 /** By default a question waits five minutes; unanswered, it expires and its card ends. */
-export const QUESTION_SECONDS = 300;
+export const QUESTION_SECONDS = FACTS.question.defaultSeconds;
 /** The longest any server lets a question wait; each server's admin sets its own limit below this. */
-export const QUESTION_CEILING_SECONDS = 30*24*60*60;
+export const QUESTION_CEILING_SECONDS = FACTS.question.ceilingSeconds;
 /** A Live Activity lives at most 8 hours on iOS; a question waiting longer continues in Relo. */
-export const CARD_MAX_SECONDS = 8*60*60;
+export const CARD_MAX_SECONDS = FACTS.card.maxSeconds;
 
 export const questionExpirySchema = z.number().int().min(30)
   .max(QUESTION_CEILING_SECONDS,{ message: "A question waits at most 30 days" })

@@ -1,12 +1,13 @@
 import type { Queryable,WorkRow } from "./store.js";
+import { FACTS } from "@relo/notification-contracts";
 
 /**
  * Leases (STATE-SPEC v2 2.11): scripts and services prove liveness without fake updates. A lease is
  * evidence for derive(), never declared text: a heartbeat moves only `lease_until` and `declared_at`.
  * Agent sessions never hold one (DB CHECK `works_lease_type`; no route under `/api/session`).
  */
-export const LEASE_MIN_SECONDS = 60;
-export const LEASE_MAX_SECONDS = 3600;
+export const LEASE_MIN_SECONDS = FACTS.lease.minSeconds;
+export const LEASE_MAX_SECONDS = FACTS.lease.maxSeconds;
 
 export type LeaseOwner =
   | { producerType: "script"; principalId: string; credentialId: string; producerKey: string }

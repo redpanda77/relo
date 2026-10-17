@@ -117,4 +117,22 @@ describe("current presentation runtime",() => {
       content: { subtitle: null },components: [],
     } });
   });
+
+  test("a stopped work keeps the step it reached; only a finished one completes its steps",() => {
+    const windowed = canonicalPresentation({ ...presentation,components: [
+      { ...presentation.components[0],before: 3,after: 6 },presentation.components[1],
+    ] });
+    const steps = (value: ReturnType<typeof terminalPresentationFromRow>) =>
+      value.components.find((component) => component.type === "steps");
+    const stopped = terminalPresentationFromRow({ presentation: windowed },"Paused","stopped");
+    expect(stopped.state).toEqual({ kind: "cancelled",tone: "neutral",icon: "cancelled" });
+    expect(steps(stopped)).toMatchObject({ before: 3,after: 6,items: [
+      { state: "complete" },{ state: "current" },{ state: "pending" },
+    ] });
+    const finished = terminalPresentationFromRow({ presentation: windowed },"Done","success",{ workFinished: true });
+    expect(finished.state.kind).toBe("completed");
+    expect(steps(finished)).toMatchObject({ before: 9,items: [
+      { state: "complete" },{ state: "complete" },{ state: "complete" },
+    ] });
+  });
 });

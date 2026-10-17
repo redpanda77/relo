@@ -200,48 +200,23 @@ describe("dashboard web routes", () => {
       "/dashboard/connections", "/dashboard/testing",
       "/dashboard/testing/runs/act_00000000-0000-0000-0000-000000000000",
       "/dashboard/testing/runs/act_00000000-0000-0000-0000-000000000000/history",
-      "/dashboard/account", "/dashboard/docs",
+      "/dashboard/account",
     ]) {
       const response = await app.request(path);
       expect(response.status, path).toBe(302);
       expect(response.headers.get("location"), path).toBe(`/sign-in?next=${encodeURIComponent(path)}`);
     }
 
-    const docs = await app.request("/docs");
+    // The docs are public: the old in-Dashboard page sends readers there.
+    const docs = await app.request("/dashboard/docs");
     expect(docs.status).toBe(302);
-    expect(docs.headers.get("location")).toBe("/dashboard/docs");
+    expect(docs.headers.get("location")).toBe("/docs");
 
     const detail = await app.request("/dashboard/notifications/ntf_00000000-0000-0000-0000-000000000000");
     expect(detail.status).toBe(302);
     expect(detail.headers.get("location")).toBe(
       "/dashboard/inbox/notifications/ntf_00000000-0000-0000-0000-000000000000",
     );
-  });
-
-  test("serves machine-readable documentation from the dashboard source", async () => {
-    const app = routeApp();
-    const docs = await app.request("/docs.md");
-    const agents = await app.request("/agents.md");
-    const llms = await app.request("/llms.txt");
-    expect(docs.status).toBe(200);
-    expect(docs.headers.get("content-type")).toContain("text/markdown");
-    const docsText = await docs.text();
-    expect(docsText).toContain("Coordinate Live Activities");
-    for (const required of [
-      "Authorization: Bearer <access-token>", "POST /api/notifications", "POST /api/interactions",
-      "GET /api/interactions/:interactionId/wait", "GET /hooks/<service-secret>/events/:eventId",
-      "PATCH /api/live-activities/:activityId", "apns_payload_too_large", "idempotency_conflict",
-      '"delivery": { "eligibleDevices": 1, "durableCommands": 1, "apnsJobs": 1 }',
-      '"ifSequence": 0', '"dismissAfterSeconds": 15', "activities:write", "activities:read",
-      "/api/devices/register", "/api/device-authorizations/start", "/api/inbox/history", "/api/clients/self",
-      "/health/ready",
-      "300/minute account ceiling", "60/minute client or service ceiling",
-      "respondingDevice", "`approval`", "`shell`", "`verdict`", "`signal`",
-    ]) expect(docsText).toContain(required);
-    const agentsText = await agents.text();
-    expect(agentsText).toContain("Only an explicit phone approval");
-    expect(agentsText).toContain("POST /api/notifications");
-    expect(await llms.text()).toContain("- Documentation: /docs.md");
   });
 
   test("serves the authenticated React Test Lab entry with a safe typed bootstrap", async () => {

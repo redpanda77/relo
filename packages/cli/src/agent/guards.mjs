@@ -1,12 +1,11 @@
 // Refusals for the agent module, before any request (plan 04 §2.3 R-1…R-5, R-12; §2.8 owner-only).
+import { harnessLabel } from "../harness/catalog.mjs";
 import { WorkRefusal } from "../work/refusal.mjs";
 
 const TIMING = ["expires-in", "stale-after", "dismiss-after"];
 const RETIRED = ["topic", "thread-name", "task-title", "title", "steps", "step-current"];
 
-const harnessName = (caller) => caller?.type === "agent_session"
-  ? ({ "claude-code": "Claude Code", codex: "Codex", mcp: "MCP" }[caller.harness] ?? caller.harness)
-  : caller?.agent ?? "an agent harness";
+const harnessName = (caller) => (caller?.harness ? harnessLabel(caller.harness) : "an agent harness");
 
 export const without = (argv, flag) => {
   const out = [];
@@ -34,18 +33,16 @@ export function guardWorkFlags({ verb, options, positionals, argv, caller, state
   if ((verb === "update" || verb === "pause") && positionals.length) {
     throw new WorkRefusal("REFUSED_POSITIONAL", { what: `relo work ${verb} always acts on this session's open work; it takes no id`, state, next: `relo work ${verb} …` });
   }
-  if (caller.type === "agent_session" && options.work !== undefined && ["start", "update", "pause"].includes(verb)) {
+  if (caller.type === "agent_session" && options.work !== undefined && ["start", "update", "pause", "deliver"].includes(verb)) {
     throw new WorkRefusal("REFUSED_WORK_FLAG", { what: "--work is only for finishing or resuming a parked work of this session", state, next: 'relo work finish --work wrk_… --outcome "…"  |  relo work resume wrk_…' });
   }
 }
 
-export const OWNER_ONLY = new Set(["sessions", "listen", "activity list", "activity diagnose", "activity get", "activity status"]);
-
-export function guardOwnerOnly({ group, action, caller }) {
-  const key = OWNER_ONLY.has(group) ? group : `${group} ${action}`;
-  if (!OWNER_ONLY.has(key)) return;
+/** An owner-only command (registry entry `ownerOnly`) refused to an agent: it shows every session, or this computer's setup. */
+export function refuseOwnerOnly(key, caller) {
   const where = caller.type === "agent_session" ? `this shell belongs to a ${harnessName(caller)} session` : `this shell runs inside ${harnessName(caller)} (no session id)`;
-  throw new WorkRefusal("OWNER_ONLY", { what: `relo ${key} shows every session; it is for the owner, not for an agent inside a session`, state: where, next: "relo state   (this session's own work)" });
+  const admin = key === "listen" || key === "config" ? "" : `  |  relo admin ${key}   (only when the owner asks you for help)`;
+  return new WorkRefusal("OWNER_ONLY", { what: `relo ${key} ${key === "config" ? "shows this computer's setup" : "shows every session"}; it is for the owner, not for an agent inside a session`, state: where, next: `relo state   (this session's own work)${admin}` });
 }
 
 export { harnessName };

@@ -1,11 +1,14 @@
 import { AlertCircle, ArrowRight, FlaskConical, Smartphone } from "lucide-react"
 import * as React from "react"
 
-import { Page, Section } from "@/components/page"
+import { StatusDot } from "@/components/atoms/status-dot"
+import { Empty, Section } from "@/components/list"
+import { ConfirmationAction } from "@/components/molecules/confirmation-action"
+import { Notice } from "@/components/molecules/notice"
 import { RunMonitor } from "@/components/organisms/run-monitor"
+import { Page } from "@/components/page"
 import { Button } from "@/components/ui/button"
 import { Sheet } from "@/components/ui/sheet"
-import { ConfirmationAction } from "@/features/connections/components"
 import { NewRunSheet } from "@/features/test-lab/new-run-sheet"
 import { RunDetailsSheet } from "@/features/test-lab/run-details-sheet"
 import { CONNECTIONS_HREF, deviceBlocker } from "@/features/test-lab/devices"
@@ -32,44 +35,39 @@ const LIST_REFRESH_MS = 5_000
 
 function DeviceSetup({ devices }: { devices: TestDevice[] }) {
   return (
-    <section
-      aria-labelledby="device-setup-heading"
-      className="glass flex flex-col gap-5 rounded-2xl p-5 sm:flex-row sm:items-center sm:p-6"
+    <Notice
+      aria-label="iPhone setup"
       data-device-setup
+      tone="orange"
+      icon={<Smartphone />}
+      title={
+        devices.length
+          ? "No iPhone is ready for tests"
+          : "Connect an iPhone to start testing"
+      }
+      action={
+        <Button variant="outline" size="sm" asChild>
+          <a href={CONNECTIONS_HREF}>
+            Open Connections
+            <ArrowRight aria-hidden="true" />
+          </a>
+        </Button>
+      }
     >
-      <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-accent text-primary">
-        <Smartphone className="size-5" aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <h2 id="device-setup-heading" className="font-medium">
-          {devices.length
-            ? "No iPhone is ready for tests"
-            : "Connect an iPhone to start testing"}
-        </h2>
-        {devices.length ? (
-          <ul className="mt-1.5 space-y-1 text-sm text-muted-foreground">
-            {devices.map((device) => (
-              <li key={device.id}>
-                <span className="text-foreground">{device.name}</span>
-                {" · "}
-                {deviceBlocker(device)}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-1 max-w-[60ch] text-sm text-muted-foreground">
-            Sign in to the Relo app on your iPhone and allow notifications and
-            Live Activities. It appears here as soon as it can receive tests.
-          </p>
-        )}
-      </div>
-      <Button variant="outline" className="min-h-11 self-start sm:self-auto" asChild>
-        <a href={CONNECTIONS_HREF}>
-          Open Connections
-          <ArrowRight aria-hidden="true" />
-        </a>
-      </Button>
-    </section>
+      {devices.length ? (
+        <ul className="space-y-0.5">
+          {devices.map((device) => (
+            <li key={device.id}>
+              <span className="text-foreground">{device.name}</span>
+              {" · "}
+              {deviceBlocker(device)}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        "Sign in to the Relo app on your iPhone and allow notifications and Live Activities. It appears here as soon as it can receive tests."
+      )}
+    </Notice>
   )
 }
 
@@ -177,11 +175,19 @@ export function TestLabPage({
   ) => {
     await mutate(() => service.waitRun(runId, kind, prompt))
   }
+  // Only End all's own button shows its work (the sheet's actions share `pending`).
+  const [endingAll, setEndingAll] = React.useState<{ pending: boolean; failed: boolean }>({ pending: false, failed: false })
   const finishAll = async () => {
-    await mutate(async () => {
-      await service.finishAll()
-      await refresh()
-    })
+    setEndingAll({ pending: true, failed: false })
+    try {
+      await mutate(async () => {
+        await service.finishAll()
+        await refresh()
+      })
+      setEndingAll({ pending: false, failed: false })
+    } catch {
+      setEndingAll({ pending: false, failed: true })
+    }
   }
 
   // Keep the list honest while anything is live; pause when the tab is hidden and while a
@@ -278,33 +284,30 @@ export function TestLabPage({
       }
     >
       {shownError ? (
-        <div
+        <Notice
           role="alert"
-          className="glass flex items-start gap-3 rounded-2xl border-[color-mix(in_srgb,var(--status-danger)_40%,var(--border))] p-4 text-sm"
-        >
-          <AlertCircle
-            className="mt-0.5 size-4 shrink-0 text-[var(--status-danger)]"
-            aria-hidden="true"
-          />
-          <div className="min-w-0 flex-1">
-            <p className="font-medium">That didn’t go through</p>
-            <p className="mt-0.5 text-muted-foreground">{shownError}</p>
-          </div>
-          <Button
-            variant="ghost"
-            className="min-h-11 shrink-0"
-            onClick={() => {
-              setError(null)
-              void refresh().catch((cause: unknown) =>
-                setError(
-                  cause instanceof Error ? cause.message : "Refresh failed."
+          tone="red"
+          icon={<AlertCircle />}
+          title="That didn’t go through"
+          action={
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setError(null)
+                void refresh().catch((cause: unknown) =>
+                  setError(
+                    cause instanceof Error ? cause.message : "Refresh failed."
+                  )
                 )
-              )
-            }}
-          >
-            Try again
-          </Button>
-        </div>
+              }}
+            >
+              Try again
+            </Button>
+          }
+        >
+          {shownError}
+        </Notice>
       ) : null}
 
       {readyDevices.length === 0 ? (
@@ -316,17 +319,8 @@ export function TestLabPage({
         action={
           <div className="flex flex-wrap items-center gap-3">
             {summary ? (
-              <span
-                className="flex items-center gap-2 text-xs text-muted-foreground"
-                role="status"
-              >
-                {hasLive ? (
-                  <span
-                    className="size-1.5 rounded-full bg-[var(--status-active)] shadow-[0_0_8px_var(--status-active)]"
-                    aria-hidden="true"
-                  />
-                ) : null}
-                {summary}
+              <span className="text-xs text-muted-foreground" role="status">
+                <StatusDot tone={hasLive ? "cyan" : "neutral"} live={hasLive} label={summary} />
               </span>
             ) : null}
             {snapshot.summary.active > 1 ? (
@@ -334,7 +328,10 @@ export function TestLabPage({
                 label={`End all ${snapshot.summary.active}`}
                 title={`End ${snapshot.summary.active} live tests?`}
                 description="Every live test is removed from its iPhone’s Lock Screen. You can’t undo this."
-                pending={pending}
+                pending={endingAll.pending}
+                failed={endingAll.failed}
+                disabled={pending}
+                pendingLabel="Ending…"
                 variant="outline"
                 onConfirm={() => void finishAll()}
               />
@@ -358,31 +355,29 @@ export function TestLabPage({
               }
             />
           ) : (
-            <div className="glass rounded-2xl px-6 py-12 text-center">
-              <FlaskConical
-                className="mx-auto size-5 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <p className="mt-3 text-sm font-medium">No tests yet</p>
-              <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-                {readyDevices.length
+            <Empty
+              icon={<FlaskConical />}
+              title="No tests yet"
+              description={
+                readyDevices.length
                   ? "Send one to see exactly how a notification looks and travels."
-                  : "Once an iPhone is connected, your tests show up here."}
-              </p>
-              {readyDevices.length ? (
-                <Button
-                  variant="outline"
-                  className="mt-5 min-h-11"
-                  onClick={() =>
-                    navigateDashboard(
-                      "/dashboard/testing?compose=1#activity-builder-panel"
-                    )
-                  }
-                >
-                  Send your first test
-                </Button>
-              ) : null}
-            </div>
+                  : "Once an iPhone is connected, your tests show up here."
+              }
+              action={
+                readyDevices.length ? (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      navigateDashboard(
+                        "/dashboard/testing?compose=1#activity-builder-panel"
+                      )
+                    }
+                  >
+                    Send your first test
+                  </Button>
+                ) : null
+              }
+            />
           )}
           <RunDetailsSheet
             key={selectedRun?.id ?? "missing"}

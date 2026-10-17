@@ -78,7 +78,7 @@ test("owner-only commands are not refused for the owner's shell (script)", async
   assert.notEqual(r.json?.error?.code, "OWNER_ONLY", r.text);
 });
 
-test("scripts cannot use the agent surface; agents cannot use relo activity", async (t) => {
+test("scripts cannot use the agent surface; relo activity start is gone for everyone", async (t) => {
   const script = shell(CALLERS.script);
   t.after(script.done);
   // A script never reaches the agent module: without its own --producer key it is refused before any request.
@@ -88,7 +88,8 @@ test("scripts cannot use the agent surface; agents cannot use relo activity", as
   const agent = shell(CALLERS.agent_session);
   t.after(agent.done);
   const gone = await agent.relo("activity", "start", "--title", "Nightly backup", "--status", "Copying files");
-  assert.equal(gone.json.error.code, "UNKNOWN_COMMAND");
+  assert.equal(gone.json.error.code, "USAGE_ERROR");
+  assert.match(gone.json.error.message, /Unknown command: activity start/u);
   assert.equal(agent.calls.length + script.calls.length, 0);
 });
 
@@ -125,7 +126,7 @@ test("DOGFOOD #16 + plans extend without restarts: investigation → add → rev
   ({ plan } = applyChange(plan, { nextStep: true }));
   ({ plan } = applyChange(plan, { add: ["Write the fix", "Run the tests"] }));
   ({ plan } = applyChange(plan, { plan: ["Run the tests", "Write the fix", "Release"] }));
-  assert.deepEqual(plan.steps.map((s) => [s.id, s.state]), [["s1", "done"], ["s2", "skipped"], ["s4", "current"], ["s3", "open"], ["s5", "open"]]);
+  assert.deepEqual(plan.steps.map((s) => [s.id, s.state]), [["s1", "done"], ["s4", "current"], ["s3", "open"], ["s5", "open"], ["s2", "skipped"]]);
   ({ plan } = applyChange(plan, { progress: { done: 3, total: 9 } }));
   assert.deepEqual(plan.steps.find((s) => s.state === "current").progress, { done: 3, total: 9 });
   const echo = renderEcho({ work: { id: "wrk_00000001", goal: "Fix the login crash", lifecycle: "open", plan } });
@@ -140,7 +141,7 @@ test("DOGFOOD #16 + plans extend without restarts: investigation → add → rev
   ({ plan } = applyChange(plan, { nextStep: true }));
   ({ plan } = applyChange(plan, { nextStep: true }));
   ({ plan } = applyChange(plan, { nextStep: true }));
-  assert.match(renderEcho({ work: { id: "wrk_00000001", goal: "Fix the login crash", lifecycle: "open", plan } }), /Next: relo work finish/u);
+  assert.match(renderEcho({ work: { id: "wrk_00000001", goal: "Fix the login crash", lifecycle: "open", plan } }), /Next: done: relo work finish --outcome .*relo work deliver --outcome/u);
   assert.equal(new Set(plan.steps.map((s) => s.id)).size, plan.steps.length, "ids never reused");
 });
 

@@ -118,6 +118,26 @@ describe("AuthPage", () => {
     expect(screen.getByText("Create your account")).toBeTruthy()
   })
 
+  test("shows the server's refusal of a sign-up, not a connection error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "sign_up_failed", message: "Couldn't create this account. If you already have one, sign in." }), { status: 400 })
+    )
+    render(
+      <AuthPage
+        bootstrap={{
+          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" },
+          mode: "sign-in", registration: "open", title: "Sign in to Relo", description: "Use your account.",
+        }}
+      />
+    )
+    fireEvent.click(screen.getByRole("button", { name: /Create an account/ }))
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Guest" } })
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "guest@example.test" } })
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "guest-password" } })
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }))
+    expect(await screen.findByText("Couldn't create this account. If you already have one, sign in.")).toBeTruthy()
+  })
+
   test("tells a new person to wait for approval instead of signing them in", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ status: "approval_pending" }), { status: 202 })

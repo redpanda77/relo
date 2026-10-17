@@ -3,13 +3,13 @@ import { isPublicHttpsUrl } from "./url-policy.js";
 import { hashPassword } from "better-auth/crypto";
 import { z } from "zod";
 import type { ApnsMode } from "./activities.js";
-import { hashToken } from "./auth.js";
+import { sha256Hex as hashToken } from "./digest.js";
 import type { Database } from "./db.js";
 import { lockDecisionGroup,settleDecisionGroup } from "./interactions/commands.js";
 import { createQuestionCardInTransaction } from "./interactions/question-card.js";
 import { prepareNotificationContent, type NotificationContentCipher } from "./notification-content.js";
 import { createNotificationInTransaction } from "./notifications/commands.js";
-import { createWebhookService } from "./services.js";
+import { createWebhookService } from "./webhooks/admin.js";
 import { requireWorkIdentity } from "./work-identity.js";
 
 /** ADR 0004: who may register, and what the server admin can do to an account (never to its data). */

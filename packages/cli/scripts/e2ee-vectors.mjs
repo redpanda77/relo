@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import {
   answerSigningInput, b64u, fromB64u, hpkeSeal, keyId, prekeySigningInput, publicKeyFor,
   safetyNumber, sealEnvelope, signBytes,
-} from "../src/e2ee.mjs";
+} from "../src/crypto/e2ee.mjs";
 
 const root = new URL("../../../", import.meta.url);
 const targets = [

@@ -22,6 +22,18 @@ export function secureHtml(context: any, html: string): Response {
   return context.html(html);
 }
 
+/** What the request tells the server's first frame (dashboard-skeleton.ts) about the owner's own layout. */
+export type DashboardDocumentOptions = { sidebarFolded?: boolean };
+
+/**
+ * The sidebar opens as the owner last left it: shadcn's provider remembers a fold in the
+ * `sidebar_state=false` cookie, so the first frame folds too and React's commit does not shift it.
+ */
+export function dashboardDocumentOptions(context: any): DashboardDocumentOptions {
+  const cookie = String(context.req.header("cookie") ?? "");
+  return { sidebarFolded: /(?:^|;\s*)sidebar_state=false(?:;|$)/.test(cookie) };
+}
+
 /** Resolves the signed-in account, or redirects to sign-in and back to this page. */
 export async function accountOrRedirect<Account>(
   context: any,

@@ -5,12 +5,17 @@ import type { resolveActivityPresentation } from "../presentation-policy.js";
 import type { persistedPresentationColumns } from "../presentation-runtime.js";
 import type { ActivityDeliverySummary,activityStartSchema,ApnsMode } from "./schemas.js";
 import type { ActivityRow,ActivitySnapshot } from "./types.js";
+import type { ProducerType } from "@relo/notification-contracts";
+
+/** The work a card projects and its producer identity, written with the card's first insert (never patched in after). */
+export type CardIdentity={workId:string;producerType:ProducerType;sessionKey:string|null};
 
 export type ProducerStartCommand={
   operation:"start";source:"producer";rawInput:z.infer<typeof activityStartSchema>;
   storedPresentation:ReturnType<typeof persistedPresentationColumns>;
   presentationPolicy:ReturnType<typeof resolveActivityPresentation>["snapshot"];
   requestedDeviceIds:string[]|null;idempotencyKey:string|undefined;requestHash:string;apnsMode:ApnsMode;
+  cardIdentity?:CardIdentity;
 };
 export type ActivityStartReceipt={
   activity:ActivitySnapshot;delivery:ActivityDeliverySummary;queued:number;

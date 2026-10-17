@@ -13,15 +13,13 @@ if (!globalThis[APPLIED]) {
   // Tests decide which agent session (if any) they run in; never inherit the developer's own.
   for (const name of ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "RELO_SOURCE", "RELO_PROJECT", "RELO_TOPIC", "RELO_TOKEN",
     "RELO_COMPUTER", "RELO_ACCOUNT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "OPENCODE",
-    "RELO_SESSION", "RELO_MCP_SESSION", "GEMINI_CLI", "CURSOR_AGENT", "COPILOT_HOME"]) {
+    "CLAUDE_CODE_REMOTE", "RELO_SESSION", "RELO_MCP_SESSION", "GEMINI_CLI", "CURSOR_AGENT", "COPILOT_HOME"]) {
     delete process.env[name];
   }
   // Tests never ask GitHub for the latest release.
   process.env.RELO_NO_UPDATE_CHECK = "1";
   // Tests never read or write the developer's end-to-end encryption key store.
   process.env.RELO_KEY_STORE_PATH = `/nonexistent/relo-test-${process.pid}/e2ee.json`;
-  process.env.RELO_SEEN_NOTES_PATH = `/nonexistent/relo-test-${process.pid}/seen-notes.json`;
-  process.env.RELO_SEALED_CARD_DIR = `/nonexistent/relo-test-${process.pid}/sealed-cards`;
   // Tests never start a background outbox flusher (it would use the developer's own config and network).
   process.env.RELO_NO_BACKGROUND_FLUSH = "1";
   // Tests never read or write the developer's harness credential.
@@ -35,4 +33,8 @@ if (!globalThis[APPLIED]) {
   process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/relo-test-state-`);
   // Tests never read the developer's home (installed skills, agent settings): HOME is an empty temp folder.
   process.env.HOME = mkdtempSync(join(tmpdir(), "relo-test-home-"));
+  // Tests never write into this repository: a command that reads the working folder (relo setup --project,
+  // relo uninstall) starts in an empty temp folder unless the test injects its own cwd. Paths to the
+  // package itself come from import.meta.url, never from the working folder.
+  process.chdir(mkdtempSync(join(tmpdir(), "relo-test-cwd-")));
 }

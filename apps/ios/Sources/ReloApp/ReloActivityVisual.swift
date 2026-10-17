@@ -43,7 +43,7 @@ struct ReloActivityVisual: View {
         if outcome == .completed { return color }
         switch state {
         case .complete: return color
-        case .pending: return .reloMediaPlaceholder
+        case .pending, .skipped: return .reloMediaPlaceholder
         case .current:
             switch outcome {
             case .running: return color.opacity(0.42)
@@ -96,13 +96,16 @@ struct ReloActivityVisual: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: value)
                 .accessibilityElement(children: .ignore).accessibilityLabel(label ?? "Progress")
                 .accessibilityValue("\(Int((value * 100).rounded())) percent")
-        case let .steps(_, _, items):
+        case let .steps(_, _, items, window):
             let outcome = InboxAttentionProjection.activityOutcome(item, now: .now)
             let current = items.first(where: { $0.state == .current })
+            // A long plan's hidden steps still get their segment: done before the window, not started after.
+            let states = Array(repeating: LiveActivityDisplayPresentation.Step.State.complete, count: window.before)
+                + items.map(\.state) + Array(repeating: .pending, count: window.after)
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    ForEach(items) { step in
-                        Capsule().fill(stepFill(step.state, outcome: outcome, color: color)).frame(height: 6)
+                HStack(spacing: states.count > 12 ? 3 : 6) {
+                    ForEach(Array(states.enumerated()), id: \.offset) { _, state in
+                        Capsule().fill(stepFill(state, outcome: outcome, color: color)).frame(height: 6)
                     }
                 }
                 if let caption = stepCaption(current: current?.label, outcome: outcome) {

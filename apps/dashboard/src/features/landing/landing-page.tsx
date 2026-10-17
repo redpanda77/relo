@@ -5,29 +5,23 @@ import {
   HardDrive,
   Laptop,
   Workflow,
-  BadgeCheck,
   BellRing,
   Check,
   ListTree,
-  Monitor,
   MessageSquareReply,
-  Pause,
-  Play,
-  Server,
-  Smartphone,
-  Users,
-  Timer,
-  Webhook,
 } from "lucide-react"
 import * as React from "react"
 
 import { BrandLockup, BrandOrb } from "@/components/brand"
 import { GITHUB_URL, GitHubMark } from "@/features/auth/github"
 import "@/features/landing/landing.css"
-import { setupLandingMotion, type LandingMotion } from "@/features/landing/landing-motion"
+import { ControlSection } from "@/features/landing/landing-control"
+import { FeatureViz, type FeatureVisual } from "@/features/landing/landing-features"
+import { setupLandingMotion } from "@/features/landing/landing-motion"
 import type { LandingScene } from "@/features/landing/landing-scene"
 
-const INSTALL_URL = `${GITHUB_URL}#install-relo`
+/** The docs this server serves: the install guide starts at Get started. */
+const DOCS_PATH = "/docs"
 
 /** Harnesses the CLI sets up (`relo setup`, `--mcp`), then everything that speaks HTTP. */
 const sources = [
@@ -62,114 +56,143 @@ const flowOutcomes = [
   { icon: MessageSquareReply, title: "Your input", text: "Approve, decline or answer, and it carries on", tone: "52 211 153" },
 ] as const
 
-const liveSteps = ["Reproduce the flaky test", "Find the cause", "Fix the race", "Run the full suite"]
-
-const features = [
+const privacy: ReadonlyArray<{ tone: string; title: string; text: string; visual: FeatureVisual }> = [
   {
-    icon: Workflow,
+    tone: "92 225 255",
+    title: "Sealed on your computer",
+    text: "Encrypted before it leaves the machine your agent runs on.",
+    visual: "seal",
+  },
+  {
+    tone: "139 124 255",
+    title: "Unreadable on the way",
+    text: "Your server stores and delivers it, but only ever sees ciphertext.",
+    visual: "transit",
+  },
+  {
+    tone: "52 211 153",
+    title: "Opens only on your devices",
+    text: "Your iPhone, and browsers you link from it, hold the only keys.",
+    visual: "devices",
+  },
+  {
+    tone: "214 92 240",
+    title: "Then it's gone",
+    text: "Wiped from your server and your devices after hours. Keys rotate every 10 hours, so an old copy can never be opened again.",
+    visual: "expiry",
+  },
+]
+
+const features: ReadonlyArray<{ tone: string; title: string; text: string; visual: FeatureVisual; wide?: boolean }> = [
+  {
     tone: "92 225 255",
     title: "A human in the loop for your apps",
     text: "Your product asks, you decide: a new sign-up, a large refund, an access request. It calls the HTTP API, waits, and gets your answer by signed callback.",
     visual: "apps",
+    wide: true,
   },
   {
-    icon: Users,
     tone: "139 124 255",
     title: "Every session at a glance",
     text: "Know which Claude Code and Gemini CLI sessions are working, waiting on you, idle or done (with hooks on).",
+    visual: "sessions",
   },
   {
-    icon: BadgeCheck,
     tone: "255 138 61",
     title: "Only you can say yes",
     text: "Approvals are signed on your phone, so nothing and no one else can approve for you.",
+    visual: "approval",
   },
   {
-    icon: Monitor,
     tone: "52 211 153",
     title: "On your desk too",
     text: "The same view in any browser you link from your phone: what's live, what happened, by project.",
+    visual: "desk",
   },
   {
-    icon: ListTree,
     tone: "214 92 240",
     title: "See the plan, not just a spinner",
     text: "Long work shows its steps, so you know what's done, what's next and when to expect it.",
+    visual: "plan",
   },
   {
-    icon: Webhook,
     tone: "255 107 87",
     title: "Your scripts and services too",
     text: "Cron jobs, deploy pipelines and webhooks report in the same place as your agents, with the CLI or a simple HTTP call.",
     visual: "sources",
+    wide: true,
   },
-] as const
+]
 
-const controls = [
-  {
-    tone: "var(--neon-cyan)",
-    title: "See everything that's running",
-    text: "Progress updates as the work happens, wherever it runs, without opening anything.",
-  },
-  {
-    tone: "var(--neon-orange)",
-    title: "Catch what's stuck",
-    text: "Questions, failures and stalled work break through before they cost hours. Everything else updates quietly.",
-  },
-  {
-    tone: "var(--neon-violet)",
-    title: "The full picture, one tap away",
-    text: "The plan, every step and the details, in plain words.",
-  },
-  {
-    tone: "var(--neon-mint)",
-    title: "Know how it went",
-    text: "Every outcome, finished or failed, and what ran while you were away.",
-  },
-] as const
-
-function LiveCard() {
-  return (
-    <div className="live-card" data-live-card>
-      <div className="flex items-center gap-2">
-        <BrandOrb className="size-5" />
-        <span className="text-[12px] font-semibold text-white/85">Claude Code</span>
-        <span className="text-[12px] text-white/60">· relo</span>
-        <span data-live-badge className="ml-auto text-[11.5px] font-semibold text-[var(--neon-cyan)]">
-          Running
-        </span>
-      </div>
-      <p className="mt-2 text-[15px] leading-snug font-semibold text-white">Fix the flaky sign-in test</p>
-      <ul className="mt-2">
-        {liveSteps.map((step, index) => (
-          <li key={step} className="live-step" data-live-step={index} data-state={index === 0 ? "now" : "next"}>
-            <i>
-              <Check className="size-2.5" strokeWidth={3.5} />
-            </i>
-            <span>{step}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="live-bar mt-2.5">
-        <span data-live-bar />
-      </div>
-      <p data-live-status className="mt-2 truncate text-[12px] text-white/70">
-        Reproducing it in a loop…
-      </p>
-    </div>
-  )
+/** Offset of an element inside an ancestor, from layout alone (reveal transforms never skew it). */
+function offsetWithin(element: HTMLElement, ancestor: HTMLElement) {
+  let x = 0
+  let y = 0
+  let node: HTMLElement | null = element
+  while (node && node !== ancestor) {
+    x += node.offsetLeft
+    y += node.offsetTop
+    node = node.offsetParent as HTMLElement | null
+  }
+  return { x, y }
 }
 
-function Phone({ children, island }: { children: React.ReactNode; island?: React.ReactNode }) {
+/**
+ * The dotted lines of "One place": from the middle of each source card into the orb's white core,
+ * and from the core out to each outcome. Measured from the layout, so they meet the core exactly
+ * at any width (desktop only; phones use the beam in CSS).
+ */
+function FlowLines() {
+  const svg = React.useRef<SVGSVGElement>(null)
+  const [geometry, setGeometry] = React.useState<{ width: number; height: number; paths: string[] } | null>(null)
+
+  React.useLayoutEffect(() => {
+    const flow = svg.current?.parentElement
+    if (!flow) return
+    const measure = () => {
+      const orb = flow.querySelector<HTMLElement>(".flow-hub .brand-orb")
+      const [sources, outcomes] = [...flow.querySelectorAll<HTMLElement>(".flow-column")].map((column) => [
+        ...column.querySelectorAll<HTMLElement>(".flow-card"),
+      ])
+      if (!orb || !sources || !outcomes || flow.offsetWidth === 0) return
+      const core = offsetWithin(orb, flow)
+      const cx = core.x + orb.offsetWidth / 2
+      const cy = core.y + orb.offsetHeight / 2
+      const curve = (x0: number, y0: number, x1: number, y1: number) => {
+        const dx = x1 - x0
+        return `M ${x0} ${y0} C ${x0 + dx * 0.55} ${y0}, ${x1 - dx * 0.45} ${y1}, ${x1} ${y1}`
+      }
+      const paths = [
+        ...sources.map((card) => {
+          const at = offsetWithin(card, flow)
+          return curve(at.x + card.offsetWidth, at.y + card.offsetHeight / 2, cx, cy)
+        }),
+        ...outcomes.map((card) => {
+          const at = offsetWithin(card, flow)
+          return curve(cx, cy, at.x, at.y + card.offsetHeight / 2)
+        }),
+      ]
+      setGeometry({ width: flow.offsetWidth, height: flow.offsetHeight, paths })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(flow)
+    void document.fonts?.ready.then(measure)
+    return () => observer.disconnect()
+  }, [])
+
+  const half = geometry ? geometry.paths.length / 2 : 0
   return (
-    <div className="phone" aria-hidden="true">
-      <div className="phone-screen">
-        <div className="phone-island">{island}</div>
-        <p className="phone-time">9:41</p>
-        <p className="phone-date">Wednesday 14 October</p>
-        {children}
-      </div>
-    </div>
+    <svg
+      ref={svg}
+      className="flow-lines"
+      viewBox={geometry ? `0 0 ${geometry.width} ${geometry.height}` : undefined}
+      aria-hidden="true"
+    >
+      {geometry?.paths.map((d, index) => (
+        <path key={index} className={index < half ? "flow-line" : "flow-line flow-line-out"} d={d} />
+      ))}
+    </svg>
   )
 }
 
@@ -209,19 +232,18 @@ function Chip({
 }
 
 export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }) {
+  const signUpPath = `${signInPath}?mode=sign-up`
   const rootRef = React.useRef<HTMLDivElement>(null)
   const stageRef = React.useRef<HTMLDivElement>(null)
   const canvasRef = React.useRef<HTMLCanvasElement>(null)
   const sceneRef = React.useRef<LandingScene | null>(null)
-  const motionRef = React.useRef<LandingMotion | null>(null)
-  // The scene runs only while on screen, the tab is visible and the visitor hasn't paused motion.
-  const pauseRef = React.useRef({ offscreen: false, hidden: false, user: false })
+  // The scene runs only while on screen and the tab is visible.
+  const pauseRef = React.useRef({ offscreen: false, hidden: false })
   const [fallback, setFallback] = React.useState(false)
-  const [paused, setPaused] = React.useState(false)
 
   const applyPause = React.useCallback(() => {
-    const { offscreen, hidden, user } = pauseRef.current
-    sceneRef.current?.setPaused(offscreen || hidden || user)
+    const { offscreen, hidden } = pauseRef.current
+    sceneRef.current?.setPaused(offscreen || hidden)
   }, [])
 
   // The WebGL hero loads after first paint; the copy never waits for it.
@@ -281,23 +303,11 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
     const motion = setupLandingMotion(root, {
       onHeroScroll: (progress) => sceneRef.current?.setScroll(progress),
     })
-    motionRef.current = motion
-    return () => {
-      motionRef.current = null
-      motion.dispose()
-    }
+    return () => motion.dispose()
   }, [])
 
-  function toggleMotion() {
-    const next = !paused
-    setPaused(next)
-    pauseRef.current.user = next
-    applyPause()
-    motionRef.current?.setPaused(next)
-  }
-
   return (
-    <div ref={rootRef} className={`landing ${paused ? "motion-paused" : ""}`}>
+    <div ref={rootRef} className="landing">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-full focus:bg-black focus:px-4 focus:py-2"
@@ -313,23 +323,13 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
             <a className="landing-nav-link" href="#one-place">Why Relo</a>
             <a className="landing-nav-link" href="#private">Privacy</a>
             <a className="landing-nav-link" href="#features">Features</a>
-            <a className="landing-nav-link" href={INSTALL_URL} rel="external noopener" target="_blank">Install</a>
+            <a className="landing-nav-link" href={DOCS_PATH}>Docs</a>
             <a className="landing-nav-link inline-flex items-center gap-2" href={GITHUB_URL} rel="external noopener" target="_blank">
               <GitHubMark className="size-4" />
               GitHub
             </a>
           </nav>
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              className="landing-nav-link landing-icon-button"
-              aria-pressed={paused}
-              aria-label={paused ? "Play motion" : "Pause motion"}
-              title={paused ? "Play motion" : "Pause motion"}
-              onClick={toggleMotion}
-            >
-              {paused ? <Play className="size-4" aria-hidden="true" /> : <Pause className="size-4" aria-hidden="true" />}
-            </button>
             <a
               className="landing-nav-link landing-icon-button landing-phone-only"
               href={GITHUB_URL}
@@ -366,9 +366,9 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
                 Live status, alerts and approvals from every agent, script and app you run, wherever it runs. On your iPhone.
               </p>
               <div className="hero-cta mt-9 flex flex-wrap items-center gap-3">
-                <a href={INSTALL_URL} className="capsule-cta magnetic max-sm:w-full" rel="external noopener" target="_blank">
-                  <GitHubMark className="size-[18px]" />
-                  Get Relo
+                <a href={signUpPath} className="capsule-cta magnetic max-sm:w-full">
+                  Create account
+                  <ArrowRight className="size-[18px]" aria-hidden="true" />
                 </a>
                 <a href={signInPath} className="ghost-cta magnetic max-sm:w-full">
                   Sign in
@@ -402,14 +402,7 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
             </div>
 
             <div className="flow mt-14" data-flow>
-              <svg className="flow-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {[12.5, 37.5, 62.5, 87.5].map((y) => (
-                  <path key={`in-${y}`} className="flow-line" d={`M 40 ${y} C 46 ${y}, 45 50, 50 50`} />
-                ))}
-                {[12.5, 37.5, 62.5, 87.5].map((y) => (
-                  <path key={`out-${y}`} className="flow-line flow-line-out" d={`M 50 50 C 55 50, 54 ${y}, 60 ${y}`} />
-                ))}
-              </svg>
+              <FlowLines />
 
               <div className="flow-column">
                 <p className="flow-caption">Wherever it runs</p>
@@ -471,44 +464,7 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
           </div>
         </div>
 
-        {/* ---------- Control ---------- */}
-        <section id="control" className="landing-section">
-          <div className="landing-glow top-[20%] left-[-10%] size-[520px] bg-[rgb(92_225_255/0.22)]" />
-          <div className="landing-wrap grid gap-12 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:gap-20">
-            <div>
-              <SectionHeading title={<>Stay in control.</>}>
-                The more you hand to agents and automations, the more you need to see them. Every agent, script and
-                app keeps its status live on your Lock Screen, so work keeps moving and nothing waits on you unnoticed.
-              </SectionHeading>
-              <div className="landing-reveal mt-12 flex justify-center lg:justify-start" data-live-phone>
-                <Phone
-                  island={
-                    <>
-                      <span className="flex items-center gap-1.5">
-                        <BrandOrb className="size-4" />
-                        <span data-island-label className="text-[var(--neon-cyan)]">1/4</span>
-                      </span>
-                      <span data-island-done className="text-[var(--neon-mint)] opacity-0">Done</span>
-                    </>
-                  }
-                >
-                  <LiveCard />
-                </Phone>
-              </div>
-            </div>
-            <div className="self-center border-b border-white/[0.07]">
-              {controls.map((item) => (
-                <div key={item.title} className="landing-question landing-reveal">
-                  <span className="dot" aria-hidden="true" style={{ background: item.tone, boxShadow: `0 0 24px ${item.tone}` }} />
-                  <div>
-                    <h3>{item.title}</h3>
-                    <p>{item.text}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+        <ControlSection />
 
         {/* ---------- Ask ---------- */}
         <section className="landing-section !pt-0">
@@ -573,7 +529,7 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
         <section id="private" className="landing-section !pt-0">
           <div className="landing-glow top-[10%] right-[5%] size-[480px] bg-[rgb(52_211_153/0.16)]" />
           <div className="landing-wrap">
-            <div className="max-w-3xl">
+            <div className="landing-head-wide">
               <SectionHeading title={<>Total privacy.<br />For confidential work.</>}>
                 Your agents work on client code, unreleased plans and personal matters. Everything Relo carries is
                 encrypted on your computer and opens only on your devices. Nobody in between can read it, not even
@@ -581,34 +537,15 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
               </SectionHeading>
             </div>
 
-            <ol className="journey mt-14" data-seal>
-              <li className="journey-stop landing-reveal">
-                <span className="journey-icon"><Laptop className="size-5" aria-hidden="true" /></span>
-                <h3>Sealed on your computer</h3>
-                <p>Encrypted before it leaves the machine your agent runs on.</p>
-              </li>
-              <li className="journey-stop landing-reveal">
-                <span className="journey-icon"><Server className="size-5" aria-hidden="true" /></span>
-                <h3>Unreadable on the way</h3>
-                <p>Your server stores and delivers it, but only ever sees this:</p>
-                <p data-seal-cipher className="seal-text journey-cipher" aria-hidden="true">
-                  9f3a·c41e·77b0·e2d9·05aa·1b6f·d83c·4e21
-                </p>
-              </li>
-              <li className="journey-stop landing-reveal" data-tone="mint">
-                <span className="journey-icon"><Smartphone className="size-5" aria-hidden="true" /></span>
-                <h3>Opens only on your devices</h3>
-                <p>Your iPhone, and browsers you link from it, hold the only keys:</p>
-                <p data-seal-plain className="seal-text journey-plain" aria-hidden="true">
-                  Migration finished · 3 tables, 0 errors
-                </p>
-              </li>
-              <li className="journey-stop landing-reveal">
-                <span className="journey-icon"><Timer className="size-5" aria-hidden="true" /></span>
-                <h3>Then it's gone</h3>
-                <p>Wiped from your server and your devices after hours, not kept forever. Keys rotate every 10 hours, so even an old copy can never be opened again.</p>
-              </li>
-            </ol>
+            <div className="bento bento-privacy mt-14" data-bento>
+              {privacy.map(({ tone, title, text, visual }) => (
+                <article key={title} className="bento-card landing-reveal" style={{ "--tone": tone } as React.CSSProperties}>
+                  <FeatureViz kind={visual} />
+                  <h3>{title}</h3>
+                  <p>{text}</p>
+                </article>
+              ))}
+            </div>
 
             <ul className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-[14px] text-[#c3c3d3]">
               {[
@@ -631,31 +568,15 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
           <div className="landing-wrap">
             <SectionHeading title={<>Built for how agents<br />actually work.</>} />
             <div className="bento mt-14" data-bento>
-              {features.map(({ icon: Icon, tone, title, text, ...rest }) => (
+              {features.map(({ tone, title, text, visual, wide }) => (
                 <article
                   key={title}
-                  className={`bento-card landing-reveal ${"visual" in rest ? "wide" : ""}`}
+                  className={`bento-card landing-reveal ${wide ? "wide" : ""}`}
                   style={{ "--tone": tone } as React.CSSProperties}
                 >
-                  <span className="bento-icon">
-                    <Icon className="size-5" aria-hidden="true" />
-                  </span>
+                  <FeatureViz kind={visual} />
                   <h3>{title}</h3>
                   <p>{text}</p>
-                  {"visual" in rest && rest.visual === "apps" ? (
-                    <div className="mt-6 flex flex-wrap items-center gap-2" aria-hidden="true">
-                      <span className="plan-pill" data-state="now">New sign-up · approve?</span>
-                      <span className="plan-pill">Refund over $500 · confirm?</span>
-                      <span className="plan-pill" data-state="done"><Check className="size-3" strokeWidth={3} /> Access request approved</span>
-                    </div>
-                  ) : null}
-                  {"visual" in rest && rest.visual === "sources" ? (
-                    <div className="mt-6 flex flex-wrap gap-2" aria-hidden="true">
-                      {["cron", "GitHub Actions", "webhooks", "HTTP API", "relo CLI"].map((source) => (
-                        <span key={source} className="plan-pill font-mono">{source}</span>
-                      ))}
-                    </div>
-                  ) : null}
                 </article>
               ))}
             </div>
@@ -674,9 +595,9 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
                 Source-available under PolyForm Noncommercial. Free for personal and noncommercial use.
               </p>
               <div className="mt-10 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-                <a href={INSTALL_URL} className="capsule-cta magnetic" rel="external noopener" target="_blank">
-                  <GitHubMark className="size-[18px]" />
-                  Install Relo
+                <a href={signUpPath} className="capsule-cta magnetic">
+                  Create account
+                  <ArrowRight className="size-[18px]" aria-hidden="true" />
                 </a>
                 <a href={signInPath} className="ghost-cta magnetic">
                   Sign in
@@ -693,6 +614,9 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
           <BrandLockup orbClassName="size-6" />
           <p>Source-available under the PolyForm Noncommercial License 1.0.0.</p>
           <div className="flex gap-2">
+            <a className="landing-footer-link" href={DOCS_PATH}>
+              Docs
+            </a>
             <a className="landing-footer-link" href={GITHUB_URL} rel="external noopener" target="_blank">
               GitHub
             </a>

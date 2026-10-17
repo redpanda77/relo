@@ -33,6 +33,8 @@ struct AppDependencies {
     var tokenRegistrar: BackgroundLiveActivityTokenRegistrar? = nil
     /// End-to-end encryption key upkeep; nil in previews and tests.
     var encryptionKeys: E2EEKeyMaintenance? = nil
+    /// The Connect a computer wizard's code and bind half; in memory in previews and tests.
+    var computerInviteStore: any ComputerInviteStoring = InMemoryComputerInviteStore()
     var answerSigner: (@Sendable () -> (any ReloIdentitySigning)?)? = nil
     var makeInboxDataSource: (URL, String) -> any InboxDataSource = {
         let sealed = ReloSealedContent.live()
@@ -106,7 +108,9 @@ struct AppDependencies {
             encryptionKeys: E2EEKeyMaintenance(ring: .live(), publisher: HTTPMobileAPIClient(baseURL: origin),
                                                directory: HTTPMobileAPIClient(baseURL: origin), trust: .live(),
                                                erase: { ReloEncryptionState.forget() },
-                                               browserLinks: BrowserLinkRenewal(browsers: .live(), linker: HTTPMobileAPIClient(baseURL: origin))),
+                                               browserLinks: BrowserLinkRenewal(browsers: .live(), linker: HTTPMobileAPIClient(baseURL: origin)),
+                                               approving: HTTPMobileAPIClient(baseURL: origin), approvers: .live()),
+            computerInviteStore: KeychainComputerInviteStore(),
             answerSigner: { ReloKeyRing.live().existingIdentitySigner() },
             makeCurrentCache: { scope in
                 FileCurrentStateCache(baseDirectory: reloDirectory.appendingPathComponent("current", isDirectory: true), scope: scope)

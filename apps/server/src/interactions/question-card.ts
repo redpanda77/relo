@@ -6,7 +6,9 @@ import { publicId } from "../ids.js";
 import { persistNotificationContent,prepareNotificationContent,type NotificationContentCipher } from "../notification-content.js";
 import { presentationCommandProjection,terminalPresentationColumnsFromRow,canonicalPresentation,
   persistedPresentationColumns } from "../presentation-runtime.js";
-import { resolveActivityPresentation,SYSTEM_PRESENTATION_POLICY,systemPresentationPolicySnapshot } from "../presentation-policy.js";
+import { effectiveComputerIcon } from "../computers/store.js";
+import { loadClientPresentationPolicy,loadServicePresentationPolicy,resolveActivityPresentation,
+  SYSTEM_PRESENTATION_POLICY,type EffectivePresentationPolicy } from "../presentation-policy.js";
 import { independentSubjectKey,lockSubjectAdmission,type SubjectCommand,type SubjectTransaction } from "../relevance/commands.js";
 import { relevanceDeliveryGuard } from "../relevance/delivery.js";
 import { admitOrdinaryEvent } from "../relevance/ordinary-admission.js";
@@ -41,12 +43,25 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
   if (input.detail && !options.contentCipher) {
     return { kind: "rejected",commit: false,status: 503,body: { error: "content_encryption_unavailable" } };
   }
+  // The asker's own appearance: a login's policy and computer icon, a service's policy; otherwise the system's.
+  let effective: EffectivePresentationPolicy = { policy: SYSTEM_PRESENTATION_POLICY,source: "system" };
+  let computerIcon: Awaited<ReturnType<typeof effectiveComputerIcon>>;
+  if (requester.credentialId) {
+    effective = await loadClientPresentationPolicy(client,requester.principalId,requester.credentialId);
+    computerIcon = await effectiveComputerIcon(client,requester.credentialId);
+  } else if (requester.serviceId) {
+    const service = (await client.query<{ live_activity_policy: unknown }>(
+      "SELECT live_activity_policy FROM webhook_services WHERE id=$1 AND principal_id=$2",
+      [requester.serviceId,requester.principalId])).rows[0];
+    effective = await loadServicePresentationPolicy(client,
+      { principal_id: requester.principalId,live_activity_policy: service?.live_activity_policy });
+  }
   const interactivePresentation = canonicalPresentation({
     content: {
       header: input.title,title: input.title,subtitle: input.prompt,status: "Waiting for input",
     },
     identity: resolveActivityPresentation({ context: input.context },{
-      principalId: requester.principalId,effective: { policy: SYSTEM_PRESENTATION_POLICY,source: "system" },
+      principalId: requester.principalId,effective,computerIcon,
     }).stored.presentation.identity,
     state: { kind: "needs_action",tone: "attention",icon: "needs_action" },
     components: [],surfaces: {},
@@ -154,16 +169,18 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
        privacy,accent_color,target_device_ids,start_idempotency_key,expires_at,stale_at,
        presentation,presentation_sha256,presentation_policy,presentation_policy_source,
        presentation_preset_id,presentation_preset_revision,state,ended_at,context,origin_hash,producer_type,declared_at
-     ) VALUES ($1,$2,$19,NULL,$3,$13,$4,NULL,$14,$5,$18,'#5ED8B7',
+     ) VALUES ($1,$2,$19,NULL,$3,$13,$4,NULL,$14,$5,$18,$20,
        $6::uuid[],$7,$8::timestamptz,$8::timestamptz,$9::jsonb,$10,
-       $11::jsonb,'system',$12,1,$15::live_activity_state,CASE WHEN $15='expired' THEN clock_timestamp() ELSE NULL END,$16::jsonb,$17,
+       $11::jsonb,$21,$12,1,$15::live_activity_state,CASE WHEN $15='expired' THEN clock_timestamp() ELSE NULL END,$16::jsonb,$17,
        CASE WHEN $19::uuid IS NULL THEN 'script' ELSE 'service' END,statement_timestamp()) RETURNING *`,
     [requester.principalId,requester.credentialId,input.title,input.prompt,style,eligibleDeviceIds,
       `interaction:${idempotencyKey}`,request.expires_at,
       display.presentation,display.presentationHash,
-      systemPresentationPolicySnapshot(`system.interactive.${input.style ?? "approval"}`),`system.interactive.${input.style ?? "approval"}`,
+      { policy: effective.policy,source: effective.source,explicit: [],
+        presetId: `system.interactive.${input.style ?? "approval"}`,presetRevision: 1 },
+      `system.interactive.${input.style ?? "approval"}`,
       display.status,display.symbol,expired ? "expired" : "active",input.context ?? {},originHash,
-      display.privacy,requester.serviceId],
+      display.privacy,requester.serviceId,display.accentColor,effective.source],
   );
   await client.query(
     `INSERT INTO notification_event_targets(notification_event_id,device_id)

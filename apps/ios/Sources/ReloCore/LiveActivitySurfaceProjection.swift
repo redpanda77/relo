@@ -23,11 +23,13 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
         public let total: Int
         public let label: String
 
-        public init(items: [LiveActivityDisplayPresentation.Step]) {
-            completed = items.filter { $0.state == .complete }.count
-            total = items.count
+        public init(items: [LiveActivityDisplayPresentation.Step], window: LiveActivityDisplayPresentation.StepWindow = .whole) {
+            // The one count (U1): the card's own when it carries it, else counted from the shown steps.
+            let counted = LiveActivityPlanDisplay.progress(LiveActivityPlanDisplay.steps(items), window: window)
+            completed = counted?.done ?? 0
+            total = counted?.total ?? 0
             if let index = items.firstIndex(where: { $0.state == .current }) {
-                current = index + 1
+                current = window.before + index + 1
                 label = items[index].label
             } else {
                 current = nil
@@ -143,9 +145,11 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
         let assigned = presentation.components(for: surface)
         let step = assigned.first { if case .steps = $0 { true } else { false } }
         let progress = assigned.first { if case .progressBar = $0 { true } else { false } }
-        let phase: Phase? = if case .steps(_, _, let items) = step { Phase(items: items) } else { nil }
+        let phase: Phase? = if case .steps(_, _, let items, let window) = step { Phase(items: items, window: window) } else { nil }
+        // A card with steps carries no percentage of its own: the count is the plan's, and a fraction beside it
+        // ("0/4" next to "75%") would measure something else (plan 14, workstream 7).
         let measured: Double? =
-            if case .progressBar(_, _, let value, _) = progress { value } else { nil }
+            if step != nil { nil } else if case .progressBar(_, _, let value, _) = progress { value } else { nil }
         let decision: Bool =
             switch presentation.behavior {
             case .approval, .yesNo, .choice, .unsupportedTextReply: true
@@ -182,10 +186,8 @@ public struct LiveActivitySurfaceProjection: Equatable, Sendable {
             status = "Quiet"
             fact = .symbol("moon.zzz.fill", status)
         } else if let phase {
-            // With steps, progress belongs to the current step: one number, never a card-wide percent.
-            let label: String? = if case .progressBar(_, _, _, let label) = progress { label } else { nil }
-            let count = Self.stepCount(label) ?? (phase.current ?? phase.completed, phase.total)
-            fact = .stages(count.0, count.1)
+            // With steps the compact count is the plan's: done of total ("2/5"), never a card-wide percent.
+            fact = .stages(phase.completed, phase.total)
         } else if case .progressBar(_, let role, let value, _) = progress {
             fact = .percentage(value, role)
         } else {

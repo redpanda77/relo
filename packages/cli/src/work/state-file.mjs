@@ -5,10 +5,21 @@ import { constants } from "node:fs";
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { FACTS } from "../shared/facts.generated.mjs";
 
-export const T_RETIRE_MS = 3600_000;
-export const T_HISTORY_MS = 28_800_000;
+/** The owner-state windows (contracts OWNER_STATE_TIMING, through the generated facts). */
+export const T_FRESH_MS = FACTS.card.freshSeconds * 1000;
+export const T_RETIRE_MS = FACTS.card.retireSeconds * 1000;
+export const T_HISTORY_MS = FACTS.card.maxSeconds * 1000;
 const MAX_BYTES = 256 * 1024;
+
+/**
+ * The CLI's data folder (plan 10 D2): what outlives a state reset, such as verified releases and archived skill
+ * copies. One home for its path; docs/site/reference/files.md lists what is in it (state-paths.test.mjs).
+ */
+export function dataRoot(home = homedir()) {
+  return join(home, ".local", "share", "relo");
+}
 
 /**
  * The CLI's state folder: the env's RELO_STATE_DIR, then its XDG_STATE_HOME, then the process's RELO_STATE_DIR
@@ -17,6 +28,15 @@ const MAX_BYTES = 256 * 1024;
 export function stateRoot(env = process.env, home = homedir()) {
   return env.RELO_STATE_DIR?.trim() || (env.XDG_STATE_HOME?.trim() && join(env.XDG_STATE_HOME.trim(), "relo"))
     || process.env.RELO_STATE_DIR?.trim() || join(home, ".local", "state", "relo");
+}
+
+/**
+ * A path in the state folder for a command's place ({ env, home }: its dependencies). Every module that keeps
+ * local state derives its path here, so RELO_STATE_DIR moves all of it and an injected home is never left.
+ */
+export function statePath(place = {}, ...parts) {
+  const env = place.env ?? process.env;
+  return join(stateRoot(env, place.home ?? (env.HOME?.trim() || homedir())), ...parts);
 }
 
 export async function readStateFile(path) {

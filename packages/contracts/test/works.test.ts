@@ -59,3 +59,17 @@ test("finishing skips open steps and completes the current one",() => {
   assert.equal(shape(closePlan(plan,"finished")),"s1:done s2:skipped");
   assert.equal(shape(closePlan(plan,"failed")),"s1:skipped s2:skipped");
 });
+
+test("handoff: the request takes a note, start takes a handle in place of a goal, and the new codes exist",async () => {
+  const { workHandoffRequestSchema,workStartRequestSchema,WORK_DISPOSITIONS,WORK_REFUSAL_CODES } = await import("../src/works.js");
+  assert.ok(workHandoffRequestSchema.safeParse({ next: { readable: "Handing off: wire the verb" } }).success);
+  assert.ok(workHandoffRequestSchema.safeParse({ next: { sealed: true },sealed: {},producerSealed: {} }).success);
+  assert.equal(workHandoffRequestSchema.safeParse({}).success,false);
+  assert.equal(workHandoffRequestSchema.safeParse({ next: { readable: "x".repeat(121) } }).success,false);
+  assert.equal(workHandoffRequestSchema.safeParse({ next: { readable: "ok" },extra: 1 }).success,false);
+  assert.ok(workStartRequestSchema.safeParse({ from: "rh_abc" }).success);
+  assert.ok(workStartRequestSchema.safeParse({ goal: { readable: "Ship" } }).success);
+  assert.equal(workStartRequestSchema.safeParse({}).success,false,"a start needs a goal or a handle");
+  for (const disposition of ["handed_off","taken_over"]) assert.ok((WORK_DISPOSITIONS as readonly string[]).includes(disposition));
+  for (const code of ["handoff_invalid","handoff_finished"]) assert.ok((WORK_REFUSAL_CODES as readonly string[]).includes(code));
+});

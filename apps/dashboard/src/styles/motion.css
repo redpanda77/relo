@@ -1,0 +1,336 @@
+/* motion: owned by one area; imported at the end of index.css so it can refine the base rules.
+   The motion system: four durations, four curves, four springs, one heartbeat. Things appear with
+   --ease-out, leave with --ease-in at about 0.7x the time, sheets travel on --ease-sheet, presses
+   release on --spring-press, and every loop breathes on --period-breath, phase-locked by
+   lib/heartbeat.ts. `lib/motion.ts` mirrors these for `motion`.
+
+   Shared utilities (use these instead of writing a transition):
+     .press       sinks to --press-scale in --dur-micro, springs back on --spring-press. Uses the
+                  `scale` property, so it composes with any transform (motion's, GSAP's, a hover lift).
+     .hover-fade  colour, background, border and opacity follow hover/focus in --dur-fast.
+     .tint        a state tint: colour, background, border, --tone and --glow crossfade in --dur-slow.
+                  Put it on the element whose --tone changes; what derives from --tone follows it.
+   They combine (`press hover-fade`, `press tint`). Reduced motion zeroes them all.
+
+   Rules: animate transform, translate, scale and opacity only (never width, height, top, left or a
+   box-shadow in a loop); loops use var(--period-breath) (or / 2 for urgency) with
+   `animation-delay: var(--breath-epoch)`; glass blurs read var(--glass-blur). */
+
+:root {
+  --dur-micro: 120ms;
+  --dur-fast: 180ms;
+  --dur-base: 260ms;
+  --dur-slow: 420ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Loops and sweeps: a sine in-out, so a breath never pauses at either end. */
+  --ease-breath: cubic-bezier(0.37, 0, 0.63, 1);
+  /* Sheets travel; they leave at 0.7x. */
+  --dur-sheet: 340ms;
+  /* Springs as Apple defines them (response r, damping fraction ζ; k = (2π/r)², c = 2ζ·2π/r, m = 1),
+     integrated to a 0.2% settle and sampled at 25 points for CSS. Durations are their settle times.
+     press: r .18 ζ1 · snappy: r .28 ζ.86 (0.4% overshoot) · smooth: r .35 ζ1 · bouncy: r .42 ζ.72 (3.7%). */
+  --spring-press: linear(0, .084, .228, .381, .519, .635, .734, .804, .856, .896, .925, .946, .961, .972, .98, .986, .99, .993, .995, .997, .998, .998, .999, .999, 1);
+  --spring-press-dur: 290ms;
+  --spring-snappy: linear(0, .062, .195, .339, .48, .605, .71, .798, .862, .909, .945, .968, .983, .993, .999, 1.002, 1.004, 1.004, 1.004, 1.003, 1.003, 1.002, 1.002, 1.001, 1);
+  --spring-snappy-dur: 390ms;
+  --spring-smooth: linear(0, .063, .193, .331, .462, .576, .676, .752, .812, .859, .896, .923, .943, .958, .97, .978, .984, .988, .991, .994, .996, .997, .998, .998, 1);
+  --spring-smooth-dur: 510ms;
+  --spring-bouncy: linear(0, .061, .185, .343, .502, .647, .768, .86, .931, .98, 1.01, 1.028, 1.036, 1.037, 1.034, 1.029, 1.023, 1.017, 1.012, 1.008, 1.004, 1.002, 1, .999, 1);
+  --spring-bouncy-dur: 570ms;
+  /* One heartbeat for everything that breathes (dots, the deck, the orb's halo): about 15 a minute. */
+  --period-breath: 4000ms;
+  --dur-ambient: 1200ms;
+  /* Set once at boot by lib/heartbeat.ts to -(now % period): the delay that puts every loop on one beat. */
+  --breath-epoch: 0ms;
+  /* Frost radius for glass surfaces; 0 under reduced transparency or more contrast. */
+  --glass-blur: 24px;
+  /* Pressed things sink to one depth everywhere. */
+  --press-scale: 0.97;
+  /* Lets `block-size: auto` (folds) transition. */
+  interpolate-size: allow-keywords;
+}
+
+/* Animatable meaning colour and glow: a state change (running → needs you) tints a card, its chip
+   and its dots in one crossfade instead of snapping. */
+@property --tone {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #8d93a8;
+}
+@property --glow {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+/* ---------- Shared utilities ---------- */
+
+.press,
+.hover-fade,
+.tint,
+.capsule-cta {
+  --_fade: var(--dur-fast);
+  --_press-dur: var(--spring-press-dur);
+  --_press-ease: var(--spring-press);
+  transition:
+    color var(--_fade) var(--ease-out),
+    background-color var(--_fade) var(--ease-out),
+    border-color var(--_fade) var(--ease-out),
+    opacity var(--_fade) var(--ease-out),
+    --tone var(--_fade) var(--ease-out),
+    --glow var(--_fade) var(--ease-out),
+    scale var(--_press-dur) var(--_press-ease);
+}
+.tint { --_fade: var(--dur-slow); }
+/* In fast, out on the spring: the after-change style picks the curve, so :active swaps them. */
+.press:active:not(:disabled, [aria-disabled="true"]),
+.capsule-cta:active:not(:disabled) {
+  --_press-dur: var(--dur-micro);
+  --_press-ease: var(--ease-out);
+  scale: var(--press-scale);
+}
+
+/* A keyed element that fades in when its key changes (no exit: the old one simply goes). */
+.fade-in { animation: fade-in var(--dur-fast) var(--ease-out) both; }
+@keyframes fade-in { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .fade-in { animation: none; } }
+
+/* ---------- Folds: the native <details> opens and closes in place ---------- */
+
+.fold::details-content {
+  block-size: 0;
+  overflow: clip;
+  transition:
+    block-size var(--dur-fast) var(--ease-in),
+    content-visibility var(--dur-fast) allow-discrete;
+}
+.fold[open]::details-content {
+  block-size: auto;
+  /* Room for a card's hover lift and focus ring once open. */
+  overflow-clip-margin: 6px;
+  transition:
+    block-size var(--dur-base) var(--ease-out),
+    content-visibility var(--dur-base) allow-discrete;
+}
+.fold > .fold-body {
+  opacity: 0;
+  translate: 0 -4px;
+  transition:
+    opacity var(--dur-fast) var(--ease-in),
+    translate var(--dur-fast) var(--ease-in);
+}
+.fold[open] > .fold-body {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity var(--dur-base) var(--ease-out) 40ms,
+    translate var(--dur-base) var(--ease-out) 40ms;
+}
+
+/* The chevron turns on the same curve as the fold opens. */
+.fold-chevron { transition: rotate var(--dur-base) var(--ease-out); }
+
+/* ---------- Overlays: sheets travel, dialogs settle, menus snap; all leave at about 0.7x ---------- */
+
+[data-slot="sheet-overlay"],
+[data-slot="dialog-overlay"],
+[data-slot="alert-dialog-overlay"] {
+  animation-duration: var(--dur-base);
+  animation-timing-function: var(--ease-out);
+}
+[data-slot="sheet-overlay"][data-state="closed"],
+[data-slot="dialog-overlay"][data-state="closed"],
+[data-slot="alert-dialog-overlay"][data-state="closed"] {
+  animation-duration: var(--dur-fast);
+  animation-timing-function: var(--ease-in);
+}
+[data-slot="sheet-content"][data-state="open"] {
+  animation-duration: var(--dur-sheet);
+  animation-timing-function: var(--ease-sheet);
+}
+[data-slot="sheet-content"][data-state="closed"] {
+  animation-duration: calc(var(--dur-sheet) * 0.7);
+  animation-timing-function: var(--ease-in);
+}
+/* A dialog settles on the snappy spring (its 0.4% overshoot is felt, not seen). */
+[data-slot="dialog-content"],
+[data-slot="alert-dialog-content"] {
+  --tw-enter-scale: 0.96;
+  --tw-exit-scale: 0.96;
+  animation-duration: var(--spring-snappy-dur);
+  animation-timing-function: var(--spring-snappy);
+}
+[data-slot="dialog-content"][data-state="closed"],
+[data-slot="alert-dialog-content"][data-state="closed"] {
+  animation-duration: var(--dur-fast);
+  animation-timing-function: var(--ease-in);
+}
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="select-content"],
+[data-slot="tooltip-content"] {
+  animation-duration: var(--dur-fast);
+  animation-timing-function: var(--ease-out);
+}
+[data-slot="dropdown-menu-content"][data-state="closed"],
+[data-slot="dropdown-menu-sub-content"][data-state="closed"],
+[data-slot="select-content"][data-state="closed"],
+[data-slot="tooltip-content"][data-state="closed"] {
+  animation-duration: var(--dur-micro);
+  animation-timing-function: var(--ease-in);
+}
+
+/* ---------- Cards and chips ---------- */
+
+/* Chips and dots change meaning by their tone; colour, fill and glow derive from it and follow. */
+.outcome-badge,
+.status-dot {
+  transition: --tone var(--dur-slow) var(--ease-out);
+}
+
+/* Errors arrive from just above, so the eye catches the change without a jolt. */
+[role="alert"] {
+  animation: alert-in var(--dur-fast) var(--ease-out) both;
+}
+@keyframes alert-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+
+/* ---------- Animated numbers ---------- */
+
+.animated-number { font-variant-numeric: tabular-nums; }
+.animated-number-visual::after { content: attr(data-value); }
+
+/* ---------- Reduced motion: state changes are instant, nothing travels, nothing loops ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-micro: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-sheet: 0ms;
+    --dur-ambient: 0ms;
+    --spring-press-dur: 0ms;
+    --spring-snappy-dur: 0ms;
+    --spring-smooth-dur: 0ms;
+    --spring-bouncy-dur: 0ms;
+  }
+  html { scroll-behavior: auto; }
+
+  /* Transitions this system owns. */
+  .press,
+  .hover-fade,
+  .tint,
+  .capsule-cta,
+  .fold::details-content,
+  .fold-chevron,
+  .fold > .fold-body,
+  .fold[open] > .fold-body,
+  .outcome-badge,
+  .status-dot,
+  .fold-summary,
+  .nav-link,
+  .sidebar-icon-button,
+  .sidebar-orb-toggle,
+  .profile-trigger,
+  .pill,
+  .orb-stage canvas,
+  .orb-stage-painted {
+    transition: none !important;
+  }
+  /* The sidebar folds its width and left at once (shadcn's transition, retimed with !important). */
+  [data-slot="sidebar-container"],
+  [data-slot="sidebar-gap"] {
+    transition-duration: 0s !important;
+  }
+  .fold > .fold-body { opacity: 1; translate: none; }
+
+  /* Nothing lifts or sinks. */
+  .press,
+  .capsule-cta {
+    translate: none !important;
+    scale: none !important;
+  }
+  button:active { transform: none !important; }
+
+  /* Loops and entrances. */
+  .breathe,
+  .status-dot[data-live="true"]::before,
+  .mission-pulse::after,
+  .skeleton::after,
+  .capsule-cta::after,
+  .animate-pulse,
+  .rise-in,
+  [role="alert"],
+  [data-slot="sheet-overlay"],
+  [data-slot="sheet-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-overlay"],
+  [data-slot="alert-dialog-content"],
+  [data-slot="drawer-overlay"],
+  [data-slot="drawer-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="tooltip-content"] {
+    animation: none !important;
+  }
+  .mission-pulse::after,
+  .capsule-cta::after { display: none; }
+  .animate-status-pulse { animation: none !important; }
+  /* Loading shows as a still bar, not a sweep. */
+  .route-loading-progress-indicator {
+    width: 42%;
+    animation: none !important;
+    background: var(--primary);
+    opacity: 0.86;
+    transform: none;
+  }
+}
+
+/* ---------- Reduced transparency or more contrast: no frost, solid surfaces ---------- */
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root { --glass-blur: 0px; }
+  .glass,
+  .glass-strong,
+  [data-slot="sheet-content"],
+  [data-slot="dialog-content"],
+  [data-slot="alert-dialog-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="sidebar"][data-mobile="true"],
+  [data-slot="sidebar-inner"],
+  .tab-bar,
+  .compact-bar::before,
+  .compact-bar-back::before,
+  .more-sheet,
+  .more-sheet-group,
+  .more-sheet-profile,
+  .split-page-body .now-fold:not(.now-fold-inline),
+  .project-index > li {
+    border-color: rgb(255 255 255 / 0.24) !important;
+    background: var(--surface) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  /* Toned surfaces keep a whisper of their meaning on the solid fill. */
+  .notice {
+    background: color-mix(in srgb, var(--tone) 6%, var(--surface)) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  /* Radix overlays dim instead of blurring. */
+  [data-slot="sheet-overlay"],
+  [data-slot="dialog-overlay"],
+  [data-slot="alert-dialog-overlay"] {
+    background: rgb(4 4 8 / 0.72) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}

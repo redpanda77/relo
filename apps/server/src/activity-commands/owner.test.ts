@@ -6,11 +6,11 @@ import {bootstrapOwner} from "../bootstrap.js";
 import {hashToken} from "../auth.js";
 import {createAuthDatabase,createDatabase,type Database} from "../db.js";
 import {migrate} from "../migrate.js";
-import {createWebhookService} from "../services.js";
+import {createWebhookService} from "../webhooks/admin.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
 suite("Owner activity command isolation and atomicity",()=>{
- let db:Database,authDb:Database,app:ReturnType<typeof createApp>,principalId:string,session:string,devices:string[],hook:string;
+ let db:Database,authDb:Database,app:ReturnType<typeof createApp>,principalId:string,session:string,devices:string[],hookSecret:string;
  const owner="owner_activity_commands_abcdefghijklmnopqrstuvwxyz",origin="http://127.0.0.1:8180",secret="owner-activity-command-test-secret-at-least-32-characters";
  beforeAll(async()=>{db=createDatabase(process.env.TEST_DATABASE_URL!);authDb=createAuthDatabase(process.env.TEST_DATABASE_URL!);await migrate(db);});
  afterAll(async()=>{await db.end();await authDb.end();});
@@ -22,7 +22,7 @@ suite("Owner activity command isolation and atomicity",()=>{
   for(let i=0;i<2;i++)devices.push((await db.query<{id:string}>(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
     app_version,app_build,os_version,apns_environment,notification_authorization,live_activity_authorization,live_activity_push_to_start_token)
     VALUES ($1,$2,$3,'Owner fixture','com.example.fixture','1','1','27','sandbox','authorized','authorized','fixture-start') RETURNING id`,[principalId,randomUUID(),randomUUID()])).rows[0]!.id);
-  hook=new URL((await createWebhookService(db,principalId,"Other authority",origin)).webhookUrl).pathname;
+  hookSecret=(await createWebhookService(db,principalId,"Other authority",origin)).secret;
   app=createApp(db,{accountAuth:createAccountAuth(authDb,origin,secret),bootstrapOwnerHandle:"owner",credentialDerivationSecret:secret,appUrl:origin,apnsMode:"sandbox"});
   const signed=await app.request("/api/auth/sign-up/email",{method:"POST",headers:{"content-type":"application/json",origin},body:JSON.stringify({name:"Owner",email:"owner-commands@example.test",password:"unique-owner-password"})});
   expect(signed.status).toBe(200);session=signed.headers.get("set-auth-token")!;
@@ -87,7 +87,7 @@ suite("Owner activity command isolation and atomicity",()=>{
   const credential=await seed(0,false);
   expect((await request(`/api/dashboard/live-activities/${credential.id}/update`,updateInput(credential))).status).toBe(409);
   expect((await request(`/api/dashboard/live-activities/${credential.id}/end`,{})).status).toBe(409);
-  const service=await request(`${hook}/live-activities`,{title:"Service",status:"Working",deviceIds:[`dev_${devices[1]}`]});expect(service.status).toBe(201);
+  const service=await request("/hooks/live-activities",{title:"Service",status:"Working",deviceIds:[`dev_${devices[1]}`]},hookSecret);expect(service.status).toBe(201);
   expect((await request(`/api/dashboard/live-activities/${service.body.activity.id}/end`,{})).status).toBe(409);
   const all=await request("/api/dashboard/live-activities/end-all",{});expect(all.status).toBe(200);expect(all.body.ended).toEqual([]);
   expect((await db.query("SELECT count(*)::int AS n FROM live_activities WHERE state='active'")).rows[0].n).toBe(2);

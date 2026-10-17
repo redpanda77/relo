@@ -34,8 +34,12 @@ struct ConnectionSettingsView: View {
             }
         }
         .reloGroupedScreen().navigationTitle("Connection").navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Reset this iPhone's registration?", isPresented: $confirmsReset, titleVisibility: .visible) {
-            Button("Reset device registration", role: .destructive) { Task { await model.resetProtectedDeviceRegistration() } }
-        } message: { Text("Unreadable device identity and cache records are removed. Your authenticated account and pending responses are preserved.") }
+        .reloConfirmation(isPresented: $confirmsReset) {
+            ReloConfirmSpec(
+                title: "Reset this iPhone's registration?",
+                message: "Unreadable device identity and cache records are removed. Your authenticated account and pending responses are preserved.",
+                symbol: "arrow.counterclockwise", actionTitle: "Reset device registration",
+                action: { await model.resetProtectedDeviceRegistration() })
+        }
     }
 }

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { originDescriptorSchema } from "./origin-slots.js";
 import { MAX_NOTIFICATION_BODY_BYTES } from "./notification-content.js";
 import { decisionSubjectCommandSchema, notificationSubjectCommandSchema } from "./relevance/admission.js";
-import { subjectVersionSchema } from "@relo/notification-contracts";
+import { FACTS,subjectVersionSchema } from "@relo/notification-contracts";
 import { answerSignatureSchema,sealedNoticeSchema } from "./sealed-content.js";
 import { choiceOptionIdSchema } from "@relo/notification-contracts";
 import {
@@ -22,38 +22,41 @@ const notificationSummarySchema = z.string().trim().min(1).refine(
 );
 
 export const notificationRequestSchema = z.object({
-  relevance: notificationSubjectCommandSchema.optional(),
-  title: z.string().trim().min(1).max(80),
-  body: notificationLongBodySchema,
-  summary: notificationSummarySchema.optional(),
-  bodyFormat: z.enum(["text","markdown"]).optional(),
-  sourceName: z.string().trim().min(1).max(80),
-  imageUrl: publicHttpsUrlSchema.optional(),
-  destinationUrl: destinationUrlSchema.optional(),
-  deviceIds: z.array(z.string()).min(1).max(50).optional(),
+  relevance: notificationSubjectCommandSchema.optional().describe("How relevant the notification is to the owner over time; Relo derives its urgency from this."),
+  title: z.string().trim().min(1).max(80).describe("Heading of the notification."),
+  body: notificationLongBodySchema.describe("Full text of the notification."),
+  summary: notificationSummarySchema.optional().describe("Short version shown where space is tight."),
+  bodyFormat: z.enum(["text","markdown"]).optional().describe("Whether the body is plain text or Markdown."),
+  sourceName: z.string().trim().min(1).max(80).describe("Name of the sender shown with the notification."),
+  imageUrl: publicHttpsUrlSchema.optional().describe("Public HTTPS address of an image to show with the notification."),
+  destinationUrl: destinationUrlSchema.optional().describe("Where tapping the notification opens."),
+  deviceIds: z.array(z.string()).min(1).max(50).optional().describe("Phones to notify; every paired phone when omitted."),
   context: z.object({
-    providerName: z.string().trim().min(1).max(80).optional(),
-    producerKind: z.enum(["agent","service","webhook","manual"]).optional(),
-    computer: z.string().trim().min(1).max(120).optional(),
-    account: z.string().trim().min(1).max(40).optional(),
-    project: z.string().trim().min(1).max(120).optional(),
-    providerThreadId: z.string().trim().min(1).max(200).optional(),
-    providerWorkItemId: z.string().trim().min(1).max(200).optional(),
-    threadName: z.string().trim().min(1).max(160).optional(),
-    taskTitle: z.string().trim().min(1).max(160).optional(),
-    threadNameSource: z.enum(["provider","explicit","fallback"]).optional(),
-    taskTitleSource: z.enum(["provider","prompt_summary","explicit","fallback"]).optional(),
-  }).strict().optional(),
-  origin: originDescriptorSchema.optional(),
+    providerName: z.string().trim().min(1).max(80).optional().describe("Name of the tool or product doing the work, shown as the source."),
+    producerKind: z.enum(["agent","service","webhook","manual"]).optional().describe("What kind of sender this is: an agent, a service, a webhook or a manual action."),
+    computer: z.string().trim().min(1).max(120).optional().describe("Name of the machine the work runs on."),
+    account: z.string().trim().min(1).max(40).optional().describe("Name of the account the work runs under."),
+    project: z.string().trim().min(1).max(120).optional().describe("Name of the project the work belongs to."),
+    providerThreadId: z.string().trim().min(1).max(200).optional().describe("The sender's own id for the conversation or thread, used to group items from one thread."),
+    providerWorkItemId: z.string().trim().min(1).max(200).optional().describe("The sender's own id for the task or work item."),
+    threadName: z.string().trim().min(1).max(160).optional().describe("Human-readable name of the thread."),
+    taskTitle: z.string().trim().min(1).max(160).optional().describe("Human-readable title of the task."),
+    threadNameSource: z.enum(["provider","explicit","fallback"]).optional().describe("Where threadName came from: the provider, set explicitly, or a fallback."),
+    taskTitleSource: z.enum(["provider","prompt_summary","explicit","fallback"]).optional().describe("Where taskTitle came from: the provider, a summary of the prompt, set explicitly, or a fallback."),
+  }).strict().optional().describe("Where the work runs and what it belongs to, shown with the notification."),
+  origin: originDescriptorSchema.optional().describe("Identifies where the notification comes from, so related items can be grouped."),
 }).strict();
 
-/** An end-to-end sealed notice: no title or body in the clear (docs/END-TO-END-ENCRYPTION.md, E3). */
+/** An end-to-end sealed notice: no title or body in the clear (docs/ENCRYPTION-PROTOCOL.md, E3). */
 export const sealedNotificationRequestSchema = notificationRequestSchema
   .omit({ title: true,body: true,summary: true,bodyFormat: true,imageUrl: true,destinationUrl: true })
   .extend({ sealed: sealedNoticeSchema })
   .strict();
-/** What a phone's Relo build can show; builds that send none receive only what every build decodes. */
-export const DEVICE_CAPABILITIES = ["choice_questions"] as const;
+/**
+ * What a device's Relo build can show; builds that send none receive only what every build decodes.
+ * `owner_overview`: reads the whole account's Now; never a delivery target (owner-overview.ts).
+ */
+export const DEVICE_CAPABILITIES = ["choice_questions","owner_overview"] as const;
 export const deviceCapabilitiesSchema = z.array(z.enum(DEVICE_CAPABILITIES)).max(16)
   .transform((values) => [...new Set(values)].sort());
 
@@ -148,38 +151,39 @@ export const interactionSchema = z.object({
 
 /** Where Relo POSTs the answer. The token is returned as a bearer token so the receiver can verify Relo. */
 export const interactionCallbackSchema = z.object({
-  url: callbackUrlSchema,
-  token: z.string().min(16).max(512).refine((value) => !/[\s]/.test(value), "Callback tokens cannot contain whitespace"),
+  url: callbackUrlSchema.describe("Address Relo POSTs the answer to."),
+  token: z.string().min(16).max(512).refine((value) => !/[\s]/.test(value), "Callback tokens cannot contain whitespace")
+    .describe("Secret Relo sends back as a bearer token so the receiver can verify the call."),
 }).strict();
 
 const interactionActionLabelSchema = z.string().trim().min(1).max(24)
   .refine((value) => !/[\r\n]/.test(value), "Action labels must use one line");
 
 export const createInteractionSchema = z.object({
-  relevance: decisionSubjectCommandSchema.optional(),
-  context: notificationRequestSchema.shape.context,
-  origin: originDescriptorSchema.optional(),
-  prompt: z.string().min(1).max(2000),
-  detail: questionDetailSchema.optional(),
+  relevance: decisionSubjectCommandSchema.optional().describe("How relevant the question is to the owner over time; Relo derives its urgency from this."),
+  context: notificationRequestSchema.shape.context.describe("Where the work runs and what it belongs to, shown with the question."),
+  origin: originDescriptorSchema.optional().describe("Identifies where the question comes from, so related items can be grouped."),
+  prompt: z.string().min(1).max(2000).describe("The question shown to the owner."),
+  detail: questionDetailSchema.optional().describe("Extra context shown with the question."),
   // Questions take tappable answers only; typed replies were removed for new questions.
-  type: questionTypeSchema,
-  options: choiceOptionsSchema.optional(),
-  title: z.string().min(1).max(80).default("Response requested"),
-  expiresInSeconds: questionExpirySchema,
-  deviceIds: z.array(z.string()).min(1).max(50).optional(),
-  presentation: z.enum(["notification","live_activity"]).default("notification"),
-  style: z.enum(["approval","shell","verdict","signal"]).optional(),
-  primaryLabel: interactionActionLabelSchema.optional(),
-  secondaryLabel: interactionActionLabelSchema.optional(),
-  imageUrl: publicHttpsUrlSchema.optional(),
-  destinationUrl: destinationUrlSchema.optional(),
-  privacy: z.enum(["standard","private"]).optional(),
-  correlationId: z.string().trim().min(1).max(100).optional(),
-  callback: interactionCallbackSchema.optional(),
+  type: questionTypeSchema.describe("Kind of answer the question takes: approval, yes_no or choice."),
+  options: choiceOptionsSchema.optional().describe("The answers to choose from when the type is choice."),
+  title: z.string().min(1).max(80).default("Response requested").describe("Heading of the question."),
+  expiresInSeconds: questionExpirySchema.describe("How long the question waits for an answer before it expires."),
+  deviceIds: z.array(z.string()).min(1).max(50).optional().describe("Phones to ask; every paired phone when omitted."),
+  presentation: z.enum(["notification","live_activity"]).default("notification").describe("Whether the question arrives as a notification or as a Live Activity card."),
+  style: z.enum(["approval","shell","verdict","signal"]).optional().describe("Layout of the question card; only for the live_activity presentation."),
+  primaryLabel: interactionActionLabelSchema.optional().describe("Text of the main answer button; only for the live_activity presentation."),
+  secondaryLabel: interactionActionLabelSchema.optional().describe("Text of the other answer button; only for the live_activity presentation."),
+  imageUrl: publicHttpsUrlSchema.optional().describe("Public HTTPS address of an image to show with the question; only for the notification presentation."),
+  destinationUrl: destinationUrlSchema.optional().describe("Where tapping the question opens; only for the notification presentation."),
+  privacy: z.enum(["standard","private"]).optional().describe("Whether the card shows its text on the Lock Screen (standard) or keeps it out of view (private); only for the live_activity presentation."),
+  correlationId: z.string().trim().min(1).max(100).optional().describe("Your own id, returned with the answer so you can match it to the question."),
+  callback: interactionCallbackSchema.optional().describe("Where Relo POSTs the answer once the owner responds."),
   /** The phone cannot show a card: notify without answer buttons; the owner answers in Relo. */
-  answerInApp: z.boolean().optional(),
+  answerInApp: z.boolean().optional().describe("Set when the phone cannot show answer buttons: the owner is notified and answers inside the Relo app."),
   /** End-to-end sealed title and prompt (E4.1); the server fills placeholders before parsing. */
-  sealed: sealedNoticeSchema.optional(),
+  sealed: sealedNoticeSchema.optional().describe("End-to-end sealed title and prompt; the readable ones then carry placeholders."),
 }).strict().superRefine((input,context) => {
   checkQuestionAnswers(input,context);
   if (input.relevance?.policy.kind === "decision" && input.relevance.policy.actionSeconds !== undefined
@@ -199,7 +203,7 @@ export const createInteractionSchema = z.object({
   if (input.prompt.length > QUESTION_MAX_CHARACTERS || /[\r\n]/.test(input.prompt)) {
     context.addIssue({ code: "custom", path: ["prompt"], message: questionPromptMessage });
   }
-  if (input.expiresInSeconds > 28_800) {
+  if (input.expiresInSeconds > FACTS.card.maxSeconds) {
     context.addIssue({ code: "custom", path: ["expiresInSeconds"], message: "Live Activities expire within 8 hours" });
   }
   if (input.imageUrl !== undefined || input.destinationUrl !== undefined) {

@@ -4,14 +4,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { b64u, generateKeyPair, keyId, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { cardKey } from "../src/identity.mjs";
-import { ensureIdentity, loadKeyStore, trustKey } from "../src/keystore.mjs";
-import { sealNoticeRequest, sealQuestion } from "../src/seal-notice.mjs";
-import { sealCardRequest } from "../src/seal-card.mjs";
-import { ensureTrust } from "../src/trust.mjs";
+import { b64u, generateKeyPair, keyId, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { cardKey } from "../src/messages/card-context.mjs";
+import { ensureIdentity, loadKeyStore, trustKey } from "../src/crypto/keystore.mjs";
+import { sealNoticeRequest, sealQuestion } from "../src/crypto/seal-notice.mjs";
+import { sealCardRequest } from "../src/crypto/seal-card.mjs";
+import { ensureTrust } from "../src/crypto/trust.mjs";
 
-// Regression tests for the independent security review (docs/END-TO-END-ENCRYPTION.md, E6.4).
+// Regression tests for the independent security review (docs/ENCRYPTION-PROTOCOL.md, E6.4).
 const apiUrl = "https://relo.example";
 
 function phone(deviceId, createdAt = new Date().toISOString()) {
@@ -25,7 +25,7 @@ function phone(deviceId, createdAt = new Date().toISOString()) {
 
 function context() {
   const folder = mkdtempSync(join(tmpdir(), "relo-review-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "state", "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   return { folder, env, dependencies: { configPath: () => join(folder, "config.json"), env, now: () => Date.now() },
     cleanup: () => rmSync(folder, { recursive: true, force: true }) };
 }

@@ -2,7 +2,7 @@ import type { Handler } from "hono";
 import { unclaimedLoginsVisible } from "../server-accounts.js";
 import { decisionGroupRepresentative } from "../pending-inventory.js";
 import type { Database } from "../db.js";
-import { listAgentSessions } from "../agent-sessions.js";
+import { sessionHandlesIn, sessionsNamingHandles } from "../agent-sessions.js";
 import { loadDeliveryEvidence } from "../delivery-evidence.js";
 import { allowedDeliveryReconciliationActions } from "../delivery-reconciliation.js";
 import { internalId, publicId } from "../ids.js";
@@ -10,27 +10,66 @@ import {
   decryptedNotificationBody,
   type NotificationContentCipher,
 } from "../notification-content.js";
-import { accountOrRedirect,isoDate,pageNumber,secureHtml } from "./http.js";
+import { accountOrRedirect,isoDate,pageNumber,secureHtml,dashboardDocumentOptions,type DashboardDocumentOptions } from "./http.js";
 import type { z } from "zod";
 import { loadNowSummary } from "../api/now-routes.js";
+import { loadOwnerStateInputs } from "../derive/load.js";
+import { deriveOwnerState } from "../derive/owner-state.js";
+import { respondingDeviceResource } from "../api/resources.js";
 import { inboxDashboardBootstrapSchema,inboxOverviewSchema,notificationHistorySchema,deliveryHistorySchema,notificationDetailSchema,inboxShellSchema } from "@relo/notification-contracts/dashboard/inbox";
 
 const pageSize = 25;
-const notificationKinds = [
-  "notification",
-  "approval",
-  "question",
-  "live_activity",
-] as const;
-const notificationStates = [
-  "active",
-  "recorded",
-  "ended",
-  "responded",
-  "expired",
-  "replaced",
-  "canceled",
-] as const;
+/**
+ * History's kinds, as the iPhone names them: messages (plain notifications), decisions (anything that
+ * asked the owner), Live Activities (work cards) and responses (what the owner answered). Each is a
+ * predicate over one logical row of `notificationListSql`.
+ */
+const historyKinds = {
+  message: `kind='notification' AND question IS NULL`,
+  decision: `question IS NOT NULL`,
+  live_activity: `kind='live_activity'`,
+  response: `question->>'state' IN ('approved','denied','yes','no','replied')`,
+} as const;
+/** History's states in the owner's words, mapped honestly onto the stored truth. */
+const historyStates = {
+  running: `activity_state='active'`,
+  done: `activity_state<>'active' AND activity_outcome='completed'`,
+  failed: `activity_state<>'active' AND activity_outcome='failed'`,
+  // Ended without saying it was done or failed: dropped, expired, replaced or ended by a safeguard.
+  stopped: `activity_state<>'active' AND activity_outcome IS NULL`,
+  answered: `question->>'state' IN ('approved','denied','yes','no','replied')`,
+  missed: `(question->>'state'='expired' OR (question->>'state'='pending'
+    AND (question->>'expiresAt')::timestamptz<=statement_timestamp()))`,
+} as const;
+type HistoryKind = keyof typeof historyKinds;
+type HistoryState = keyof typeof historyStates;
+const historyKindNames = Object.keys(historyKinds) as HistoryKind[];
+const historyStateNames = Object.keys(historyStates) as HistoryState[];
+
+/** "50%_off" -> "50\%\_off": a search is literal text, never a pattern. */
+function likePattern(query: string): string {
+  return `%${query.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+}
+
+/**
+ * History's filters over one logical row ($2 kind … $7 search). The search reads only what the
+ * server can read: a sealed row (ADR 0005) holds placeholders, so it matches by its source alone.
+ */
+function historyFilterSql(kind: HistoryKind | null, state: HistoryState | null): string {
+  return [
+    // Every parameter stays referenced, so Postgres can type it.
+    kind ? `($2::text IS NOT NULL AND (${historyKinds[kind]}))` : "$2::text IS NULL",
+    state ? `($3::text IS NOT NULL AND (${historyStates[state]}))` : "$3::text IS NULL",
+    `($4::text IS NULL OR NULLIF(BTRIM(activity_context->>'project'),'')=$4)`,
+    `($5::text IS NULL OR source=$5)`,
+    `($6::text IS NULL OR NULLIF(BTRIM(activity_context->>'computer'),'')=$6)`,
+    `($7::text IS NULL OR source ILIKE $7 OR (NOT COALESCE(event_encrypted,false)
+      AND NOT COALESCE(activity_encrypted,false) AND (
+        title ILIKE $7 OR body ILIKE $7 OR activity_title ILIKE $7 OR activity_status ILIKE $7
+        OR activity_context->>'taskTitle' ILIKE $7 OR activity_context->>'threadName' ILIKE $7
+        OR activity_context->>'project' ILIKE $7 OR resource_project_name ILIKE $7)))`,
+  ].join("\n        AND ");
+}
 
 export type DashboardInboxShell = z.input<typeof inboxShellSchema>;
 
@@ -126,7 +165,7 @@ export type DashboardActivitySummary = {
   encrypted: boolean;
   /** Card digest (additive): how the work ended, step progress and update count. */
   outcome?: "completed" | "failed" | null;
-  steps?: { done: number; total: number; current: string | null } | null;
+  steps?: { done: number; total: number; current: string | null; currentIndex?: number; fill?: number } | null;
   updates?: number | null;
   stepItems?: Array<{ label: string; state: string }>;
 };
@@ -188,7 +227,7 @@ type InboxHandlerDependencies = {
   db: Database;
   releaseIdentity: string;
   getAccount(headers: Headers): Promise<InboxDashboardAccount | null>;
-  renderDocument(bootstrap: InboxDashboardBootstrap): Promise<string>;
+  renderDocument(bootstrap: InboxDashboardBootstrap,options?: DashboardDocumentOptions): Promise<string>;
   contentCipher?: NotificationContentCipher;
 };
 
@@ -322,11 +361,37 @@ function activitySummary(row: Record<string, any>): DashboardActivitySummary | n
   };
 }
 
-function stepDigest(value: unknown): { done: number; total: number; current: string | null } | null {
+function stepDigest(value: unknown): { done: number; total: number; current: string | null; currentIndex?: number; fill?: number } | null {
   const steps = record(value);
   const total = number(steps.total);
   if (total <= 0) return null;
-  return { done: number(steps.done), total, current: optionalString(steps.current) };
+  const index = number(steps.currentIndex);
+  return { done: number(steps.done), total, current: optionalString(steps.current),
+    ...(index >= 1 ? { currentIndex: index } : {}),
+    ...(typeof steps.fill === "number" && Number.isFinite(steps.fill) ? { fill: Math.min(1, Math.max(0, steps.fill)) } : {}) };
+}
+
+type PlanStepState = "open" | "current" | "done" | "skipped";
+type PlanTreeStep = { id: string; state: PlanStepState; label?: string; parent?: string; round?: number; detail?: string; startedAt?: string; doneAt?: string };
+type PlanTreeRound = { n: number; state: "open" | "closed"; title?: string; outcome?: string; openedAt?: string; closedAt?: string };
+const STEP_STATES = new Set<string>(["open", "current", "done", "skipped"]);
+const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+const positive = (value: unknown) => (Number.isInteger(value) && (value as number) > 0 ? (value as number) : undefined);
+type Loose<T> = { [K in keyof T]: T[K] | undefined };
+const defined = <T extends object>(value: Loose<T>) => Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+
+/** The work's plan and rounds for the detail page's tree, read back into the contract's shape; nothing without a plan. */
+function planTree(value: unknown): { plan?: PlanTreeStep[]; rounds?: PlanTreeRound[] } {
+  const tree = record(value);
+  const plan = (Array.isArray(tree.plan) ? tree.plan : []).map(record)
+    .filter((step) => typeof step.id === "string" && STEP_STATES.has(String(step.state)))
+    .map((step) => defined<PlanTreeStep>({ id: String(step.id), state: step.state as PlanStepState, label: text(step.label),
+      parent: text(step.parent), round: positive(step.round), detail: text(step.detail), startedAt: text(step.startedAt), doneAt: text(step.doneAt) }));
+  const rounds = (Array.isArray(tree.rounds) ? tree.rounds : []).map(record)
+    .filter((round) => positive(round.n) !== undefined && (round.state === "open" || round.state === "closed"))
+    .map((round) => defined<PlanTreeRound>({ n: positive(round.n)!, state: round.state as "open" | "closed", title: text(round.title),
+      outcome: text(round.outcome), openedAt: text(round.openedAt), closedAt: text(round.closedAt) }));
+  return { ...(plan.length ? { plan } : {}), ...(rounds.length ? { rounds } : {}) };
 }
 
 function stepItems(value: unknown, isPrivate: boolean): Array<{ label: string; state: string }> {
@@ -352,6 +417,24 @@ function questionDigest(value: unknown): DashboardQuestion | null {
     expiresAt: isoDate(question.expiresAt),
     chosenLabel: typeof question.chosenLabel === "string" ? question.chosenLabel : null,
   };
+}
+
+/**
+ * Attaches the derived absence (why a card left the screen or dimmed) to the work cards of a page: the
+ * same derive() the phone reads, never worked out here. Display only; a failed load leaves the rows plain.
+ */
+async function withAbsences(db: Database,principalId: string,summaries: DashboardNotificationSummary[]): Promise<DashboardNotificationSummary[]> {
+  const ids = summaries.flatMap((summary) => summary.activity ? [summary.activity.id] : []);
+  if (!ids.length) return summaries;
+  const loaded = await loadOwnerStateInputs(db,principalId,ids,new Date()).catch(() => []);
+  const absences = new Map(loaded.flatMap((work) => {
+    const absence = deriveOwnerState(work.input).absence;
+    return absence ? [[work.id,absence] as const] : [];
+  }));
+  return summaries.map((summary) => {
+    const absence = summary.activity ? absences.get(summary.activity.id) : undefined;
+    return absence && summary.activity ? { ...summary,activity: { ...summary.activity,absence } } : summary;
+  });
 }
 
 function notificationSummary(
@@ -569,13 +652,29 @@ const activityProjectionSql = `a.id AS live_activity_id,
     CASE WHEN a.state<>'active' AND a.presentation#>>'{state,kind}' IN ('completed','failed')
       THEN a.presentation#>>'{state,kind}' END AS activity_outcome,
     GREATEST(a.sequence,0)+1 AS activity_updates,
-    (SELECT CASE WHEN count(*)>0 THEN jsonb_build_object('done',count(*) FILTER (WHERE step->>'state'='complete'),
-        'total',count(*),
+    (SELECT CASE WHEN COALESCE(wire.total,count(*))>0 THEN jsonb_build_object(
+        'done',COALESCE(wire.done,count(*) FILTER (WHERE step->>'state'='complete')),
+        'total',COALESCE(wire.total,count(*)),
         'current',CASE WHEN (e.payload->>'privacy'='private' OR e.payload#>>'{liveActivity,privacy}'='private') THEN NULL
-          ELSE NULLIF(left((array_agg(step->>'label') FILTER (WHERE step->>'state'='current'))[1],80),'') END) END
-      FROM jsonb_array_elements(COALESCE((SELECT component->'items' FROM jsonb_array_elements(
+          ELSE NULLIF(left(COALESCE(wire.label,(array_agg(step->>'label') FILTER (WHERE step->>'state'='current'))[1]),80),'') END,
+        'currentIndex',wire.current,'fill',wire.fill) END
+      -- The card's plan wire carries the count (top-level steps); a card from before it counts the shown steps.
+      FROM (SELECT component FROM jsonb_array_elements(
         CASE WHEN jsonb_typeof(a.presentation->'components')='array' THEN a.presentation->'components' ELSE '[]'::jsonb END) component
-        WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1),'[]'::jsonb)) step
+        WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1) steps_component
+      CROSS JOIN LATERAL (SELECT
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'total')='number' AND jsonb_typeof(steps_component.component->'plan'->'done')='number'
+          THEN (steps_component.component->'plan'->>'total')::int END AS total,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'total')='number' AND jsonb_typeof(steps_component.component->'plan'->'done')='number'
+          THEN (steps_component.component->'plan'->>'done')::int END AS done,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'stepLabel')='string'
+          THEN steps_component.component->'plan'->>'stepLabel' END AS label,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'current')='number'
+          THEN (steps_component.component->'plan'->>'current')::int END AS current,
+        CASE WHEN jsonb_typeof(steps_component.component->'plan'->'fill')='number'
+          THEN (steps_component.component->'plan'->>'fill')::float8 END AS fill) wire
+      CROSS JOIN LATERAL jsonb_array_elements(steps_component.component->'items') step
+      GROUP BY wire.total,wire.done,wire.label,wire.current,wire.fill
     ) AS activity_steps`;
 
 /** Whether an event carries end-to-end envelopes; only this boolean ever leaves the server. */
@@ -586,12 +685,6 @@ const activityJoinSql = `LEFT JOIN live_activities a
     ON a.principal_id=e.principal_id
    AND e.kind='live_activity'
    AND e.payload#>>'{liveActivity,activityId}'=('act_'||a.id::text)`;
-
-const notificationStateSql = `CASE
-    WHEN a.id IS NOT NULL THEN a.state::text
-    WHEN e.kind='notification' AND e.state='active' THEN 'recorded'
-    ELSE e.state::text
-  END`;
 
 const notificationProjectSql = `NULLIF(BTRIM(COALESCE(a.context,e.payload->'context')->>'project'),'')`;
 
@@ -662,6 +755,15 @@ export function createDashboardInboxHandlers(
     contentCipher,
   } = dependencies;
 
+  /**
+   * The page plus the agent sessions whose sealed names envelopes name its handles (ids only), so a
+   * linked browser names a project on History and the detail page as it does on Now.
+   */
+  async function withNamesFrom<T extends object>(principalId: string, page: T): Promise<T & { namesFrom?: string[] }> {
+    const namesFrom = await sessionsNamingHandles(db, principalId, sessionHandlesIn(page));
+    return namesFrom.length ? { ...page, namesFrom } : page;
+  }
+
   const overview: Handler = async (context) => {
     const account = await accountOrRedirect(context, getAccount);
     if (account instanceof Response) return account;
@@ -672,7 +774,7 @@ export function createDashboardInboxHandlers(
       requestedPage,
       counts.approvals,
     );
-    const [approvals, pendingResponses, notifications, running, sessions] = await Promise.all([
+    const [approvals, pendingResponses, notifications, running] = await Promise.all([
       db.query<any>(
         `SELECT user_code,client_name,requested_scopes,expires_at,credential_expires_at
         FROM device_authorizations WHERE status='pending' AND expires_at>now() AND ${unclaimedLoginsVisible}
@@ -708,7 +810,6 @@ export function createDashboardInboxHandlers(
         ORDER BY created_at DESC,id DESC LIMIT 50`,
         [account.principalId],
       ),
-      listAgentSessions(db, account.principalId),
     ]);
     const since = context.req.query("since");
     const now = await loadNowSummary(db, account.principalId, undefined,
@@ -721,8 +822,8 @@ export function createDashboardInboxHandlers(
         account,
         releaseIdentity,
         active: "inbox",
-        title: "Inbox",
-        description: `Account ${account.accountId}. Approvals and recent notification outcomes in one durable queue.`,
+        title: "Now",
+        description: `Account ${account.accountId}. What needs you, what is running and what finished.`,
         counts,
       }),
       summary: {
@@ -753,24 +854,20 @@ export function createDashboardInboxHandlers(
         credentialExpiresAt: isoDate(row.credential_expires_at),
       })),
       approvalPagination: approvalPages,
-      recentNotifications: notifications.rows.map(notificationSummary),
-      runningActivities: running.rows.map(notificationSummary),
-      sessions,
+      recentNotifications: await withAbsences(db,account.principalId,notifications.rows.map(notificationSummary)),
+      runningActivities: await withAbsences(db,account.principalId,running.rows.map(notificationSummary)),
       now,
     };
-    return secureHtml(context, await renderDocument(bootstrap));
+    return secureHtml(context, await renderDocument(await withNamesFrom(account.principalId, bootstrap),dashboardDocumentOptions(context)));
   };
 
   const history: Handler = async (context) => {
     const account = await accountOrRedirect(context, getAccount);
     if (account instanceof Response) return account;
     const kind =
-      notificationKinds.find((value) => value === context.req.query("kind")) ??
-      null;
+      historyKindNames.find((value) => value === context.req.query("kind")) ?? null;
     const state =
-      notificationStates.find(
-        (value) => value === context.req.query("state"),
-      ) ?? null;
+      historyStateNames.find((value) => value === context.req.query("state")) ?? null;
     const projectOptions = await db.query<{ project: string }>(
       `SELECT DISTINCT ${notificationProjectSql} AS project
       FROM notification_events e
@@ -780,41 +877,53 @@ export function createDashboardInboxHandlers(
       [account.principalId],
     );
     const projects = projectOptions.rows.map((row) => String(row.project));
+    // Which sources and computers the owner has heard from: the menus appear only with a choice.
+    const originOptions = await db.query<{ history_source: string; history_computer: string | null }>(
+      `SELECT DISTINCT e.source AS history_source,
+        NULLIF(BTRIM(COALESCE(a.context,e.payload->'context')->>'computer'),'') AS history_computer
+      FROM notification_events e
+      ${activityJoinSql}
+      WHERE e.principal_id=$1
+      LIMIT 1000`,
+      [account.principalId],
+    );
+    const sorted = (values: Iterable<string>) => [...new Set(values)].sort((a, b) => a.localeCompare(b));
+    const sources = sorted(originOptions.rows.map((row) => String(row.history_source)));
+    const computers = sorted(originOptions.rows.flatMap((row) => row.history_computer ? [String(row.history_computer)] : []));
     const requestedProject = optionalString(context.req.query("project"));
     const project =
       requestedProject && projects.includes(requestedProject)
         ? requestedProject
         : null;
+    const requestedSource = optionalString(context.req.query("source"));
+    const source = requestedSource && sources.includes(requestedSource) ? requestedSource : null;
+    const requestedComputer = optionalString(context.req.query("computer"));
+    const computer = requestedComputer && computers.includes(requestedComputer) ? requestedComputer : null;
+    const q = optionalString(context.req.query("q"))?.slice(0, 120) ?? null;
+    const filters = { kind, state, project, source, computer, q };
+    const filterParams = [account.principalId, kind, state, project, source, computer, q ? likePattern(q) : null];
+    const where = historyFilterSql(kind, state);
     const counts = await loadCounts(db, account.principalId);
     const filtered = await db.query<{ total: number }>(
-      `SELECT count(DISTINCT ${logicalNotificationKeySql})::int AS total FROM notification_events e
-      ${activityJoinSql}
-      WHERE e.principal_id=$1 AND ($2::text IS NULL OR e.kind::text=$2)
-        AND ($3::text IS NULL OR (${notificationStateSql})=$3)
-        AND ($4::text IS NULL OR ${notificationProjectSql}=$4)`,
-      [account.principalId, kind, state, project],
+      `SELECT count(*)::int AS total FROM (${notificationListSql}
+      WHERE e.principal_id=$1) logical_notifications
+      WHERE logical_rank=1
+        AND ${where}`,
+      filterParams,
     );
     const pages = pagination(
       "/dashboard/inbox/notifications",
       pageNumber(context.req.query("page")),
       filtered.rows[0]?.total,
-      { kind, state, project },
+      filters,
     );
     const notifications = await db.query<any>(
       `SELECT * FROM (${notificationListSql}
-      WHERE e.principal_id=$1 AND ($2::text IS NULL OR e.kind::text=$2)
-        AND ($3::text IS NULL OR (${notificationStateSql})=$3)
-        AND ($4::text IS NULL OR ${notificationProjectSql}=$4)) logical_notifications
+      WHERE e.principal_id=$1) logical_notifications
       WHERE logical_rank=1
-      ORDER BY created_at DESC,id DESC LIMIT $5 OFFSET $6`,
-      [
-        account.principalId,
-        kind,
-        state,
-        project,
-        pageSize,
-        (pages.page - 1) * pageSize,
-      ],
+        AND ${where}
+      ORDER BY created_at DESC,id DESC LIMIT $8 OFFSET $9`,
+      [...filterParams, pageSize, (pages.page - 1) * pageSize],
     );
     const unread = await db.query<{ project: string; count: number }>(
       `SELECT COALESCE(resource_project_name,'Direct') AS project,count(*)::int AS count
@@ -831,14 +940,14 @@ export function createDashboardInboxHandlers(
       route: {
         path: context.req.path,
         page: pages.page,
-        filters: { kind, state, project },
+        filters,
       },
-      filterOptions: { projects },
+      filterOptions: { projects, sources, computers },
       shell: shell({
         account,
         releaseIdentity,
         active: "inbox-notifications",
-        title: "Notifications",
+        title: "History",
         description:
           "Review source, target, delivery state, timestamps, and canonical responses.",
         counts,
@@ -850,10 +959,10 @@ export function createDashboardInboxHandlers(
           count: number(row.count),
         })),
       },
-      notifications: notifications.rows.map(notificationSummary),
+      notifications: await withAbsences(db,account.principalId,notifications.rows.map(notificationSummary)),
       pagination: pages,
     };
-    return secureHtml(context, await renderDocument(bootstrap));
+    return secureHtml(context, await renderDocument(await withNamesFrom(account.principalId, bootstrap),dashboardDocumentOptions(context)));
   };
 
   const delivery: Handler = async (context) => {
@@ -894,7 +1003,7 @@ export function createDashboardInboxHandlers(
       deliveries: deliveries.rows.map(deliverySummary),
       pagination: pages,
     };
-    return secureHtml(context, await renderDocument(bootstrap));
+    return secureHtml(context, await renderDocument(bootstrap,dashboardDocumentOptions(context)));
   };
 
   const detail: Handler = async (context) => {
@@ -915,6 +1024,28 @@ export function createDashboardInboxHandlers(
         (SELECT component->'items' FROM jsonb_array_elements(
           CASE WHEN jsonb_typeof(a.presentation->'components')='array' THEN a.presentation->'components' ELSE '[]'::jsonb END) component
           WHERE component->>'type'='steps' AND jsonb_typeof(component->'items')='array' LIMIT 1) AS activity_step_items,
+        -- The work's plan tree and rounds, as the phone gets them (inbox/queries.ts): labels, details, titles and
+        -- outcomes only when readable; a sealed work's labels open from its sealed text in the browser.
+        (SELECT jsonb_build_object(
+            'plan',(SELECT jsonb_agg(jsonb_build_object('id',plan_step.step->>'id','state',plan_step.step->>'state',
+                'label',CASE WHEN hidden.yes THEN NULL ELSE left(plan_step.step->>'label',120) END)
+                || jsonb_strip_nulls(jsonb_build_object('parent',plan_step.step->'parent','round',plan_step.step->'round',
+                  'startedAt',plan_step.step->'startedAt','doneAt',plan_step.step->'doneAt',
+                  'detail',CASE WHEN hidden.yes THEN NULL ELSE to_jsonb(left(plan_step.step->>'detail',200)) END))
+                ORDER BY plan_step.position)
+              FROM jsonb_array_elements(CASE WHEN jsonb_typeof(work.plan->'steps')='array' THEN work.plan->'steps' ELSE '[]'::jsonb END)
+                WITH ORDINALITY plan_step(step,position)
+              WHERE plan_step.step->>'state' IN ('open','current','done','skipped')),
+            'rounds',CASE WHEN jsonb_typeof(work.plan->'rounds')='array' THEN (SELECT jsonb_agg(
+                jsonb_strip_nulls(jsonb_build_object('n',r.round->'n','state',r.round->'state',
+                  'title',CASE WHEN hidden.yes THEN NULL ELSE to_jsonb(left(r.round->>'title',80)) END,
+                  'outcome',CASE WHEN hidden.yes THEN NULL ELSE to_jsonb(left(r.round->>'outcome',200)) END,
+                  'openedAt',r.round->'openedAt','closedAt',r.round->'closedAt')) ORDER BY r.position)
+              FROM jsonb_array_elements(work.plan->'rounds') WITH ORDINALITY r(round,position)) END)
+          FROM works work
+          CROSS JOIN LATERAL (SELECT work.sealed_text IS TRUE
+            OR COALESCE(e.payload->>'privacy',e.payload#>>'{liveActivity,privacy}','standard')='private' AS yes) hidden
+          WHERE work.id=a.work_id AND work.principal_id=a.principal_id) AS activity_plan_tree,
         ${activityProjectionSql}
       FROM notification_events e
       ${activityJoinSql}
@@ -931,13 +1062,15 @@ export function createDashboardInboxHandlers(
       relationships, correlationDecisions, evidenceTimeline,
     ] = await Promise.all([
       db.query<any>(
-        `SELECT r.kind,r.prompt,r.state,r.response,r.expires_at,r.created_at,r.responded_at,
-          winner.kind AS response_action,winner.device_id AS response_device_id,d.name AS response_device_name
+        `SELECT r.id,r.kind,r.prompt,r.state,r.response,r.expires_at,r.created_at,r.responded_at,
+          winner.kind AS response_action,winner.device_id AS response_device_id,winner.browser_id AS response_browser_id,
+          COALESCE(d.name,b.name) AS response_device_name
         FROM interaction_requests r
         LEFT JOIN LATERAL (
-          SELECT i.kind,i.device_id FROM interactions i
-          WHERE i.interaction_request_id=r.id ORDER BY i.created_at,i.id LIMIT 1
+          SELECT i.kind,i.device_id,i.browser_id FROM interactions i
+          WHERE i.interaction_request_id=COALESCE(r.answered_on_request_id,r.id) ORDER BY i.created_at,i.id LIMIT 1
         ) winner ON true LEFT JOIN devices d ON d.id=winner.device_id
+        LEFT JOIN linked_browsers b ON b.id=winner.browser_id
         WHERE r.notification_event_id=$1 AND r.principal_id=$2`,
         [notificationId, account.principalId],
       ),
@@ -1077,6 +1210,7 @@ export function createDashboardInboxHandlers(
         ? {
             ...activitySummary(row)!,
             stepItems: stepItems(row.activity_step_items, row.privacy === "private"),
+            ...planTree(row.activity_plan_tree),
             threadHistory: threadHistory.rows.map((related) => ({
               id: publicId("act", String(related.id)),
               encrypted: related.encrypted === true,
@@ -1170,14 +1304,10 @@ export function createDashboardInboxHandlers(
                   : String(interaction.response_action),
             prompt: String(interaction.prompt),
             responseText,
-            respondingDevice: interaction.response_device_id
-              ? {
-                  id: publicId("dev", String(interaction.response_device_id)),
-                  name: String(
-                    interaction.response_device_name ?? "Unnamed device",
-                  ),
-                }
-              : null,
+            // The question's id: a linked browser answers it (molecules/answer-controls.tsx).
+            id: publicId("int", String(interaction.id)),
+            // A phone (dev_…) or a linked browser (brw_…) that answered.
+            respondingDevice: respondingDeviceResource(interaction),
             createdAt: isoDate(interaction.created_at),
             expiresAt: isoDate(interaction.expires_at),
             respondedAt: isoDate(interaction.responded_at),
@@ -1191,7 +1321,7 @@ export function createDashboardInboxHandlers(
         createdAt: isoDate(receipt.created_at),
       })),
     };
-    return secureHtml(context, await renderDocument(bootstrap));
+    return secureHtml(context, await renderDocument(await withNamesFrom(account.principalId, bootstrap),dashboardDocumentOptions(context)));
   };
 
   return { overview, history, delivery, detail };

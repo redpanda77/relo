@@ -14,7 +14,7 @@ struct WorkModelTests {
     }
 
     private func labels(_ presentation: LiveActivityPresentation) -> [String] {
-        for case let .steps(_, _, items) in presentation.components { return items.map(\.label) }
+        for case let .steps(_, _, items, _) in presentation.components { return items.map(\.label) }
         return []
     }
 
@@ -194,7 +194,7 @@ struct WorkModelTests {
 
         // The card's own steps ("Step n" from the server) take the opened labels.
         let withSteps = sealedFiveStepCard(digest: digest, presented: true).openingSealed { _, _ in data }
-        guard case let .steps(presented) = try #require(withSteps.liveActivity).compositionalPresentation.visual
+        guard case let .steps(presented, _) = try #require(withSteps.liveActivity).compositionalPresentation.visual
         else { Issue.record("steps"); return }
         let timeline = withSteps.timelineSteps(presented: presented)
         #expect(timeline.map(\.label) == five)

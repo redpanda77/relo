@@ -5,11 +5,11 @@ import { hashToken } from "../auth.js";
 import { bootstrapOwner } from "../bootstrap.js";
 import { createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
-import { createWebhookService } from "../services.js";
+import { createWebhookService } from "../webhooks/admin.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
 suite("Operational subject admission",()=>{
-  let db:Database,principalId:string,servicePath:string;
+  let db:Database,principalId:string,serviceSecret:string;
   const owner="operational_owner_abcdefghijklmnopqrstuvwxyz";
   const phone="operational_phone_abcdefghijklmnopqrstuvwxyz";
   beforeAll(async()=>{db=createDatabase(process.env.TEST_DATABASE_URL!);await migrate(db);});
@@ -22,14 +22,14 @@ suite("Operational subject admission",()=>{
       VALUES ($1,$2,$3,'Operational fixture','com.example.fixture','1','1','27','sandbox','authorized','authorized','fixture-token') RETURNING id`,
       [principalId,randomUUID(),randomUUID()])).rows[0];
     await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['inbox:read'])",[device.id,hashToken(phone)]);
-    servicePath=new URL((await createWebhookService(db,principalId,"Operational fixture","http://127.0.0.1:8180")).webhookUrl).pathname;
+    serviceSecret=(await createWebhookService(db,principalId,"Operational fixture","http://127.0.0.1:8180")).secret;
   });
   const app=()=>createApp(db,{apnsMode:"sandbox",credentialDerivationSecret:"operational-fixture-secret-at-least-32-characters"});
   const command=(policy:unknown,revision=1,more:Record<string,unknown>={})=>({subjectKey:"operational-work",generation:1,revision,
     operation:revision===1?"replace":"update",occurredAt:new Date().toISOString(),policy,...more});
   async function send(adapter:string,relevance:unknown,key=randomUUID()){
-    const response=await app().request(adapter==="api"?"/api/notifications":servicePath,{method:"POST",
-      headers:{"content-type":"application/json","idempotency-key":key,...(adapter==="api"?{authorization:`Bearer ${owner}`}:{})},
+    const response=await app().request(adapter==="api"?"/api/notifications":"/hooks",{method:"POST",
+      headers:{"content-type":"application/json","idempotency-key":key,authorization:`Bearer ${adapter==="api"?owner:serviceSecret}`},
       body:JSON.stringify({body:"Operational state",...(adapter==="api"?{title:"Operational state",sourceName:"Fixture"}:{}),relevance})});
     return {status:response.status,body:await response.json() as any};
   }

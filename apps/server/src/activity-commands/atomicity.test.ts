@@ -5,13 +5,13 @@ import {bootstrapOwner} from "../bootstrap.js";
 import {hashToken} from "../auth.js";
 import {createDatabase,type Database} from "../db.js";
 import {migrate} from "../migrate.js";
-import {createWebhookService} from "../services.js";
+import {createWebhookService} from "../webhooks/admin.js";
 import {executeActivityCommand} from "./commands.js";
 import {SYSTEM_PRESENTATION_POLICY} from "../presentation-policy.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
 suite("Activity transactions",()=>{
- let db:Database,principalId:string,credentialId:string,hook:string,serviceId:string;
+ let db:Database,principalId:string,credentialId:string,hookSecret:string,serviceId:string;
  const owner="activity_atomic_owner_abcdefghijklmnopqrstuvwxyz";
  beforeAll(async()=>{db=createDatabase(process.env.TEST_DATABASE_URL!);await migrate(db);});
  afterAll(async()=>db.end());
@@ -23,11 +23,11 @@ suite("Activity transactions",()=>{
     os_version,apns_environment,notification_authorization,live_activity_authorization,live_activity_push_to_start_token)
     VALUES ($1,$2,$3,'Atomicity','com.example.fixture','1','1','27','sandbox','authorized','authorized','fixture-start')`,[principalId,randomUUID(),randomUUID()]);
   const service=await createWebhookService(db,principalId,"Atomicity","http://127.0.0.1:8180");
-  hook=new URL(service.webhookUrl).pathname;serviceId=service.row.id;
+  hookSecret=service.secret;serviceId=service.row.id;
  });
  async function send(adapter:string,suffix:string,body:unknown,method="POST",key=randomUUID()){
-  const response=await createApp(db,{apnsMode:"sandbox"}).request(`${adapter==="service"?hook:"/api"}/live-activities${suffix}`,{method,
-   headers:{authorization:`Bearer ${owner}`,"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body)});
+  const response=await createApp(db,{apnsMode:"sandbox"}).request(`${adapter==="service"?"/hooks":"/api"}/live-activities${suffix}`,{method,
+   headers:{authorization:`Bearer ${adapter==="service"?hookSecret:owner}`,"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body)});
   return {status:response.status,body:await response.json() as {activity:{id:string;sequence:number};replayed:boolean;error?:string}};
  }
  for(const adapter of ["credential","service"]) for(const operation of ["update","end"]){

@@ -5,7 +5,7 @@ import { hashToken } from "./auth.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
 import { canonicalOriginHash,type OriginDescriptor } from "./origin-slots.js";
-import { createWebhookService } from "./services.js";
+import { createWebhookService } from "./webhooks/admin.js";
 import { currentTestPresentationRecord } from "./test-current-presentation.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -111,9 +111,8 @@ suite("origin-slot lifecycle", () => {
     )).rows[0]!.count).toBe(0);
   });
 
-  test("resolves client policy once and preserves it across lifecycle ensure calls",async () => {
+  test("snapshots the client policy at start, and the open card follows a later policy change on ensure",async () => {
     const clientPolicy = {
-      preset: "terminal",theme: "dark",symbol: "build",
       colorStrategy: "fixed",accentColor: "#63B3FF",
     };
     await db.query("UPDATE principal_api_keys SET live_activity_policy=$2::jsonb WHERE id=$1",[
@@ -126,11 +125,11 @@ suite("origin-slot lifecycle", () => {
     expect(first.status).toBe(201);
     const firstBody = await first.json() as any;
     expect(firstBody.activity).toMatchObject({
-      style: "terminal",symbol: "build",accentColor: "#63B3FF",
+      style: "standard",symbol: "build",accentColor: "#63B3FF",
     });
     await db.query("UPDATE principal_api_keys SET live_activity_policy=$2::jsonb WHERE id=$1",[
       credentialId,{
-        ...clientPolicy,preset: "terminal",accentColor: "#FF7A90",
+        ...clientPolicy,accentColor: "#FF7A90",
       },
     ]);
     const ensured = await request("/api/live-activities",{
@@ -141,7 +140,8 @@ suite("origin-slot lifecycle", () => {
       reused: true,
       activity: {
         id: firstBody.activity.id,progress: 0.5,
-        style: "terminal",symbol: "build",accentColor: "#63B3FF",
+        // The policy now says #FF7A90: an open card takes the policy's color on its next write.
+        style: "standard",symbol: "build",accentColor: "#FF7A90",
       },
     });
     expect((await db.query<any>(
@@ -152,7 +152,7 @@ suite("origin-slot lifecycle", () => {
     )).rows[0]).toMatchObject({
       presentation_policy_source: "client",
       presentation_policy: { policy: clientPolicy,source: "client",explicit: [] },
-      presentation_preset_id: "policy.terminal",
+      presentation_preset_id: "system.agent.measured",
       presentation_preset_revision: 1,
     });
   });
@@ -688,9 +688,10 @@ suite("origin-slot lifecycle", () => {
 
   test("applies the same durable slot and terminal contract to service webhooks", async () => {
     const service = await createWebhookService(db,principalId,"Origin Service","http://127.0.0.1:8180");
-    const path = `${new URL(service.webhookUrl).pathname}/live-activities`;
+    const path = "/hooks/live-activities";
+    const auth = { authorization: `Bearer ${service.secret}` };
     const send = (body: unknown,key: string) => app().request(path,{
-      method: "POST",headers: { "content-type": "application/json","idempotency-key": key },
+      method: "POST",headers: { "content-type": "application/json","idempotency-key": key,...auth },
       body: JSON.stringify(body),
     });
     const serviceOrigin = { ...origin,sourceInstance: "build-service",thread: "release-7" };
@@ -705,7 +706,7 @@ suite("origin-slot lifecycle", () => {
       resumed: false,activity: { id: firstBody.activity.id,generation: 1,sequence: 1,progress: 0.8 },
     });
     const ended = await app().request(`${path}/${firstBody.activity.id}/end`,{
-      method: "POST",headers: { "content-type": "application/json","idempotency-key": "service-origin-end" },
+      method: "POST",headers: { "content-type": "application/json","idempotency-key": "service-origin-end",...auth },
       body: JSON.stringify({ status: "Done",progress: 1 }),
     });
     expect(ended.status).toBe(200);

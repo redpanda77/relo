@@ -54,7 +54,8 @@ final class DeviceAccessTests: XCTestCase {
         XCTAssertEqual(ReloDeepLink.accessRequestID(relo: ["deepLink": url.absoluteString]), phone)
         XCTAssertEqual(ReloDeepLink.accessRequestID(relo: ["destination": url.absoluteString]), phone)
         XCTAssertNil(ReloDeepLink.accessRequestID(relo: ["deepLink": "relo://settings/security"]))
-        XCTAssertNil(ReloDeepLink.accessRequestURL(id: "brw_00000000-0000-4000-8000-0000000000cc"))
+        XCTAssertNotNil(ReloDeepLink.accessRequestURL(id: "brw_00000000-0000-4000-8000-0000000000cc"))
+        XCTAssertNil(ReloDeepLink.accessRequestURL(id: "web_00000000-0000-4000-8000-0000000000cc"))
         XCTAssertNil(ReloDeepLink.accessRequestURL(id: "dev_../keys"))
         for bad in ["https://security/request/\(phone)", "relo://security/request/\(phone)?x=1",
                     "relo://security/request", "relo://security/other/\(phone)", "relo://settings/request/\(phone)",

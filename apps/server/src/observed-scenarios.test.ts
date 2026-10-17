@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
-import { agentSessionRowsSql,sessionsViewRows } from "./agent-sessions.js";
+import { agentSessionRowsSql } from "./agent-sessions.js";
+import { sessionsViewRows } from "./derive/sessions-view.js";
 import { createApp } from "./app.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
@@ -9,7 +10,8 @@ import { deriveOwnerState } from "./derive/owner-state.js";
 import { migrate } from "./migrate.js";
 // The CLI's own caller detection: the observed snapshots and the CLI's work meet by this key only.
 // @ts-ignore untyped CLI module
-import { detectCaller,sessionKey } from "../../../packages/cli/src/caller.mjs";
+import { detectCaller } from "../../../packages/cli/src/caller.mjs";
+import { sessionKey } from "../../../packages/cli/src/shared/session-key.mjs";
 
 /**
  * Observed state scenarios, STATE-SPEC 2.2, 4.3, 4.4, 6.1 and 9, at the server's edge (ADR 0008):
@@ -137,7 +139,9 @@ suite("observed state (hooks) scenarios",() => {
     await startWork(turn,base);
     await observe(turn,"stopped",base + 5 * MIN);
     expect((await ownerState(turn,base + 6 * MIN)).state).toBe("waiting_on_you");
-    expect((await ownerState(turn,base + 100 * MIN)).state).toBe("waiting_on_you"); // up to T_history
+    // ...for 5 minutes; then it is left open: Quiet and dimmed (12b-plan-ux 4.11), off the Lock Screen after an hour.
+    expect(await ownerState(turn,base + 12 * MIN)).toMatchObject({ state: "stale",lockScreen: "dimmed",quietReason: "session_idle" });
+    expect(await ownerState(turn,base + 100 * MIN)).toMatchObject({ state: "no_signal",lockScreen: "none",now: "quiet",quietReason: "session_idle" });
 
     // Permission prompt: needs you.
     const ask = randomUUID();
@@ -145,12 +149,12 @@ suite("observed state (hooks) scenarios",() => {
     await observe(ask,"waiting",base + 5 * MIN);
     expect(await ownerState(ask,base + 6 * MIN)).toMatchObject({ state: "needs_you",needsYou: "permission" });
 
-    // Session ended without finishing: stopped responding after T_done.
+    // Session ended without finishing: Quiet at once, with the reason.
     const gone = randomUUID();
     await startWork(gone,base);
     await observe(gone,"ended",base + 3 * MIN);
-    expect((await ownerState(gone,base + 10 * MIN)).state).toBe("moving");
-    expect((await ownerState(gone,base + 16 * MIN)).state).toBe("stopped_responding");
+    expect(await ownerState(gone,base + 10 * MIN)).toMatchObject({ state: "stale",lockScreen: "dimmed",now: "quiet",quietReason: "session_ended" });
+    expect((await ownerState(gone,base + 16 * MIN)).state).toBe("stale");
   });
 
   test("without hooks: declared timestamps only (moving, stale at 20 min, no signal at 60, left unfinished at 8 h)",async () => {
@@ -182,10 +186,24 @@ suite("observed state (hooks) scenarios",() => {
     rows = await sessionRows(base + 6 * MIN);
     expect(rows.raw.map((row) => row.session_hash).sort()).toEqual([keyOf(old),keyOf(fresh)].sort());
     expect(rows.raw.find((row) => row.session_hash === keyOf(fresh)).card_id).toBeNull(); // nothing of the old work
-    expect((await ownerState(old,base + 21 * MIN)).state).toBe("stopped_responding");
-    expect((await ownerState(old,base + 8 * 60 * MIN + 6 * MIN)).state).toBe("left_unfinished");
+    // An ended session's card is a finished item: the final card for T_done (15 minutes), then History only.
+    expect((await ownerState(old,base + 18 * MIN)).state).toBe("stale");
+    expect(await ownerState(old,base + 21 * MIN)).toMatchObject({ state: "no_signal",lockScreen: "none",now: null });
     // The fresh session writing later never touches the old work.
     await startWork(fresh,base + 30 * MIN,"Another goal");
-    expect((await ownerState(old,base + 31 * MIN)).state).toBe("stopped_responding");
+    expect((await ownerState(old,base + 31 * MIN)).state).toBe("no_signal");
+  });
+
+  test("a turn that stops under a declared wait (a background job) is moving and working, not the owner's turn",async () => {
+    const base = Date.now() - 30 * MIN;
+    const id = randomUUID();
+    await startWork(id,base);
+    // `relo work update --waiting "the deploy"` in the same turn, then the turn stops.
+    await db.query("UPDATE works SET waiting_reason='the deploy',waiting_since=$2 WHERE session_key=$1",[keyOf(id),new Date(base)]);
+    await observe(id,"stopped",base + MIN);
+    expect((await ownerState(id,base + 2 * MIN)).state).toBe("moving");
+    expect((await sessionRows(base + 2 * MIN)).view[0]).toMatchObject({ phase: "working",waitingFor: null });
+    // Past T_retire the declared wait no longer holds it: the stopped turn was left open long ago, so it is Quiet.
+    expect(await ownerState(id,base + 61 * MIN)).toMatchObject({ state: "no_signal",quietReason: "session_idle" });
   });
 });

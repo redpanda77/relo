@@ -79,17 +79,22 @@ relo work finish --producer nightly-import --outcome "4,200 orders imported"
 - **Finishing is explicit.** `finish --outcome "…"` is required; add `--failed` or `--dropped` when
   it did not succeed. The outcome is the notification. Open steps become skipped.
 - **Pausing** (`pause --status "…"`) hides the work; `resume` brings it back.
-- **Work text is readable.** Scripts and services cannot seal text, so the account shows it as not
-  end-to-end encrypted ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md)).
+- **A script's work is sealed** like an agent's when the computer trusts a phone: the server stores
+  `{sealed: true}` in place of the goal, status, outcome and step labels, and the card carries the words
+  ([ENCRYPTION-PROTOCOL.md](ENCRYPTION-PROTOCOL.md)). On an account that requires end-to-end
+  encryption, readable script text is refused (`end_to_end_required`). A service posting over HTTP
+  cannot seal: its text is readable, and a plain string is read as readable text.
 
 Over HTTP a script's work lives under `/api/producers/{producerKey}/works` (`producerKey` is the
 base64url SHA-256 of `producer:` plus the readable key; the CLI computes it). A service holding a
-`hook_…` secret uses `/hooks/{secret}/works` with `producerKey` in the start body. Both take
-`Idempotency-Key` on create and answer `{ "work": …, "disposition": … }`. A service's work does not
-start a Live Activity card yet.
+`hook_…` secret uses `/hooks/works`, the secret in `Authorization: Bearer hook_…`, with `producerKey` in the start body. Both take
+`Idempotency-Key` on create and answer `{ "work": …, "disposition": … }`. A service's work gets
+its card like a script's: it starts, advances its steps and ends with the work.
 
-The older card commands (`relo activity start|update|end`, the `/api/live-activities` routes) remain
-for scripts and apps that want a card of their own without a work. Agent sessions cannot use them.
+A script's card is its work's card: `relo activity start` and `relo activity update` are gone, so a
+script declares its work with `relo work start --producer KEY` and the server shows it. The
+`/api/live-activities` routes remain for apps and services that post a card of their own over HTTP,
+and the owner keeps `relo activity end|status|get|list|diagnose` (and `relo admin activity …`).
 
 Every card, question and notification also carries a source, project and topic. The CLI fills source
 and computer itself; the project defaults to the profile name, and the topic is the work as the owner
@@ -125,7 +130,7 @@ relo ask "Which region goes first?" --option EU --option US --option Both --topi
 - A phone that runs an older Relo cannot show options; such an ask is refused with
   `choice_unsupported` and nothing is sent.
 - For phones this computer verified (`relo keys`), the CLI seals the question, its title and its detail
-  before they leave the computer; option labels stay readable so the server can check the answer ([END-TO-END-ENCRYPTION.md](END-TO-END-ENCRYPTION.md)).
+  before they leave the computer; option labels stay readable so the server can check the answer ([ENCRYPTION-PROTOCOL.md](ENCRYPTION-PROTOCOL.md)).
 
 ## Getting the answer: four ways
 
@@ -158,7 +163,9 @@ Relo POSTs JSON to the callback URL once the question settles:
 ```
 
 `signature` is the phone's own signature over the answer, passed through untouched (it is `null`
-for a phone without published keys). A verifying receiver trusts the phone, not the server
+for a phone without published keys). When you answered from a linked browser, `device.id` is its
+`brw_…` id and `signature` is the browser's, over the same input; trust it only while a phone you
+trust linked that browser ([Answering from a linked browser](ENCRYPTION-PROTOCOL.md#answering-from-a-linked-browser)). A verifying receiver trusts the phone, not the server
 ([ADR 0005](adr/0005-end-to-end-encrypted-content.md)).
 
 Headers: `Authorization: Bearer <token>`, `Relo-Delivery-Id: cbk_…` (the same on every retry of one
@@ -199,7 +206,7 @@ route needs the scope shown.
 | `POST /api/interactions`, `GET …/{id}`, `GET …/{id}/wait`, `POST …/{id}/cancel` | `interactions:create`, `interactions:read` | Ask, read, wait, withdraw |
 | `GET /api/interactions/answers` | `interactions:read` | Answer feed with cursors |
 | `POST /api/producers/{producerKey}/works`, then `GET`, `PATCH`, `…/pause`, `…/resume`, `…/finish`, `…/heartbeat` | `activities:write` | A script's or app's work |
-| `POST /hooks/{secret}/works` and the same sub-routes | the service secret | A service's work |
+| `POST /hooks/works` and the same sub-routes | the service secret, in a header | A service's work |
 | `/api/live-activities…` | `activities:write` | Cards without a work |
 | `GET /api/devices` | `devices:read` | The account's phones |
 
@@ -239,7 +246,7 @@ Set in the Dashboard by whoever owns the server:
 - **Longest question wait** (Server): 7 days by default, up to 30. A longer `--expires-in` is refused
   with `question_wait_too_long`, which names the limit.
 - **Private callback addresses** (Server): nobody, the admin only, or everyone.
-- **Cards per login** (Connections): at the limit a card start is refused with `card_limit_reached`
+- **Cards per computer** (Connections → Computers): at the limit a card start is refused with `card_limit_reached`
   and `relo ask` falls back to a question in Needs you (the output says so in `note`).
 - **Who may have an account** (Server): open sign-up, admin approval, or closed.
 

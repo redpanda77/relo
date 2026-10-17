@@ -37,7 +37,7 @@
 //     holds the lock it returns at once with { locked: true }.
 //
 //   pending({ directory }) -> Promise<{ observed, declared, total, oldestAt, dead }>
-//     Counts for `relo state`, `relo doctor` and `relo outbox status`. `dead` is the recent dead list.
+//     Counts for `relo state`, `relo doctor` and `relo outbox status`. `dead` is the dead list of the last 7 days.
 //
 //   discard({ directory, lane }) -> Promise<number>
 //     Drops every pending entry of a lane (e.g. observed snapshots once hooks are turned off and the
@@ -53,13 +53,17 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "nod
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { stateRoot } from "../work/state-file.mjs";
+import { FACTS } from "../shared/facts.generated.mjs";
 
-export const LANES = Object.freeze(["observed", "declared"]);
+const LANES = Object.freeze(["observed", "declared"]);
 const CREDENTIALS = new Set(["harness", "cli"]);
 const METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 const LOCK_FILE = "flush.lock";
 const DEAD_FILE = "dead.json";
 const DEAD_KEEP = 50;
+/** The dead list is recent history for diagnosis: entries older than this age out (on read and on the next write). */
+export const DEAD_KEEP_MS = FACTS.outbox.deadDays * 24 * 3600_000;
+const recent = (list, now = Date.now()) => list.filter((item) => !(Date.parse(item?.at) < now - DEAD_KEEP_MS));
 // A flusher that crashed leaves its lock behind; past this age (or once its pid is gone) it is stale.
 export const STALE_LOCK_MS = 60_000;
 const MAX_ENTRY_BYTES = 256 * 1024;
@@ -190,6 +194,18 @@ export async function isFlushing({ directory, now = Date.now() }) {
   return lockIsLive(await readLock(directory), now);
 }
 
+/**
+ * One writer per lane: hooks get `observedQueue` (session phases), declared writes get `declaredQueue`.
+ * A module imports only its own lane, so the reachability test can pin that hooks never queue declared state.
+ */
+export const observedQueue = Object.freeze({
+  enqueue: ({ directory, entry, now }) => enqueue({ directory, lane: "observed", entry, now }),
+  isFlushing,
+});
+export const declaredQueue = Object.freeze({
+  enqueue: ({ directory, entry, now }) => enqueue({ directory, lane: "declared", entry, now }),
+});
+
 async function acquireLock(directory, now) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const path = join(directory, LOCK_FILE);
@@ -234,19 +250,33 @@ async function recordDead(directory, item) {
     if (Array.isArray(data)) list = data;
   } catch { /* first one */ }
   list.push(item);
-  await writeAtomic(path, directory, JSON.stringify(list.slice(-DEAD_KEEP)));
+  await writeAtomic(path, directory, JSON.stringify(recent(list).slice(-DEAD_KEEP)));
 }
 
-async function readDead(directory) {
+async function readDead(directory, now = Date.now()) {
   try {
     const data = JSON.parse(await readFile(join(directory, DEAD_FILE), "utf8"));
-    return Array.isArray(data) ? data : [];
+    return Array.isArray(data) ? recent(data, now) : [];
   } catch {
     return [];
   }
 }
 
+// A lane the server rate-limited waits until the time it named (Retry-After), so a flush neither spends a
+// request per trigger nor reorders the lane: `<lane>.wait.json` holds { until }.
+const waitPath = (directory, lane) => join(directory, `${lane}.wait.json`);
+async function waitingUntil(directory, lane) {
+  try {
+    const until = Date.parse(JSON.parse(await readFile(waitPath(directory, lane), "utf8"))?.until);
+    return Number.isFinite(until) ? until : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function flushLane({ directory, lane, send, server, deadline, clock, counts }) {
+  if (clock() < await waitingUntil(directory, lane)) return;
+  await rm(waitPath(directory, lane), { force: true });
   for (const file of await laneFiles(directory, lane)) {
     if (clock() >= deadline) return;
     // Claim the file by renaming it, so an observed snapshot enqueued while we send lands in a fresh
@@ -270,10 +300,12 @@ async function flushLane({ directory, lane, send, server, deadline, clock, count
       continue;
     }
     let outcome;
+    let retryAfterSeconds;
     try {
       outcome = classify(await send(data.entry));
     } catch (error) {
       outcome = Number.isFinite(Number(error?.status)) ? classify({ status: error.status }) : { kind: "network" };
+      retryAfterSeconds = Number(error?.details?.retryAfterSeconds);
     }
     if (outcome.kind === "sent") {
       counts.sent += 1;
@@ -291,6 +323,10 @@ async function flushLane({ directory, lane, send, server, deadline, clock, count
       });
       await rm(inflight, { force: true });
       continue;
+    }
+    if (outcome.status === 429 && retryAfterSeconds > 0) {
+      await writeAtomic(waitPath(directory, lane), directory,
+        JSON.stringify({ until: new Date(clock() + retryAfterSeconds * 1000).toISOString() }));
     }
     // Keep it. On the observed lane a newer snapshot for the same session may have arrived meanwhile;
     // it replaces this one, so put ours back only if the slot is still empty.
@@ -342,8 +378,8 @@ export async function flush({ directory, send, server, budgetMs = 10_000, now = 
   return { sent: counts.sent, pending: (await pending({ directory })).total, dead: counts.dead };
 }
 
-export async function pending({ directory }) {
-  const result = { observed: 0, declared: 0, total: 0, oldestAt: null, dead: await readDead(directory) };
+export async function pending({ directory, now = Date.now() }) {
+  const result = { observed: 0, declared: 0, total: 0, oldestAt: null, dead: await readDead(directory, now) };
   for (const lane of LANES) {
     const files = await laneFiles(directory, lane);
     result[lane] = files.length;

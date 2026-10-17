@@ -1,3 +1,7 @@
+import { LOGIN_SCOPES,computerRenameSchema } from "@relo/notification-contracts";
+import { loadComputerRecord } from "../computers/record.js";
+import { changeAppearance } from "../activity-commands/reproject.js";
+import { findComputer,updateComputer } from "../computers/store.js";
 import {
 
 liveActivityPresentationPolicySchema } from "@relo/notification-contracts";
@@ -8,7 +12,7 @@ import { z } from "zod";
 
 import { approveDeviceFromBrowser,browserApprovalSchema } from "../device-approvals.js";
 import { dashboardDevices,twoFactorEnabled } from "../device-overview.js";
-import { revokeHarnessCredential } from "../harness-credentials.js";
+import { revokeHarnessCredential } from "../credentials/harness.js";
 import { internalId,publicId } from "../ids.js";
 import { purgeUnreadableContent } from "../unreadable-content.js";
 
@@ -17,12 +21,19 @@ import {
 parsePresentationPolicy,
 
 SYSTEM_PRESENTATION_POLICY } from "../presentation-policy.js";
-import { createWebhookService,rotateWebhookService } from "../services.js";
+import { revokeService } from "../credentials/service.js";
+import { createWebhookService,rotateWebhookService,updateWebhookService } from "../webhooks/admin.js";
+import { serviceCreateSchema } from "../webhooks/schemas.js";
+
+const serviceScopesSchema = serviceCreateSchema.shape.scopes.unwrap();
 import { destinationUrlSchema,publicHttpsUrlSchema } from "../url-policy.js";
 import { createAccountUser,resetAccountUserPassword } from "../user-admin.js";
 
 import { getOwnerAccount } from "./owner-account.js";
 import type { WebRouteContext } from "./route-context.js";
+import { revokeDeviceCredentials,revokeDeviceCredentialsRegisteredBy } from "../credentials/device.js";
+import { mintCiToken,revokeLogin } from "../credentials/login.js";
+import { CI_TOKEN_REFUSALS,ciTokenCreateSchema,ciTokenResource } from "../api/credential-routes.js";
 
 /** Approving from the Dashboard: at most this many attempts per account per window (any outcome). */
 const APPROVAL_ATTEMPTS = 10;
@@ -41,7 +52,7 @@ function approvalLimited(principalId: string,now = Date.now()): boolean {
 /** Tests only. */
 export function resetApprovalAttempts(): void { approvalAttempts.clear(); }
 
-/** Owner administration: presentation policies, users, services, phones and CLI clients. */
+/** Owner administration: presentation policies, users, services, phones and computers. */
 export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
   const { db,appUrl,accountAuth,apnsMode,dashboardMutationAccount,ownerAdminAccount } = shared;
   app.put("/api/dashboard/account/live-activity-policy", async (context) => {
@@ -112,9 +123,7 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
       if (action === "disable") await db.query("DELETE FROM auth.sessions WHERE user_id=$1",[subject]);
     }
     if (action === "disable" || action === "revoke-sessions") {
-      await db.query(`UPDATE device_credentials c SET revoked_at=now()
-        FROM devices d WHERE c.device_id=d.id AND d.principal_id=$1
-          AND d.registered_by_subject=$2 AND c.revoked_at IS NULL`,[account.principalId,subject]);
+      await revokeDeviceCredentialsRegisteredBy(db,account.principalId,subject);
       await db.query(`UPDATE devices SET revoked_at=now() WHERE principal_id=$1
         AND registered_by_subject=$2 AND revoked_at IS NULL`,[account.principalId,subject]);
     }
@@ -148,7 +157,8 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
         effectiveLiveActivityPolicy: accountPolicy ?? SYSTEM_PRESENTATION_POLICY,
         liveActivityPolicySource: accountPolicy ? "account" : "system",
       },
-      webhookUrl: created.webhookUrl,
+      endpoint: created.endpoint,
+      secret: created.secret,
     }, 201);
   });
 
@@ -161,17 +171,14 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
       title: z.string().trim().min(1).max(80),
       imageUrl: publicHttpsUrlSchema.nullable(),
       destinationUrl: destinationUrlSchema.nullable(),
+      readableAllowed: z.boolean().optional(),
+      scopes: serviceScopesSchema.optional(),
     }).strict().parse(await context.req.json());
-    const result = await db.query<any>(
-      `UPDATE webhook_services SET title=$3,image_url=$4,default_url=$5,updated_at=now()
-       WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL RETURNING id,title,secret_prefix,image_url,default_url`,
-      [serviceId,account.principalId,input.title,input.imageUrl,input.destinationUrl],
-    );
-    return result.rowCount
+    const row = await updateWebhookService(db,account.principalId,serviceId,input);
+    return row
       ? context.json({ service: {
-        id: publicId("svc",result.rows[0].id), title: result.rows[0].title,
-        prefix: result.rows[0].secret_prefix, imageUrl: result.rows[0].image_url,
-        destinationUrl: result.rows[0].default_url,
+        id: publicId("svc",row.id), title: row.title, prefix: row.secret_prefix, imageUrl: row.image_url,
+        destinationUrl: row.default_url, readableAllowed: row.readable_allowed === true, scopes: row.scopes,
       } })
       : context.json({ error: "not_found" },404);
   });
@@ -185,7 +192,8 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     if (!rotated) return context.json({ error: "not_found" }, 404);
     return context.json({
       service: { id: publicId("svc",rotated.row.id), title: rotated.row.title, prefix: rotated.row.secret_prefix },
-      webhookUrl: rotated.webhookUrl,
+      endpoint: rotated.endpoint,
+      secret: rotated.secret,
     });
   });
 
@@ -194,8 +202,7 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     if (account instanceof Response) return account;
     const serviceId = internalId("svc",context.req.param("serviceId"));
     if (!serviceId) return context.json({ error: "not_found" }, 404);
-    const result = await db.query("UPDATE webhook_services SET revoked_at=COALESCE(revoked_at,now()),updated_at=now() WHERE id=$1 AND principal_id=$2 RETURNING id", [serviceId,account.principalId]);
-    return result.rowCount ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
+    return await revokeService(db,account.principalId,serviceId) ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
   });
 
   app.put("/api/dashboard/services/:serviceId/live-activity-policy", async (context) => {
@@ -253,7 +260,7 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
         [deviceId,account.principalId],
       );
       if (!result.rowCount) { await client.query("ROLLBACK"); return context.json({ error: "not_found" }, 404); }
-      await client.query("UPDATE device_credentials SET revoked_at=COALESCE(revoked_at,now()) WHERE device_id=$1", [deviceId]);
+      await revokeDeviceCredentials(client,deviceId);
       await client.query("UPDATE delivery_jobs SET state='canceled',updated_at=now() WHERE device_id=$1 AND state IN ('pending','retry')", [deviceId]);
       await client.query("COMMIT");
     } catch (error) { await client.query("ROLLBACK"); throw error; }
@@ -272,7 +279,7 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     return context.json({ devices,twoFactorEnabled: twoFactor });
   });
 
-  // A linked browser approves a pending phone (docs/END-TO-END-ENCRYPTION.md, "Approving from a linked browser").
+  // A linked browser approves a pending phone (docs/ENCRYPTION-PROTOCOL.md, "Approving from a linked browser").
   app.post("/api/dashboard/devices/:deviceId/approve", async (context) => {
     const account = await ownerAdminAccount(context);
     if (account instanceof Response) return account;
@@ -298,13 +305,44 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     return context.json({ deviceId,approved: true });
   });
 
+  // CI tokens (plan 10 A1): the owner makes one from the Dashboard; its secret is shown once. Revoked like any login.
+  app.post("/api/dashboard/ci-tokens", async (context) => {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    const input = ciTokenCreateSchema.parse(await context.req.json());
+    const minted = await mintCiToken(db,{ principalId: account.principalId,name: input.name,scopes: input.scopes ?? [...LOGIN_SCOPES].sort(),
+      expiresInDays: input.expiresInDays,maker: { credentialId: null,kind: "owner",scopes: "all" } });
+    if (typeof minted === "string") {
+      const [status,message] = CI_TOKEN_REFUSALS[minted];
+      return context.json({ error: minted,message },status);
+    }
+    return context.json({ token: minted.token,credential: ciTokenResource(minted.row) },201);
+  });
+
+  // Computers (ADR 0011): the owner renames one and picks its icon. The login's label is never edited.
+  app.patch("/api/dashboard/computers/:computerId", async (context) => {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    const computerId = internalId("cmp",context.req.param("computerId"));
+    if (!computerId) return context.json({ error: "not_found" },404);
+    const input = computerRenameSchema.safeParse(await context.req.json().catch(() => undefined));
+    if (!input.success) return context.json({ error: "invalid_request" },400);
+    const existing = await findComputer(db,account.principalId,computerId);
+    if (!existing) return context.json({ error: "not_found" },404);
+    // A new icon changes how the computer's open cards look: they are shown again in the same transaction.
+    const saved = await changeAppearance(db,{ principalId: account.principalId,credentialId: existing.login_key_id },apnsMode,
+      async (tx) => await updateComputer(tx,account.principalId,computerId,input.data) ? true : null);
+    if (!saved) return context.json({ error: "not_found" },404);
+    const record = await loadComputerRecord(db,account.principalId,computerId);
+    return record ? context.json(record) : context.json({ error: "not_found" },404);
+  });
+
   app.post("/api/dashboard/credentials/:credentialId/revoke", async (context) => {
     const account = await dashboardMutationAccount(context);
     if (account instanceof Response) return account;
     const credentialId = internalId("key",context.req.param("credentialId"));
     if (!credentialId) return context.json({ error: "not_found" }, 404);
-    const result = await db.query("UPDATE principal_api_keys SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1 AND principal_id=$2 RETURNING id", [credentialId,account.principalId]);
-    return result.rowCount ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
+    return await revokeLogin(db,account.principalId,credentialId) ? context.json({ revoked: true }) : context.json({ error: "not_found" }, 404);
   });
 
   // Hooks credentials (kind "harness"): the owner can revoke one from the Dashboard too.
@@ -335,12 +373,13 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     const credentialId = internalId("key",context.req.param("credentialId"));
     if (!credentialId) return context.json({ error: "not_found" },404);
     const policy = liveActivityPresentationPolicySchema.parse(await context.req.json());
-    const result = await db.query(
-      `UPDATE principal_api_keys SET live_activity_policy=$3::jsonb
-       WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL RETURNING id`,
-      [credentialId,account.principalId,policy],
-    );
-    return result.rowCount
+    // The computer's open cards follow the change in the same transaction.
+    const saved = await changeAppearance(db,{ principalId: account.principalId,credentialId },apnsMode,
+      async (tx) => (await tx.query(
+        `UPDATE principal_api_keys SET live_activity_policy=$3::jsonb
+         WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL RETURNING id`,
+        [credentialId,account.principalId,policy])).rowCount ? true : null);
+    return saved
       ? context.json({ policy,source: "client" })
       : context.json({ error: "not_found" },404);
   });
@@ -350,12 +389,12 @@ export function registerAdminRoutes(app: Hono, shared: WebRouteContext): void {
     if (account instanceof Response) return account;
     const credentialId = internalId("key",context.req.param("credentialId"));
     if (!credentialId) return context.json({ error: "not_found" },404);
-    const result = await db.query(
-      `UPDATE principal_api_keys SET live_activity_policy=NULL
-       WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL RETURNING id`,
-      [credentialId,account.principalId],
-    );
-    if (!result.rowCount) return context.json({ error: "not_found" },404);
+    const reset = await changeAppearance(db,{ principalId: account.principalId,credentialId },apnsMode,
+      async (tx) => (await tx.query(
+        `UPDATE principal_api_keys SET live_activity_policy=NULL
+         WHERE id=$1 AND principal_id=$2 AND revoked_at IS NULL RETURNING id`,
+        [credentialId,account.principalId])).rowCount ? true : null);
+    if (!reset) return context.json({ error: "not_found" },404);
     const inherited = await db.query<{ live_activity_policy: unknown }>(
       "SELECT live_activity_policy FROM owner_principals WHERE id=$1",
       [account.principalId],

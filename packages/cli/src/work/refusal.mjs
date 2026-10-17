@@ -1,5 +1,5 @@
 // Three-line refusals (plan 04 §0.3): what went wrong, the state, the exact next command.
-import { EXIT, ReloError } from "../errors.mjs";
+import { EXIT, ReloError } from "../shared/errors.mjs";
 
 export class WorkRefusal extends ReloError {
   constructor(code, { what, state, next, exitCode = EXIT.USAGE, details } = {}) {

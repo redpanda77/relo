@@ -26,11 +26,11 @@ final class E2EEAnswerSigningTests: XCTestCase {
     }
 
     func testRepliesSignADigestThatMatchesTheCLI() {
-        // The same digest packages/cli/src/answer-verify.mjs computes for "Ship it".
+        // The same digest packages/cli/src/crypto/answer-verify.mjs computes for "Ship it".
         XCTAssertEqual(ReloAnswerSigning.signedValue(action: .answer, value: ["response": "Ship it"]),
                        "answer:2c8d1fbaf0f6d4624aec53356e2fdec79a3dfe8ffb13d8ab9c2f82438fbe421f")
         XCTAssertEqual(ReloAnswerSigning.signedValue(action: .deny, value: [:]), "deny")
-        // A choice signs the option it picked, as packages/cli/src/answer-verify.mjs expects.
+        // A choice signs the option it picked, as packages/cli/src/crypto/answer-verify.mjs expects.
         XCTAssertEqual(ReloAnswerSigning.signedValue(action: .choose, value: ["optionId": "eu"]), "choose:eu")
     }
 

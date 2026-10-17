@@ -4,7 +4,7 @@ import { createApp } from "../app.js";
 import { bootstrapOwner } from "../bootstrap.js";
 import { createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
-import { createWebhookService } from "../services.js";
+import { createWebhookService } from "../webhooks/admin.js";
 import { canonicalOriginHash,lockOriginGenerationSlot } from "../origin-slots.js";
 
 const suite=process.env.TEST_DATABASE_URL?describe:describe.skip;
@@ -21,9 +21,11 @@ suite("Retained ActivityKit run replay",()=>{
       VALUES ($1,$2,$3,'Replay phone','com.example.relo.notifications','1','1','26','sandbox','authorized','authorized')`,
       [principalId,randomUUID(),randomUUID()]);
   });
+  /** The current service's secret: a `/hooks` route reads only that header. */
+  let hookSecret="";
   async function request(path:string,body:unknown,key=randomUUID()){
     const response=await createApp(db,{apnsMode:"disabled",credentialDerivationSecret:"activity-replay-secret-at-least-32-characters"}).request(path,{
-      method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body),
+      method:"POST",headers:{authorization:`Bearer ${path.startsWith("/hooks")?hookSecret:token}`,"content-type":"application/json","idempotency-key":key},body:JSON.stringify(body),
     });return {status:response.status,body:await response.json() as any};
   }
   test.each([
@@ -31,7 +33,8 @@ suite("Retained ActivityKit run replay",()=>{
     {actor:"service",withNewer:false},{actor:"service",withNewer:true},
   ])("$actor replays retained admission after pruning (newer run: $withNewer)",async({actor,withNewer})=>{
     const service=actor==="service"?await createWebhookService(db,principalId,"Replay","http://127.0.0.1:8180"):null;
-    const path=service?new URL(service.webhookUrl).pathname+"/live-activities":"/api/live-activities";
+    if(service)hookSecret=service.secret;
+    const path=service?"/hooks/live-activities":"/api/live-activities";
     const origin={sourceInstance:"replay-fixture",project:"Relo",thread:"same-work",channel:"progress"};
     const lifecycle={provider:"codex",runId:"replay-original-run"};
     const body={title:"Original run",status:"Working",origin,lifecycle};
@@ -55,7 +58,8 @@ suite("Retained ActivityKit run replay",()=>{
   });
   test.each(["credential","service"])("%s concurrent start retries produce one admission and one command",async actor=>{
     const service=actor==="service"?await createWebhookService(db,principalId,"Replay","http://127.0.0.1:8180"):null;
-    const path=service?new URL(service.webhookUrl).pathname+"/live-activities":"/api/live-activities";
+    if(service)hookSecret=service.secret;
+    const path=service?"/hooks/live-activities":"/api/live-activities";
     const body={title:"Concurrent run",status:"Working",lifecycle:{provider:"codex",runId:"concurrent-original-run"},
       origin:{sourceInstance:"replay-fixture",project:"Relo",thread:"same-work",channel:"progress"}};
     const results=await Promise.all([request(path,body),request(path,body)]);
@@ -83,7 +87,8 @@ suite("Retained ActivityKit run replay",()=>{
   });
   test.each(["credential","service"])("%s start after a lapsed lease never creates a second card",async actor=>{
     const service=actor==="service"?await createWebhookService(db,principalId,"Replay","http://127.0.0.1:8180"):null;
-    const path=service?new URL(service.webhookUrl).pathname+"/live-activities":"/api/live-activities";
+    if(service)hookSecret=service.secret;
+    const path=service?"/hooks/live-activities":"/api/live-activities";
     const body={title:"Expired run",status:"Working",lifecycle:{provider:"codex",runId:"expired-original-run"},
       origin:{sourceInstance:"replay-fixture",project:"Relo",thread:"same-work",channel:"progress"}};
     const first=await request(path,body);expect(first.status).toBe(201);

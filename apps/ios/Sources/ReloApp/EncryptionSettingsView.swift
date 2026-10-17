@@ -2,7 +2,7 @@ import ReloCore
 import ReloNotificationSupport
 import SwiftUI
 
-/// Settings → Devices (docs/END-TO-END-ENCRYPTION.md), laid out like WhatsApp's "Linked devices":
+/// Settings → Devices (docs/ENCRYPTION-PROTOCOL.md), laid out like WhatsApp's "Linked devices":
 /// what waits for the owner first, one line about this iPhone, then phones, computers and browsers.
 /// Key ids and security codes live in each row's Advanced area.
 @MainActor @Observable
@@ -17,22 +17,28 @@ final class EncryptionSecurityModel {
         var id: String { client.clientId }
     }
 
-    /// A phone or computer waiting for the owner's approval on this iPhone.
+    /// A phone, computer or browser waiting for the owner's approval on this iPhone.
     enum AccessRequest: Identifiable, Equatable {
         case phone(ReloPendingDevice)
         case computer(Computer)
+        case browser(ReloPendingBrowser)
 
         var id: String {
             switch self {
             case .phone(let device): device.deviceId
             case .computer(let computer): computer.client.clientId
+            case .browser(let browser): browser.browserId
             }
         }
+        var isBrowser: Bool { if case .browser = self { true } else { false } }
+        /// The code the owner compares with the one the browser shows.
+        var linkCode: String? { if case .browser(let browser) = self { browser.linkCode } else { nil } }
         var isPhone: Bool { if case .phone = self { true } else { false } }
         var name: String {
             switch self {
             case .phone(let device): device.displayName
             case .computer(let computer): computer.client.name
+            case .browser(let browser): browser.name
             }
         }
         /// "iPhone Air · Simulator" when it adds something to the name.
@@ -50,17 +56,46 @@ final class EncryptionSecurityModel {
             switch self {
             case .phone(let device): device.registeredDate
             case .computer(let computer): computer.notice?.at
+            case .browser(let browser): browser.requestedDate
             }
         }
         var signedInLine: String {
+            if isBrowser {
+                guard let date = signedInAt else { return "Asked recently" }
+                return "Asked \(date.formatted(.relative(presentation: .named)))"
+            }
             guard let date = signedInAt else { return "Signed in recently" }
             return "Signed in \(date.formatted(.relative(presentation: .named)))"
         }
-        var ask: String { isPhone ? "wants access" : "wants to send you encrypted cards" }
-        var declineLine: String {
-            isPhone ? "Sign it out. It won't be able to read anything." : "This iPhone won't open anything it sends."
+        var ask: String {
+            switch self {
+            case .phone: "wants access"
+            case .computer: "wants to send you encrypted cards"
+            case .browser: "wants to read your Relo cards"
+            }
         }
-        var symbol: String { isPhone ? "iphone" : "laptopcomputer" }
+        var declineLine: String {
+            switch self {
+            case .phone: "Sign it out. It won't be able to read anything."
+            case .computer: "This iPhone won't open anything it sends."
+            case .browser: "It won't be able to read anything here. Remove it in Devices if you don't know it."
+            }
+        }
+        /// Why to approve, and the check that has to pass first.
+        var approveLine: String {
+            switch self {
+            case .phone: "Approve it only if you just signed in on it yourself. Then your computers can send it encrypted cards."
+            case .computer: "Approve it only if you just signed in to Relo on it yourself. Then this iPhone opens what it sends."
+            case .browser: "Approve only if your browser shows the same code."
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .phone: "iphone"
+            case .computer(let computer): (computer.client.icon ?? .laptop).systemImageName
+            case .browser: "globe"
+            }
+        }
     }
 
     enum Phase: Equatable { case loading, ready, unavailable(String) }
@@ -79,6 +114,8 @@ final class EncryptionSecurityModel {
     var linkResult: LinkResult?
     /// Phones of this account waiting for this phone's approval.
     private(set) var pendingDevices: [ReloPendingDevice] = []
+    /// Browsers that asked, from their Dashboard, to be linked by this phone.
+    private(set) var pendingBrowsers: [ReloPendingBrowser] = []
     /// True once the waiting phones were asked for at least once (the request sheet waits for it).
     private(set) var pendingLoaded = false
     /// Why loading, approving or declining a request failed.
@@ -114,6 +151,8 @@ final class EncryptionSecurityModel {
     private let ring: ReloKeyRing
     private let trust: ReloTrustedClients
     private let linked: ReloLinkedBrowsers
+    /// Sends this phone's signed approval of a computer it approved, so it opens on every trusted device too.
+    @ObservationIgnored var shareApproval: ((ReloClientKey) -> Void)?
 
     init(ring: ReloKeyRing = .live(), trust: ReloTrustedClients = .live(), linked: ReloLinkedBrowsers = .live()) {
         self.ring = ring
@@ -124,9 +163,10 @@ final class EncryptionSecurityModel {
     /// Computers that appeared after this phone's first contact and wait for the owner here.
     var waitingComputers: [Computer] { computers.filter { $0.trust == .pending } }
 
-    /// Everything waiting for the owner, phones first.
+    /// Everything waiting for the owner: phones, browsers, then computers.
     var waitingRequests: [AccessRequest] {
-        pendingDevices.map(AccessRequest.phone) + waitingComputers.map(AccessRequest.computer)
+        pendingDevices.map(AccessRequest.phone) + pendingBrowsers.map(AccessRequest.browser)
+            + waitingComputers.map(AccessRequest.computer)
     }
 
     func request(id: String) -> AccessRequest? { waitingRequests.first { $0.id == id } }
@@ -148,7 +188,8 @@ final class EncryptionSecurityModel {
 
     /// Waiting phones, computers, the account's phones and browsers, in one pass.
     func refresh(credential: DeviceCredential?, client: Any?) async {
-        await loadPending(credential: credential, approver: client as? any DeviceApproving)
+        await loadPending(credential: credential, approver: client as? any DeviceApproving,
+                          linker: client as? any BrowserLinking)
         await load(credential: credential, directory: client as? any ClientKeyDirectory)
         await loadPhones(credential: credential, lister: client as? any AccountDeviceListing)
     }
@@ -264,13 +305,27 @@ final class EncryptionSecurityModel {
 
     // MARK: Requests
 
-    func loadPending(credential: DeviceCredential?, approver: (any DeviceApproving)?) async {
-        guard let credential, let approver else { pendingDevices = []; pendingLoaded = true; return }
+    func loadPending(credential: DeviceCredential?, approver: (any DeviceApproving)?,
+                     linker: (any BrowserLinking)? = nil) async {
+        guard let credential, let approver else {
+            pendingDevices = []
+            pendingBrowsers = []
+            pendingLoaded = true
+            return
+        }
         do {
             pendingDevices = try await approver.pendingDevices(credential: credential)
             pendingProblem = nil
         } catch {
             pendingProblem = Self.message(for: error, doing: "check for new devices")
+        }
+        if let linker {
+            // Best effort: an older server has no link requests, and the rest keeps working.
+            if let browsers = try? await linker.browserLinkRequests(credential: credential) {
+                pendingBrowsers = browsers.filter { $0.linkCode != nil }
+            }
+        } else {
+            pendingBrowsers = []
         }
         pendingLoaded = true
     }
@@ -283,6 +338,7 @@ final class EncryptionSecurityModel {
         switch request {
         case .phone(let device): await approve(device, credential: credential, approver: approver, signer: signer)
         case .computer(let computer): approveComputer(computer)
+        case .browser(let browser): await approveBrowser(browser, credential: credential, approver: approver, signer: signer)
         }
     }
 
@@ -291,6 +347,49 @@ final class EncryptionSecurityModel {
         switch request {
         case .phone(let device): await decline(device, credential: credential, approver: approver)
         case .computer(let computer): declineComputer(computer)
+        case .browser(let browser): await declineBrowser(browser, credential: credential, approver: approver)
+        }
+    }
+
+    /// Signs the browser's key exactly like a scanned code (and remembers it to re-sign), then it leaves the list.
+    private func approveBrowser(_ browser: ReloPendingBrowser, credential: DeviceCredential?,
+                                approver: (any DeviceApproving)?, signer: (any ReloIdentitySigning)?) async -> Bool {
+        guard let code = try? browser.code() else {
+            pendingProblem = "This browser's code is damaged. Ask again from the Dashboard."
+            return false
+        }
+        answeringDevice = browser.browserId
+        defer { answeringDevice = nil }
+        await link(code, credential: credential, linker: approver as? any BrowserLinking, signer: signer)
+        // link() reports through linkResult; a request sheet shows the problem inline instead.
+        let linkedOK = (try? linked.contains(browser.browserId)) ?? false
+        if linkedOK {
+            pendingBrowsers.removeAll { $0.browserId == browser.browserId }
+            pendingProblem = nil
+            linkResult = nil
+        } else {
+            pendingProblem = linkResult?.message ?? "Relo could not link \(browser.name). Try again."
+            linkResult = nil
+        }
+        return linkedOK
+    }
+
+    private func declineBrowser(_ browser: ReloPendingBrowser, credential: DeviceCredential?,
+                                approver: (any DeviceApproving)?) async -> Bool {
+        guard let credential, let linker = approver as? any BrowserLinking else {
+            pendingProblem = "Sign in to Relo on this iPhone first."
+            return false
+        }
+        answeringDevice = browser.browserId
+        defer { answeringDevice = nil }
+        do {
+            try await linker.declineBrowserLinkRequest(credential: credential, browserID: browser.browserId)
+            pendingBrowsers.removeAll { $0.browserId == browser.browserId }
+            pendingProblem = nil
+            return true
+        } catch {
+            pendingProblem = Self.message(for: error, doing: "decline \(browser.name)")
+            return false
         }
     }
 
@@ -365,7 +464,34 @@ final class EncryptionSecurityModel {
         }
         computers[index].trust = .auto
         pendingProblem = nil
+        shareApproval?(computer.client)
         return true
+    }
+
+    /// Signs a computer out of the account on the server, then forgets it on this iPhone. Throws what the owner reads.
+    func signOutComputer(_ computer: Computer, credential: DeviceCredential?, approving: (any ComputerApproving)?) async throws {
+        if !computer.unlisted {
+            guard let credential, let approving else { throw SignOutProblem("Sign in to Relo on this iPhone first.") }
+            do {
+                try await approving.revokeComputer(credential: credential, clientID: computer.client.clientId)
+            } catch {
+                throw SignOutProblem(Self.message(for: error, doing: "sign out \(computer.client.name)"))
+            }
+        }
+        try? trust.forget(clientId: computer.client.clientId)
+        computers.removeAll { $0.id == computer.id }
+    }
+
+    struct SignOutProblem: LocalizedError {
+        let errorDescription: String?
+        init(_ message: String) { errorDescription = message }
+    }
+
+    /// Removes a browser and reports the failure instead of an alert (the detail screen shows it inline).
+    @discardableResult
+    func removeBrowser(_ target: UnlinkTarget, credential: DeviceCredential?, linker: (any BrowserLinking)?) async -> Bool {
+        await unlink(target, credential: credential, linker: linker)
+        return linkResult == nil
     }
 
     /// Declined: the computer stays listed and opens nothing on this iPhone.
@@ -393,10 +519,18 @@ struct EncryptionSettingsView: View {
     @State private var scanning = false
     @State private var pendingCode: ReloBrowserLink.Code?
     @State private var pendingUnlink: EncryptionSecurityModel.UnlinkTarget?
+    /// Sign in a computer: scanning its `relo auth login` QR code, then the request it made, to approve or deny.
+    @State private var scanningSignIn = false
+    @State private var signIn: ReloComputerSignIn.Request?
+    /// A sign-in whose CLI sent its key: the number check and the connecting follow-up.
+    @State private var numberedSignIn: ReloComputerSignIn.Request?
+    @State private var signingIn = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var security: EncryptionSecurityModel { model.devices }
     private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
+    private var signInApprover: (any ComputerSignInApproving)? { model.apiClient as? any ComputerSignInApproving }
+    private var inviter: (any ComputerInviting)? { model.apiClient as? any ComputerInviting }
 
     var body: some View {
         list
@@ -426,37 +560,56 @@ struct EncryptionSettingsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Devices")
         .sheet(isPresented: $scanning) {
-            BrowserLinkScannerView { code in
+            CodeScannerView(title: "Link a browser", hint: "Point the camera at the QR code on Relo's web Dashboard.",
+                            source: "the code from the Dashboard", parse: ReloBrowserLink.parse) { code in
                 scanning = false
                 pendingCode = code
             }
         }
-        .confirmationDialog("Link this browser?", isPresented: Binding(
-            get: { pendingCode != nil }, set: { if !$0 { pendingCode = nil } }
-        ), titleVisibility: .visible, presenting: pendingCode) { code in
-            Button("Link Browser") {
-                pendingCode = nil
-                Task {
-                    await security.link(code, credential: model.credential, linker: linker, signer: model.answerSigner?())
+        .sheet(isPresented: $scanningSignIn) {
+            CodeScannerView(title: "Sign in a computer", hint: "Point the camera at the QR code relo auth login shows on the computer.",
+                            source: "the code relo auth login shows",
+                            parse: { [serverURL = model.serverURL] in try ReloComputerSignIn.parse($0, server: serverURL) }) { code in
+                scanningSignIn = false
+                Task { await loadSignIn(code) }
+            }
+        }
+        .sheet(item: $numberedSignIn) { request in
+            if let credential = model.credential, let signInApprover {
+                ComputerSignInNumberSheet(request: request, credential: credential, approver: signInApprover) { client in
+                    await model.shareComputerApproval(client)
+                    await model.refreshDevices()
                 }
             }
-            Button("Cancel", role: .cancel) { pendingCode = nil }
-        } message: { _ in
-            Text("It will be able to read your encrypted cards.")
         }
-        .confirmationDialog(pendingUnlink.map { "Remove \($0.name)?" } ?? "", isPresented: Binding(
-            get: { pendingUnlink != nil }, set: { if !$0 { pendingUnlink = nil } }
-        ), titleVisibility: .visible, presenting: pendingUnlink) { target in
-            Button("Remove", role: .destructive) {
-                pendingUnlink = nil
-                Task { await security.unlink(target, credential: model.credential, linker: linker) }
+        .reloConfirmation(item: $signIn) { request in
+            ReloConfirmSpec(
+                title: "Sign in \u{201C}\(request.clientName)\u{201D}?",
+                message: "Check that the computer shows \(request.userCode). It will be able to send you cards, questions and notifications.",
+                symbol: "laptopcomputer.and.iphone", actionTitle: "Approve", destructive: false,
+                alternative: .init(title: "Deny", destructive: true) { await decideSignIn(request, approve: false) },
+                action: { await decideSignIn(request, approve: true) })
+        }
+        .reloConfirmation(item: $pendingCode) { code in
+            ReloConfirmSpec(
+                title: "Link this browser?", message: "It will be able to read your encrypted cards.",
+                symbol: "globe", actionTitle: "Link Browser", destructive: false,
+                action: { await security.link(code, credential: model.credential, linker: linker, signer: model.answerSigner?()) })
+        }
+        .reloConfirmation(item: $pendingUnlink) { target in
+            ReloConfirmSpec(
+                title: "Remove \(target.name)?", message: "It won't be able to read your encrypted cards anymore.",
+                symbol: "globe", actionTitle: "Remove",
+                action: { await security.unlink(target, credential: model.credential, linker: linker) })
+        }
+        .sheet(item: Binding(get: { security.linkResult }, set: { security.linkResult = $0 })) { result in
+            ReloSheet(cancelTitle: "OK") {
+                ReloSheetHeader(symbol: result.title.hasPrefix("Not") ? "exclamationmark.triangle" : "checkmark.circle",
+                                tint: result.title.hasPrefix("Not") ? .reloAttention : .reloDone,
+                                title: result.title, message: result.message)
+            } actions: {
+                EmptyView()
             }
-            Button("Cancel", role: .cancel) { pendingUnlink = nil }
-        } message: { _ in
-            Text("It won't be able to read your encrypted cards anymore.")
-        }
-        .alert(item: Binding(get: { security.linkResult }, set: { security.linkResult = $0 })) { result in
-            Alert(title: Text(result.title), message: Text(result.message))
         }
     }
 
@@ -469,10 +622,12 @@ struct EncryptionSettingsView: View {
             Section {
                 ForEach(requests) { request in
                     Button { model.openAccessRequest(id: request.id) } label: {
-                        DeviceRow(symbol: request.symbol, tint: ReloHoloTheme.orange, title: request.name,
-                                  detail: [request.modelLine, request.signedInLine].compactMap { $0 }.joined(separator: " · "),
-                                  status: request.isPhone ? "Wants access" : "Wants to send you encrypted cards",
-                                  statusColor: ReloHoloTheme.orange, chevron: true)
+                        DeviceRow(symbol: request.symbol, tint: Color.reloAttention, title: request.name,
+                                  detail: [request.modelLine, request.linkCode.map { "Code \($0)" }, request.signedInLine]
+                                    .compactMap { $0 }.joined(separator: " · "),
+                                  status: request.isPhone ? "Wants access"
+                                    : request.isBrowser ? "Wants to read your Relo cards" : "Wants to send you encrypted cards",
+                                  statusColor: Color.reloAttention, chevron: true)
                     }
                     .foregroundStyle(.primary)
                     .accessibilityIdentifier("review-\(request.id)")
@@ -498,7 +653,7 @@ struct EncryptionSettingsView: View {
                       detail: line == name ? nil : line,
                       status: status.line,
                       statusColor: status.isGood ? Color.reloSecondaryText
-                        : status == .waitingForApproval ? ReloHoloTheme.orange : Color.reloErrorText,
+                        : status == .waitingForApproval ? Color.reloAttention : Color.reloErrorText,
                       statusSymbol: status.isGood ? "lock.fill" : nil)
                 .accessibilityIdentifier("this-iphone-status")
         } header: { Text("This iPhone") } footer: {
@@ -516,46 +671,103 @@ struct EncryptionSettingsView: View {
                               detail: [phone.modelLine == phone.name ? nil : phone.modelLine, lastSeen(phone.lastSeenDate)]
                                 .compactMap { $0 }.joined(separator: " · "),
                               status: phone.trusted ? "Can read encrypted cards" : "Waiting for approval",
-                              statusColor: phone.trusted ? Color.reloSecondaryText : ReloHoloTheme.orange)
+                              statusColor: phone.trusted ? Color.reloSecondaryText : Color.reloAttention)
                 }
             } header: { Text("Phones") }
             .listRowBackground(ReloListRowBackground())
         }
     }
 
-    @ViewBuilder private var computersSection: some View {
-        let computers = security.computers.filter { $0.trust != .pending }
-        if !computers.isEmpty {
-            Section {
-                ForEach(computers) { computer in
-                    NavigationLink { ComputerDetailView(security: security, computer: computer) } label: {
-                        DeviceRow(symbol: "laptopcomputer", tint: .reloIndigo, title: computer.client.name,
-                                  detail: ComputerDetailView.noticeLine(computer),
-                                  status: ComputerDetailView.statusLine(computer),
-                                  statusColor: computer.trust == .declined || computer.unlisted
-                                    ? ReloHoloTheme.orange : Color.reloSecondaryText)
-                    }
+    private var computersSection: some View {
+        Section {
+            ForEach(security.computers.filter { $0.trust != .pending }) { computer in
+                NavigationLink { ComputerDetailView(model: model, computer: computer) } label: {
+                    DeviceRow(symbol: (computer.client.icon ?? .laptop).systemImageName, tint: .reloIndigo, title: computer.client.name,
+                              detail: ComputerDetailView.noticeLine(computer),
+                              status: ComputerDetailView.statusLine(computer),
+                              statusColor: computer.trust == .declined || computer.unlisted
+                                ? Color.reloAttention : Color.reloSecondaryText)
                 }
-            } header: { Text("Computers") }
-            .listRowBackground(ReloListRowBackground())
+            }
+            Button {
+                scanningSignIn = true
+            } label: {
+                if signingIn {
+                    HStack { ProgressView(); Text("Signing in…") }
+                } else {
+                    Label("Sign in a computer", systemImage: "qrcode.viewfinder")
+                }
+            }
+            .disabled(signingIn || model.credential == nil || signInApprover == nil)
+            .accessibilityIdentifier("sign-in-computer")
+            Button {
+                model.openComputerSetup()
+            } label: {
+                Label(model.computerSetup.hasPending ? "Resume connecting a computer" : "Add a computer",
+                      systemImage: "plus.rectangle.on.rectangle")
+            }
+            .disabled(model.credential == nil || inviter == nil)
+            .accessibilityIdentifier("add-computer")
+        } header: { Text("Computers") } footer: {
+            Text("Add a computer gives you one command, or a prompt for your agent, to connect a server or another computer. Sign in a computer scans the QR code relo auth login shows.")
         }
+        .listRowBackground(ReloListRowBackground())
+    }
+
+    // MARK: Signing in a computer
+
+    private func loadSignIn(_ code: String) async {
+        guard let credential = model.credential, let signInApprover else { return }
+        signingIn = true
+        defer { signingIn = false }
+        do {
+            let request = try await signInApprover.computerSignIn(credential: credential, userCode: code)
+            if request.isPending {
+                if request.identityKey != nil { numberedSignIn = request } else { signIn = request }
+            } else { security.linkResult = .init(title: "Not signed in", message: ReloComputerSignIn.DecisionError.alreadyDecided.localizedDescription) }
+        } catch {
+            security.linkResult = .init(title: "Not signed in", message: Self.describe(error))
+        }
+    }
+
+    private func decideSignIn(_ request: ReloComputerSignIn.Request, approve: Bool) async {
+        guard let credential = model.credential, let signInApprover else { return }
+        signingIn = true
+        defer { signingIn = false }
+        do {
+            try await signInApprover.decideComputerSignIn(credential: credential, userCode: request.userCode, approve: approve)
+            security.linkResult = approve
+                ? .init(title: "\(request.clientName) is signing in", message: "It finishes on the computer in a few seconds. If it is new to this account, approve its key when it asks.")
+                : .init(title: "Sign-in denied", message: "\(request.clientName) was not signed in.")
+            if approve { await model.refreshDevices() }
+        } catch {
+            security.linkResult = .init(title: "Not signed in", message: Self.describe(error))
+        }
+    }
+
+    private static func describe(_ error: any Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? "Relo could not reach your server. Try again."
     }
 
     @ViewBuilder private var browsersSection: some View {
         Section {
             ForEach(security.browsers) { browser in
-                DeviceRow(symbol: "globe", tint: .reloMagenta, title: browser.name,
-                          detail: "Linked \(browser.linkedAt.formatted(.relative(presentation: .named)))",
-                          status: "Can read encrypted cards", statusColor: Color.reloSecondaryText)
+                NavigationLink { BrowserDetailView(model: model, target: .local(browser)) } label: {
+                    DeviceRow(symbol: "globe", tint: .reloMagenta, title: browser.name,
+                              detail: "Linked \(browser.linkedAt.formatted(.relative(presentation: .named)))",
+                              status: "Can read encrypted cards", statusColor: Color.reloSecondaryText)
+                }
                     .swipeActions { Button("Remove", role: .destructive) { pendingUnlink = .local(browser) } }
                     .contextMenu {
                         Button("Remove", systemImage: "xmark.circle", role: .destructive) { pendingUnlink = .local(browser) }
                     }
             }
             ForEach(security.serverOnlyBrowsers ?? []) { browser in
-                DeviceRow(symbol: "globe", tint: .reloMagenta, title: browser.name,
-                          detail: "Linked from another device",
-                          status: "Stops working within 14 days", statusColor: ReloHoloTheme.orange)
+                NavigationLink { BrowserDetailView(model: model, target: .serverOnly(browser)) } label: {
+                    DeviceRow(symbol: "globe", tint: .reloMagenta, title: browser.name,
+                              detail: "Linked from another device",
+                              status: "Stops working within 14 days", statusColor: Color.reloAttention)
+                }
                     .swipeActions { Button("Remove", role: .destructive) { pendingUnlink = .serverOnly(browser) } }
                     .contextMenu {
                         Button("Remove", systemImage: "xmark.circle", role: .destructive) { pendingUnlink = .serverOnly(browser) }
@@ -576,7 +788,7 @@ struct EncryptionSettingsView: View {
             .disabled(security.linking || model.credential == nil)
             .accessibilityIdentifier("link-browser")
         } header: { Text("Browsers") } footer: {
-            Text("Scan the QR code on Relo's web Dashboard. Swipe a browser to remove it.")
+            Text("Scan the QR code on Relo's web Dashboard. Open a browser, or swipe it, to remove it.")
         }
         .listRowBackground(ReloListRowBackground())
     }
@@ -632,8 +844,7 @@ struct DeviceRow: View {
             }
             Spacer(minLength: 0)
             if chevron {
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
+                ReloChevron()
             }
         }
         .padding(.vertical, 2)
@@ -653,9 +864,12 @@ struct DeviceRow: View {
 }
 
 private struct ComputerDetailView: View {
-    let security: EncryptionSecurityModel
+    let model: AppModel
     let computer: EncryptionSecurityModel.Computer
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmsSignOut = false
+
+    private var security: EncryptionSecurityModel { model.devices }
 
     private var current: EncryptionSecurityModel.Computer {
         security.computers.first { $0.id == computer.id } ?? computer
@@ -680,7 +894,7 @@ private struct ComputerDetailView: View {
     var body: some View {
         List {
             Section {
-                DeviceRow(symbol: "laptopcomputer", tint: .reloIndigo, title: current.client.name,
+                DeviceRow(symbol: (current.client.icon ?? .laptop).systemImageName, tint: .reloIndigo, title: current.client.name,
                           detail: Self.noticeLine(current), status: Self.statusLine(current),
                           statusColor: Color.reloSecondaryText)
                 if current.trust == .declined {
@@ -688,8 +902,12 @@ private struct ComputerDetailView: View {
                 } else if current.trust == .auto || current.trust == .verified {
                     Button("Stop opening its cards", role: .destructive) { security.declineComputer(current); dismiss() }
                 }
+                Button("Sign out this computer", role: .destructive) { confirmsSignOut = true }
+                    .accessibilityIdentifier("sign-out-computer")
             } footer: {
-                Text("To sign a computer out, remove it in the Relo Dashboard.")
+                Text(current.unlisted
+                     ? "The server no longer lists this computer. Signing it out here makes this iPhone forget it."
+                     : "Signing out stops it sending and reading your encrypted cards until you sign it in again.")
             }
             .listRowBackground(ReloListRowBackground())
             Section {
@@ -712,6 +930,19 @@ private struct ComputerDetailView: View {
         .listStyle(.insetGrouped)
         .navigationTitle(current.client.name)
         .navigationBarTitleDisplayMode(.inline)
+        .reloConfirmation(isPresented: $confirmsSignOut) {
+            let computer = current
+            return ReloConfirmSpec(
+                title: "Sign out \(computer.client.name)?",
+                message: "It stops sending and reading your encrypted cards until you sign it in again.",
+                symbol: "laptopcomputer.slash", actionTitle: "Sign out",
+                ownerCheckReason: "Sign out \(computer.client.name)",
+                action: {
+                    try await security.signOutComputer(computer, credential: model.credential,
+                                                       approving: model.apiClient as? any ComputerApproving)
+                    dismiss()
+                })
+        }
     }
 
     private func formatted(_ number: String) -> String {
@@ -719,5 +950,210 @@ private struct ComputerDetailView: View {
         return stride(from: 0, to: groups.count, by: 4)
             .map { groups[$0..<min($0 + 4, groups.count)].joined(separator: " ") }
             .joined(separator: "\n")
+    }
+}
+
+/// One linked browser: when it was linked, by whom, and a Remove button behind the device-owner check.
+private struct BrowserDetailView: View {
+    let model: AppModel
+    let target: EncryptionSecurityModel.UnlinkTarget
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmsRemoval = false
+
+    private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
+
+    private var linkedLine: String {
+        switch target {
+        case .local(let browser): "Linked \(browser.linkedAt.formatted(.relative(presentation: .named)))"
+        case .serverOnly(let browser):
+            ISO8601DateFormatter().date(from: browser.linkedAt)
+                .map { "Linked \($0.formatted(.relative(presentation: .named)))" } ?? "Linked from another device"
+        }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                switch target {
+                case .local:
+                    DeviceRow(symbol: "globe", tint: .reloMagenta, title: target.name, detail: linkedLine,
+                              status: "Linked by this iPhone", statusColor: Color.reloSecondaryText)
+                case .serverOnly:
+                    DeviceRow(symbol: "globe", tint: .reloMagenta, title: target.name, detail: linkedLine,
+                              status: "Linked elsewhere. Stops working within 14 days.", statusColor: Color.reloAttention)
+                }
+                Button("Remove browser", role: .destructive) { confirmsRemoval = true }
+                    .accessibilityIdentifier("remove-browser")
+            } footer: {
+                Text("A removed browser can no longer read your encrypted cards. Link it again from the Dashboard to bring it back.")
+            }
+            .listRowBackground(ReloListRowBackground())
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(target.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .reloConfirmation(isPresented: $confirmsRemoval) {
+            ReloConfirmSpec(
+                title: "Remove \(target.name)?", message: "It won't be able to read your encrypted cards anymore.",
+                symbol: "globe", actionTitle: "Remove", ownerCheckReason: "Remove \(target.name)",
+                action: {
+                    if await model.devices.removeBrowser(target, credential: model.credential, linker: linker) { dismiss() }
+                })
+        }
+    }
+}
+
+
+/// Approving a computer's sign-in by its number: the owner picks the number the terminal shows among two decoys, the
+/// phone approves, then waits for the computer's login and key and approves that key too
+/// (docs/ENCRYPTION-PROTOCOL.md, "Sign-in number").
+struct ComputerSignInNumberSheet: View {
+    let request: ReloComputerSignIn.Request
+    let credential: DeviceCredential
+    let approver: any ComputerSignInApproving
+    let approveKey: (ReloClientKey) async -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private enum Phase: Equatable { case choosing, mismatch(retry: Bool), connecting, connected, later, failed(String), denied }
+
+    @State private var phase = Phase.choosing
+    @State private var choices: [String] = []
+    @State private var retried = false
+    @State private var working = false
+
+    private var real: String { ReloComputerSignIn.Number.compute(userCode: request.userCode, identityKey: request.identityKey ?? "") }
+
+    var body: some View {
+        ReloSheet(cancelTitle: nil, busy: phase == .connecting || working, sizing: .detents([.medium, .large])) {
+            ReloSheetHeader(symbol: icon, title: title, message: message)
+        } content: {
+            content
+        } actions: {
+            actions
+        }
+        .onAppear { if choices.isEmpty { choices = ReloComputerSignIn.Number.choices(real: real) } }
+    }
+
+    private var icon: String {
+        switch phase {
+        case .connected: "checkmark.circle"
+        case .mismatch, .failed: "exclamationmark.triangle"
+        default: "laptopcomputer.and.iphone"
+        }
+    }
+
+    private var title: String {
+        switch phase {
+        case .choosing: "Sign in \u{201C}\(request.clientName)\u{201D}?"
+        case .mismatch: "Wrong number"
+        case .connecting: "Connecting\u{2026}"
+        case .connected: "\u{2713} \(request.clientName) connected and approved"
+        case .later: "It will ask for approval later"
+        case .failed: "Not signed in"
+        case .denied: "Sign-in denied"
+        }
+    }
+
+    private var message: String {
+        switch phase {
+        case .choosing: "Which number does your terminal show?"
+        case .mismatch: "That doesn't match. Deny this sign-in unless you're sure it's yours."
+        case .connecting: "Waiting for \(request.clientName) to finish signing in."
+        case .connected: "Its encrypted cards open on this iPhone."
+        case .later: "\(request.clientName) is signed in. Approve its key from Devices when it asks."
+        case .failed(let text): text
+        case .denied: "\(request.clientName) was not signed in."
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch phase {
+        case .choosing:
+            HStack(spacing: 12) {
+                ForEach(choices, id: \.self) { number in
+                    Button { pick(number) } label: {
+                        Text(number).font(.largeTitle.weight(.semibold).monospacedDigit()).frame(minHeight: 64)
+                    }
+                    .buttonStyle(.reloSecondary)
+                    .accessibilityIdentifier("sign-in-number-\(number)")
+                }
+            }
+            .disabled(working)
+        case .connecting:
+            ProgressView()
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        switch phase {
+        case .choosing:
+            Button("Deny") { Task { await deny() } }.buttonStyle(.reloDestructive).disabled(working)
+        case .mismatch(let retry):
+            Button("Deny this sign-in") { Task { await deny() } }.buttonStyle(.reloDestructive).disabled(working)
+            if retry {
+                Button("Try again") { phase = .choosing }.buttonStyle(.reloSecondary)
+            }
+            Button("Cancel") { dismiss() }.buttonStyle(.reloSecondary)
+        case .connecting:
+            EmptyView()
+        case .connected, .later, .failed, .denied:
+            Button("Done") { dismiss() }.buttonStyle(.reloPrimary)
+        }
+    }
+
+    private func pick(_ number: String) {
+        guard number == real else {
+            let allowRetry = !retried
+            retried = true
+            phase = .mismatch(retry: allowRetry)
+            return
+        }
+        Task {
+            working = true
+            defer { working = false }
+            guard await DeviceOwnerCheck.confirm(reason: "Sign in \(request.clientName)") else { return }
+            do {
+                try await approver.decideComputerSignIn(credential: credential, userCode: request.userCode, approve: true)
+            } catch {
+                phase = .failed((error as? LocalizedError)?.errorDescription ?? "Relo could not reach your server. Try again.")
+                return
+            }
+            phase = .connecting
+            await connect()
+        }
+    }
+
+    private func deny() async {
+        working = true
+        defer { working = false }
+        do {
+            try await approver.decideComputerSignIn(credential: credential, userCode: request.userCode, approve: false)
+            phase = .denied
+        } catch {
+            phase = .failed((error as? LocalizedError)?.errorDescription ?? "Relo could not reach your server. Try again.")
+        }
+    }
+
+    /// Polls every 2 s for up to 2 minutes while this sheet is open, until the computer's login and key are there.
+    private func connect() async {
+        let deadline = Date().addingTimeInterval(120)
+        while Date() < deadline, !Task.isCancelled {
+            if let latest = try? await approver.computerSignIn(credential: credential, userCode: request.userCode),
+               latest.keyPublished == true, let clientId = latest.clientId, let key = latest.identityKey {
+                // The key the number came from, not whatever a later read says.
+                guard key == request.identityKey,
+                      let approved = ReloComputerSignIn.approvedKey(clientId: clientId, name: request.clientName, identityKey: key) else {
+                    phase = .later
+                    return
+                }
+                await approveKey(approved)
+                phase = .connected
+                return
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
+        phase = .later
     }
 }

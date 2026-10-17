@@ -34,14 +34,13 @@ function fixture(options: { authenticated?: boolean; identity?: boolean } = {}) 
   });
   const app = new Hono();
   app.get("/dashboard/account", handlers.account);
-  app.get("/dashboard/docs", handlers.docs);
   return { app, query, renderDocument };
 }
 
 describe("dashboard system handlers", () => {
   test("redirects unauthenticated system routes without rendering data", async () => {
     const { app, query, renderDocument } = fixture({ authenticated: false });
-    for (const path of ["/dashboard/account", "/dashboard/docs"]) {
+    for (const path of ["/dashboard/account"]) {
       const response = await app.request(path);
       expect(response.status).toBe(302);
       expect(response.headers.get("location")).toBe(
@@ -81,8 +80,7 @@ describe("dashboard system handlers", () => {
         authentication: "Better Auth email/password session",
         liveActivityPolicySource: "system",
         liveActivityPolicy: {
-          preset: "automatic",
-          colorStrategy: "thread",
+          colorStrategy: "project",
         },
       },
     });
@@ -91,28 +89,5 @@ describe("dashboard system handlers", () => {
   test("fails closed when the scoped account identity is unavailable", async () => {
     const { app } = fixture({ identity: false });
     expect((await app.request("/dashboard/account")).status).toBe(404);
-  });
-
-  test("returns structured documentation and stable machine links", async () => {
-    const { app, query } = fixture();
-    const response = await app.request("/dashboard/docs");
-    expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("private, no-store");
-    const bootstrap = (await response.json()) as SystemDashboardBootstrap;
-    expect(bootstrap.kind).toBe("docs");
-    if (bootstrap.kind !== "docs") throw new Error("Expected docs bootstrap");
-    expect(bootstrap.sections.map((section) => section.title)).toEqual([
-      "Send notifications",
-      "Authorize agents and the CLI",
-      "Coordinate Live Activities",
-      "Operate safely",
-    ]);
-    expect(bootstrap.machineLinks).toEqual([
-      { label: "/docs.md", href: "/docs.md" },
-      { label: "/agents.md", href: "/agents.md" },
-      { label: "/llms.txt", href: "/llms.txt" },
-    ]);
-    expect(JSON.stringify(bootstrap)).not.toContain("<section");
-    expect(query).not.toHaveBeenCalled();
   });
 });

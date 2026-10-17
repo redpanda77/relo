@@ -11,7 +11,8 @@ flags; [security.md](security.md) covers what may appear in work text.
 - [Plan steps or a count](#plan-steps-or-a-count)
 - [Statuses that read well on a Lock Screen](#statuses-that-read-well-on-a-lock-screen)
 - [Questions on the work](#questions-on-the-work)
-- [Finishing](#finishing)
+- [Delivering and finishing](#delivering-and-finishing)
+- [Nested steps](#nested-steps)
 - [What the owner sees](#what-the-owner-sees)
 
 ## What the work is for
@@ -27,7 +28,7 @@ Skip the work only for something that finishes in under a minute or two with not
 ## The worked example
 
 Every command prints an echo: the work, its plan, `Owner sees: …` and `Next: …` with the exact
-command. Read it; it is the state. A planless start (E-1):
+command. Read it; it is the state. A planless start:
 
 ```bash
 relo work start --goal "Fix the login crash" --status "Looking into the crash report"
@@ -52,14 +53,14 @@ relo work update --next-step --plan "Patch token refresh,Add regression test,Run
 
 The last line finishes "Choose the fix" first (`--next-step` runs before `--plan`), then lists what
 is left; done steps stay done and a new step lands after the current one. An update that revises the
-plan (E-4) prints the header `(open, updated)` and reports every move as a note:
+plan prints the header `(open, updated)` and reports every move as a note:
 
 ```
 Note: skipped s4 Run all gates (left out of --plan)
 Note: s3 Choose the fix skipped (left out of --plan; add --next-step to mark it done)
 ```
 
-A repeat start with a different goal changes nothing (E-2):
+A repeat start with a different goal changes nothing:
 
 ```
 Work wrk_8f2c1a9e "Ship the 0.17 release" (open, continuing)
@@ -72,7 +73,7 @@ Owner sees: on the Lock Screen, "Step 2 · 1 to go · Run local gates · 3 of 5"
 Next: relo work update --progress 4/5  |  relo work update --next-step
 ```
 
-A different goal really is new (E-3, `relo work start --new --goal "Fix the flaky upload test"`):
+A different goal really is new (`relo work start --new --goal "Fix the flaky upload test"`):
 
 ```
 Work wrk_5d0e7b21 "Fix the flaky upload test" (open, started)
@@ -84,12 +85,12 @@ Parked: wrk_8f2c1a9e "Ship the 0.17 release" (paused 10:44) → relo work resume
 Next: relo work update --next-step  |  relo work finish --outcome "…"
 ```
 
-Away for a while (E-5): `relo work pause --status "Waiting for the owner's design review"` prints the
+Away for a while: `relo work pause --status "Waiting for the owner's design review"` prints the
 header `(paused, paused)`, `Owner sees: nothing on the Lock Screen; Now › Paused` and
-`Next: relo work resume  |  relo work finish --outcome "…"`. `relo work resume` (E-6) prints
+`Next: relo work resume  |  relo work finish --outcome "…"`. `relo work resume` prints
 `(open, resumed)`, plus `Note: parked wrk_… "<goal>"` when another work was open.
 
-Finishing (E-7), `relo work finish --outcome "0.17 built and tested; publishing moved to tomorrow"`:
+Finishing, `relo work finish --outcome "0.17 built and tested; publishing moved to tomorrow"`:
 
 ```
 Work wrk_8f2c1a9e "Ship the 0.17 release" (finished, done)
@@ -97,7 +98,7 @@ Work wrk_8f2c1a9e "Ship the 0.17 release" (finished, done)
   [x] s2 Run local gates
   [-] s3 Tag and publish   (skipped)
   Outcome: 0.17 built and tested; publishing moved to tomorrow
-Owner sees: the final card for 15 min and one quiet notification: "0.17 built and tested; publishing moved to tomorrow"
+Owner sees: the final card for 15 min and one notification: "0.17 built and tested; publishing moved to tomorrow"
 Next: nothing open in this session. A new goal: relo work start --goal "…"
 ```
 
@@ -136,11 +137,12 @@ Progress is measured or absent.
 
 Good: "Running tests", "Reproduced on iOS 17", "Reviewing 3 changes".
 Avoid: step narration ("Calling the read tool"), raw commands, paths, or anything from
-[security.md](security.md)'s never-send list. Waiting on something outside (CI, a review) is
-`--waiting "CI"`, cleared with `--not-waiting`: the card is not dimmed while it waits.
+[security.md](security.md)'s never-send list. Waiting on something outside (CI, a review, a
+background job such as a deploy) is `--waiting "CI"`, cleared with `--not-waiting`: the card is not
+dimmed while it waits, and a turn that ends under it stays moving instead of "waiting on you" (up to an hour).
 
 Update on real milestones only. Updates are silent on the phone; only questions alert, and the
-finish outcome is the one notification.
+deliver or finish outcome is the one notification.
 
 ## Questions on the work
 
@@ -152,16 +154,56 @@ finish outcome is the one notification.
 - Everything else goes in `--detail`: why you ask, the risk, what changes, how to undo it.
 - Tappable answers only: approve/deny, yes/no, or 2-4 options (`--option LABEL`). A picked option is a
   preference, never permission: anything risky still needs an `--approval` question answered `approved`.
-- In a session `ask` waits about 100s. Exit `4`: still open, run `relo interaction wait ID`. Exit `8`:
+- In a session `ask` waits about <!--f:question.agentWaitSeconds short-->100s<!--/f-->. Exit `4`: still open, run `relo interaction wait ID`. Exit `8`:
   closed without an answer, do not act. An answer that shows up later in an echo
   (`Answer since you asked: … (late: not permission)`) is never permission: ask again.
 
-## Finishing
+## Delivering and finishing
 
-Finish exactly once with `--outcome` (what happened, in the owner's words), plus `--failed` or
-`--dropped` when it did not succeed. Open steps become skipped. A finished work is never reopened.
-The outcome is the notification: no separate `relo notify` is needed (a notify while a work is open
-is recorded on it and sends no buzz).
+One goal is one work, and each request on it is a **round**. `relo work deliver --outcome "…"` ends
+the request you just did: the round closes, the owner gets the outcome as one quiet notification, it is
+their turn, and the work stays open:
+
+```
+Work wrk_8f2c1a9e "Ship the 0.17 release" (open, delivered)
+  [✓] Round 1 "Ship the 0.17 release": 0.17 is on TestFlight
+Owner sees: the round's final card and one quiet notification: "0.17 is on TestFlight"; then it's the owner's turn
+Next: the round is delivered. A follow-up on this goal: relo work start --round "<the request in a few words>" --plan "…"  |  goal done: relo work finish --outcome "…"
+```
+
+Their follow-up on the same goal is `relo work start --round "Add the release notes" --plan "Draft them,Review them"`
+(round 2, header `(open, round_opened)`); without `--round` the start is refused and the refusal names it.
+Without `--plan` the round carries the unfinished steps of the one before; a `--plan` replaces them (the echo says how many were not carried).
+A different goal is `start --new`. Deliver when a request is done; do not finish a goal that continues. `deliver` is
+refused while top-level steps are open (exit 2, naming them): the owner must act mid-plan is `relo ask … --approval` or
+`--waiting`; this request is done with steps left is `deliver --drop-rest` (skips them; the next round carries them).
+
+Finish exactly once, when the goal itself is done, with `--outcome` (what happened, in the owner's
+words), plus `--failed` or `--dropped` when it did not succeed. Open steps become skipped. A finished
+work is never reopened. The outcome is the notification: no separate `relo notify` is needed (a
+notify while a work is open is recorded on it and sends no buzz). A refused deliver or finish is
+remembered: `Refused earlier: …` leads every echo until one is accepted.
+
+## Nested steps
+
+A plan nests when a step cannot be finished in one go, never by default. In a newline-separated
+`--plan`, indent a line two spaces to put it under the line above (three levels at most), or add under
+a step with `--add "…" --under s3`. Only a step without sub-steps is current; `--detail "…"` explains it:
+
+```bash
+relo work update --add "Handle quoted fields" --under s3 --detail "Quotes inside quoted fields break the split"
+```
+
+```
+  [x] s1 Read the spec
+  [>] s2 Build it
+    [>] s3 Parse the rows
+      [>] s6 Handle quoted fields
+        Quotes inside quoted fields break the split
+    [ ] s4 Write the rows
+  [ ] s5 Verify it
+Owner sees: on the Lock Screen, "Step 2 · 2 to go · Parse the rows › Handle quoted fields"
+```
 
 ## What the owner sees
 

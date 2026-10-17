@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { generateKeyPair } from "../src/e2ee.mjs";
-import { groupingKey, HANDLE_PATTERN, loadKnownNames, nameHandle, opaqueContext, rememberNames } from "../src/opaque-names.mjs";
+import { generateKeyPair } from "../src/crypto/e2ee.mjs";
+import { groupingKey, HANDLE_PATTERN, loadKnownNames, nameHandle, opaqueContext, rememberNames } from "../src/crypto/opaque-names.mjs";
 
 test("handles are stable per computer, case-insensitive, unguessable without the key", () => {
   const key = groupingKey(generateKeyPair().privateKey);
@@ -37,11 +37,11 @@ test("opaque context replaces names, keeps handles, and never sends a plain hash
 
 test("the names this computer made are remembered privately", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-names-"));
-  const env = { RELO_SEALED_CARD_DIR: join(folder, "state", "cards") };
+  const env = { RELO_STATE_DIR: join(folder, "state") };
   try {
-    await rememberNames(env, { "p-aaaaaaaaaaaaaaaa": "relo" });
-    await rememberNames(env, { "t-bbbbbbbbbbbbbbbb": "Release" });
-    assert.deepEqual(await loadKnownNames(env), { "p-aaaaaaaaaaaaaaaa": "relo", "t-bbbbbbbbbbbbbbbb": "Release" });
+    await rememberNames({ env }, { "p-aaaaaaaaaaaaaaaa": "relo" });
+    await rememberNames({ env }, { "t-bbbbbbbbbbbbbbbb": "Release" });
+    assert.deepEqual(await loadKnownNames({ env }), { "p-aaaaaaaaaaaaaaaa": "relo", "t-bbbbbbbbbbbbbbbb": "Release" });
     assert.equal(statSync(join(folder, "state", "names.json")).mode & 0o777, 0o600);
   } finally {
     rmSync(folder, { recursive: true, force: true });

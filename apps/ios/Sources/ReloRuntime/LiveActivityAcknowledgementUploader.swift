@@ -57,7 +57,7 @@ public struct LiveActivityAcknowledgementUploader {
         await upload(
             pending: { try await coordinator.pendingDismissedActivityIdentities(limit: 25) },
             send: { identity in
-                try await client.reportLiveActivityDismissed(credential: credential, activityId: identity.activityID)
+                try await client.reportLiveActivityDismissed(credential: credential, activityId: identity.activityID, generation: identity.generation)
             },
             alreadyRecorded: { if case MobileAPIError.invalidRequest = $0 { true } else { false } },
             remove: { try await coordinator.removeDismissedActivityIdentities($0) },

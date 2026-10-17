@@ -2,7 +2,7 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execute } from "../src/cli.mjs";
-import { ApiError, AuthError, NetworkError } from "../src/errors.mjs";
+import { ApiError, AuthError, NetworkError } from "../src/shared/errors.mjs";
 
 function harness(pages) {
   const requests = [];

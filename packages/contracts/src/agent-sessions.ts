@@ -9,11 +9,6 @@ import { SESSION_PHASES, observedSessionPhaseSchema, sessionPhaseSchema, session
  * a hash the CLI computes, so the server never learns the harness's own session id.
  */
 
-/** Presence of a session relative to its card: its card is moving, quiet, absent, or the session ended. */
-export const AGENT_SESSION_PRESENCES = ["working", "quiet", "no_card", "ended"] as const;
-export const agentSessionPresenceSchema = z.enum(AGENT_SESSION_PRESENCES);
-export type AgentSessionPresence = z.infer<typeof agentSessionPresenceSchema>;
-
 /** The owner-facing phases of a session (the server's session-row derivation; never computed by clients). */
 export const AGENT_SESSION_PHASES = SESSION_PHASES;
 export const agentSessionPhaseSchema = sessionPhaseSchema;
@@ -35,21 +30,26 @@ const timestamp = z.iso.datetime({ offset: true });
  * is greater than the stored one, so retries and out-of-order deliveries change nothing.
  */
 export const agentSessionObservedRequestSchema = z.object({
-  session: agentSessionHashSchema,
-  harness: agentSessionHarnessSchema,
-  phase: observedSessionPhaseSchema,
-  phaseSince: timestamp,
-  lastSeenAt: timestamp,
-  openToolSince: timestamp.nullable(),
-  seq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  project: label(120).optional(),
-  computer: label(120).optional(),
-  account: label(40).optional(),
+  session: agentSessionHashSchema.describe("Hash of the harness's session id, computed by the CLI; the server never sees the real id."),
+  harness: agentSessionHarnessSchema.describe("Name of the harness the session runs in, such as claude-code."),
+  phase: observedSessionPhaseSchema.describe("What the session is doing now, as the CLI's local state machine sees it."),
+  phaseSince: timestamp.describe("When the session entered this phase."),
+  lastSeenAt: timestamp.describe("When the session last showed activity."),
+  openToolSince: timestamp.nullable().describe("When the tool call that is still running began; null when none is running."),
+  seq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).describe("Orders snapshots of one session; a snapshot is applied only when this is higher than the stored one."),
+  project: label(120).optional().describe("Name of the project the session works in."),
+  computer: label(120).optional().describe("Name of the machine the session runs on."),
+  account: label(40).optional().describe("Name of the account the session runs under."),
+  contextPct: z.number().int().min(0).max(100).optional().describe("How full the session's context window is, in whole percent; present once the CLI's status line wrapper (relo setup --level optimize) has read it, and sent only after it moved by 5 points."),
+  costUsd: z.number().min(0).max(1_000_000).optional().describe("What the session has cost so far in US dollars, rounded to the cent; present with contextPct, and sent only after it moved by 50 cents."),
+  contextTokens: z.number().int().min(0).max(10_000_000).optional().describe("Tokens in the session's context window, read by the CLI's hooks from the session's transcript (where no status line runs, such as the Claude desktop app); sent first, then only after it moved by 10,000 tokens or 5%."),
+  heartbeat: z.boolean().optional().describe("True on a snapshot the Relo MCP server sends once a minute for a session at a permission prompt; it repeats the phase and only proves the session is still alive."),
+  endReason: z.enum(["hook","gone","mcp"]).optional().describe("How the session ended, sent with phase ended: the harness's end hook, the CLI's dead-process sweep (gone) or the Relo MCP server (mcp). Logged with the phase change to measure how fast ended sessions clear."),
   /**
    * End-to-end sealed names for the handles above (kind "names"); only the account's phones can
    * open it. The server checks its shape and stores it as is.
    */
-  sealedNames: z.unknown().optional(),
+  sealedNames: z.unknown().optional().describe("End-to-end sealed names for project, computer and account, readable only on the account's phones."),
 }).strict();
 export type AgentSessionObservedRequest = z.infer<typeof agentSessionObservedRequestSchema>;
 
@@ -69,14 +69,13 @@ export const agentSessionSummarySchema = z.object({
   startedAt: z.iso.datetime({ offset: true }),
   /** The session's last observed activity (a phase change or a heartbeat). */
   lastSeenAt: z.iso.datetime({ offset: true }),
+  contextPct: z.number().int().min(0).max(100).optional().describe("How full the session's context window is, in whole percent; absent until the CLI reports it. A display fact."),
+  costUsd: z.number().min(0).optional().describe("What the session has cost so far in US dollars; absent until the CLI reports it. A display fact."),
+  contextTokens: z.number().int().min(0).max(10_000_000).optional().describe("Tokens in the session's context window; absent until a hook reports it. A display fact."),
   card: z.object({
     id: z.string().regex(/^act_[0-9a-f-]{36}$/),
     state: z.enum(["active", "ended", "expired", "replaced"]),
-    quietForSeconds: z.number().int().nonnegative(),
   }).strict().nullable(),
-  presence: agentSessionPresenceSchema,
-  /** The sealed names for this session's handles, in the phone's snapshot only. */
-  sealedNames: z.unknown().nullable().optional(),
 }).strict();
 export type AgentSessionSummary = z.infer<typeof agentSessionSummarySchema>;
 
@@ -117,7 +116,7 @@ export type AgentSessionListResponse = z.infer<typeof agentSessionListResponseSc
  * can post observed session snapshots and nothing else; declared credentials can never post them.
  * Minted by an owner CLI credential with `services:write`; the token is shown once.
  */
-export const harnessCredentialCreateRequestSchema = z.object({ name: label(120) }).strict();
+export const harnessCredentialCreateRequestSchema = z.object({ name: label(120).describe("How the credential shows in lists.") }).strict();
 export type HarnessCredentialCreateRequest = z.infer<typeof harnessCredentialCreateRequestSchema>;
 export const harnessCredentialIdSchema = z.string().regex(/^hck_[0-9a-f-]{36}$/);
 export const harnessCredentialCreateResponseSchema = z.object({

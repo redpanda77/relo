@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execute } from "../src/cli.mjs";
-import { answerSigningInput, b64u, generateKeyPair, keyId, signBytes } from "../src/e2ee.mjs";
-import { trustKey } from "../src/keystore.mjs";
+import { answerSigningInput, b64u, generateKeyPair, keyId, signBytes } from "../src/crypto/e2ee.mjs";
+import { trustKey } from "../src/crypto/keystore.mjs";
 
 const API = "https://relo.example";
 const PHONE = "dev_2a2a2a2a-0000-4000-8000-000000000000";

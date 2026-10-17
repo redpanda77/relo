@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Database } from "./db.js";
 import { QUESTION_CEILING_SECONDS,QUESTION_SECONDS,QuestionWaitTooLongError } from "./question-policy.js";
+import { FACTS } from "@relo/notification-contracts";
 
 type Queryable = { query: Database["query"] };
 
@@ -8,7 +9,7 @@ type Queryable = { query: Database["query"] };
 export async function maxQuestionSeconds(db: Queryable): Promise<number> {
   const result = await db.query<{ max_question_seconds: number }>(
     "SELECT max_question_seconds FROM server_settings WHERE singleton");
-  return result.rows[0]?.max_question_seconds ?? 604_800;
+  return result.rows[0]?.max_question_seconds ?? FACTS.question.serverCapSeconds;
 }
 
 /** Refuses a question that would wait longer than the server admin allows. */

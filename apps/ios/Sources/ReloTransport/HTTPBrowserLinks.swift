@@ -1,9 +1,10 @@
 import Foundation
 import ReloCore
 
-/// Linked browsers (docs/END-TO-END-ENCRYPTION.md, "Linked browsers"), authenticated as this device.
+/// Linked browsers (docs/ENCRYPTION-PROTOCOL.md, "Linked browsers"), authenticated as this device.
 extension HTTPMobileAPIClient: BrowserLinking {
     private struct LinkedBrowsersResponse: Decodable { let browsers: [ReloLinkedBrowser] }
+    private struct LinkRequestsResponse: Decodable { let browsers: [ReloPendingBrowser] }
 
     public func linkBrowser(credential: DeviceCredential, request link: ReloBrowserLinkRequest) async throws -> ReloLinkedBrowser {
         var request = request(path: "api/devices/self/links", method: "POST")
@@ -39,6 +40,28 @@ extension HTTPMobileAPIClient: BrowserLinking {
         let (_, response) = try await data(for: request)
         switch response.statusCode {
         case 200, 204, 404: return // Already gone is unlinked.
+        default: throw Self.linkFailure(response.statusCode)
+        }
+    }
+
+    public func browserLinkRequests(credential: DeviceCredential) async throws -> [ReloPendingBrowser] {
+        var request = request(path: "api/devices/self/link-requests")
+        request.authorize(bearer: credential.accessToken)
+        let (data, response) = try await data(for: request)
+        guard response.statusCode == 200 else { throw Self.linkFailure(response.statusCode) }
+        guard let decoded = try? JSONDecoder().decode(LinkRequestsResponse.self, from: data) else {
+            throw MobileAPIError.invalidResponse
+        }
+        return decoded.browsers
+    }
+
+    public func declineBrowserLinkRequest(credential: DeviceCredential, browserID: String) async throws {
+        guard ReloBrowserLink.isBrowserID(browserID) else { throw MobileAPIError.invalidRequest }
+        var request = request(path: "api/devices/self/link-requests/\(browserID)/decline", method: "POST")
+        request.authorize(bearer: credential.accessToken)
+        let (_, response) = try await data(for: request)
+        switch response.statusCode {
+        case 200, 204, 404: return // Already cleared is declined.
         default: throw Self.linkFailure(response.statusCode)
         }
     }

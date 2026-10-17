@@ -1,6 +1,9 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { KeyRound } from "lucide-react"
 
+import { IconTile } from "@/components/atoms/icon-tile"
+import { ActionButton } from "@/components/molecules/action-button"
+import { OperationStatus } from "@/components/molecules/operation-status"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,6 +14,7 @@ import {
   type TwoFactorService,
   type TwoFactorSetup,
 } from "@/features/two-factor/two-factor-service"
+import { useShake } from "@/lib/use-shake"
 
 const httpService = createHttpTwoFactorService()
 
@@ -28,7 +32,7 @@ function BackupCodes({ codes }: { codes: string[] }) {
       <p className="text-sm text-muted-foreground">
         Save these somewhere safe. Each one signs you in once if you lose your phone. They are shown only now.
       </p>
-      <ul className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-3 font-mono text-sm" aria-label="Backup codes">
+      <ul className="grid grid-cols-2 gap-1 rounded-xl border bg-white/[0.03] p-3 font-mono text-sm" aria-label="Backup codes">
         {codes.map((code) => <li key={code}>{code}</li>)}
       </ul>
     </div>
@@ -41,6 +45,8 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [form, shake] = useShake<HTMLFormElement>()
+  const field = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let active = true
@@ -54,7 +60,11 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
   async function run(work: () => Promise<void>) {
     setBusy(true)
     setError("")
-    try { await work() } catch (cause) { setError(cause instanceof Error ? cause.message : "Something went wrong.") } finally { setBusy(false) }
+    try { await work() } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Something went wrong.")
+      // A wrong password or code: the form shakes and the field is selected for the next try.
+      shake(field.current)
+    } finally { setBusy(false) }
   }
 
   function submitPassword(event: React.FormEvent<HTMLFormElement>) {
@@ -82,7 +92,7 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><KeyRound className="size-4" aria-hidden="true" />Two-step sign-in</CardTitle>
+        <CardTitle className="flex items-center gap-2.5"><IconTile icon={KeyRound} tone="violet" />Two-step sign-in</CardTitle>
         <CardDescription>
           {step.kind === "on"
             ? "On: signing in here needs your password and a code from your authenticator app."
@@ -103,22 +113,22 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
           </>
         ) : null}
         {step.kind === "password" ? (
-          <form className="grid gap-3" onSubmit={submitPassword}>
+          <form ref={form} className="grid gap-3" onSubmit={submitPassword}>
             <div className="grid gap-2">
               <Label htmlFor="two-factor-password">Your password</Label>
-              <Input id="two-factor-password" name="password" type="password" autoComplete="current-password" required autoFocus className="min-h-11" />
+              <Input ref={field} id="two-factor-password" name="password" type="password" autoComplete="current-password" required autoFocus />
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" disabled={busy} variant={step.action === "disable" ? "destructive" : "default"}>
+              <ActionButton type="submit" pending={busy} failed={Boolean(error)} successLabel={null} pendingLabel="Checking…" variant={step.action === "disable" ? "destructive" : "default"}>
                 {step.action === "enable" ? "Continue" : step.action === "disable" ? "Turn off two-step sign-in" : "Show new codes"}
-              </Button>
+              </ActionButton>
               <Button type="button" variant="ghost" disabled={busy}
                 onClick={() => setStep({ kind: step.action === "enable" ? "off" : "on" })}>Cancel</Button>
             </div>
           </form>
         ) : null}
         {step.kind === "scan" ? (
-          <form className="grid gap-4" onSubmit={submitCode}>
+          <form ref={form} className="grid gap-4" onSubmit={submitCode}>
             <p className="text-sm text-muted-foreground">
               Scan this with an authenticator app (for example the Passwords app on iPhone), then enter the code it shows.
             </p>
@@ -128,15 +138,15 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
             </p>
             <div className="grid gap-2">
               <Label htmlFor="two-factor-code">Code from the app</Label>
-              <Input id="two-factor-code" name="code" inputMode="numeric" autoComplete="one-time-code" required className="min-h-11" />
+              <Input ref={field} id="two-factor-code" name="code" inputMode="numeric" autoComplete="one-time-code" required />
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="submit" disabled={busy}>Turn on</Button>
+              <ActionButton type="submit" pending={busy} failed={Boolean(error)} successLabel={null} pendingLabel="Checking…">Turn on</ActionButton>
               <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep({ kind: "off" })}>Cancel</Button>
             </div>
           </form>
         ) : null}
-        {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+        <OperationStatus error={error || null} />
       </CardContent>
     </Card>
   )

@@ -17,7 +17,6 @@ enum InboxPresentationProjection {
                     ?? summary.status,
                 visual: canonicalVisual(base.visual, progress: summary.progress),
                 behavior: base.behavior,
-                theme: base.theme,
                 accentColor: base.accentColor,
                 secondaryColor: base.secondaryColor,
                 symbol: base.symbol,

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
-import { ReloApiClient } from "../src/api-client.mjs";
+import { ReloApiClient } from "../src/shared/api-client.mjs";
 import { applyChange, startPlan } from "../src/work/plan.mjs";
 
 function fakeServer() {
@@ -58,6 +58,11 @@ function fakeServer() {
       return respond({ disposition: "updated", work: w, parked: parked(), replayed: false, ignored: [] });
     }
     if (m[2] === "finish") { assert.equal(typeof body.outcome.readable, "string"); w.lifecycle = "finished"; w.result = body.result; w.outcome = body.outcome.readable; return respond({ disposition: "finished", work: w, parked: parked() }); }
+    if (m[2] === "deliver") {
+      w.plan.rounds = [{ n: 1, state: "closed", outcome: body.outcome.readable }];
+      w.plan.steps = w.plan.steps.map((x) => ({ ...x, round: 1, state: x.state === "current" ? "done" : x.state === "open" ? "skipped" : x.state }));
+      return respond({ disposition: "delivered", work: w, parked: [] });
+    }
     if (m[2] === "pause") { w.lifecycle = "paused"; w.status = body.status.readable; return respond({ disposition: "paused", work: w, parked: [] }); }
     w.lifecycle = "open";
     return respond({ disposition: "resumed", work: w, parked: [] });
@@ -89,7 +94,7 @@ test("start, update, repeat start and finish print the echo and keep one work pe
   assert.equal(r.code, 0);
   assert.match(r.text, /^Work wrk_aaaaaaa1 "Fix the login crash" \(open, started\)/u);
   assert.match(r.text, /\[>\] s1 Reproduce the crash/u);
-  assert.match(r.text, /Owner sees: on the Lock Screen, "Step 1 · 1 to go · Reproduce the crash"/u);
+  assert.match(r.text, /Owner sees: on the Lock Screen, "Step 1 of 2 · Reproduce the crash"/u);
   assert.equal(s.server.calls[0].headers["relo-harness"], "claude-code");
   assert.ok(s.server.calls.every((c) => c.headers["relo-session-key"]));
   const file = statSync(join(s.state, "relo", "sessions"));
@@ -110,7 +115,7 @@ test("refused flags and verbs refuse in three lines before any request", async (
   const s = session({ CLAUDE_CODE_SESSION_ID: "session-two" });
   t.after(s.done);
   for (const argv of [["work", "start", "--goal", "Ship it", "--name", "x"], ["work", "start", "--goal", "Ship it", "--expires-in", "1h"],
-    ["work", "heartbeat"], ["activity", "start", "--title", "Ship it"], ["work", "start", "--goal", "todo"], ["work", "update", "--status", "Testing"]]) {
+    ["work", "heartbeat"], ["work", "start", "--goal", "todo"], ["work", "update", "--status", "Testing"]]) {
     const r = await s.relo(...argv);
     assert.equal(r.code, 2, argv.join(" "));
     const lines = r.text.split("\n");
@@ -136,11 +141,11 @@ test("plan rules: --plan lists what is left; unlisted current is skipped; ids ne
   const { plan } = startPlan(["Reproduce the crash", "Find the cause", "Choose the fix"]);
   const step1 = applyChange(plan, { nextStep: true }).plan;
   const revised = applyChange(step1, { nextStep: true, plan: ["Patch token refresh", "Add regression test"] });
-  assert.deepEqual(revised.plan.steps.map((s) => `${s.id}:${s.state}`), ["s1:done", "s2:done", "s3:skipped", "s4:current", "s5:open"]);
+  assert.deepEqual(revised.plan.steps.map((s) => `${s.id}:${s.state}`), ["s1:done", "s2:done", "s4:current", "s5:open", "s3:skipped"]);
   const collapsed = applyChange(startPlan(["A one", "B two", "C three"]).plan, { plan: ["Write six plan sections"], progress: { done: 2, total: 6 } });
   assert.equal(collapsed.plan.steps.filter((s) => s.state === "current").length, 1);
   assert.deepEqual(collapsed.plan.steps.find((s) => s.state === "current").progress, { done: 2, total: 6 });
-  assert.equal(collapsed.plan.steps.at(-1).id, "s4");
+  assert.equal(collapsed.plan.steps.find((s) => s.label === "Write six plan sections").id, "s4");
 });
 
 const worksContract = new URL("../../contracts/dist/src/works.js", import.meta.url);
@@ -170,4 +175,28 @@ test("every relo work request body parses with the server's schemas (contracts/w
     assert.ok(parsed.success, `${call.method} ${call.path} ${JSON.stringify(call.body)}: ${parsed.error?.message}`);
     assert.ok(call.headers["idempotency-key"], `${call.method} ${call.path} carries an idempotency key`);
   }
+});
+
+test("deliver with open top-level steps is refused before any request; --drop-rest delivers and names the skipped steps", async (t) => {
+  const s = session({ CLAUDE_CODE_SESSION_ID: "session-deliver" });
+  t.after(s.done);
+  await s.relo("work", "start", "--goal", "Build four batches", "--plan", "Batch 1,Batch 2,Batch 3,Batch 4");
+  await s.relo("work", "update", "--next-step");
+  const writes = () => s.server.calls.filter((c) => c.method !== "GET").length;
+  const before = writes();
+  let r = await s.relo("work", "deliver", "--outcome", "Batch 1 built");
+  assert.equal(r.code, 2, r.text);
+  const lines = r.text.split("\n");
+  assert.equal(lines.length, 3, r.text);
+  assert.match(lines[0], /^Refused: Round 1 still has open steps: s3 Batch 3, s4 Batch 4/u);
+  assert.match(lines[2], /relo ask "…" --approval/u);
+  assert.match(lines[2], /--drop-rest/u);
+  assert.equal(writes(), before, "nothing was sent");
+  r = await s.relo("work", "deliver", "--outcome", "Batch 1 built", "--drop-rest");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /Note: skipped 2 open steps \(--drop-rest\): s3 Batch 3, s4 Batch 4/u);
+  assert.equal(s.server.calls.at(-1).body.dropRest, true);
+  r = await s.relo("work", "start", "--round", "Batch 3 and 4");
+  assert.equal(s.server.calls.at(-1).body.plan, undefined, "no plan is sent: the round carries the unfinished steps");
+  assert.deepEqual(s.server.calls.at(-1).body.round, { readable: "Batch 3 and 4" });
 });

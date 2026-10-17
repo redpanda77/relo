@@ -9,8 +9,9 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { VERSION, run } from "../src/cli.mjs";
-import { compareVersions, parseSums } from "../src/update.mjs";
+import { run } from "../src/cli.mjs";
+import { VERSION } from "../src/version.mjs";
+import { compareVersions, parseSums } from "../src/owner/releases.mjs";
 import { cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 const PREFIX = "/repos/redpanda77/relo/releases";
@@ -62,12 +63,15 @@ const NEWER = "9.9.9";
 async function box({ server, version = VERSION, npmCode = 0, env = {} } = {}) {
   const home = await mkdtemp(join(tmpdir(), "relo-update-"));
   const npmCalls = [];
+  const refreshes = [];
   const overrides = {
     home, version, env: { RELO_RELEASES_URL: server?.url, ...env },
     runNpm: async (args) => { npmCalls.push(args); return { code: npmCode, stderr: npmCode ? "EACCES: permission denied, mkdir '/usr/lib/node_modules'" : "" }; },
+    // The new CLI's relo setup --refresh: one block brought up to date.
+    runRefresh: async () => { refreshes.push(true); return { ok: true, changed: [{ kind: "block", harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "updated" }] }; },
   };
   return {
-    home, npmCalls, overrides,
+    home, npmCalls, refreshes, overrides,
     async cli(argv, extra = {}) {
       const stdout = [];
       const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, { ...overrides, ...extra });
@@ -107,7 +111,7 @@ test("update downloads, verifies the checksum, installs the stored tarball and k
   const b = await box({ server });
   const updated = await b.cli(["update"]);
   assert.equal(updated.exitCode, 0);
-  assert.deepEqual(updated.line, { ok: true, from: VERSION, to: NEWER, verified: true });
+  assert.deepEqual(updated.line, { ok: true, from: VERSION, to: NEWER, verified: true, refreshed: [{ kind: "block", harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "updated" }] });
   const tarball = join(b.home, ".local", "share", "relo", "cli-releases", NEWER, `relo-cli-${NEWER}.tgz`);
   assert.deepEqual(b.npmCalls, [["install", "--global", tarball]]);
   assert.equal(sha(await readFile(tarball)), sha(Buffer.from(`tarball ${NEWER}`)));
@@ -121,7 +125,7 @@ test("rollback reinstalls the previous stored release after re-verifying it", as
   await b.cli(["update"]);
   b.npmCalls.length = 0;
   const rolled = await b.cli(["update", "--rollback"], { version: NEWER });
-  assert.deepEqual(rolled.line, { ok: true, from: NEWER, to: VERSION, rollback: true, verified: true });
+  assert.deepEqual(rolled.line, { ok: true, from: NEWER, to: VERSION, rollback: true, verified: true, refreshed: [{ kind: "block", harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "updated" }] });
   assert.deepEqual(b.npmCalls, [["install", "--global", join(b.home, ".local", "share", "relo", "cli-releases", VERSION, `relo-cli-${VERSION}.tgz`)]]);
 
   // A stored tarball that no longer matches its checksum is never installed.
@@ -166,7 +170,10 @@ test("--version picks a release (v and cli-v prefixes work), and the version fla
   const server = await releaseServer({ releases: [release("0.9.0"), release(VERSION), release(NEWER)] });
   const b = await box({ server });
   const picked = await b.cli(["update", "--version", "cli-v0.9.0"]);
-  assert.deepEqual(picked.line, { ok: true, from: VERSION, to: "0.9.0", verified: true });
+  assert.deepEqual(picked.line, { ok: true, from: VERSION, to: "0.9.0", verified: true, refreshed: [{ kind: "block", harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "updated" }] });
+  // The refresh never undoes the update: when it fails, the line says to run it by hand.
+  const unrefreshed = await b.cli(["update", "--version", "0.9.0"], { runRefresh: async () => undefined });
+  assert.match(unrefreshed.line.note ?? "", /run relo setup --refresh/u);
   assert.equal((await b.cli(["update", "--version", "v1.2.3"])).line.error.code, "RELEASE_NOT_FOUND");
   assert.equal((await b.cli(["update", "--version", "latest"])).exitCode, 2);
   const stdout = [];
@@ -294,7 +301,7 @@ async function packedVersion(temp, version) {
     await writeFile(file, change(await readFile(file, "utf8")));
   };
   await edit("package.json", (text) => text.replace(/"version": "[^"]+"/u, `"version": "${version}"`));
-  await edit("src/cli.mjs", (text) => text.replace(/const VERSION = "[^"]+";/u, `const VERSION = "${version}";`));
+  await edit("src/version.mjs", (text) => text.replace(/export const VERSION = "[^"]+";/u, `export const VERSION = "${version}";`));
   await edit("skill/package.json", (text) => text.replace(/"version": "[^"]+"/u, `"version": "${version}"`).replace(/"@relo\/cli": "[^"]+"/u, `"@relo/cli": "${version}"`));
   const env = { ...process.env, npm_config_cache: join(temp, "npm-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_update_notifier: "false" };
   const [packed] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: root, env, encoding: "utf8" }));
@@ -315,9 +322,59 @@ test("end to end in a temp prefix: install the old release, update with a verifi
   execFileSync("npm", ["install", "--global", oldRelease.file], { env, encoding: "utf8" });
   assert.equal(await relo("--version"), "0.9.1");
   assert.deepEqual(JSON.parse(await relo("update", "--check")), { ok: true, current: "0.9.1", latest: "0.9.2", updateAvailable: true });
-  assert.deepEqual(JSON.parse(await relo("update")), { ok: true, from: "0.9.1", to: "0.9.2", verified: true });
+  assert.deepEqual(JSON.parse(await relo("update")), { ok: true, from: "0.9.1", to: "0.9.2", verified: true, refreshed: [] },
+    "the new CLI ran its own relo setup --refresh (nothing installed in this home)");
   assert.equal(await relo("--version"), "0.9.2");
   assert.deepEqual(JSON.parse(await relo("update")), { ok: true, current: "0.9.2", latest: "0.9.2", updateAvailable: false });
-  assert.deepEqual(JSON.parse(await relo("update", "--rollback")), { ok: true, from: "0.9.2", to: "0.9.1", rollback: true, verified: true });
+  assert.deepEqual(JSON.parse(await relo("update", "--rollback")), { ok: true, from: "0.9.2", to: "0.9.1", rollback: true, verified: true, refreshed: [] });
   assert.equal(await relo("--version"), "0.9.1");
+});
+
+/** A Relo server that hands out its CLI (/cli/version, /cli/relo-cli.tgz), as `install.sh` installs it. */
+async function reloServer(version) {
+  const work = await mkdtemp(join(tmpdir(), "relo-cli-pack-"));
+  await mkdir(join(work, "package", "bin"), { recursive: true });
+  await writeFile(join(work, "package", "bin", "relo.mjs"), `console.log("relo ${version}")\n`);
+  await writeFile(join(work, "package", "package.json"), JSON.stringify({ name: "@relo/cli", version }));
+  execFileSync("tar", ["-czf", join(work, "relo-cli.tgz"), "-C", work, "package"]);
+  const bytes = await readFile(join(work, "relo-cli.tgz"));
+  const requests = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url);
+    if (request.url === "/cli/version") { response.writeHead(200, { "content-type": "application/json" }); return response.end(JSON.stringify({ version, sha256: sha(bytes) })); }
+    if (request.url === "/cli/relo-cli.tgz") { response.writeHead(200, { "content-type": "application/gzip" }); return response.end(bytes); }
+    response.writeHead(404); response.end("{}");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  test.after(() => server.close());
+  return { origin: `http://127.0.0.1:${server.address().port}`, requests };
+}
+
+test("a CLI the install script installed updates from its own server, beside itself, and the launcher follows", async () => {
+  const server = await reloServer(NEWER);
+  const home = await mkdtemp(join(tmpdir(), "relo-update-launcher-"));
+  const entry = join(home, ".local", "share", "relo", "cli", VERSION, "bin", "relo.mjs");
+  await mkdir(join(home, ".local", "share", "relo", "cli", VERSION, "bin"), { recursive: true });
+  await writeFile(entry, "// the running CLI\n");
+  await mkdir(join(home, ".local", "bin"), { recursive: true });
+  const launcher = join(home, ".local", "bin", "relo");
+  await writeFile(launcher, `#!/bin/sh\n# relo launcher: ${entry}\nexec "/opt/node/bin/node" "${entry}" "$@"\n`);
+  const npmCalls = [];
+  const deps = { home, version: VERSION, entrypoint: entry, env: {},
+    loadConfig: async () => ({ apiUrl: server.origin, token: "x".repeat(44) }),
+    runNpm: async (args) => { npmCalls.push(args); return { code: 0 }; },
+    runRefresh: async () => ({ ok: true, changed: [] }) };
+  const stdout = [];
+  const exitCode = await run(["update"], { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, deps);
+  const line = JSON.parse(stdout[0]);
+  assert.equal(exitCode, 0, stdout[0]);
+  assert.equal(line.to, NEWER);
+  assert.equal(line.source, server.origin);
+  assert.deepEqual(npmCalls, [], "no npm: the new version is unpacked beside the old one");
+  const next = join(home, ".local", "share", "relo", "cli", NEWER, "bin", "relo.mjs");
+  assert.equal(await readFile(next, "utf8"), `console.log("relo ${NEWER}")\n`);
+  assert.equal(await readFile(launcher, "utf8"), `#!/bin/sh\n# relo launcher: ${next}\nexec "/opt/node/bin/node" "${next}" "$@"\n`);
+  assert.ok(existsSync(entry), "the old version stays for --rollback");
+  // Checked against the server's digest, never GitHub.
+  assert.ok(server.requests.includes("/cli/version") && server.requests.includes("/cli/relo-cli.tgz"));
 });

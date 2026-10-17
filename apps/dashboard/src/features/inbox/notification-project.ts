@@ -45,17 +45,6 @@ export function notificationProject(
   }
 }
 
-export function notificationProjectOptions(
-  notifications: NotificationSummary[]
-): NotificationProjectOption[] {
-  const options = new Map<string, NotificationProjectOption>()
-  for (const notification of notifications) {
-    const project = notificationProject(notification)
-    options.set(project.key, { key: project.key, name: project.name })
-  }
-  return [...options.values()]
-}
-
 export function notificationContext(notification: NotificationSummary): string {
   const project = notificationProject(notification)
   const context = notification.activity?.context ?? notification.context

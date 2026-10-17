@@ -1,6 +1,6 @@
 {
   "name": "@relo/notification-contracts",
-  "version": "0.18.15",
+  "version": "0.18.79",
   "private": true,
   "type": "module",
   "main": "./dist/src/index.js",
@@ -24,7 +24,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "generate": "tsx scripts/generated.ts"
   },
   "dependencies": {
     "zod": "^4.0.0"

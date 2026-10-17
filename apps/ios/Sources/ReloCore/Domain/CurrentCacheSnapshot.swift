@@ -115,11 +115,6 @@ public struct CurrentCacheSnapshot: Codable, Equatable, Sendable {
         return floor.addingTimeInterval(max(0, wallTime.timeIntervalSince(savedAtWall)))
     }
 
-    public func freshness(of item: CurrentSubjectProjection, at serverTime: Date) -> CurrentSubjectProjection.Freshness {
-        guard let deadline = item.freshUntil else { return item.freshness }
-        return deadline <= serverTime ? .stale : item.freshness
-    }
-
     private mutating func retire(id: String, version: CurrentVersion?, reason: RetiredCurrentSubject.Reason, at time: Date) {
         if let current = subjects[id] {
             if let version {

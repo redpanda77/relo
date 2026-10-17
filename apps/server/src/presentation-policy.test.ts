@@ -29,8 +29,8 @@ describe("Live Activity presentation policy", () => {
   };
 
   test("resolves scoped, account, and system precedence", () => {
-    const account = { ...SYSTEM_PRESENTATION_POLICY,preset: "steps" as const };
-    const client = { ...SYSTEM_PRESENTATION_POLICY,preset: "terminal" as const };
+    const account = { ...SYSTEM_PRESENTATION_POLICY,accentColor: "#F2A65A" };
+    const client = { ...SYSTEM_PRESENTATION_POLICY,colorStrategy: "fixed" as const };
     expect(effectivePresentationPolicy(client,account,"client")).toEqual({
       policy: client,source: "client",
     });
@@ -101,10 +101,7 @@ describe("Live Activity presentation policy", () => {
   });
 
   test("treats explicit automatic as server delegation and omits meaningless progress",() => {
-    const inherited = {
-      ...SYSTEM_PRESENTATION_POLICY,
-      preset: "steps" as const,
-    };
+    const inherited = { ...SYSTEM_PRESENTATION_POLICY };
     const delegated = resolveActivityPresentation({
       title: "Codex task",status: "Working",preset: "automatic",privacyMode: "standard",
     },{
@@ -113,7 +110,7 @@ describe("Live Activity presentation policy", () => {
     });
     expect(delegated.stored).toMatchObject({ style: "standard",progress: null });
     expect(delegated.snapshot).toMatchObject({
-      source: "account",explicit: [],presetId: "policy.steps",presetRevision: 1,
+      source: "account",explicit: [],presetId: "system.agent.informational",presetRevision: 1,
     });
 
     const attention = resolveActivityPresentation({
@@ -128,9 +125,6 @@ describe("Live Activity presentation policy", () => {
 
   test("honors fixed scoped policy and explicit invocation overrides", () => {
     const policy = {
-      preset: "terminal" as const,
-      theme: "dark" as const,
-      symbol: "build" as const,
       colorStrategy: "fixed" as const,
       accentColor: "#63B3FF",
     };
@@ -141,12 +135,12 @@ describe("Live Activity presentation policy", () => {
       effective: { policy,source: "service" },
     });
     expect(inherited.stored).toMatchObject({
-      style: "terminal",symbol: "build",accentColor: "#63B3FF",
+      style: "standard",accentColor: "#63B3FF",
     });
     expect(inherited.stored.presentation).toMatchObject({
       components: [{ type: "progress_bar",value: 0.4 }],
     });
-    expect(inherited.stored.presentation.appearance.theme).toBe("dark");
+    expect(inherited.stored.presentation.appearance.theme).toBe("system");
 
     const explicit = resolveActivityPresentation({
       title: "Release",status: "Building",progress: 0.4,privacyMode: "standard",
@@ -337,7 +331,6 @@ describe("Live Activity presentation policy", () => {
       effective: {
         policy: {
           ...SYSTEM_PRESENTATION_POLICY,
-          preset: "terminal",
           colorStrategy: "fixed",
           accentColor: "#FF7A90",
         },
@@ -364,6 +357,50 @@ describe("Live Activity presentation policy", () => {
       accentColor: original.accentColor,
       status: "Working",
       progress: 0.5,
+    });
+  });
+
+  describe("computer icon and policy changes on open cards", () => {
+    const input = { title: "Export",status: "Running",progress: 0.4,context: { project: "Relo",threadName: "Export run" } };
+    const resolve = (policy: typeof SYSTEM_PRESENTATION_POLICY,computerIcon?: "server" | "cloud") =>
+      resolveActivityPresentation(input,{ principalId: "principal-1",effective: { policy,source: "client" },computerIcon });
+    const asRow = (stored: ReturnType<typeof resolve>["stored"]) => ({
+      title: stored.title,status: stored.status,detail: stored.detail,progress: stored.progress,symbol: stored.symbol,
+      style: stored.style,privacy: stored.privacy,accent_color: stored.accentColor,presentation: stored.presentation,
+      presentation_sha256: stored.presentationHash,
+    });
+
+    test("a computer icon becomes the project token icon; the thread keeps its own", () => {
+      const withIcon = resolve(SYSTEM_PRESENTATION_POLICY,"server").stored.presentation.identity;
+      expect(withIcon.project).toMatchObject({ label: "Relo",icon: "server",provenance: "generated" });
+      expect(withIcon.thread).toMatchObject({ icon: "thread" });
+      expect(resolve(SYSTEM_PRESENTATION_POLICY).stored.presentation.identity.project).toMatchObject({ icon: "project" });
+    });
+
+    test("color follows the strategy: per project, or one accent", () => {
+      const perProject = resolve(SYSTEM_PRESENTATION_POLICY).stored.presentation.identity.project!;
+      const fixed = resolve({ ...SYSTEM_PRESENTATION_POLICY,colorStrategy: "fixed",accentColor: "#112233" }).stored
+        .presentation.identity.project!;
+      expect(fixed.color).toBe("#112233");
+      expect(perProject.color).not.toBe("#112233");
+    });
+
+    test("an update that resolves the same project takes the policy's color and icon; an unscoped one does not", () => {
+      const original = resolve(SYSTEM_PRESENTATION_POLICY).stored;
+      const next = { ...SYSTEM_PRESENTATION_POLICY,colorStrategy: "fixed" as const,accentColor: "#112233" };
+      const followed = preserveActivePresentationPolicy(asRow(original),
+        { ...input },resolve(next,"cloud").stored);
+      expect(followed.presentation.identity.project).toMatchObject({
+        label: "Relo",color: "#112233",icon: "cloud",provenance: "generated" });
+      // Labels, the thread and the content stay as stored.
+      expect(followed.presentation.identity.thread).toEqual(original.presentation.identity.thread);
+      expect(followed.presentation.content.title).toBe("Export");
+
+      // An update without context resolves to the unscoped "Relo" identity: nothing is copied from it.
+      const unscoped = resolveActivityPresentation({ title: "Export",status: "Running",progress: 0.5 },
+        { principalId: "principal-1",effective: { policy: next,source: "client" },computerIcon: "cloud" }).stored;
+      const kept = preserveActivePresentationPolicy(asRow(original),{ status: "Running",progress: 0.5 },unscoped);
+      expect(kept.presentation.identity.project).toEqual(original.presentation.identity.project);
     });
   });
 });

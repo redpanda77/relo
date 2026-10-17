@@ -45,14 +45,17 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
         public var state: ProgressState?
         /// Plain text from the server, or the label opened from the sealed text.
         public var label: String?
+        /// A longer note on the step, from the server (readable works) or the sealed text.
+        public var detail: String?
 
-        public init(id: String, state: ProgressState? = nil, label: String? = nil) {
+        public init(id: String, state: ProgressState? = nil, label: String? = nil, detail: String? = nil) {
             self.id = id
             self.state = state
             self.label = label
+            self.detail = detail
         }
 
-        private enum CodingKeys: String, CodingKey { case id, state, label }
+        private enum CodingKeys: String, CodingKey { case id, state, label, detail }
 
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -61,34 +64,39 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
             // "Step n" is the server's stand-in for a sealed label, not a label.
             label = ReloWork.text(try? values.decodeIfPresent(String.self, forKey: .label))
                 .flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
+            detail = ReloWork.text((try? values.decodeIfPresent(String.self, forKey: .detail)) ?? nil)
         }
     }
 
     public struct Phase: Codable, Equatable, Hashable, Sendable, Identifiable {
         public let id: String
         public var title: String?
+        /// What a closed round delivered (a round is the phase `r<n>`).
+        public var outcome: String?
         public var state: ProgressState?
         public var startedAt: Date?
         public var endedAt: Date?
         public var steps: [Step]
 
-        public init(id: String, title: String? = nil, state: ProgressState? = nil, startedAt: Date? = nil,
-                    endedAt: Date? = nil, steps: [Step] = []) {
+        public init(id: String, title: String? = nil, outcome: String? = nil, state: ProgressState? = nil,
+                    startedAt: Date? = nil, endedAt: Date? = nil, steps: [Step] = []) {
             self.id = id
             self.title = title
+            self.outcome = outcome
             self.state = state
             self.startedAt = startedAt
             self.endedAt = endedAt
             self.steps = steps
         }
 
-        private enum CodingKeys: String, CodingKey { case id, title, state, startedAt, endedAt, finishedAt, completedAt, steps }
+        private enum CodingKeys: String, CodingKey { case id, title, outcome, state, startedAt, endedAt, finishedAt, completedAt, steps }
 
         public init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             id = try values.decode(String.self, forKey: .id)
             title = ReloWork.text(try? values.decodeIfPresent(String.self, forKey: .title))
                 .flatMap { ReloSealedCards.isPlaceholderPhase($0) ? nil : $0 }
+            outcome = ReloWork.text((try? values.decodeIfPresent(String.self, forKey: .outcome)) ?? nil)
             state = ProgressState(wire: try? values.decodeIfPresent(String.self, forKey: .state))
             startedAt = (try? values.decodeIfPresent(Date.self, forKey: .startedAt)) ?? nil
             endedAt = ((try? values.decodeIfPresent(Date.self, forKey: .endedAt)) ?? nil)
@@ -101,6 +109,7 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
             var values = encoder.container(keyedBy: CodingKeys.self)
             try values.encode(id, forKey: .id)
             try values.encodeIfPresent(title, forKey: .title)
+            try values.encodeIfPresent(outcome, forKey: .outcome)
             try values.encodeIfPresent(state?.rawValue, forKey: .state)
             try values.encodeIfPresent(startedAt, forKey: .startedAt)
             try values.encodeIfPresent(endedAt, forKey: .endedAt)
@@ -282,22 +291,34 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
     public func opening(_ text: ReloSealedCardText) -> ReloWork {
         var opened = self
         opened.title = text.title.flatMap { ReloSealedCards.isPlaceholderTitle($0) ? nil : ReloWork.text($0) } ?? title
+        // The update's own step (sealed text), for grouping updates by step; the server's frame wins when it sent one.
+        if let stepId = text.stepId, opened.phase?.stepId == nil {
+            var position = opened.phase ?? PhasePosition()
+            position.stepId = stepId
+            opened.phase = position
+        }
         let sealedPhases = text.phases ?? []
         if opened.phases.isEmpty {
             opened.phases = sealedPhases.map { phase in
-                Phase(id: phase.id, title: ReloWork.text(phase.title),
-                      steps: (phase.steps ?? []).map { Step(id: $0.id, label: ReloWork.text($0.label)) })
+                Phase(id: phase.id, title: ReloWork.text(phase.title), outcome: ReloWork.text(phase.outcome),
+                      steps: (phase.steps ?? []).map {
+                          Step(id: $0.id, label: ReloWork.text($0.label), detail: ReloWork.text($0.detail))
+                      })
             }
             return opened
         }
         let titles = Dictionary(sealedPhases.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        let outcomes = Dictionary(sealedPhases.map { ($0.id, $0.outcome) }, uniquingKeysWith: { first, _ in first })
         let labels = text.labelsByStepID
+        let details = text.detailsByStepID
         opened.phases = phases.map { phase in
             var phase = phase
             if let title = titles[phase.id].flatMap(ReloWork.text) { phase.title = title }
+            if let outcome = outcomes[phase.id].flatMap(ReloWork.text) { phase.outcome = outcome }
             phase.steps = phase.steps.map { step in
                 var step = step
                 if let label = labels[step.id] { step.label = label }
+                if let detail = details[step.id] { step.detail = detail }
                 return step
             }
             return phase
@@ -344,6 +365,7 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
         stripped.phases = phases.map { phase in
             var phase = phase
             phase.title = nil
+            phase.outcome = nil
             phase.steps = phase.steps.map { Step(id: $0.id, state: $0.state) }
             return phase
         }
@@ -357,16 +379,22 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
         guard let older else { return self }
         let titles = Dictionary(older.phases.compactMap { phase in phase.title.map { (phase.id, $0) } },
                                 uniquingKeysWith: { first, _ in first })
+        let outcomes = Dictionary(older.phases.compactMap { phase in phase.outcome.map { (phase.id, $0) } },
+                                  uniquingKeysWith: { first, _ in first })
         let labels = Dictionary(older.steps.compactMap { step in step.label.map { (step.id, $0) } },
                                 uniquingKeysWith: { first, _ in first })
+        let details = Dictionary(older.steps.compactMap { step in step.detail.map { (step.id, $0) } },
+                                 uniquingKeysWith: { first, _ in first })
         var merged = self
         merged.title = title ?? older.title
         merged.phases = phases.map { phase in
             var phase = phase
             phase.title = phase.title ?? titles[phase.id]
+            phase.outcome = phase.outcome ?? outcomes[phase.id]
             phase.steps = phase.steps.map { step in
                 var step = step
                 step.label = step.label ?? labels[step.id]
+                step.detail = step.detail ?? details[step.id]
                 return step
             }
             return phase

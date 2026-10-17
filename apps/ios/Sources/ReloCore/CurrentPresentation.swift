@@ -144,9 +144,4 @@ public struct CurrentInboxPresentation: Equatable, Sendable {
               state.snapshot.pending?.metadata?.nextExpiryAt.map({ $0 > now }) ?? true else { return .unverified }
         return .available
     }
-
-    public static func freshnessLabel(for subject: CurrentSubjectProjection, now: Date) -> String? {
-        if subject.freshness == .stale || subject.freshUntil.map({ $0 <= now }) == true { return "Out of date" }
-        return nil
-    }
 }

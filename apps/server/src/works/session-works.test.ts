@@ -4,6 +4,7 @@ import { createApp } from "../app.js";
 import { bootstrapOwner } from "../bootstrap.js";
 import { createDatabase,type Database } from "../db.js";
 import { migrate } from "../migrate.js";
+import { loadInboxSnapshot } from "../inbox/queries.js";
 
 const suite = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 suite("Session works: lifecycle, plan, isolation",() => {
@@ -89,6 +90,32 @@ suite("Session works: lifecycle, plan, isolation",() => {
     expect((await request("POST","/api/session/works",{ goal: { readable: "x" } },null)).body.error).toBe("session_key_required");
   });
 
+  test("admin finish: the owner ends a hanging work of any session; a session never can, a moving work is refused",async () => {
+    const paused = await start({ status: { readable: "Halfway" } });
+    await request("POST","/api/session/works/current/pause",{ status: { readable: "Parked for a test" } });
+    const finish = (id: string,session: string | null = null) =>
+      request("POST",`/api/works/${id}/finish`,{ result: "dropped",outcome: { readable: "Test card" } },session);
+    expect((await finish(paused.body.work.id,B)).status).toBe(403);
+    const listed = await request("GET","/api/works?state=live",undefined,null);
+    expect(listed.body.works.map((work: any) => [work.id,work.lifecycle])).toEqual([[paused.body.work.id,"paused"]]);
+    expect(listed.body.works[0].updatedAt).toEqual(expect.any(String));
+    const ended = await finish(paused.body.work.id);
+    expect(ended.status).toBe(200);
+    expect(ended.body.work).toMatchObject({ lifecycle: "dropped",outcome: "Test card" });
+    expect((await request("GET","/api/session/works")).body).toEqual({ open: null,parked: [] });
+    expect((await finish(paused.body.work.id)).body.error).toBe("work_finished");
+
+    const moving = await start({ goal: { readable: "Still building" },new: true },B);
+    const refused = await finish(moving.body.work.id);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe("work_running");
+    expect((await request("GET","/api/session/works",undefined,B)).body.open.id).toBe(moving.body.work.id);
+    // The hanging rule reads the derivation, which reads the declared clocks of the work and its card.
+    await db.query("UPDATE works SET declared_at=now() - interval '21 minutes',updated_at=now() - interval '21 minutes' WHERE id=$1",[moving.body.work.id.slice(4)]);
+    await db.query("UPDATE live_activities SET declared_at=now() - interval '21 minutes' WHERE work_id=$1",[moving.body.work.id.slice(4)]);
+    expect((await finish(moving.body.work.id)).body.work.lifecycle).toBe("dropped");
+  });
+
   test("cards are views of works: start, update, end",async () => {
     await db.query(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
       app_version,app_build,os_version,apns_environment,notification_authorization,live_activity_authorization,apns_token,
@@ -145,8 +172,8 @@ suite("Session works: lifecycle, plan, isolation",() => {
     const paused = { ...copy,ciphertext: "cGF1c2Vk" };
     await request("POST","/api/session/works/current/pause",{ status: { sealed: true },producerSealed: paused });
     expect((await request("GET",`/api/session/works/${sealed.body.work.id}`)).body.work.producerSealed).toEqual(paused);
-    // Owner reads and other sessions never see it.
-    expect(JSON.stringify((await request("GET","/api/works",undefined,null)).body)).not.toContain("producerSealed");
+    // Other sessions never see it; the owner's API key gets it opaquely (only the sealing computer can open it).
+    expect((await request("GET","/api/works",undefined,null)).body.works[0].producerSealed).toEqual(paused);
     expect((await request("GET",`/api/session/works/${sealed.body.work.id}`,undefined,B)).status).toBe(404);
   });
 
@@ -162,5 +189,23 @@ suite("Session works: lifecycle, plan, isolation",() => {
     const done = await request("POST",`/api/session/works/${id}/finish`,{ result: "finished",outcome: { readable: "Shipped" } });
     expect(done.body.work).toMatchObject({ status: null,outcome: "Shipped" });
     expect(done.body.work.plan.steps.map((step: any) => step.state)).toEqual(["done","done"]);
+  });
+
+  // The card carries an 8-step window of a long plan; History carries the whole plan for the detail page.
+  test("history items carry the work's whole plan",async () => {
+    // A paired phone, so the card is delivered and History has its events.
+    await db.query(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
+      app_version,app_build,os_version,apns_environment,notification_authorization,live_activity_authorization,apns_token,
+      live_activity_push_to_start_token) VALUES ($1,$2,$3,'Phone','com.example.relo.notifications','1','1','26','sandbox',
+      'authorized','authorized','fixture-alert','fixture-start')`,[principalId,randomUUID(),randomUUID()]);
+    const labels = Array.from({ length: 10 },(_,index) => ({ label: `Phase ${index + 1}` }));
+    const first = await start({ plan: { op: "set",steps: labels } });
+    expect(first.status).toBe(201);
+    const items = (await loadInboxSnapshot(db,{ principalId })).items.filter((item) => item.activity?.plan);
+    expect(items.length).toBeGreaterThan(0);
+    const plan = items[0]!.activity!.plan!;
+    expect(plan.map((step) => step.label)).toEqual(labels.map((step) => step.label));
+    expect(plan[0]).toMatchObject({ id: "s1",state: "current" });
+    expect(items[0]!.activity!.steps).toMatchObject({ done: 0,total: 10 });
   });
 });

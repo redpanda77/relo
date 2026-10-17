@@ -1,400 +1,415 @@
-import { Check, Send, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { AnimatePresence, LayoutGroup, LazyMotion, m } from "motion/react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react"
 
-import { fetchDashboardRoute } from "@/app/dashboard-route-loader"
-import { NowHud } from "@/components/organisms/now-hud"
-import { Empty, Page, Section } from "@/components/page"
-import { displayName } from "@/lib/encrypted"
-import { SIGNAL_CSS } from "@/lib/signal"
-import { NowAllClear, NowItemList, NowSection } from "@/features/inbox/now-all-clear"
-import { SessionsSection, type SessionWorkLink } from "@/features/inbox/sessions-section"
-import { FOLD_LABEL, nowBlocks, nowCounts, overviewNow, type NowItem } from "@/features/inbox/now-model"
-import { useNowRefresh } from "@/features/inbox/use-now-refresh"
-import { ActivityCardRow } from "@/features/inbox/activity-card"
-import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
-import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
+import { Fold } from "@/components/molecules/fold"
+import { NowDeck } from "@/components/organisms/now-deck"
+import { PageTitle, SplitPage } from "@/components/page"
 import {
   agentSecondsToday,
   agentTimeLabel,
   cardFor,
-  daySummary,
-  groupByDay,
-  nowMetrics,
   nowMix,
   nowSentence,
   todayActivity,
 } from "@/features/inbox/activity-model"
-import { navigateDashboard } from "@/state/use-dashboard-route"
-import { Button } from "@/components/ui/button"
+import { useDetailPanel } from "@/features/inbox/detail-panel"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetTitle,
-} from "@/components/ui/sheet"
-import { InboxPager } from "@/features/inbox/components"
-import { NotificationDetailBody } from "@/features/inbox/notification-detail"
+  ActivityStrip,
+  NowAllClear,
+  NowItemList,
+  NowSection,
+} from "@/features/inbox/now-all-clear"
+import { ConnectionRequests } from "@/features/inbox/now-approvals"
+import { NowStageContext, type NowStage } from "@/features/inbox/now-context"
 import {
-  notificationContext,
-  notificationProject,
-  notificationProjectOptions,
-} from "@/features/inbox/notification-project"
-import type {
-  InboxOverview,
-  NotificationDetail,
-  NotificationHistory,
-} from "@/features/inbox/types"
-import { formatDashboardDate } from "@/features/inbox/utils"
+  catchUpEvents,
+  nowArcs,
+  nowEvents,
+  nowItemsById,
+  nowPlaces,
+  type NowEventBatch,
+} from "@/features/inbox/now-events"
+import {
+  FOLD_LABEL,
+  nowBlocks,
+  nowCounts,
+  overviewNow,
+  withoutUnreadable,
+  type NowBlock,
+  type NowItem,
+} from "@/features/inbox/now-model"
+import { notificationContext } from "@/features/inbox/notification-project"
+import {
+  SessionsSection,
+  type SessionWorkLink,
+} from "@/features/inbox/sessions-section"
+import type { InboxOverview } from "@/features/inbox/types"
+import { useNowRefresh } from "@/features/inbox/use-now-refresh"
+import { ConnectEntry } from "@/features/onboarding/connect-entry"
+import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
+import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
+import { DUR, EASE_IN, EASE_OUT, SPRING, loadMotionFeatures } from "@/lib/motion"
+import { orbMotion } from "@/lib/orb-theme"
+import { displayNameOrNull } from "@/lib/encrypted"
+import { isBrowserLinked, isSealedOpening, subscribeBrowserLinked, subscribeSealedOpening } from "@/lib/sealed-opening"
+import { SIGNAL_CSS } from "@/lib/signal"
+import type { WorkTone } from "@/lib/work-outcome"
+import { SpectrumBar } from "@/components/molecules/spectrum-bar"
 import type { InboxService } from "@/services/inbox-service"
 import { useInboxAction } from "@/state/use-inbox-action"
 
-type Panel =
-  | { state: "closed" }
-  | { state: "loading"; context: string }
-  | { state: "ready"; context: string; detail: NotificationDetail }
-  | { state: "failed"; context: string; href: string }
+/** A block's wrapper: present blocks fade in after the first paint, leave fast, and the rest close the gap. */
+const BLOCK_IN = { opacity: 1, transition: { duration: DUR.base, ease: EASE_OUT } }
+const BLOCK_OUT = { opacity: 0, transition: { duration: DUR.fast, ease: EASE_IN } }
+const BLOCK_TRANSITION = { layout: SPRING }
 
-function detailHref(id: string) {
-  return `/dashboard/inbox/notifications/${encodeURIComponent(id)}`
+type ShownBlock = NowBlock | { kind: "connections" }
+
+/** How long a newly-needs-you card keeps its announce ring (one 700 ms ring, then the attribute goes). */
+const ANNOUNCE_MS = 800
+
+/**
+ * Now's layout by the page's own width (the `split-page` container, so the sidebar counts):
+ * - stacked (under 1100px): a compact deck above the work, Sessions after the folds, Today last;
+ * - split (1100px+): the deck is a 360px column beside the work and carries today's strip;
+ * - wide (1400px+): Sessions moves to a 320px rail on the right.
+ * The breakpoints match now.css. Measured before paint, so the first frame is already right.
+ */
+export type NowLayout = "stacked" | "split" | "wide"
+const SPLIT_AT = 1100
+const RAIL_AT = 1400
+
+function layoutFor(width: number): NowLayout {
+  return width >= RAIL_AT ? "wide" : width >= SPLIT_AT ? "split" : "stacked"
 }
 
+/** Phone width: Since you looked shows one row (and "Show n more"), so the first live card is on screen. */
+const PHONE_BELOW = 640
+
+function useNowLayout(probe: RefObject<HTMLElement | null>): { layout: NowLayout; phone: boolean } {
+  const [layout, setLayout] = useState<{ layout: NowLayout; phone: boolean }>({ layout: "stacked", phone: false })
+  useLayoutEffect(() => {
+    const page = probe.current?.closest<HTMLElement>(".split-page")
+    if (!page) return
+    const measure = () => {
+      const width = page.getBoundingClientRect().width
+      const next = { layout: layoutFor(width), phone: width > 0 && width < PHONE_BELOW }
+      setLayout((current) => (current.layout === next.layout && current.phone === next.phone ? current : next))
+    }
+    measure()
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(page)
+    return () => observer.disconnect()
+  }, [probe])
+  return layout
+}
+
+/** Since you looked: the server's line, then up to three rows and "Show n more" under them. */
+function SinceYouLooked({
+  block,
+  onOpen,
+  phone,
+}: {
+  block: Extract<NowBlock, { kind: "sinceYouLooked" }>
+  onOpen: (item: NowItem) => void
+  /** On a phone one row shows, so the first live card is above the fold. */
+  phone: boolean
+}) {
+  const [all, setAll] = useState(false)
+  const every = [...block.recent, ...block.more]
+  const cap = phone ? 1 : block.recent.length
+  const items = all ? every : every.slice(0, cap)
+  const hidden = every.length - items.length
+  return (
+    <section aria-label="Since you looked" className="space-y-3" data-now-block="since-you-looked">
+      <p className={block.muted ? "text-sm text-pretty text-muted-foreground" : "text-sm font-medium text-pretty text-foreground"}>
+        {block.text}
+      </p>
+      {items.length ? <NowItemList variant="rows" label="Since you looked" items={items} onOpen={onOpen} /> : null}
+      {every.length > cap ? (
+        <button type="button" className="now-more" aria-expanded={all} onClick={() => setAll((value) => !value)}>
+          {all ? "Show fewer" : `Show ${hidden} more`}
+        </button>
+      ) : null}
+    </section>
+  )
+}
+
+/** Now: the living deck beside the live work (the iPhone's landscape layout), from the server's summary. */
 export function InboxView({
   overview,
-  history,
   service,
   onApprovalSuccess,
 }: {
-  overview?: InboxOverview
-  history?: NotificationHistory
+  overview: InboxOverview
   service: InboxService
   onApprovalSuccess?: () => void
 }) {
   const actions = useInboxAction(service, onApprovalSuccess)
-  const [project, setProject] = useState("")
-  const [panel, setPanel] = useState<Panel>({ state: "closed" })
-  const notifications = history?.notifications ?? overview?.recentNotifications ?? []
-  // History filters on the server across every page; the recent list filters what it shows.
-  const shown = history || !project
-    ? notifications
-    : notifications.filter((item) => notificationProject(item).key === project)
-  const projectOptions = history
-    ? history.filterOptions.projects.map((name) => ({ key: name, name: displayName(name) }))
-    : notificationProjectOptions(notifications)
-  const selectedProject = history ? (history.route.filters.project ?? "") : project
-  const chooseProject = (value: string) => {
-    if (!history) return setProject(value)
-    const query = new URLSearchParams()
-    if (value) query.set("project", value)
-    if (history.route.filters.kind) query.set("kind", history.route.filters.kind)
-    if (history.route.filters.state) query.set("state", history.route.filters.state)
-    const search = query.toString()
-    navigateDashboard(`/dashboard/inbox/notifications${search ? `?${search}` : ""}`)
-  }
+  const { open, sheet } = useDetailPanel(service)
+  const notifications = overview.recentNotifications
+  const probe = useRef<HTMLDivElement>(null)
+  const { layout, phone } = useNowLayout(probe)
 
-  const open = async (id: string, context: string) => {
-    setPanel({ state: "loading", context })
-    try {
-      const route = await fetchDashboardRoute(detailHref(id))
-      if (route.kind === "dashboard" && route.bootstrap.kind === "notification-detail") {
-        setPanel({ state: "ready", context, detail: route.bootstrap })
-      } else {
-        setPanel({ state: "failed", context, href: detailHref(id) })
-      }
-    } catch {
-      setPanel({ state: "failed", context, href: detailHref(id) })
-    }
-  }
-
-  // History display only (Today strip, Activity list): the page-load instant formats dates.
+  // Display only (Today strip, agent time): the page-load instant formats dates.
   const [now] = useState(() => Date.now())
-  const allCards = shown.map((notification) => ({ notification, card: cardFor(notification, now) }))
+  // A linked browser hides what it still cannot open once opening settles: it was sealed before the
+  // link and only the iPhone reads it (now-model `withoutUnreadable`).
+  const linked = useSyncExternalStore(subscribeBrowserLinked, isBrowserLinked, () => false)
+  const opening = useSyncExternalStore(subscribeSealedOpening, isSealedOpening, () => false)
+  const hideUnreadable = linked && !opening
+  const allCards = notifications
+    .map((notification) => ({
+      notification,
+      card: cardFor(notification, now),
+    }))
+    .filter(({ card }) => !(hideUnreadable && card.encrypted))
   // Now is the server's: sections, folds and counts come from its summary, refetched every 60 s.
   const initialNow = useMemo(() => overviewNow(overview), [overview])
-  const { summary, offline } = useNowRefresh(overview?.shell.account.id, initialNow)
-  const blocks = summary ? nowBlocks(summary, { offline }) : []
-  const openItem = (item: NowItem) => void open(item.notificationId ?? item.id, [item.sourceName, item.project].filter(Boolean).join(" · "))
-  const nowIds = new Set(
-    summary ? [...summary.needsYou, ...summary.running, ...summary.waitingOnYou, ...summary.quiet, ...summary.paused].map((item) => item.id) : []
+  const refreshed = useNowRefresh(overview.shell.account.id, initialNow)
+  const { offline, syncing } = refreshed
+  const summary = useMemo(
+    () => (refreshed.summary && hideUnreadable ? withoutUnreadable(refreshed.summary) : refreshed.summary),
+    [refreshed.summary, hideUnreadable]
   )
-  const cards = allCards.filter(({ card }) => !nowIds.has(card.id))
-  const approvals = overview?.approvalRequests ?? []
-  const needsYou = (summary?.needsYou.length ?? 0) + approvals.length
-  const running = summary?.running.length ?? 0
-  // Done is the server's "finished since you looked", not a count of the notification page's cards
-  // (finished work is not a notification row, so counting cards showed DONE 0 beside "2 finished").
-  const cardMetrics = nowMetrics({ cards: allCards.map(({ card }) => card), running, needsYou })
-  const metrics = summary ? { ...cardMetrics, done: nowCounts(summary).done } : cardMetrics
-  const mix = nowMix({ cards: allCards.map(({ card }) => card), running, needsYou, now: new Date(now) })
-  const agentSeconds = agentSecondsToday(allCards.map(({ card }) => card), new Date(now))
-  const works = new Map<string, SessionWorkLink>(
-    summary
-      ? [...summary.needsYou, ...summary.waitingOnYou, ...summary.running].map((item) => [item.id, { title: item.title, open: () => openItem(item) }])
-      : []
-  )
-  const agentTime = agentSeconds > 0 ? agentTimeLabel(agentSeconds) : null
 
-  const filters = history?.route.filters
-  const chooseFilter = (name: "kind" | "state", value: string) => {
-    if (!history || !filters) return
-    const query = new URLSearchParams()
-    if (filters.project) query.set("project", filters.project)
-    const next = { kind: filters.kind, state: filters.state, [name]: value || null }
-    if (next.kind) query.set("kind", next.kind)
-    if (next.state) query.set("state", next.state)
-    const search = query.toString()
-    navigateDashboard(`/dashboard/inbox/notifications${search ? `?${search}` : ""}`)
+  // Moments between the previous summary and this one (a comet, a ring), never state. The first
+  // summary has no previous one, so the first paint fires nothing. Adjusted while rendering.
+  const [moments, setMoments] = useState<{ summary: typeof summary; batch: NowEventBatch }>(() => ({
+    summary,
+    batch: { key: 0, events: [] },
+  }))
+  if (moments.summary !== summary) {
+    setMoments({
+      summary,
+      batch: { key: moments.batch.key + 1, events: nowEvents(moments.summary, summary) },
+    })
+  }
+  const batch = moments.batch
+  // The page-open catch-up (what happened since the owner looked), from the first summary only.
+  const [catchUp] = useState(() => catchUpEvents(summary))
+  const [announceSpent, setAnnounceSpent] = useState(0)
+  useEffect(() => {
+    if (!batch.events.some((event) => event.kind === "needsYou")) return
+    const timer = window.setTimeout(() => setAnnounceSpent(batch.key), ANNOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [batch])
+  const announce = useMemo(
+    () =>
+      new Set(
+        announceSpent === batch.key
+          ? []
+          : batch.events.filter((event) => event.kind === "needsYou").map((event) => event.id)
+      ),
+    [batch, announceSpent]
+  )
+
+  // Ready after the first paint: what mounts later animates in, the first paint stays still.
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setReady(true))
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
+
+  // Which folds are open, read when a card leaves (into a closed fold it drops toward the summary).
+  const foldsOpen = useRef<Record<string, boolean>>({})
+  const isFoldOpen = useCallback((fold: string) => foldsOpen.current[fold] ?? false, [])
+  const onFold = useCallback((fold: string, value: boolean) => {
+    foldsOpen.current[fold] = value
+  }, [])
+  // The tone each card last showed (display only): a card moved between lists crossfades from it.
+  const [tones] = useState(() => new Map<string, WorkTone>())
+
+  // The item whose detail is open keeps a ring while its sheet is.
+  const [openedId, setOpenedId] = useState<string | null>(null)
+  const sheetOpen = Boolean((sheet.props as { open?: boolean }).open)
+  // Not memoized: Now re-renders only on a refresh or the sheet (lists no longer tick), and the
+  // cards' memo then re-renders them once.
+  const openItem = (item: NowItem) => {
+    setOpenedId(item.id)
+    void open(
+      item.notificationId ?? item.id,
+      [item.sourceName, item.project].filter(Boolean).join(" · ")
+    )
   }
 
-  const activityList = cards.length ? (
-    <ul aria-label="Activity" className="space-y-2.5">
-      {groupByDay(cards.map(({ card }) => card)).flatMap((group) => {
-        const byId = new Map(cards.map(({ notification, card }) => [card.id, notification]))
-        return [
-          <li key={`day-${group.key}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-4 first:pt-0">
-            <h3 className="text-sm font-medium text-foreground">{group.label}</h3>
-            <span className="micro">{daySummary(group.cards)}</span>
-          </li>,
-          ...group.cards.map((card) => {
-            const notification = byId.get(card.id)!
-            return (
-              <ActivityCardRow
-                key={card.id}
-                card={card}
-                now={now}
-                onOpen={() => void open(card.id, notificationContext(notification))}
-              />
-            )
-          }),
-        ]
-      })}
-    </ul>
-  ) : (
-    <Empty title="Nothing yet" description="Notifications from your CLI, agents, and webhooks appear here." />
+  const items = useMemo(() => nowItemsById(summary), [summary])
+  const places = useMemo(() => nowPlaces(summary), [summary])
+  const openId = sheetOpen ? openedId : null
+  const sessionByWork = useMemo(
+    () => new Map((summary?.sessions.sessions ?? []).flatMap((row) => (row.workId ? [[row.workId, { id: row.id, computer: displayNameOrNull(row.computer) }] as const] : []))),
+    [summary]
+  )
+  const stage = useMemo<NowStage>(
+    () => ({ ready, items, places, isFoldOpen, announce, openId, tones, offline, sessionByWork }),
+    [ready, items, places, isFoldOpen, announce, openId, tones, offline, sessionByWork]
   )
 
-  const projectSelect =
-    projectOptions.length > 1 ? (
-      <select
-        aria-label="Project"
-        value={selectedProject}
-        data-active={selectedProject ? "true" : undefined}
-        onChange={(event) => chooseProject(event.target.value)}
-        className="pill"
-      >
-        <option value="">All projects</option>
-        {projectOptions.map((option) => (
-          <option key={option.key} value={option.key}>{option.name}</option>
-        ))}
-      </select>
-    ) : null
+  // When the server derived the Now on screen: the page load, then each refetch.
+  const syncedAt = summary ? Date.parse(summary.serverTime) : undefined
+  const blocks = summary ? nowBlocks(summary, { offline }) : []
+  const approvals = overview.approvalRequests ?? []
+  // The deck's readouts are the server's live counts (plus connection requests, which need you too).
+  const counts = summary ? nowCounts(summary) : { needsYou: 0, running: 0, sessionsWorking: 0, waitingOnYou: 0 }
+  const needsYou = counts.needsYou + approvals.length
+  // The core's steady motion and arcs: from the server's summary only, never a client clock.
+  const motion = useMemo(() => orbMotion(summary, offline, approvals.length), [summary, offline, approvals.length])
+  const arcs = useMemo(() => nowArcs(summary), [summary])
+  const cards = allCards.map(({ card }) => card)
+  // Today is one set of rows: the Today caption, the strip's key and the deck's Today count.
+  const activity = todayActivity(cards, new Date(now))
+  const mix = nowMix({ cards, running: counts.running, needsYou, now: new Date(now) })
+  const agentSeconds = agentSecondsToday(cards, new Date(now))
+  const agentTime = agentSeconds > 0 ? agentTimeLabel(agentSeconds) : null
+  const works = new Map<string, SessionWorkLink>(
+    summary
+      ? [...summary.needsYou, ...summary.waitingOnYou, ...summary.running].map(
+          (item) => [item.id, { title: item.title, open: () => openItem(item) }]
+        )
+      : []
+  )
+  const split = layout !== "stacked"
+  const sessionsBlock = blocks.find((block) => block.kind === "sessions")
 
-  const kinds = [
-    ["", "All"],
-    ["live_activity", "Live Activities"],
-    ["approval", "Approvals"],
-    ["question", "Questions"],
-    ["notification", "Messages"],
-  ] as const
-  const filtered = Boolean(filters?.kind || filters?.state || filters?.project)
+  // "Needs you" renders in one place: the server's block, or (connection requests only) the same
+  // first slot, so it never remounts when work joins the requests. Sessions sit in
+  // the rail on wide pages.
+  const shown: ShownBlock[] = blocks.filter(
+    (block) =>
+      block.kind !== "allClear" &&
+      !(layout === "wide" && block.kind === "sessions") &&
+      // "Nothing new" is absence, which Now already shows by being quiet: no line, no gap.
+      !(block.kind === "sinceYouLooked" && block.muted && !block.recent.length && !block.more.length)
+  )
+  if (approvals.length && !blocks.some((block) => block.kind === "needsYou")) {
+    shown.unshift({ kind: "connections" })
+  }
 
-  const historyFilters = history ? (
-    <div className="flex w-full flex-col gap-2.5">
-      <div role="group" aria-label="Kind" className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
-        {kinds.map(([value, label]) => (
-          <button
-            key={value || "all"}
-            type="button"
-            className="pill"
-            aria-pressed={(filters?.kind ?? "") === value}
-            onClick={() => chooseFilter("kind", value)}
+  const needsYouSection = (
+    <NowSection title="Needs you" count={needsYou} color={SIGNAL_CSS.needsYou}>
+      {summary?.needsYou.length ? (
+        <NowItemList label="Needs you" items={summary.needsYou} onOpen={openItem} />
+      ) : null}
+      {approvals.length ? <ConnectionRequests approvals={approvals} actions={actions} /> : null}
+    </NowSection>
+  )
+
+  const renderBlock = (block: ShownBlock) => {
+    switch (block.kind) {
+      case "sinceYouLooked":
+        return <SinceYouLooked block={block} onOpen={openItem} phone={phone} />
+      case "needsYou":
+      case "connections":
+        return needsYouSection
+      case "waitingOnYou":
+        return (
+          <NowSection title="Waiting on you" count={block.items.length} color={SIGNAL_CSS.attention}>
+            <NowItemList label="Waiting on you" items={block.items} onOpen={openItem} />
+          </NowSection>
+        )
+      case "fold":
+        return (
+          <Fold
+            name={block.fold}
+            label={FOLD_LABEL[block.fold]}
+            count={block.count}
+            className="now-fold"
+            onOpenChange={(value) => onFold(block.fold, value)}
           >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {projectSelect}
-        <select
-          aria-label="State"
-          value={filters?.state ?? ""}
-          data-active={filters?.state ? "true" : undefined}
-          onChange={(event) => chooseFilter("state", event.target.value)}
-          className="pill"
-        >
-          <option value="">Any state</option>
-          <option value="active">Running</option>
-          <option value="ended">Ended</option>
-          <option value="responded">Answered</option>
-          <option value="expired">Expired</option>
-          <option value="recorded">Recorded</option>
-          <option value="canceled">Canceled</option>
-          <option value="replaced">Replaced</option>
-        </select>
-        {filtered ? (
-          <a href="/dashboard/inbox/notifications" className="pill" aria-label="Clear filters">
-            <X className="size-3.5" aria-hidden="true" />
-            Clear
-          </a>
-        ) : null}
-      </div>
-    </div>
-  ) : (
-    projectSelect
-  )
+            <NowItemList variant="rows" label={FOLD_LABEL[block.fold]} items={block.items} onOpen={openItem} />
+          </Fold>
+        )
+      case "running":
+        return (
+          <NowSection title={block.title} count={block.items.length} color={SIGNAL_CSS.running} className="now-running">
+            <NowItemList label={block.title} items={block.items} onOpen={openItem} />
+          </NowSection>
+        )
+      case "sessions":
+        return <SessionsSection sessions={block.sessions} works={works} />
+      case "allClear":
+        return null
+    }
+  }
+  const blockKey = (block: ShownBlock) =>
+    block.kind === "fold" ? block.fold : block.kind === "connections" ? "needsYou" : block.kind
 
-  const needsYouSection = overview && needsYou > 0 ? (
-        <NowSection title="Needs you" count={needsYou} color={SIGNAL_CSS.needsYou}>
-          {summary?.needsYou.length ? <NowItemList label="Needs you" items={summary.needsYou} onOpen={openItem} /> : null}
-          {approvals.length ? (
-          <ul aria-label="Connection requests" className="space-y-2.5">
-            {approvals.map((request) => {
-              const pending = actions.pendingCodes.has(request.userCode)
-              const error = actions.errorFor(request.userCode)
-              return (
-                <li key={request.userCode}>
-                  <div className="holo-card tone-orange p-4" data-live="true">
-                    <span className="micro" style={{ color: SIGNAL_CSS.needsYou }}>Connection request</span>
-                    <h3 className="mt-2 text-[15px] font-medium text-foreground">{`Connect ${request.clientName}`}</h3>
-                    <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
-                      {`Code ${request.userCode} · ${request.requestedScopes.join(", ") || "no permissions"} · access until ${formatDashboardDate(request.credentialExpiresAt)}`}
-                    </p>
-                    <div className="mt-3 flex flex-wrap justify-end gap-2">
-                      <Button size="sm" variant="ghost" className="min-h-11 sm:min-h-8" data-action="deny-approval" data-code={request.userCode}
-                        disabled={pending} onClick={() => void actions.decide(request.userCode, "deny")}>
-                        <X aria-hidden="true" /> Deny
-                      </Button>
-                      <Button size="sm" className="min-h-11 sm:min-h-8" data-action="approve-approval" data-code={request.userCode}
-                        disabled={pending} onClick={() => void actions.decide(request.userCode, "approve")}>
-                        <Check aria-hidden="true" /> Approve
-                      </Button>
-                    </div>
-                    {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-          ) : null}
-        </NowSection>
-      ) : null
+  const spectrum = Object.keys(mix).length ? <SpectrumBar mix={mix} /> : null
 
   return (
-    <Page
-      title={history ? "History" : "Now"}
-      eyebrow={history ? "Every notification and Live Activity, newest first." : undefined}
-      actions={history ? <a href="/dashboard/inbox/delivery" className="pill"><Send className="size-3.5" aria-hidden="true" />Delivery log</a> : undefined}
-    >
-      {overview ? (
-        <NowHud
-          today={metrics.today}
-          done={metrics.done}
-          running={metrics.running}
-          needsYou={metrics.needsYou}
-          arcs={(summary?.running ?? []).map((item) => ({
-            progress: item.steps ? item.steps.done / item.steps.total : null,
-          }))}
-          sentence={nowSentence(metrics)}
+    <SplitPage
+      aside={
+        <NowDeck
+          heading={<PageTitle title="Now" />}
+          today={activity.rows.length}
+          sessions={counts.sessionsWorking}
+          waiting={counts.waitingOnYou}
+          running={counts.running}
+          needsYou={needsYou}
+          motion={motion}
+          arcs={arcs}
+          events={batch}
+          catchUp={catchUp}
+          sentence={nowSentence({ running: counts.running, needsYou, today: activity.rows.length })}
           mix={mix}
           agentTime={agentTime}
-          syncing={offline}
+          syncedAt={syncedAt}
+          syncing={syncing}
+          offline={offline}
+          layout={split ? "split" : "stacked"}
+          todayStrip={split && activity.rows.length ? <ActivityStrip activity={activity} /> : null}
         />
-      ) : null}
-
-      {overview ? <PendingDevicesNotice /> : null}
-
-      {overview ? <LinkBrowserBanner accountId={overview.shell.account.id} /> : null}
-
-      {/* Connection requests need the owner even when no work does. */}
-      {!blocks.some((block) => block.kind === "needsYou") ? needsYouSection : null}
-
-      {blocks.map((block) => {
-        switch (block.kind) {
-          case "sinceYouLooked":
-            return (
-              <section key="since" aria-label="Since you looked" className="space-y-3" data-now-block="since-you-looked">
-                <p className={block.muted ? "text-sm text-muted-foreground" : "text-sm font-medium text-foreground"}>{block.text}</p>
-                {block.recent.length ? <NowItemList label="Since you looked" items={block.recent} onOpen={openItem} /> : null}
-                {block.more.length ? (
-                  <details data-fold="recent">
-                    <summary className="micro cursor-pointer select-none">{`Show ${block.more.length} more`}</summary>
-                    <div className="mt-2.5"><NowItemList label="More since you looked" items={block.more} onOpen={openItem} /></div>
-                  </details>
-                ) : null}
-              </section>
-            )
-          case "needsYou":
-            return <div key="needs-you">{needsYouSection}</div>
-          case "fold":
-            return (
-              <details key={block.fold} data-fold={block.fold} className="space-y-2.5">
-                <summary
-                  className="micro cursor-pointer select-none font-semibold"
-                  style={{ color: block.fold === "waitingOnYou" ? SIGNAL_CSS.attention : undefined }}
+      }
+    >
+      <PendingDevicesNotice />
+      <ConnectEntry />
+      <LinkBrowserBanner accountId={overview.shell.account.id} />
+      <NowStageContext.Provider value={stage}>
+        {/* One layout group: an item the server moves between sections travels there. Blocks are
+            the page stack's own children: each fades in when it appears after the first paint,
+            fades out fast when it goes (keeping its last items while it does), and the blocks
+            around it close the gap on the spring. */}
+        <LayoutGroup>
+          <LazyMotion features={loadMotionFeatures} strict>
+            <AnimatePresence initial={false}>
+              {shown.map((block) => (
+                <m.div
+                  key={blockKey(block)}
+                  layout="position"
+                  className="now-block"
+                  data-now-slot={block.kind === "connections" ? "needsYou" : block.kind}
+                  initial={{ opacity: 0 }}
+                  animate={BLOCK_IN}
+                  exit={BLOCK_OUT}
+                  transition={BLOCK_TRANSITION}
                 >
-                  {`${FOLD_LABEL[block.fold]} (${block.count})`}
-                </summary>
-                <div className="mt-2.5"><NowItemList label={FOLD_LABEL[block.fold]} items={block.items} onOpen={openItem} /></div>
-              </details>
-            )
-          case "running":
-            return (
-              <NowSection key="running" title={block.title} count={block.items.length} color={SIGNAL_CSS.running}>
-                <NowItemList label={block.title} items={block.items} onOpen={openItem} />
-              </NowSection>
-            )
-          case "sessions":
-            return <SessionsSection key="sessions" sessions={block.sessions} works={works} />
-          case "allClear":
-            return null
-        }
-      })}
-
-      {overview ? (
+                  {renderBlock(block)}
+                </m.div>
+              ))}
+            </AnimatePresence>
+          </LazyMotion>
+        </LayoutGroup>
         <NowAllClear
           allClear={blocks.some((block) => block.kind === "allClear") && approvals.length === 0}
-          activity={todayActivity(allCards.map(({ card }) => card), new Date(now))}
+          activity={activity}
+          strip={!split}
+          instruments={split ? null : { agentTime, spectrum }}
           onOpen={(id) => {
             const found = notifications.find((item) => item.id === id)
             void open(id, found ? notificationContext(found) : "")
           }}
         />
-      ) : null}
-
-      <Section title="Activity" action={historyFilters}>
-        {activityList}
-        {history ? (
-          <InboxPager value={history.pagination} />
-        ) : overview && overview.summary.notifications > notifications.length ? (
-          <div className="mt-4 text-center">
-            <Button asChild variant="ghost" size="sm">
-              <a href="/dashboard/inbox/notifications?page=2">Show older</a>
-            </Button>
-          </div>
+        {layout === "wide" && sessionsBlock?.kind === "sessions" ? (
+          <aside className="now-rail" aria-label="Sessions">
+            <div className="now-rail-inner">
+              <SessionsSection sessions={sessionsBlock.sessions} works={works} />
+            </div>
+          </aside>
         ) : null}
-      </Section>
-
-      <Sheet open={panel.state !== "closed"} onOpenChange={(value) => { if (!value) setPanel({ state: "closed" }) }}>
-        <SheetContent side="right" className="w-full gap-0 overflow-y-auto border-l p-0 outline-none sm:max-w-lg">
-          {panel.state === "ready" ? (
-            <NotificationDetailBody
-              variant="panel"
-              detail={panel.detail}
-              context={panel.context}
-              service={service}
-              heading={(title) => <SheetTitle className="pr-8 text-xl font-semibold tracking-tight">{title}</SheetTitle>}
-            />
-          ) : (
-            <>
-              <SheetTitle className="sr-only">Notification</SheetTitle>
-              <SheetDescription className="px-6 pt-16 text-center">
-                {panel.state === "failed" ? (
-                  <>Couldn't load this notification. <a className="underline" href={panel.href}>Open it in full</a>.</>
-                ) : "Loading…"}
-              </SheetDescription>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
-    </Page>
+      </NowStageContext.Provider>
+      <div ref={probe} className="now-probe" hidden />
+      {sheet}
+    </SplitPage>
   )
 }

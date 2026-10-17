@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR,
+  type ComputerIcon,
   liveActivityPresentationPolicySchema,
   type LiveActivityPresentation,
   type LiveActivityPresentationPolicy,
+  type PlanProgressWire,
 } from "@relo/notification-contracts";
 import {
   canonicalPresentation,
@@ -22,10 +24,7 @@ export type EffectivePresentationPolicy<Source extends "client" | "service" = "c
 
 export const SYSTEM_PRESENTATION_POLICY: LiveActivityPresentationPolicy =
   liveActivityPresentationPolicySchema.parse({
-    preset: "automatic",
-    theme: "system",
-    symbol: "automatic",
-    colorStrategy: "thread",
+    colorStrategy: "project",
     accentColor: LIVE_ACTIVITY_DEFAULT_ACCENT_COLOR,
   });
 
@@ -72,12 +71,12 @@ type ActivityPresentationInput = {
   detail?: string | null | undefined;
   progress?: number | null | undefined;
   progressLabel?: string | null | undefined;
-  steps?: { labels: string[];current: number } | undefined;
+  steps?: { labels: string[];current: number;before?: number | undefined;after?: number | undefined;plan?: PlanProgressWire | undefined } | undefined;
   symbol?: "terminal" | "code" | "build" | "success" | "warning" | undefined;
   style?: "standard" | "ring" | "hero" | "terminal" | "steps" | undefined;
   privacy?: "standard" | "private" | undefined;
-  preset?: LiveActivityPresentationPolicy["preset"] | undefined;
-  theme?: LiveActivityPresentationPolicy["theme"] | undefined;
+  preset?: "automatic" | "standard" | "terminal" | "steps" | undefined;
+  theme?: "system" | "light" | "dark" | undefined;
   accentColor?: string | undefined;
   key?: string | undefined;
   context?: {
@@ -189,6 +188,7 @@ function generatedPresentationIdentity(
   input: ActivityPresentationInput,
   presentation: LiveActivityPresentation,
   policy: LiveActivityPresentationPolicy,
+  computerIcon: ComputerIcon | undefined,
 ): LiveActivityPresentation["identity"] {
   // Colors key on the stable identity; labels show the human name and always fit the contract.
   const projectKey = input.origin?.project ?? input.context?.project;
@@ -218,7 +218,7 @@ function generatedPresentationIdentity(
     project: ownerProject ?? {
       label: projectLabel,
       color: policy.colorStrategy === "fixed" ? policy.accentColor : accentPalette[projectIndex]!,
-      icon: "project",
+      icon: computerIcon ?? "project",
       revision: 1,provenance: "generated",
     },
     thread: threadLabel === undefined ? null : ownerThread ?? {
@@ -259,25 +259,18 @@ function semanticStyle(input: ActivityPresentationInput): "standard" | "hero" | 
 
 function resolvedStyle(input: ActivityPresentationInput,policy: LiveActivityPresentationPolicy): "standard" | "ring" | "hero" | "terminal" | "steps" {
   if (input.style) return input.style;
-  const preset = input.preset && input.preset !== "automatic" ? input.preset : policy.preset;
-  if (preset === "terminal" || preset === "steps") return preset;
-  if (preset === "standard") return "standard";
+  if (input.preset && input.preset !== "automatic") return input.preset;
   return semanticStyle(input);
 }
 
 function resolvedAccent(input: ActivityPresentationInput,policy: LiveActivityPresentationPolicy,principalId: string): string {
   if (input.accentColor) return input.accentColor;
   if (policy.colorStrategy === "fixed") return policy.accentColor;
-  const key = policy.colorStrategy === "project"
-    ? input.origin?.project ?? input.context?.project
-    : input.origin?.thread ?? input.lifecycle?.runId ?? input.key
-      ?? input.context?.taskTitle ?? input.context?.project;
-  return stableAccent(principalId,key);
+  return stableAccent(principalId,input.origin?.project ?? input.context?.project);
 }
 
-function resolvedSymbol(input: ActivityPresentationInput,policy: LiveActivityPresentationPolicy): "terminal" | "code" | "build" | "success" | "warning" {
+function resolvedSymbol(input: ActivityPresentationInput): "terminal" | "code" | "build" | "success" | "warning" {
   if (input.symbol) return input.symbol;
-  if (policy.symbol !== "automatic") return policy.symbol;
   return input.lifecycle ? "code" : "terminal";
 }
 
@@ -288,7 +281,6 @@ function resolvedPresetId(
 ): string {
   if (input.style) return `invocation.style.${input.style}`;
   if (input.preset && input.preset !== "automatic") return `invocation.${input.preset}`;
-  if (policy.preset !== "automatic") return `policy.${policy.preset}`;
   if (style === "hero") return "system.agent.attention";
   if (style === "terminal") return "system.agent.terminal";
   if (typeof input.progress === "number") return "system.agent.measured";
@@ -299,6 +291,7 @@ function semanticStepsPresentation(
   input: ActivityPresentationInput,
   policy: LiveActivityPresentationPolicy,
   principalId: string,
+  computerIcon: ComputerIcon | undefined,
 ): LiveActivityPresentation {
   const steps = input.steps!;
   const stepComponent: LiveActivityPresentation["components"][number] = {
@@ -307,6 +300,9 @@ function semanticStepsPresentation(
       id: `step_${index+1}`,label,
       state: index+1 < steps.current ? "complete" : index+1 === steps.current ? "current" : "pending",
     })),
+    ...(steps.before ? { before: steps.before } : {}),
+    ...(steps.after ? { after: steps.after } : {}),
+    ...(steps.plan ? { plan: steps.plan } : {}),
   };
   const progressComponent: LiveActivityPresentation["components"][number] | null =
     typeof input.progress === "number"
@@ -320,11 +316,11 @@ function semanticStepsPresentation(
       : null;
   const components = progressComponent ? [stepComponent,progressComponent] : [stepComponent];
   const minimalComponent = progressComponent ?? stepComponent;
-  const theme = input.theme ?? policy.theme;
+  const theme = input.theme ?? "system";
   const hasScopedIdentity = Boolean(input.origin?.project ?? input.context?.project);
   const identity = hasScopedIdentity ? { project: null,thread: null,direct: true } : {
     project: {
-      label: "Relo",color: resolvedAccent(input,policy,principalId),icon: resolvedSymbol(input,policy),
+      label: "Relo",color: resolvedAccent(input,policy,principalId),icon: resolvedSymbol(input),
       revision: 1,provenance: "owner" as const,
     },
     thread: null,direct: false,
@@ -355,7 +351,7 @@ function semanticStepsPresentation(
   });
   return canonicalPresentation({
     ...requested,
-    identity: generatedPresentationIdentity(principalId,input,requested,policy),
+    identity: generatedPresentationIdentity(principalId,input,requested,policy,computerIcon),
     state: generatedPresentationState(input,requested),
   }) as LiveActivityPresentation;
 }
@@ -364,12 +360,13 @@ function semanticPresentation(
   input: ActivityPresentationInput,
   policy: LiveActivityPresentationPolicy,
   principalId: string,
+  computerIcon: ComputerIcon | undefined,
 ): LiveActivityPresentation {
   const style = resolvedStyle(input,policy);
   const hasScopedIdentity = Boolean(input.origin?.project ?? input.context?.project);
   const identity = hasScopedIdentity ? { project: null,thread: null,direct: true } : {
     project: {
-      label: "Relo",color: resolvedAccent(input,policy,principalId),icon: resolvedSymbol(input,policy),
+      label: "Relo",color: resolvedAccent(input,policy,principalId),icon: resolvedSymbol(input),
       revision: 1,provenance: "owner" as const,
     },
     thread: null,direct: false,
@@ -405,7 +402,7 @@ function semanticPresentation(
     },
     behavior: progressComponent ? { type: "progress" } : { type: "informational" },
     appearance: {
-      theme: input.theme ?? (style === "terminal" && policy.theme === "system" ? "dark" : policy.theme),
+      theme: input.theme ?? (style === "terminal" ? "dark" : "system"),
       roles: { cardIdentity: "project",componentIdentity: "thread",statusEmphasis: "state" },
       ...(style === "ring" ? { progressDisplay: "ring" as const } : {}),
     },
@@ -413,7 +410,7 @@ function semanticPresentation(
   });
   return canonicalPresentation({
     ...requested,
-    identity: generatedPresentationIdentity(principalId,input,requested,policy),
+    identity: generatedPresentationIdentity(principalId,input,requested,policy,computerIcon),
     state: generatedPresentationState(input,requested),
   });
 }
@@ -421,6 +418,8 @@ function semanticPresentation(
 export function resolveActivityPresentation(input: ActivityPresentationInput,inputPolicy: {
   principalId: string;
   effective: EffectivePresentationPolicy;
+  /** The computer's icon for a credential's card: the generated project token shows it. */
+  computerIcon?: ComputerIcon | undefined;
 }) {
   const governedInput = applyActivityPrivacyPolicy(input,inputPolicy.effective.policy);
   if (governedInput.presentation) {
@@ -429,6 +428,7 @@ export function resolveActivityPresentation(input: ActivityPresentationInput,inp
       ...requested,
       identity: generatedPresentationIdentity(
         inputPolicy.principalId,governedInput,requested,inputPolicy.effective.policy,
+        inputPolicy.computerIcon,
       ),
       state: generatedPresentationState(governedInput,requested),
     });
@@ -447,7 +447,7 @@ export function resolveActivityPresentation(input: ActivityPresentationInput,inp
   const policy = inputPolicy.effective.policy;
   if (governedInput.steps) {
     const presentation = semanticStepsPresentation(
-      governedInput,policy,inputPolicy.principalId,
+      governedInput,policy,inputPolicy.principalId,inputPolicy.computerIcon,
     );
     return {
       stored: persistedPresentationColumns(presentation),
@@ -464,7 +464,7 @@ export function resolveActivityPresentation(input: ActivityPresentationInput,inp
   }
   const requestedStyle = resolvedStyle(governedInput,policy);
   const presetId = resolvedPresetId(governedInput,policy,requestedStyle);
-  const presentation = semanticPresentation(governedInput,policy,inputPolicy.principalId);
+  const presentation = semanticPresentation(governedInput,policy,inputPolicy.principalId,inputPolicy.computerIcon);
   const explicit = ["preset","theme","symbol","style","accentColor"]
     .filter((field) => governedInput[field as keyof ActivityPresentationInput] !== undefined)
     .filter((field) => field !== "preset" || governedInput.preset !== "automatic");
@@ -478,6 +478,24 @@ export function resolveActivityPresentation(input: ActivityPresentationInput,inp
       presetRevision: 1,
     },
   };
+}
+
+/**
+ * What the policy owns on a stored card is its project token's color and icon (fixed or per project color, the
+ * computer's icon). When a write resolves the same generated project, the card takes those two from the
+ * resolution, so a changed policy reaches an open card. Labels, owner-provenance tokens and the thread stay as
+ * stored; an update without context resolves to the unscoped "Relo" identity and is never copied from.
+ */
+function followPolicyIdentity(
+  stored: LiveActivityPresentation["identity"],
+  resolved: LiveActivityPresentation["identity"],
+): LiveActivityPresentation["identity"] {
+  const current = stored.project;
+  const next = resolved.project;
+  if (!current || !next) return stored;
+  if (current.provenance !== "generated" || next.provenance !== "generated" || current.label !== next.label) return stored;
+  if (current.color === next.color && current.icon === next.icon) return stored;
+  return { ...stored,project: { ...current,color: next.color,icon: next.icon } };
 }
 
 export function preserveActivePresentationPolicy(
@@ -539,7 +557,7 @@ export function preserveActivePresentationPolicy(
       }),
       identity: changesAppearance && ownerIdentity
         ? resolved.presentation.identity
-        : normalizedCurrent.identity,
+        : followPolicyIdentity(normalizedCurrent.identity,resolved.presentation.identity),
       appearance: input.theme === undefined
         ? normalizedCurrent.appearance
         : {

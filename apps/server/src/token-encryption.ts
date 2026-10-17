@@ -9,7 +9,7 @@ export type TransportTokenPurpose =
   | "device.live_activity_push_to_start_token"
   | "live_activity_update_token.token";
 /** Other at-rest secrets sealed with the same key under their own AAD. */
-export type SealedSecretPurpose = TransportTokenPurpose | "interaction_callback.token";
+export type SealedSecretPurpose = TransportTokenPurpose | "interaction_callback.token" | "computer_invite_activity.token";
 
 export class InvalidTransportTokenError extends Error {
   constructor() {

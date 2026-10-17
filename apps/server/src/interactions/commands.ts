@@ -1,10 +1,12 @@
 import { verifyLiveActivityCredential } from "../live-activity-interaction.js";
 import { readDecisionRelevance } from "../relevance/decisions.js";
-import { selectVisibleDecisionEvent,selectResponseRequest,responseEvidence,acceptLockedResponse,insertResponseEvidence,markRespondedEvent,type ResponseRequestRow,type ResponseEvidenceRow } from "./store.js";
-import type { ActivityCapabilityActor,RespondCommand,ResponseResult,InteractionRow } from "./types.js";
+import { selectVisibleDecisionEvent,selectResponseRequest,selectBrowserResponseRequest,responseEvidence,acceptLockedResponse,insertResponseEvidence,markRespondedEvent,type ResponseRequestRow,type ResponseEvidenceRow } from "./store.js";
+import type { ActivityCapabilityActor,Answerer,BrowserAnswerActor,RespondCommand,ResponseResult,InteractionRow } from "./types.js";
 import type { Database } from "../db.js";
 import type { ApnsMode } from "../activities.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
+import { settleQuestionCopies } from "./settle-copies.js";
+import { askedCopy } from "../browser-answers.js";
 import { lockDecisionActivity } from "../decision-lock.js";
 import { settleInteractiveLiveActivity } from "../interactive-activity-lifecycle.js";
 import { selectOwnedInteraction,expireLockedRequest } from "./store.js";
@@ -61,33 +63,15 @@ export type DecisionGroupOutcome = {
 export async function settleDecisionGroup(tx: SubjectTransaction,input: {
   groupId: string; exceptInteractionId?: string | undefined; outcome: DecisionGroupOutcome; apnsMode: ApnsMode;
 }): Promise<number> {
-  const members=(await tx.query<{id:string;principal_id:string;notification_event_id:string}>(
-    `SELECT id,principal_id,notification_event_id FROM interaction_requests
-     WHERE decision_group_id=$1 AND state='pending' AND id IS DISTINCT FROM $2 ORDER BY id`,
-    [input.groupId,input.exceptInteractionId??null])).rows;
-  let settled=0;
-  for(const member of members) {
-    await lockDecisionActivity(tx,member.principal_id,member.notification_event_id);
-    const locked=await tx.query("SELECT 1 FROM interaction_requests WHERE id=$1 AND state='pending' FOR UPDATE",[member.id]);
-    if(!locked.rowCount) continue;
-    if(input.outcome.state==="canceled") {
-      await cancelLockedInteraction(tx,{principalId:member.principal_id,interactionId:member.id,
-        notificationEventId:member.notification_event_id,apnsMode:input.apnsMode});
-    } else {
-      await tx.query(`UPDATE interaction_requests SET state=$2::interaction_request_state,response=$3::jsonb,
-        responded_at=clock_timestamp() WHERE id=$1 AND state='pending'`,[member.id,input.outcome.state,input.outcome.response??null]);
-      await tx.query("UPDATE notification_events SET state='responded',updated_at=clock_timestamp() WHERE id=$1",
-        [member.notification_event_id]);
-      await tx.query(`UPDATE delivery_jobs SET state='canceled',last_error_code='interaction_settled',
-        last_error_message='The decision was made elsewhere',claim_token=NULL,claim_started_at=NULL,
-        claim_phase=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
-        WHERE notification_event_id=$1 AND state IN ('pending','retry')`,[member.notification_event_id]);
-      await settleInteractiveLiveActivity(tx,{principalId:member.principal_id,notificationEventId:member.notification_event_id,
-        responseState:input.outcome.state,apnsMode:input.apnsMode});
-    }
-    settled++;
-  }
-  return settled;
+  const settled=await settleQuestionCopies(tx,{
+    scope:{decisionGroupId:input.groupId},
+    winner:input.exceptInteractionId?{interactionId:input.exceptInteractionId}:undefined,
+    outcome:{state:input.outcome.state,response:input.outcome.response??null},
+    beforeSettle:async (member)=>{await lockDecisionActivity(tx,member.principalId,member.notificationEventId);},
+  });
+  for(const member of settled) await settleInteractiveLiveActivity(tx,{principalId:member.principalId,
+    notificationEventId:member.notificationEventId,responseState:input.outcome.state,apnsMode:input.apnsMode});
+  return settled.length;
 }
 
 export async function expireInteraction(db: Database,actor: InteractionActor,command: ExpireCommand,apnsMode: ApnsMode): Promise<ExpiryResult> {
@@ -100,12 +84,15 @@ export async function expireInteraction(db: Database,actor: InteractionActor,com
   finally{tx.release();}
 }
 
-export async function respondToInteraction(db: Database,actor: InteractionActor | ActivityCapabilityActor,
+export async function respondToInteraction(db: Database,actor: InteractionActor | ActivityCapabilityActor | BrowserAnswerActor,
   command: RespondCommand,dependencies: {apnsMode:ApnsMode;credentialDerivationSecret?:string|undefined}): Promise<ResponseResult> {
-  // Owner/producer/service authority never grants the authority of a phone or a
-  // signed exact ActivityKit capability, even to callers of this internal API.
-  if(actor.kind!=="device"&&actor.kind!=="live_activity") return {kind:"rejected",error:"forbidden"};
+  // Owner/producer/service authority never grants the authority of a phone, a linked browser's
+  // signed answer or a signed exact ActivityKit capability, even to callers of this internal API.
+  if(actor.kind!=="device"&&actor.kind!=="live_activity"&&actor.kind!=="browser") return {kind:"rejected",error:"forbidden"};
   const capability=actor.kind==="live_activity";
+  // A browser answers taps only (no typed replies), like the phone's buttons.
+  if(actor.kind==="browser"&&command.kind==="answer") return {kind:"rejected",error:"invalid_action"};
+  const answerer:Answerer=actor.kind==="browser"?{browserId:actor.browserId}:{deviceId:actor.deviceId};
   if(capability&&(!command.interactionId||command.kind==="answer")) return {kind:"rejected",error:"not_found"};
   const tx=await db.connect();
   const finish=async(result:ResponseResult,commit=false)=>{await tx.query(commit?"COMMIT":"ROLLBACK");return result;};
@@ -113,7 +100,8 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
   try {
     await tx.query("BEGIN");
     const group=await lockDecisionGroupOfEvent(tx,command.eventId);
-    if(actor.kind==="device"&&!await selectVisibleDecisionEvent(tx,actor.principalId,actor.deviceId,command.eventId)) return await finish(reject("not_found"));
+    const overview=actor.kind==="device"&&actor.ownerOverview===true;
+    if(actor.kind==="device"&&!await selectVisibleDecisionEvent(tx,actor.principalId,actor.deviceId,command.eventId,overview)) return await finish(reject("not_found"));
     let row:ResponseRequestRow|null=null;
     const validCapability=(request:ResponseRequestRow)=>actor.kind!=="live_activity"||Boolean(dependencies.credentialDerivationSecret
       &&verifyLiveActivityCredential(dependencies.credentialDerivationSecret,actor.credential,{
@@ -126,10 +114,13 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
       if(!validCapability(row)) return await finish(reject("invalid_credential"));
       await lockDecisionActivity(tx,row.principal_id,command.eventId);
     } else await lockDecisionActivity(tx,actor.principalId,command.eventId);
-    row=await selectResponseRequest(tx,actor,command,true);
+    row=actor.kind==="browser"?await selectBrowserResponseRequest(tx,actor,command,true):await selectResponseRequest(tx,actor,command,true);
     if(!row) return await finish(reject(capability?"not_found":"interaction_not_found"));
     if(!validCapability(row)) return await finish(reject("invalid_credential"));
     if(command.interactionId&&command.interactionId!==row.id) return await finish(reject("interaction_version_mismatch"));
+    // An overview device has no copy of its own: like a linked browser it answers the copy the asking
+    // computer waits on, whose ids the computer checks the signature over (browser-answers.ts askedCopy).
+    if(overview&&await askedCopy(tx,row.principal_id,row.id)!==row.id) return await finish(reject("not_asked_copy"));
     const nextState=({approve:"approved",deny:"denied",yes:"yes",no:"no",answer:"replied",choose:"replied"} as const)[command.kind];
     // A choice is answered with one of its own options, stored as replied with that option.
     const chosen=row.kind==="choice"&&command.kind==="choose"
@@ -144,7 +135,8 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
     const response=chosen?{optionId:chosen.id,label:chosen.label,...signature}:command.value;
     const relevance=await readDecisionRelevance(tx,row.principal_id,command.eventId,command.expectedSubject);
     if(!relevance.matchesExpected) return await finish(reject("interaction_version_mismatch"));
-    const exact=(evidence:ResponseEvidenceRow)=>evidence.notification_event_id===command.eventId&&evidence.device_id===actor.deviceId
+    const exact=(evidence:ResponseEvidenceRow)=>evidence.notification_event_id===command.eventId
+      &&(evidence.device_id??undefined)===answerer.deviceId&&(evidence.browser_id??undefined)===answerer.browserId
       &&evidence.interaction_request_id===row!.id&&evidence.kind===command.kind&&(capability||evidence.value_matches);
     const prior=await responseEvidence(tx,row.principal_id,command.idempotencyKey,command.value);
     if(prior) return await finish(exact(prior)?{kind:"replayed",evidenceId:prior.id,interactionId:row.id,state:row.state,respondedAt:row.responded_at}:reject("idempotency_conflict"),exact(prior));
@@ -159,7 +151,7 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
       // The owner dismissed this missed question: it no longer needs them, so no late answer either.
       if(!late&&row.owner_dismissed_at) return await finish(reject("question_dismissed",row.state));
       if(!late) return await finish(reject("interaction_not_pending",row.state));
-      const lateEvidence=await insertResponseEvidence(tx,row,actor.deviceId,command);
+      const lateEvidence=await insertResponseEvidence(tx,row,answerer,command);
       if(!lateEvidence) return await finish(reject("idempotency_conflict"));
       return await finish({kind:"accepted",late:true,evidenceId:lateEvidence.id,interactionId:row.id,state:"expired",respondedAt:late.late_responded_at},true);
     }
@@ -172,7 +164,7 @@ export async function respondToInteraction(db: Database,actor: InteractionActor 
       });
       return await finish(reject(capability?"interaction_expired":"interaction_not_pending",capability?undefined:"expired"),true);
     }
-    const evidence=await insertResponseEvidence(tx,row,actor.deviceId,command);
+    const evidence=await insertResponseEvidence(tx,row,answerer,command);
     if(!evidence) {
       const raced=await responseEvidence(tx,row.principal_id,command.idempotencyKey,command.value);
       // The request lock excludes another exact writer; a different request can

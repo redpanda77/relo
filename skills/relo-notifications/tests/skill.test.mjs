@@ -42,12 +42,24 @@ test("the work is the default and notifications are the exception", () => {
   assert.ok(skill.indexOf("relo work start") < skill.indexOf("relo notify"),
     "the first recipe an agent sees is the work");
   assert.match(skill, /One open work per session/);
+  // ADR 0012: deliver ends a request and keeps the work, finish ends the goal; rounds, nesting, unfiltered output
+  assert.match(skill, /relo work deliver --outcome/);
+  assert.match(skill, /relo work start --round/);
+  assert.match(skill, /`deliver`\s+closes the request you just did/);
+  assert.match(skill, /--under s3/);
+  // The plan belongs to the goal: deliver is refused with open steps; mid-plan owner checks are ask or --waiting
+  assert.match(skill, /refused while top-level steps are open \(an owner check mid-plan is `ask` or `--waiting`\)/);
+  assert.match(skill, /an answer or "go on"\s+continues the plan/);
+  assert.match(skill, /--drop-rest/);
+  assert.match(skill, /never `>\/dev\/null`, `tail`, `head` or `grep`/);
   const cards = read("references/cards.md");
   for (const echo of ["(open, started)", "(open, continuing)", "(open, updated)", "(paused, paused)", "(open, resumed)", "(finished, done)"]) {
     assert.ok(cards.includes(echo), `cards.md shows the ${echo} echo`);
   }
   assert.match(cards, /Parallel work \(subagents, several jobs\) is one step with a count/);
   assert.match(cards, /Finish exactly once/);
+  assert.match(cards, /Without `--plan` the round carries the unfinished steps/);
+  assert.match(read("references/cli.md"), /`--after sN`/);
   assert.match(cards, /Tappable answers only/);
 });
 
@@ -61,7 +73,7 @@ test("safety rules keep approval exact and fail closed", () => {
 
 test("every relo command in the skill is a valid command", { skip: !existsSync(cliSource) }, async (t) => {
   const { execute } = await import(pathToFileURL(cliSource).href);
-  const { UsageError } = await import(pathToFileURL(resolve(dirname(cliSource), "errors.mjs")).href);
+  const { UsageError } = await import(pathToFileURL(resolve(dirname(cliSource), "shared", "errors.mjs")).href);
   // A server where this session's card is already running, as it is after the first recipe.
   const card = { id: "act_11111111-1111-4111-8111-111111111111", state: "active", sequence: 1,
     presentation: { components: [{ type: "steps", items: ["Build", "Test", "Deploy"].map((label) => ({ label })) }] } };
@@ -100,7 +112,7 @@ test("every relo command in the skill is a valid command", { skip: !existsSync(c
 
 test("SKILL.md stays small and carries the steps-vs-progress rule and the first-run flow", () => {
   const skill = read("SKILL.md");
-  assert.ok(Buffer.byteLength(skill) <= 4_900, `SKILL.md is ${Buffer.byteLength(skill)} bytes`);
+  assert.ok(Buffer.byteLength(skill) <= 5_700, `SKILL.md is ${Buffer.byteLength(skill)} bytes`);
   assert.match(skill, /Parallel work is one step with a count/);
   assert.match(skill, /--progress 3\/20/);
   assert.match(skill, /relo work start --goal/);
@@ -108,18 +120,20 @@ test("SKILL.md stays small and carries the steps-vs-progress rule and the first-
   assert.match(skill, /relo auth login --wait/);
   assert.match(skill, /relo test/);
   assert.match(skill, /RELO_SESSION/);
-  assert.match(skill, /relo skill install --agent <yours>/);
-  assert.ok(Buffer.byteLength(skill) <= 4_950);
-  assert.match(read("references/install.md"), /relo skill install --agent claude-code/);
+  assert.match(skill, /Skill and block: `relo setup`/);
+  assert.ok(Buffer.byteLength(skill) <= 5_750);
+  assert.match(read("references/install.md"), /relo setup --agent codex/);
   assert.match(read("references/install.md"), /npx --yes skills@1\.5\.22 add redpanda77\/relo@relo-notifications/);
   assert.doesNotMatch(skill, /warns\s+when that note/);
   const install = read("references/install.md");
-  assert.match(install, /exactly one/i);
-  assert.match(install, /--move/);
-  assert.match(install, /--remove/);
-  assert.match(install, /never automatic/i);
-  const block = install.match(/<!-- relo:start -->[^]*?<!-- relo:end -->/)[0];
-  assert.ok(block.split("\n").length <= 12);
+  assert.match(install, /the owner's command/i);
+  assert.match(install, /relo uninstall --apply/);
+  assert.match(install, /relo setup --refresh/);
+  // The block's copies are the CLI's install/blocks/*.md; install.md only points at it.
+  assert.doesNotMatch(install, /<!-- relo:start -->\n##/u);
+  const blocksDir = resolve(packageRoot, "..", "..", "packages", "cli", "src", "install", "blocks");
+  const block = ["heading", "reporting", "planning"].map((name) => readFileSync(resolve(blocksDir, `${name}.md`), "utf8")).join("\n");
+  assert.ok(block.trimEnd().split("\n").length <= 20);
   assert.match(read("references/cards.md"), /generate 10 images, polish 20 chapters/);
   assert.match(block, /relo work start --goal/);
   assert.doesNotMatch(block, /relo activity|--steps\b|--topic\b/);

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { QUESTION_SECONDS } from "../question-policy.js";
 import type { ApnsMode } from "../activities.js";
 import { syncActivityPresentationLease } from "../activity-presentation-leases.js";
-import { hashToken } from "../auth.js";
+import { sha256Hex as hashToken } from "../digest.js";
 import { publicId } from "../ids.js";
 import { persistedPresentationColumns,presentationCommandProjection,presentationFromRow,terminalPresentationFromRow } from "../presentation-runtime.js";
 import type { SubjectTransaction } from "../relevance/commands.js";

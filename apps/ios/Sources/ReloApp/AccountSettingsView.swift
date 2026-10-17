@@ -31,9 +31,13 @@ struct AccountSettingsView: View {
             }
         }
         .reloGroupedScreen().navigationTitle("Account").navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Sign out of Relo?", isPresented: $confirmsSignOut, titleVisibility: .visible) {
-            Button("Sign out", role: .destructive) { Task { _ = await model.signOut() } }
-        } message: { Text("This iPhone stops getting notifications and Live Activities, and its saved activity is removed. You can sign back in anytime.") }
+        .reloConfirmation(isPresented: $confirmsSignOut) {
+            ReloConfirmSpec(
+                title: "Sign out of Relo?",
+                message: "This iPhone stops getting notifications and Live Activities, and its saved activity is removed. You can sign back in anytime.",
+                symbol: "rectangle.portrait.and.arrow.right", actionTitle: "Sign out",
+                action: { _ = await model.signOut() })
+        }
         .sheet(isPresented: $showsDeletion) { AccountDeletionView(model: model) }
     }
 }

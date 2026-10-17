@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// Signs a phone's answer with its identity key so a CLI can tell a real approval from one a
-/// compromised server invented (docs/END-TO-END-ENCRYPTION.md, E4.2). The signature rides inside the
+/// compromised server invented (docs/ENCRYPTION-PROTOCOL.md, E4.2). The signature rides inside the
 /// answer value; it is made once, when the answer is queued, so every retry sends identical bytes.
 public enum ReloAnswerSigning {
     public static let keyIDField = "e2eeKeyId"

@@ -1,6 +1,7 @@
 # ADR 0007: Presence, messages and work are separate, and work continues by the session
 
-Status: accepted, 14 October 2026, and implemented. Refined by [ADR 0008](0008-relo-design-framework.md)
+Status: accepted, 14 October 2026, and implemented. Lifecycle amended by
+[ADR 0012](0012-working-layer.md) (rounds, `deliver`, handoff; see the notes under rules 2 and 3). Refined by [ADR 0008](0008-relo-design-framework.md)
 (the design framework, including the edge split between the CLI and the server). The rules below
 describe what the code does; the derivation constants and the owner-facing terms are in
 [ARCHITECTURE.md](../ARCHITECTURE.md#state-model).
@@ -52,11 +53,16 @@ Rules enforced in code, each with a test that fails if the coupling returns
 2. **Work has its own lifecycle.** `open`, `paused`, `finished`, `failed`, `dropped`. Only the
    producer moves it, by verbs. Time never writes it: a work nobody touches is shown dimmed, then
    folded, then listed as "left unfinished" by the derivation, and its declared state stays as it was.
+   *Amended by ADR 0012: a work has rounds; `relo work deliver` closes a round and keeps the work open,
+   and `finish` ends the goal.*
 3. **Work continues by the session.** An agent session has at most one open work. `relo work start`
    again continues it and says so; `--new` parks the open one (still readable) and starts another.
    The CLI keeps the session's working copy and finds it from the harness's session id, so the agent
    never repeats a handle. A work survives turns, `/clear`, compaction and resumes. Start takes an
    idempotency key; a retry returns the same work.
+   *Amended by ADR 0012: it survives `/clear` and compaction through restore (the Guide hooks inject the
+   plan), and another session takes it over only through a handoff handle (`relo work handoff`, then
+   `start --from`).*
 4. **Plans are revised, never overwritten.** Steps have stable ids (`s1…`) and states `open`,
    `current`, `done`, `skipped`; the plan has a version and writes carry the version they read.
    Completed steps stay completed; a step dropped from a revised list becomes `skipped`. Step labels

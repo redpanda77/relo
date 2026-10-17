@@ -5,11 +5,13 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { EXIT, VERSION, run } from "../src/cli.mjs";
-import { BLOCK_LINES, planBlock } from "../src/setup.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
+import { run } from "../src/cli.mjs";
+import { VERSION } from "../src/version.mjs";
+import { DEPTHS, planBlock, renderBlock, renderBlockText } from "../src/install/block.mjs";
 import { cardDependencies, fakeCards, fakeHome } from "./fake-cards.mjs";
 
-const BLOCK = BLOCK_LINES.join("\n");
+const BLOCK = renderBlock(DEPTHS.track).join("\n");
 
 async function cli(argv, dependencies) {
   const stdout = [];
@@ -25,259 +27,261 @@ async function sandbox(options) {
     authStatus: async () => ({ authenticated: true, credential: { id: "c", clientName: "Studio", prefix: "p", expiresAt: "2027-01-01T00:00:00Z",
       scopes: ["activities:read", "activities:write", "devices:read", "interactions:create", "interactions:read", "notifications:send"] } }) };
   const deps = { ...cardDependencies(healthy), home, cwd, env: {} };
-  return { home, cwd, deps, run: (argv) => cli(argv, deps) };
+  return { home, cwd, deps, run: (argv, extra = {}) => cli(argv, { ...deps, ...extra }) };
 }
 
-test("the block is short, marked, and carries no version or date", () => {
-  assert.ok(BLOCK_LINES.length <= 12);
-  assert.equal(BLOCK_LINES[0], "<!-- relo:start -->");
-  assert.equal(BLOCK_LINES.at(-1), "<!-- relo:end -->");
-  assert.equal(/\d+\.\d+\.\d+|20\d\d-\d\d-\d\d/u.test(BLOCK), false);
-});
+/** The rows of one kind in a setup or uninstall line: [{ harness?, file, action }]. */
+const rows = (line, kind, list = "changed") => (line[list] ?? []).filter((row) => row.kind === kind).map(({ harness, file, action }) => ({ ...(harness ? { harness } : {}), file, action }));
+/** What happened to the block: its change, "kept" when the owner froze it, else "unchanged". */
+const blockAction = (line) => line.changed.find((row) => row.kind === "block")?.action
+  ?? (line.skipped?.some((row) => row.kind === "block" && /relo:keep/u.test(row.reason)) ? "kept" : "unchanged");
 
-test("bare setup writes nothing and lists the choices", async () => {
-  const box = await sandbox();
+test("relo setup with no harness on this computer names --agent and writes nothing", async () => {
+  const box = await sandbox({ agents: [] });
   const out = await box.run(["setup"]);
   assert.equal(out.exitCode, EXIT.USAGE);
-  assert.match(out.line.error.hint, /--project.*--global --agent <claude-code\|codex.*--file PATH/u);
-  assert.equal(existsSync(join(box.home, ".claude", "CLAUDE.md")), false);
-  assert.equal(existsSync(join(box.home, ".codex", "AGENTS.md")), false);
-  assert.deepEqual(await readdir(box.cwd), []);
-  for (const argv of [["setup", "--global"], ["setup", "--agent", "codex"], ["setup", "--project", "--file", "a.md"],
-    ["setup", "--file", "a.md", "--file", "b.md"], ["setup", "--global", "--agent", "nope"]]) {
-    assert.equal((await box.run(argv)).exitCode, EXIT.USAGE, argv.join(" "));
-  }
-  const unknown = await box.run(["setup", "--global", "--agent", "nope"]);
-  assert.match(unknown.line.error.hint, /--file PATH/u);
+  assert.match(out.line.error.hint, /relo setup --agent claude-code/u);
+  assert.deepEqual(await readdir(box.home), []);
+  assert.equal((await box.run(["setup", "--agent", "nope"])).exitCode, EXIT.USAGE);
+  for (const retired of ["--global", "--move", "--remove"]) assert.equal((await box.run(["setup", retired])).exitCode, EXIT.USAGE, retired);
 });
 
-test("--global --agent writes the one file of that harness and nothing else", async () => {
-  const box = await sandbox({ agents: [] });
-  const claude = await box.run(["setup", "--global", "--agent", "claude-code"]);
-  assert.equal(claude.exitCode, EXIT.OK);
-  assert.deepEqual({ file: claude.line.file, action: claude.line.action }, { file: "~/.claude/CLAUDE.md", action: "created" });
-  assert.equal(await readFile(join(box.home, ".claude", "CLAUDE.md"), "utf8"), `${BLOCK}\n`);
-  assert.equal(claude.line.files, undefined);
-  assert.equal(claude.line.skill.installed.length, 0);
-  assert.match(claude.line.hint, /relo skill install --agent claude-code/u);
-  assert.equal(existsSync(join(box.home, ".codex")), false);
-});
-
-test("each supported harness maps to its documented global file, with config-dir overrides", async () => {
-  const box = await sandbox({ agents: [] });
-  const custom = join(box.home, "custom-codex");
-  const env = { CODEX_HOME: custom, CLAUDE_CONFIG_DIR: join(box.home, "cc"), COPILOT_HOME: join(box.home, "cp") };
-  const expected = {
-    codex: join(custom, "AGENTS.md"), "claude-code": join(box.home, "cc", "CLAUDE.md"), copilot: join(box.home, "cp", "copilot-instructions.md"),
-    gemini: join(box.home, ".gemini", "GEMINI.md"), opencode: join(box.home, ".config", "opencode", "AGENTS.md"),
-    amp: join(box.home, ".config", "amp", "AGENTS.md"),
-  };
-  for (const [agent, path] of Object.entries(expected)) {
-    const out = await cli(["setup", "--global", "--agent", agent, "--dry-run"], { ...box.deps, env });
-    assert.equal(out.line.file, path.replace(box.home, "~"), agent);
-    assert.equal(out.line.dryRun, true);
-    assert.equal(existsSync(path), false, "dry-run writes nothing");
-  }
-  assert.equal((await cli(["setup", "--global", "--agent", "claude", "--dry-run"], { ...box.deps, env })).line.file, "~/cc/CLAUDE.md");
-  await cli(["setup", "--global", "--agent", "gemini"], box.deps);
-  assert.equal(existsSync(expected.gemini), true, "the harness folder is created for a global target");
-});
-
-test("setup is idempotent, appends after one blank line, and preserves the rest byte for byte", async () => {
+test("relo setup writes the block and installs the skill for every harness found here; again, it changes nothing", async () => {
   const box = await sandbox();
+  const first = await box.run(["setup"]);
+  assert.equal(first.exitCode, EXIT.OK);
+  assert.deepEqual(rows(first.line, "block"), [
+    { harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "created" },
+    { harness: "codex", file: "~/.codex/AGENTS.md", action: "created" },
+  ]);
+  assert.deepEqual(rows(first.line, "skill"), [
+    { harness: "claude-code", file: "~/.claude/skills", action: "installed" },
+    { harness: "codex", file: "~/.agents/skills", action: "installed" },
+  ]);
+  assert.equal(await readFile(join(box.home, ".claude", "CLAUDE.md"), "utf8"), `${BLOCK}\n`);
+  assert.ok(existsSync(join(box.home, ".claude", "skills", "relo-notifications", "SKILL.md")));
+  assert.match(first.line.next[0], /^Restart Claude Code, Codex/u);
+  const again = await box.run(["setup"]);
+  assert.deepEqual(again.line.changed, []);
+  assert.deepEqual(again.line.next, ["relo doctor"]);
+});
+
+test("--agent picks the harnesses, each into its documented files, with config-dir overrides", async () => {
+  const box = await sandbox({ agents: [] });
+  const env = { CLAUDE_CONFIG_DIR: join(box.home, "work-claude"), CODEX_HOME: join(box.home, "work-codex"), COPILOT_HOME: join(box.home, "cop") };
+  const out = await box.run(["setup", "--agent", "claude-code", "--agent", "codex", "--agent", "gemini", "--agent", "opencode",
+    "--agent", "copilot", "--agent", "amp"], { env });
+  assert.deepEqual(rows(out.line, "block").map((row) => row.file), [
+    "~/work-claude/CLAUDE.md", "~/work-codex/AGENTS.md", "~/.gemini/GEMINI.md", "~/.config/opencode/AGENTS.md",
+    "~/cop/copilot-instructions.md", "~/.config/amp/AGENTS.md",
+  ]);
+  assert.deepEqual(rows(out.line, "skill").map((row) => row.file), [
+    "~/work-claude/skills", "~/.agents/skills", "~/.gemini/skills", "~/cop/skills", "~/.config/agents/skills",
+  ]);
+  // OpenCode reads the shared ~/.agents/skills (Codex's copy here), so it gets no second copy.
+  assert.deepEqual(out.line.skipped.filter((row) => row.kind === "skill"), [{ kind: "skill", harness: "opencode", reason: "reads the skill from ~/.agents/skills" }]);
+});
+
+test("OpenCode gets its own AGENTS.md and reads the skill from Claude Code's or the shared folder", async () => {
+  const box = await sandbox({ agents: [] });
+  const out = await box.run(["setup", "--agent", "opencode", "--agent", "claude-code"]);
+  assert.deepEqual(rows(out.line, "block").map((row) => row.file), ["~/.config/opencode/AGENTS.md", "~/.claude/CLAUDE.md"]);
+  assert.deepEqual(rows(out.line, "skill").map((row) => row.file), ["~/.claude/skills"]);
+  assert.deepEqual(out.line.skipped, [{ kind: "skill", harness: "opencode", reason: "reads the skill from ~/.claude/skills" }]);
+  // OpenCode alone, with nothing to read, gets its own skill; OPENCODE_DISABLE_CLAUDE_CODE turns the reading off.
+  const fresh = await sandbox({ agents: [] });
+  assert.deepEqual(rows((await fresh.run(["setup", "--agent", "opencode", "--dry-run"])).line, "skill").map((row) => row.file), ["~/.config/opencode/skills"]);
+  const off = await fresh.run(["setup", "--agent", "opencode", "--agent", "claude-code", "--dry-run"], { env: { OPENCODE_DISABLE_CLAUDE_CODE: "1" } });
+  assert.deepEqual(rows(off.line, "skill").map((row) => row.file), ["~/.config/opencode/skills", "~/.claude/skills"]);
+});
+
+test("the block is appended after one blank line, refreshed in place, and the rest of the file kept byte for byte", async () => {
+  const box = await sandbox({ agents: [".claude"] });
   const claude = join(box.home, ".claude", "CLAUDE.md");
-  const argv = ["setup", "--global", "--agent", "claude-code"];
+  const argv = ["setup", "--agent", "claude-code"];
   await writeFile(claude, "# Mine\r\nkeep  \r\n");
-  assert.equal((await box.run(argv)).line.action, "appended");
+  assert.equal(blockAction((await box.run(argv)).line), "appended");
   assert.equal(await readFile(claude, "utf8"), `# Mine\r\nkeep  \r\n\r\n${BLOCK.replaceAll("\n", "\r\n")}\r\n`);
-  assert.equal((await box.run(argv)).line.action, "unchanged");
+  assert.equal(blockAction((await box.run(argv)).line), "unchanged");
   const stale = (await readFile(claude, "utf8")).replace("Relo (live", "Relo OLD (live");
   await writeFile(claude, `before\n${stale}after without newline`);
-  assert.equal((await box.run(argv)).line.action, "updated");
+  assert.equal(blockAction((await box.run(argv)).line), "updated");
   const text = await readFile(claude, "utf8");
-  assert.equal(text.startsWith("before\n"), true);
-  assert.equal(text.endsWith("<!-- relo:end -->\r\nafter without newline"), true);
-  assert.equal(text.includes("OLD"), false);
+  assert.ok(text.startsWith("before\n") && text.endsWith("<!-- relo:end -->\r\nafter without newline") && !text.includes("OLD"));
 });
 
-test("a keep marker freezes the block; markers inside a line do not count", async () => {
-  const box = await sandbox();
+test("a keep marker freezes the block; markers inside a line do not count; an unterminated block is an error row", async () => {
+  const box = await sandbox({ agents: [".claude"] });
   const claude = join(box.home, ".claude", "CLAUDE.md");
-  const argv = ["setup", "--global", "--agent", "claude-code"];
+  const argv = ["setup", "--agent", "claude-code"];
   const custom = "<!-- relo:start -->\nmy own words\n<!-- relo:keep -->\n<!-- relo:end -->\n";
   await writeFile(claude, custom);
-  assert.equal((await box.run(argv)).line.action, "kept");
-  assert.equal((await box.run(["setup", "--remove"])).line.action, "kept");
+  assert.equal(blockAction((await box.run(argv)).line), "kept");
   assert.equal(await readFile(claude, "utf8"), custom);
-  const inline = "text <!-- relo:start --> inline\n";
-  await writeFile(claude, inline);
-  assert.equal((await box.run(argv)).line.action, "appended");
-  assert.equal((await readFile(claude, "utf8")).startsWith(inline), true);
-});
-
-test("an unterminated block is left alone", async () => {
+  await writeFile(claude, "text <!-- relo:start --> inline\n");
+  assert.equal(blockAction((await box.run(argv)).line), "appended");
   assert.equal(planBlock("<!-- relo:start -->\nno end\n").action, "skipped");
-  const box = await sandbox();
-  await writeFile(join(box.home, ".claude", "CLAUDE.md"), "<!-- relo:start -->\nno end\n");
-  const out = await box.run(["setup", "--global", "--agent", "claude-code"]);
-  assert.equal(out.exitCode, EXIT.USAGE);
+  await writeFile(claude, "<!-- relo:start -->\nno end\n");
+  const broken = await box.run(argv);
+  assert.equal(broken.exitCode, EXIT.USAGE);
+  assert.equal(broken.line.errors[0].kind, "block");
+  assert.equal(broken.line.unchanged, 1, "the rest of the plan (the skill) still ran");
 });
 
-test("--project picks the one instruction file in the repository root, never both", async () => {
-  const box = await sandbox();
+test("--project: the repository's own file, or AGENTS.md plus a CLAUDE.md that imports it; both with their own text is an error", async () => {
+  const box = await sandbox({ agents: [".claude"] });
   await mkdir(join(box.cwd, ".git"));
   await mkdir(join(box.cwd, "packages", "app"), { recursive: true });
-  const deps = { ...box.deps, cwd: join(box.cwd, "packages", "app") };
-  const created = await cli(["setup", "--project"], deps);
-  assert.deepEqual({ file: created.line.file, action: created.line.action }, { file: join(box.cwd, "AGENTS.md"), action: "created" });
-  assert.equal(existsSync(join(box.cwd, "CLAUDE.md")), false);
-  assert.equal((await cli(["setup", "--project"], deps)).line.action, "unchanged");
+  const deps = { cwd: join(box.cwd, "packages", "app") };
+  const fresh = await box.run(["setup", "--project"], deps);
+  assert.deepEqual(rows(fresh.line, "block"), [{ file: join(box.cwd, "AGENTS.md"), action: "created" }]);
+  assert.equal(await readFile(join(box.cwd, "CLAUDE.md"), "utf8"), "@AGENTS.md\n");
+  assert.equal(existsSync(join(box.home, ".claude", "CLAUDE.md")), false, "--project leaves the global files alone");
+  assert.equal(blockAction((await box.run(["setup", "--project"], deps)).line), "unchanged", "the import counts as the same file");
   await rm(join(box.cwd, "AGENTS.md"));
   await writeFile(join(box.cwd, "CLAUDE.md"), "# Claude\n");
-  const only = await cli(["setup", "--project"], deps);
-  assert.deepEqual({ file: only.line.file, action: only.line.action }, { file: join(box.cwd, "CLAUDE.md"), action: "appended" });
-  assert.equal(existsSync(join(box.cwd, "AGENTS.md")), false);
+  assert.deepEqual(rows((await box.run(["setup", "--project"], deps)).line, "block"), [{ file: join(box.cwd, "CLAUDE.md"), action: "appended" }]);
   await writeFile(join(box.cwd, "AGENTS.md"), "# Agents\n");
-  const both = await cli(["setup", "--project"], deps);
+  const both = await box.run(["setup", "--project"], deps);
   assert.equal(both.exitCode, EXIT.USAGE);
-  assert.match(both.line.error.hint, /--file/u);
-  assert.equal((await readFile(join(box.cwd, "AGENTS.md"), "utf8")), "# Agents\n");
-  assert.equal(existsSync(join(box.home, ".claude", "CLAUDE.md")), false, "--project leaves the global files alone");
+  assert.match(both.line.errors[0].reason, /both AGENTS.md and CLAUDE.md/u);
+  assert.equal(await readFile(join(box.cwd, "AGENTS.md"), "utf8"), "# Agents\n");
+  await rm(join(box.cwd, "AGENTS.md"));
+  await symlink(join(box.cwd, "CLAUDE.md"), join(box.cwd, "AGENTS.md"));
+  assert.equal((await box.run(["setup", "--project"], deps)).exitCode, EXIT.OK, "a symlinked pair is one file");
 });
 
-test("a symlinked AGENTS.md and CLAUDE.md count as one file", async () => {
-  const box = await sandbox();
-  await mkdir(join(box.cwd, ".git"));
-  await writeFile(join(box.cwd, "AGENTS.md"), "# Shared\n");
-  await symlink(join(box.cwd, "AGENTS.md"), join(box.cwd, "CLAUDE.md"));
-  const out = await cli(["setup", "--project"], box.deps);
-  assert.equal(out.exitCode, EXIT.OK);
-  assert.equal(out.line.file, join(box.cwd, "AGENTS.md"));
-});
-
-test("--file is exactly that file, relative to the working folder", async () => {
-  const box = await sandbox();
-  const out = await box.run(["setup", "--file", "a.md"]);
-  assert.deepEqual({ file: out.line.file, action: out.line.action }, { file: join(box.cwd, "a.md"), action: "created" });
-  assert.equal(existsSync(join(box.home, ".claude", "CLAUDE.md")), false);
-  const missing = await box.run(["setup", "--file", "notes/b.md"]);
-  assert.equal(missing.exitCode, EXIT.USAGE);
-  assert.equal((await box.run(["setup", "stray", "--file", "c.md"])).exitCode, EXIT.USAGE);
-});
-
-test("setup refuses when the block is already in another file, and --move relocates it", async () => {
-  const box = await sandbox();
-  const codex = join(box.home, ".codex", "AGENTS.md");
-  await mkdir(join(box.cwd, ".git"));
-  await writeFile(codex, "# Codex rules\n");
-  await box.run(["setup", "--global", "--agent", "codex"]);
-  const refused = await box.run(["setup", "--project"]);
-  assert.equal(refused.exitCode, EXIT.USAGE);
-  assert.equal(refused.line.error.message, "Relo is already set up in ~/.codex/AGENTS.md.");
-  assert.match(refused.line.error.hint, /relo setup --project --move/u);
-  assert.equal(existsSync(join(box.cwd, "AGENTS.md")), false);
-  assert.equal((await readFile(codex, "utf8")).includes("relo:start"), true);
-
-  const dry = await box.run(["setup", "--project", "--move", "--dry-run"]);
-  assert.deepEqual({ action: dry.line.action, from: dry.line.from, dry: dry.line.dryRun }, { action: "moved", from: "~/.codex/AGENTS.md", dry: true });
-  assert.equal((await readFile(codex, "utf8")).includes("relo:start"), true);
-
-  const moved = await box.run(["setup", "--project", "--move"]);
-  assert.deepEqual({ file: moved.line.file, action: moved.line.action, from: moved.line.from },
-    { file: join(box.cwd, "AGENTS.md"), action: "moved", from: "~/.codex/AGENTS.md" });
-  assert.equal(await readFile(codex, "utf8"), "# Codex rules\n");
-  assert.equal(await readFile(join(box.cwd, "AGENTS.md"), "utf8"), `${BLOCK}\n`);
-  // The same file again is an in-place refresh, not a conflict.
-  assert.equal((await box.run(["setup", "--project"])).line.action, "unchanged");
-});
-
-test("--move will not touch a block the owner froze with relo:keep", async () => {
-  const box = await sandbox();
-  await writeFile(join(box.home, ".codex", "AGENTS.md"), "<!-- relo:start -->\nmine\n<!-- relo:keep -->\n<!-- relo:end -->\n");
-  const out = await box.run(["setup", "--global", "--agent", "claude-code", "--move"]);
-  assert.equal(out.exitCode, EXIT.USAGE);
-  assert.equal(existsSync(join(box.home, ".claude", "CLAUDE.md")), false);
-});
-
-test("--remove takes the block out wherever it is, with no target flags; --dry-run changes nothing", async () => {
-  const box = await sandbox();
-  const codex = join(box.home, ".codex", "AGENTS.md");
-  await writeFile(codex, "# Codex rules\n");
-  await box.run(["setup", "--global", "--agent", "codex"]);
-  const dry = await box.run(["setup", "--remove", "--dry-run"]);
-  assert.deepEqual({ file: dry.line.file, action: dry.line.action, dry: dry.line.dryRun }, { file: "~/.codex/AGENTS.md", action: "removed", dry: true });
-  assert.equal((await readFile(codex, "utf8")).includes("relo:start"), true);
-  const removed = await box.run(["setup", "--remove"]);
-  assert.equal(removed.line.action, "removed");
-  assert.equal(removed.line.skill, undefined);
-  assert.equal(await readFile(codex, "utf8"), "# Codex rules\n");
-  const again = await box.run(["setup", "--remove"]);
-  assert.equal(again.line.action, "unchanged");
-  await box.run(["setup", "--global", "--agent", "claude-code"]);
-  await box.run(["setup", "--remove"]);
-  assert.equal(existsSync(join(box.home, ".claude", "CLAUDE.md")), false, "a file that held only the block goes away with it");
-});
-
-test("setup writes through a symlinked instruction file instead of replacing it", async () => {
-  const box = await sandbox();
+test("--dry-run writes nothing and shows the block it would write; a symlinked file is written through", async () => {
+  const box = await sandbox({ agents: [".claude"] });
+  const dry = await box.run(["setup", "--dry-run"]);
+  assert.equal(dry.line.dryRun, true);
+  assert.equal(dry.line.block, renderBlockText(DEPTHS.track));
+  assert.deepEqual(rows(dry.line, "block"), [{ harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "created" }]);
+  assert.deepEqual(await readdir(join(box.home, ".claude")), []);
   const real = join(box.cwd, "dotfiles-CLAUDE.md");
   await writeFile(real, "# Dotfiles\n");
-  await rm(join(box.home, ".claude"), { recursive: true });
-  await mkdir(join(box.home, ".claude"));
   await symlink(real, join(box.home, ".claude", "CLAUDE.md"));
-  await box.run(["setup", "--global", "--agent", "claude-code"]);
-  assert.equal((await readFile(real, "utf8")).includes("relo:start"), true);
+  await box.run(["setup"]);
+  assert.ok((await readFile(real, "utf8")).includes("relo:start"));
 });
 
-test("setup reports the skill copies and whether they match this CLI", async () => {
-  const argv = ["setup", "--global", "--agent", "claude-code"];
-  const current = await sandbox({ skillVersion: VERSION });
-  const fine = await current.run(argv);
-  assert.deepEqual(fine.line.skill, { installed: ["~/.agents/skills/relo-notifications"], version: VERSION, matchesCli: true });
-  assert.equal(fine.line.hint, undefined);
-  const old = await sandbox({ skillVersion: "0.1.0" });
-  const behind = await old.run(argv);
-  assert.equal(behind.line.skill.matchesCli, false);
-  assert.match(behind.line.hint, /0\.1\.0.*relo skill install --agent codex/u);
+test("--refresh brings what is installed up to this CLI and adds nothing", async () => {
+  const box = await sandbox({ block: "stale", skillVersion: "0.0.1" });
+  const out = await box.run(["setup", "--refresh"]);
+  assert.deepEqual(rows(out.line, "block"), [{ file: "~/.claude/CLAUDE.md", action: "updated" }]);
+  assert.deepEqual(rows(out.line, "skill"), [{ harness: "codex", file: "~/.agents/skills", action: "updated" }]);
+  assert.equal(existsSync(join(box.home, ".codex", "AGENTS.md")), false, "refresh never adds a block");
+  assert.deepEqual((await box.run(["setup", "--refresh"])).line.changed, []);
+  assert.equal((await box.run(["setup", "--refresh", "--project"])).exitCode, EXIT.USAGE);
 });
 
-test("doctor never nudges toward setup; --full reports it informationally; the skill warning stays", async () => {
+test("relo uninstall lists Relo's files, and --apply removes Relo's parts only", async () => {
+  const box = await sandbox({ agents: [".claude"] });
+  await mkdir(join(box.cwd, ".git"));
+  await writeFile(join(box.home, ".claude", "CLAUDE.md"), "# Mine\n");
+  // The project block first: once a user-level block exists, setup --project leaves the repository alone.
+  await box.run(["setup", "--project"]);
+  await box.run(["setup"]);
+  const listed = await box.run(["uninstall"]);
+  assert.equal(listed.line.dryRun, true);
+  assert.deepEqual(rows(listed.line, "block").map((row) => row.action), ["removed", "removed"]);
+  assert.deepEqual(listed.line.next, ["relo uninstall --apply   (removes what is listed above)"]);
+  assert.ok(existsSync(join(box.cwd, "AGENTS.md")), "a dry run changes nothing");
+  const removed = await box.run(["uninstall", "--apply"]);
+  assert.equal(removed.exitCode, EXIT.OK);
+  assert.equal(await readFile(join(box.home, ".claude", "CLAUDE.md"), "utf8"), "# Mine\n");
+  assert.equal(existsSync(join(box.cwd, "AGENTS.md")), false, "a file that held only the block goes with it");
+  assert.equal(existsSync(join(box.cwd, "CLAUDE.md")), false, "and so does the CLAUDE.md that only imported it");
+  assert.equal(existsSync(join(box.home, ".claude", "skills", "relo-notifications")), false);
+  assert.deepEqual(rows(removed.line, "skill").map((row) => row.action), ["removed"]);
+  assert.match(removed.line.next.at(-1), /npm uninstall --global @relo\/cli/u);
+  assert.deepEqual((await box.run(["uninstall", "--apply"])).line.changed, []);
+});
+
+test("doctor points a missing skill at relo setup, never suggests hooks or MCP, and --full reports the block", async () => {
   const bare = await sandbox();
   const out = await bare.run(["doctor"]);
   assert.equal(out.exitCode, EXIT.OK);
   assert.equal(out.line.ok, true);
   assert.deepEqual(Object.keys(out.line.warnings), ["skill"]);
-  assert.equal(JSON.stringify(out.line).includes("relo setup"), false);
+  assert.doesNotMatch(JSON.stringify(out.line), /--level|--hooks|--mcp/u);
   assert.equal(out.line.warnings.skill.state, "missing");
-  assert.match(out.line.warnings.skill.hint, /relo-notifications/u);
+  assert.match(out.line.warnings.skill.hint, /relo-notifications.*relo setup --agent claude-code/u);
   const none = await bare.run(["doctor", "--full"]);
   assert.deepEqual(none.line.data.warnings.agentSetup, { ok: true, state: "none" });
+  assert.equal(none.line.data.warnings.path, undefined, "PATH matters only once hooks or a shell MCP entry run relo");
 
   const behind = await sandbox({ block: true, skillVersion: "0.0.1" });
   const stale = await behind.run(["doctor"]);
   assert.equal(stale.line.warnings.skill.state, "outdated");
   const full = await behind.run(["doctor", "--full"]);
-  assert.deepEqual(full.line.data.warnings.agentSetup, { ok: true, state: "set", file: "~/.claude/CLAUDE.md" });
+  assert.deepEqual(full.line.data.warnings.agentSetup, { ok: true, state: "set", files: [{ file: "~/.claude/CLAUDE.md", state: "current", modules: ["reporting", "planning"] }] });
   assert.equal(full.line.data.warnings.skill.cliVersion, VERSION);
+});
+
+test("doctor flags what setup wrote that needs fixing, each with the command that fixes it", async () => {
+  const { setupWarnings } = await import("../src/owner/doctor.mjs");
+  const box = await sandbox({ block: "stale", agents: [".claude"] });
+  const probe = { ...box.deps, env: {}, version: VERSION, platform: "darwin" };
+  const stale = await setupWarnings(probe);
+  assert.deepEqual([stale.agentSetup.ok, stale.agentSetup.state], [false, "stale"]);
+  assert.match(stale.agentSetup.hint, /relo setup --refresh$/u);
+
+  // A project AGENTS.md block Claude Code never reads: no CLAUDE.md imports it. (Without a user-level block, or
+  // setup --project would leave the repository alone.)
+  await box.run(["setup", "--refresh"]);
+  await rm(join(box.home, ".claude", "CLAUDE.md"));
+  await mkdir(join(box.cwd, ".git"));
+  await box.run(["setup", "--project"]);
+  await rm(join(box.cwd, "CLAUDE.md"));
+  const hidden = await setupWarnings(probe);
+  assert.equal(hidden.agentSetup.state, "hidden");
+  assert.match(hidden.agentSetup.hint, /not read by Claude Code: relo setup --project/u);
+  await box.run(["setup", "--project"]);
+  assert.equal((await setupWarnings(probe)).agentSetup.ok, true, "setup --project adds the import back");
+
+  // A GUI app's MCP entry that names a node or relo that moved; and a relo on PATH that is not this CLI.
+  const bin = await mkdtemp(join(tmpdir(), "relo-bin-"));
+  await writeFile(join(bin, "relo"), "#!/bin/sh\n");
+  const moved = { ...probe, nodePath: process.execPath, entrypoint: join(bin, "old-relo.mjs"), env: { PATH: bin } };
+  await mkdir(join(box.home, ".cursor"), { recursive: true });
+  await writeFile(join(box.home, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: { relo: { type: "stdio", command: "/gone/node", args: ["/gone/relo.mjs", "mcp"] } } }));
+  const gui = await setupWarnings(moved);
+  assert.match(gui.mcp.hint, /points at a node or relo that moved: relo setup --refresh/u);
+  await box.run(["setup", "--mcp", "--agent", "claude-code"]);
+  const path = (await setupWarnings(moved)).path;
+  assert.deepEqual([path.ok, path.state], [false, "other"], "a shell MCP entry runs whatever relo PATH finds first");
+});
+
+test("doctor names an agent installed after setup, with the setup that covers it; nothing before any setup", async () => {
+  const box = await sandbox({ agents: [".claude", ".codex"] });
+  assert.equal((await box.run(["doctor"])).line.warnings?.agentsNotSetUp, undefined, "before setup the skill advice says it");
+  await box.run(["setup", "--agent", "claude-code"]);
+  const out = await box.run(["doctor"]);
+  assert.equal(out.exitCode, EXIT.OK, "advice, never a failure");
+  assert.equal(out.line.warnings.agentsNotSetUp.state, "Codex");
+  assert.match(out.line.warnings.agentsNotSetUp.hint, /Relo does not cover Codex here yet: relo setup --agent codex$/u);
+  await box.run(["setup", "--agent", "codex"]);
+  assert.equal((await box.run(["doctor"])).line.warnings?.agentsNotSetUp, undefined);
 });
 
 test("relo schema COMMAND prints only those commands plus the exit codes", async () => {
   const deps = cardDependencies(fakeCards().client);
-  for (const argv of [["schema", "activity", "update"], ["schema", "activity.update"]]) {
+  for (const argv of [["schema", "activity", "end"], ["schema", "activity.end"]]) {
     const { line } = await cli(argv, deps);
-    assert.deepEqual(line.data.commands.map((command) => command.name), ["activity update"]);
+    assert.deepEqual(line.data.commands.map((command) => command.name), ["activity end"]);
     assert.ok(line.data.exitCodes[5]);
     assert.equal(line.data.environment, undefined);
   }
-  const several = await cli(["schema", "ask", "activity.start", "activity.end"], deps);
-  assert.deepEqual(several.line.data.commands.map((command) => command.name), ["ask", "activity start", "activity end"]);
+  const several = await cli(["schema", "ask", "activity.get", "activity.end"], deps);
+  assert.deepEqual(several.line.data.commands.map((command) => command.name), ["ask", "activity get", "activity end"]);
   const group = await cli(["schema", "activity"], deps);
-  assert.ok(group.line.data.commands.length >= 6);
+  assert.ok(group.line.data.commands.length >= 5);
   const bare = await cli(["schema"], deps);
   assert.ok(bare.line.data.environment);
-  const typo = await cli(["schema", "activity", "updat"], deps);
+  const typo = await cli(["schema", "activity", "edn"], deps);
   assert.equal(typo.exitCode, EXIT.USAGE);
-  assert.equal(typo.line.error.hint, "Did you mean activity update?");
+  assert.equal(typo.line.error.hint, "Did you mean activity end?");
   assert.equal((await cli(["schema", "setup"], deps)).line.data.commands[0].name, "setup");
 });
 
@@ -287,4 +291,123 @@ test("services list is compact; auth login and logout have compact shapes too", 
   assert.deepEqual(out.line, { ok: true, services: [{ id: "svc_1", title: "Builds", prefix: "hook_a", createdAt: "2026-01-01T00:00:00Z" }] });
   const full = await cli(["services", "list", "--full"], cardDependencies(client));
   assert.equal(full.line.command, "services.list");
+});
+
+/** A signed-in computer whose client records the name and icon PUTs, and a config that records the cached name. */
+async function named(extra = {}) {
+  const box = await sandbox();
+  const puts = [];
+  const asked = [];
+  const depthAsked = [];
+  const written = [];
+  const base = {
+    clientFactory: () => ({ putComputerSelf: async (change, key) => { puts.push({ change, key }); } }),
+    env: { RELO_STATE_DIR: join(box.home, "state") },
+    configPath: () => join(box.home, "config.json"),
+    loadStoredConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), revision: "r1" }),
+    writeConfig: async (_path, config) => { written.push(config); },
+    computerName: () => "studio-mac",
+    // The depth and agent questions are counted apart: these tests are about the name and icon questions.
+    ask: async (question, fallback) => { (/^(How deep|Relo found these agents)/u.test(question) ? depthAsked : asked).push(question); return fallback; },
+    ...extra,
+  };
+  return { ...box, puts, asked, depthAsked, written, run: (argv, more = {}) => box.run(argv, { ...base, ...more }) };
+}
+const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
+
+test("--computer and --icon name this computer without a prompt, for any caller, and cache the name", async () => {
+  const box = await named();
+  const out = await box.run(["setup", "--computer", "Studio Mac", "--icon", "desktop"]);
+  assert.equal(out.exitCode, EXIT.OK);
+  assert.deepEqual(box.puts.map((put) => put.change), [{ name: "Studio Mac", icon: "desktop" }]);
+  assert.deepEqual(box.asked, []);
+  assert.equal(box.written[0].computerName, "Studio Mac");
+  const row = out.line.changed.find((entry) => entry.kind === "computer");
+  assert.equal(row.action, "updated");
+  assert.match(row.reason, /relo uninstall keeps it/u);
+  const icon = await box.run(["setup", "--icon", "cloud"]);
+  assert.deepEqual(box.puts.at(-1).change, { icon: "cloud" });
+  assert.equal(icon.exitCode, EXIT.OK);
+});
+
+test("an agent session never prompts, even at a terminal; its flags still apply", async () => {
+  const box = await named();
+  const agent = { ...terminal, caller: { type: "agent_session", harness: "claude-code", sessionId: "s", sessionKey: "k" } };
+  assert.equal((await box.run(["setup"], agent)).exitCode, EXIT.OK);
+  assert.deepEqual([box.asked, box.puts], [[], []]);
+  await box.run(["setup", "--computer", "Build box", "--icon", "build"], agent);
+  assert.deepEqual(box.puts.map((put) => put.change), [{ name: "Build box", icon: "build" }]);
+});
+
+test("a person at a terminal is asked once, with the detected name and icon as the defaults", async () => {
+  const box = await named();
+  const first = await box.run(["setup"], terminal);
+  assert.equal(first.exitCode, EXIT.OK);
+  assert.deepEqual(box.asked, ["What should Relo call this computer? [studio-mac] ", `Icon: laptop, desktop, server, cloud, terminal, build [${box.asked[1].match(/\[(\w+)\] $/u)[1]}] `]);
+  assert.equal(box.puts[0].change.name, "studio-mac");
+  assert.ok(["laptop", "desktop", "server", "cloud", "terminal", "build"].includes(box.puts[0].change.icon));
+  await box.run(["setup"], terminal);
+  assert.equal(box.puts.length, 1, "answered once, never asked again");
+  assert.equal(box.asked.length, 2);
+});
+
+test("the answers are what is sent; a wrong icon is asked again", async () => {
+  const answers = ["Office Mac", "spaceship", "Desktop"];
+  const box = await named({ ask: async (question) => (/^(How deep|Relo found these agents)/u.test(question) ? "" : answers.shift()) });
+  await box.run(["setup"], terminal);
+  assert.deepEqual(box.puts.map((put) => put.change), [{ name: "Office Mac", icon: "desktop" }]);
+});
+
+test("--json, --dry-run, a pipe and an environment credential never prompt or send", async () => {
+  const box = await named();
+  for (const [argv, extra] of [[["setup", "--json"], terminal], [["setup", "--dry-run"], terminal], [["setup"], { stdinIsTTY: true, stdoutIsTTY: false }],
+    [["setup"], { stdinIsTTY: false, stdoutIsTTY: true }]]) {
+    assert.equal((await box.run(argv, extra)).exitCode, EXIT.OK, argv.join(" "));
+  }
+  assert.deepEqual([box.asked, box.puts], [[], []]);
+  const dry = await box.run(["setup", "--dry-run", "--computer", "X", "--icon", "server"], terminal);
+  assert.equal(dry.line.changed.find((entry) => entry.kind === "computer").action, "updated");
+  assert.deepEqual(box.puts, [], "a dry run sends nothing");
+  const env = await box.run(["setup", "--icon", "server"], { loadConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), source: "environment" }) });
+  assert.deepEqual(box.puts, []);
+  assert.match(env.line.skipped.find((entry) => entry.kind === "computer").reason, /relo auth login/u);
+});
+
+test("signed out, setup still works, sends nothing and says how to sign in", async () => {
+  const box = await named({ loadConfig: async () => { throw new Error("no login"); } });
+  for (const [argv, extra] of [[["setup", "--computer", "Mac"], {}], [["setup"], terminal]]) {
+    const out = await box.run(argv, extra);
+    assert.equal(out.exitCode, EXIT.OK);
+    assert.match(out.line.skipped.find((entry) => entry.kind === "computer").reason, /^Sign in with relo auth login to name this computer on your phone\.$/u);
+  }
+  assert.deepEqual([box.asked, box.puts], [[], []]);
+});
+
+test("bad --icon, an over-long name, and --refresh or --level track with them are usage errors", async () => {
+  const box = await named();
+  assert.equal((await box.run(["setup", "--icon", "spaceship"])).exitCode, EXIT.USAGE);
+  assert.equal((await box.run(["setup", "--computer", "x".repeat(81)])).exitCode, EXIT.USAGE);
+  assert.equal((await box.run(["setup", "--refresh", "--icon", "cloud"])).exitCode, EXIT.USAGE);
+  assert.equal((await box.run(["setup", "--refresh", "--level", "track"])).exitCode, EXIT.USAGE);
+  assert.deepEqual(box.puts, []);
+});
+
+test("a failed send is reported, and the next setup asks again", async () => {
+  let failing = true;
+  const puts = [];
+  const box = await named({ clientFactory: () => ({ putComputerSelf: async (change) => { if (failing) throw new Error("offline"); puts.push(change); } }) });
+  const out = await box.run(["setup"], terminal);
+  assert.equal(out.exitCode, EXIT.USAGE);
+  assert.equal(out.line.errors.find((entry) => entry.kind === "computer").reason, "offline");
+  failing = false;
+  await box.run(["setup"], terminal);
+  assert.equal(puts.length, 1);
+});
+
+test("relo uninstall does not undo the name or icon", async () => {
+  const box = await named();
+  await box.run(["setup", "--computer", "Mac", "--icon", "laptop"]);
+  const out = await box.run(["uninstall", "--apply"]);
+  assert.equal(out.line.changed.some((entry) => entry.kind === "computer"), false);
+  assert.equal(box.puts.length, 1);
 });

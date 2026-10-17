@@ -40,9 +40,17 @@ type Ids = Record<string, string>;
 const notOwnerScopedById: Record<string, string> = {
   "GET /": "public landing",
   "GET /agents.md": "public docs",
+  "GET /install.sh": "the public install script of Add a computer; it holds no account data",
+  "GET /cli/relo-cli.tgz": "the public CLI download of Add a computer",
+  "GET /cli/version": "the public version of that CLI",
+  "POST /api/computer-invites/redeem": "the one-time code is the shared secret of the sign-in",
   "GET /docs": "public docs",
+  "GET /docs/*": "public docs",
+  "GET /docs/search.json": "public docs search index",
   "GET /docs.md": "public docs",
   "GET /llms.txt": "public docs",
+  "GET /llms-full.txt": "public docs",
+  "GET /dashboard/docs": "redirect to the public docs",
   "GET /assets/:dashboardAsset": "static Dashboard bundle",
   "GET /health/live": "health",
   "GET /health/ready": "health",
@@ -61,23 +69,29 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/auth/sign-up/email": "sign-up",
   "POST /api/dashboard/browser": "registers the calling browser's own keys for the signed-in account",
   "DELETE /api/dashboard/browser/:browserId": "the signed-in account revokes one of its own browsers; unlinkBrowser matches it by account",
+  "POST /api/dashboard/browser/:browserId/link-request": "the signed-in account asks to link one of its own browsers; requestBrowserLink matches it by account",
+  "POST /api/devices/self/link-requests/:browserId/decline": "clears a request of the calling phone's own account; declineBrowserLinkRequest matches it by account",
   "PUT /api/dashboard/end-to-end/policy": "sets the signed-in account's own end-to-end requirement",
   "POST /api/devices/self/approvals": "approves a phone of the calling phone's own account; approveDevice matches it by account",
   "POST /api/devices/self/links": "links a browser of the calling phone's own account; linkBrowser matches it by account",
+  "POST /api/devices/self/computer-approvals": "approves a computer of the calling device's own account; approveComputer matches it by account",
   "POST /api/device-authorizations/start": "unauthenticated CLI login start",
   "POST /api/device-authorizations/token": "device code exchange",
   "GET /api/device-authorizations/requests/:userCode": "user code is the shared secret of the login",
   "POST /api/device-authorizations/requests/:userCode/approve": "user code is the shared secret of the login",
   "POST /api/device-authorizations/requests/:userCode/deny": "user code is the shared secret of the login",
-  "POST /hooks/:secret": "webhook secret identifies the service",
-  "POST /hooks/:secret/live-activities": "webhook secret identifies the service",
-  "POST /hooks/:secret/live-activities/resolve": "webhook secret identifies the service",
+  "POST /hooks": "webhook secret (header) identifies the service",
+  "POST /hooks/live-activities": "webhook secret (header) identifies the service",
+  "POST /hooks/live-activities/resolve": "webhook secret (header) identifies the service",
   "POST /api/devices/register": "registers the caller's own device",
   "PUT /api/devices/self/keys": "publishes the caller's own device keys; device-keys.test.ts",
   "PUT /api/clients/self/keys": "publishes the calling CLI's own identity key; device-keys.test.ts",
+  "PUT /api/computers/self": "takes no identifier: it renames only the calling login's own computer; api/computer-routes.test.ts",
+  "PUT /api/computers/self/report": "takes no identifier: it writes only the calling login's own computer; api/computer-routes.test.ts",
   "PUT /api/end-to-end/policy": "the caller's own account setting; end-to-end-policy.test.ts",
   "POST /api/account/delete": "deletes the caller's own account",
   "GET /api/inbox/events": "stream; covered by its snapshot",
+  "GET /api/dashboard/events": "hint-only stream scoped to the session's principal; web/dashboard-events.test.ts",
   "GET /api/dashboard/server": "server admin account metadata (ADR 0004); server-accounts.test.ts",
   "PUT /api/dashboard/server/registration": "server admin setting; server-accounts.test.ts",
   "PUT /api/dashboard/server/question-wait": "server admin setting; long-question.test.ts",
@@ -91,6 +105,8 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/session/works/:workId/pause": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
   "POST /api/session/works/:workId/resume": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
   "POST /api/session/works/:workId/finish": "scoped in SQL to account + Relo-Session-Key; works/session-works.test.ts",
+  "POST /api/session/works/:workId/deliver": "scoped in SQL to account + Relo-Session-Key; works/session-rounds.test.ts",
+  "POST /api/session/works/:workId/handoff": "scoped in SQL to account + Relo-Session-Key; the handle takes over only on the same account and credential; works/session-handoff.test.ts",
   "POST /api/session/works": "creates in the caller's own session; works/session-works.test.ts",
   "GET /api/session/works": "the caller's own session; works/session-works.test.ts",
   "POST /api/producers/:producerKey/works": "creates under the calling key's own producer key; works/producer-works.test.ts",
@@ -101,8 +117,8 @@ const notOwnerScopedById: Record<string, string> = {
   "POST /api/producers/:producerKey/works/:workId/resume": "scoped in SQL to account + producer key",
   "POST /api/producers/:producerKey/works/:workId/finish": "scoped in SQL to account + producer key",
   "POST /api/producers/:producerKey/works/:workId/heartbeat": "scoped in SQL to account + producer key",
-  "POST /hooks/:secret/works": "webhook secret identifies the service",
-  "GET /hooks/:secret/works": "webhook secret identifies the service; lists its own works",
+  "POST /hooks/works": "webhook secret (header) identifies the service",
+  "GET /hooks/works": "webhook secret (header) identifies the service; lists its own works",
 };
 
 /** Creates that name other resources in the body: B's ids must answer like missing ones. */
@@ -115,7 +131,10 @@ const bodyIdRoutes: Record<string,(values: Ids) => unknown> = {
 
 /** Actions on the caller's own account; running them as A must leave every row of B unchanged. */
 const ownAccountRoutes: Record<string,unknown> = {
-  "PUT /api/dashboard/account/live-activity-policy": {},
+  "POST /api/devices/self/computer-invites": {},
+  "POST /api/clients/computer-invites": {},
+  "POST /api/dashboard/computer-invites": {},
+  "PUT /api/dashboard/account/live-activity-policy": { colorStrategy: "project" },
   "DELETE /api/dashboard/account/live-activity-policy": undefined,
   "POST /api/dashboard/users": { name: "A member",email: "member@tenant-a.example",password: "member-password-123" },
   "POST /api/dashboard/services": { title: "A dashboard service" },
@@ -128,6 +147,8 @@ const ownAccountRoutes: Record<string,unknown> = {
   "POST /api/agent-sessions/observed": { session: "a".repeat(64),harness: "codex",phase: "open",phaseSince: new Date().toISOString(),
     lastSeenAt: new Date().toISOString(),openToolSince: null,seq: 1,computer: "tenant-a-mac" },
   "POST /api/harness-credentials": { name: "A computer hooks" },
+  "POST /api/credentials": { name: "A pipeline" },
+  "POST /api/dashboard/ci-tokens": { name: "A dashboard pipeline" },
 };
 
 suite("tenant isolation (ADR 0004)", () => {
@@ -221,7 +242,9 @@ suite("tenant isolation (ADR 0004)", () => {
   }
 
   async function as(owner: Account,kind: "key" | "device" | "session",method: string,path: string,body?: unknown) {
-    const token = kind === "key" ? owner.apiKey : kind === "device" ? owner.device.credential : owner.session;
+    // A service route reads only its webhook secret header: the caller probes with its own service's secret.
+    const token = path.startsWith("/hooks") ? (owner === a ? aHookSecret : bSecrets[0]!)
+      : kind === "key" ? owner.apiKey : kind === "device" ? owner.device.credential : owner.session;
     return await app.request(path,{
       method,
       headers: { authorization: `Bearer ${token}`,"content-type": "application/json",origin: appUrl,
@@ -240,7 +263,7 @@ suite("tenant isolation (ADR 0004)", () => {
   async function seedService(owner: Account,title: string): Promise<string> {
     const created = await ok(await as(owner,"key","POST","/api/services",{ title }));
     if (owner === b) ids.serviceId = created.service.id;
-    return new URL(created.webhookUrl).pathname.split("/")[2]!;
+    return created.secret as string;
   }
 
   async function seedB(): Promise<void> {
@@ -271,9 +294,6 @@ suite("tenant isolation (ADR 0004)", () => {
     const project = projects.items.find((item: any) => item.name.includes(MARK));
     expect(project,"B's project exists").toBeDefined();
     ids.projectId = project.id;
-    const alias = await ok(await as(b,"session","POST",`/api/dashboard/resources/projects/${project.id}/aliases`,
-      { expectedRevision: project.revision,displayName: `${MARK} alias` }));
-    ids.aliasId = JSON.stringify(alias).match(/als_[0-9a-f-]{36}/i)![0];
     const deliveries = await ok(await as(b,"key","GET","/api/deliveries"));
     expect(deliveries.deliveries.length,"B has a delivery").toBeGreaterThan(0);
     ids.deliveryId = deliveries.deliveries[0].id ?? deliveries.deliveries[0].deliveryId;
@@ -285,6 +305,14 @@ suite("tenant isolation (ADR 0004)", () => {
       body: JSON.stringify({ session: "b".repeat(64),harness: "codex",phase: "open",phaseSince: observedAt,lastSeenAt: observedAt,
         openToolSince: null,seq: 1,computer: `${MARK} mac`,project: `${MARK} project` }) }));
     ids.credentialId = (await ok(await as(b,"key","GET","/api/clients/self"))).credential.id;
+    ids.clientId = ids.credentialId;
+    ids.inviteId = (await ok(await as(b,"key","POST","/api/clients/computer-invites",{}))).inviteId;
+    // B's raw `tenant-key` login skipped the sign-in path that creates a computer (ADR 0011).
+    await db.query(`INSERT INTO computers(principal_id,login_key_id) SELECT principal_id,id FROM principal_api_keys
+      WHERE principal_id=$1 AND kind='login' ON CONFLICT (login_key_id) DO NOTHING`,[b.principalId]);
+    ids.computerId = `cmp_${(await db.query<{ id: string }>(
+      "SELECT c.id FROM computers c JOIN principal_api_keys k ON k.id=c.login_key_id WHERE c.principal_id=$1 AND k.label='tenant-key'",
+      [b.principalId])).rows[0]!.id}`;
     // B's own CLI starts signing in: its code must never reach another account.
     const login = await ok(await app.request("/api/device-authorizations/start",{
       method: "POST",headers: { "content-type": "application/json" },
@@ -295,7 +323,6 @@ suite("tenant isolation (ADR 0004)", () => {
     ids.deviceId = b.device.deviceId;
     ids.userId = b.userId;
     ids.action = "disable";
-    ids.secret = "";
 
     for (const [name,value] of Object.entries(ids)) {
       missing[name] = name === "assetId" ? `ast_${randomUUID().replaceAll("-","")}`
@@ -337,14 +364,14 @@ suite("tenant isolation (ADR 0004)", () => {
     return result;
   }
 
-  function fill(path: string,values: Ids,hookSecret: string): string {
-    return path.replace(/:([A-Za-z]+)/g,(_,name: string) =>
-      name === "secret" ? hookSecret : encodeURIComponent(values[name] ?? `unmapped-${name}`));
+  function fill(path: string,values: Ids): string {
+    return path.replace(/:([A-Za-z]+)/g,(_,name: string) => encodeURIComponent(values[name] ?? `unmapped-${name}`));
   }
 
   /** A plausible body, so a foreign id reaches the ownership check instead of stopping at validation. */
   function bodyFor(route: string): unknown {
     if (route.endsWith("/card-limit")) return { limit: 2 };
+    if (route === "PATCH /api/dashboard/computers/:computerId") return { name: "A rename",icon: "server" };
     if (route === "PATCH /api/dashboard/services/:serviceId") return { title: "A rename",imageUrl: null,destinationUrl: null };
     if (route === "POST /api/dashboard/live-activities/:activityId/update") return { presentation: bPresentation };
     if (route === "POST /api/dashboard/live-activities/:activityId/wait") return { kind: "approval",prompt: "A?" };
@@ -354,6 +381,7 @@ suite("tenant isolation (ADR 0004)", () => {
       credential: "A".repeat(43),idempotencyKey: `iso-${randomUUID()}` };
     if (route.endsWith("/heartbeat")) return { lifecycle: { provider: "codex",runId: "tenant-a-run" } };
     if (route === "POST /api/live-activities/:activityId/wait") return { type: "approval",prompt: "A?",expiresInSeconds: 120 };
+    if (route === "PUT /api/devices/self/computer-invites/:inviteId/activity") return { pushToken: "ab".repeat(32) };
     if (route.includes("/resources/projects/") && route.endsWith("/aliases")) return { expectedRevision: 1,displayName: "A alias" };
     if (route.endsWith("/merge")) return { expectedRevision: 1,targetProjectId: mergeTarget,targetExpectedRevision: 1 };
     if (route.endsWith("/split")) return { expectedRevision: 1,conversationIds: [`cnv_${randomUUID()}`],destination: { kind: "new",displayName: "A" } };
@@ -362,12 +390,16 @@ suite("tenant isolation (ADR 0004)", () => {
     if (route.endsWith("/interactions")) return { kind: "approve",value: {},idempotencyKey: `iso-${randomUUID()}` };
     if (route.endsWith("/reset-password")) return { password: "attacker-password-123" };
     if (route.endsWith("/token")) return { generation: 1,nativeActivityId: "native",environment: "sandbox",token: "c".repeat(64) };
-    if (route.endsWith("/live-activity-policy")) return {};
+    if (route.endsWith("/live-activity-policy")) return { colorStrategy: "project" };
     if (route.includes("/services/")) return { title: "A rename" };
-    if (route.endsWith("/devices/:deviceId/approve")) return { browserId: `brw_${randomUUID()}`,
+    if (route === "POST /api/dashboard/questions/:interactionId/answer") return { notificationId: ids.eventId,action: "approve",
+      idempotencyKey: `iso-${randomUUID()}`,signature: { e2eeKeyId: `k_${randomBytes(16).toString("base64url")}`,
+        e2eeSignedAt: new Date().toISOString(),e2eeSignature: randomBytes(64).toString("base64url") } };
+    if (route.endsWith("/devices/:deviceId/approve") || route.endsWith("/computers/:clientId/approve")) return { browserId: `brw_${randomUUID()}`,
       identityKey: Buffer.concat([Buffer.from([4]),randomBytes(64)]).toString("base64url"),signedAt: new Date().toISOString(),
       signature: randomBytes(64).toString("base64url") };
     if (route.includes("/devices/:deviceId")) return { name: "A rename" };
+    if (route === "POST /api/works/:workId/end" || route === "POST /api/dashboard/works/:workId/end") return {};
     if (route.endsWith("/end")) return { status: "Ended by A" };
     if (route.includes("live-activities")) return { status: "Changed by A" };
     return {};
@@ -389,9 +421,9 @@ suite("tenant isolation (ADR 0004)", () => {
       const [method,path] = route.split(" ") as [string,string];
       for (const kind of ["key","device","session"] as const) {
         await db.query("DELETE FROM request_rate_limits");
-        const foreign = await attempt(kind,method,fill(path,ids,aHookSecret),route);
+        const foreign = await attempt(kind,method,fill(path,ids),route);
         await db.query("DELETE FROM request_rate_limits");
-        const absent = await attempt(kind,method,fill(path,missing,aHookSecret),route);
+        const absent = await attempt(kind,method,fill(path,missing),route);
         if (foreign.status >= 200 && foreign.status < 300) {
           failures.push(`${route} as ${kind}: foreign id accepted (${foreign.status}) ${foreign.text.slice(0,160)}`);
         } else if (foreign.status !== absent.status

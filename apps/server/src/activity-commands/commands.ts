@@ -2,7 +2,7 @@ import { beginActivityTransaction,lifecycleMutationAllowed } from "../activity-l
 import type { Database } from "../db.js";
 import { preserveActivePresentationPolicy,resolveActivityPresentation } from "../presentation-policy.js";
 import {
-assertAccountPresentationAssets,canonicalPresentation,patchPresentationColumns,
+assertAccountPresentationAssets,canonicalPresentation,
 persistedPresentationColumns,
 PresentationRuntimeError,
 terminalPresentationColumnsFromRow
@@ -36,13 +36,16 @@ function commandPresentation(actor: ActivityActor,current: ActivityRow,command: 
   }
   if(command.operation==="end") return input.presentation
     ?persistedPresentationColumns(canonicalPresentation(input.presentation))
-    :terminalPresentationColumnsFromRow(current,input.status??"Complete",input.symbol==="warning"?"warning":"success",
-      {detail:input.detail,progress:input.progress,accentColor:input.accentColor,workFinished:true});
+    :terminalPresentationColumnsFromRow(current,input.status??"Complete",
+      command.stopped?"stopped":input.symbol==="warning"?"warning":"success",
+      {detail:input.detail,progress:input.progress,accentColor:input.accentColor,workFinished:!command.stopped,plan:command.input.plan});
+  // Scripts and services update the same way (plan 10 M5): semantic fields, steps included, over the current card.
   const update=command.input;
-  if(actor.kind==="service") return update.presentation
-    ?persistedPresentationColumns(canonicalPresentation(update.presentation))
-    :patchPresentationColumns(current,{...update,title:update.title??update.context?.taskTitle,detail:update.detail??update.context?.threadName});
-  const progress=current.lifecycle_provider&&typeof update.progress==="number"&&typeof current.progress==="number"
+  // A work's card with a plan carries no fraction of its own: the current step's fraction travels in the plan, so an old
+  // percentage is neither carried forward nor held at its maximum beside the step count (plan 14, workstream 7).
+  // Only a work's projected card (it has a work): a raw API card may use steps beside a percentage of its own.
+  const planned=update.steps!==undefined&&Boolean((current as {work_id?:string|null}).work_id);
+  const progress=!planned&&current.lifecycle_provider&&typeof update.progress==="number"&&typeof current.progress==="number"
     ?Math.max(update.progress,current.progress):update.progress;
   const title=boundedPresentationText(update.context?.taskTitle,80);
   const semanticInput=update.presentation?update:{...update,
@@ -50,8 +53,8 @@ function commandPresentation(actor: ActivityActor,current: ActivityRow,command: 
     detail:update.detail!==undefined?update.detail:update.context?.threadName??current.detail,
     // Carry progress only when the card shows a measured bar; a steps card's stored progress is
     // derived from its steps and must not come back as a second, frozen bar.
-    progress:progress!==undefined?progress:hasMeasuredProgress(current)?current.progress:undefined};
-  const resolved=resolveActivityPresentation(semanticInput,{principalId:actor.principalId,effective:command.policy});
+    progress:progress!==undefined?progress:!planned&&hasMeasuredProgress(current)?current.progress:undefined};
+  const resolved=resolveActivityPresentation(semanticInput,{principalId:actor.principalId,effective:command.policy,computerIcon:command.computerIcon});
   return preserveActivePresentationPolicy(current,semanticInput,resolved.stored);
 }
 

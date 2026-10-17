@@ -84,10 +84,6 @@ final class E2EENameTests: XCTestCase {
         XCTAssertEqual(stored.originLabel, "Work Mac")
         // The stored form keeps the handle: names live only in this phone's Keychain.
         XCTAssertTrue(String(decoding: try JSONEncoder().encode(stored), as: UTF8.self).contains(project))
-        let session = try ReloWireJSON.decoder().decode(AgentSession.self, from: Data(
-            #"{"id":"s1","harness":"claude-code","computer":"\#(computer)","project":"\#(project)","startedAt":"2026-10-13T17:00:00.000Z","lastSeenAt":"2026-10-13T17:00:00.000Z","presence":"working"}"#.utf8))
-        XCTAssertEqual(session.project, "relo")
-        XCTAssertEqual(SessionSource.groupTitle(computer: session.computer, account: session.account), "Work Mac")
     }
 
     func testAnAgentSessionsSealedNamesTeachThePhoneItsNames() throws {
@@ -102,16 +98,9 @@ final class E2EENameTests: XCTestCase {
         let envelope = try ReloE2EE.seal(kind: "names", context: "ses:abc", sender: mac,
                                          recipients: [("dev_1", state.prekeys[0].id, state.prekeys[0].key.publicKey)],
                                          content: try JSONSerialization.data(withJSONObject: ["names": [project: "relo"]]))
-        let json = """
-        {"id":"ags_00000000-0000-4000-8000-000000000001","harness":"claude-code","project":"\(project)",
-         "startedAt":"2026-10-13T17:00:00.000Z","lastSeenAt":"2026-10-13T17:00:00.000Z","card":null,"presence":"no_card",
-         "sealedNames":\(String(decoding: try JSONEncoder().encode(envelope), as: UTF8.self))}
-        """
-        let session = try ReloWireJSON.decoder().decode(AgentSession.self, from: Data(json.utf8))
-        let snapshot = InboxRepairResponse(items: [], total: 0, serverTime: Date(), readWatermark: nil,
-                                           unread: InboxUnreadSummary(account: 0, projects: [:]), sessions: [session])
         XCTAssertTrue(book.names().isEmpty)
-        _ = snapshot.openingSealed(sealed.opener)
+        // A session row reaches the phone in the Now summary; opening its names teaches the book.
+        _ = sealed.opener(envelope, "ags_00000000-0000-4000-8000-000000000001")
         XCTAssertEqual(book.names(), [project: "relo"])
     }
 

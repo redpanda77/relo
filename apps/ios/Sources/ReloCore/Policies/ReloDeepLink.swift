@@ -35,7 +35,17 @@ public enum ReloDeepLink {
         return identity.isValid ? identity : nil
     }
 
-    /// Settings → Security, where a new device waiting for access is approved.
+    /// The Connect a computer wizard (the setup Live Activity opens it).
+    public static let setupURL = URL(string: "relo://setup")!
+
+    /// `relo://setup` (a trailing slash allowed; nothing else).
+    public static func isSetup(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "relo", url.host?.lowercased() == "setup",
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return false }
+        return url.pathComponents.filter { $0 != "/" }.isEmpty
+    }
+
+    /// Settings → Devices, where a new device waiting for access is approved.
     public static let securitySettingsURL = URL(string: "relo://settings/security")!
 
     /// `relo://settings/security` (a trailing slash allowed; nothing else).
@@ -45,14 +55,14 @@ public enum ReloDeepLink {
         return url.pathComponents.filter { $0 != "/" }.map { $0.lowercased() } == ["security"]
     }
 
-    /// A notification's `relo.destination` or `relo.deepLink` naming Settings → Security.
+    /// A notification's `relo.destination` or `relo.deepLink` naming Settings → Devices.
     public static func opensSecuritySettings(relo: [String: Any]) -> Bool {
         ["destination", "deepLink"].contains { key in
             (relo[key] as? String).flatMap { URL(string: $0) }.map(isSecuritySettings) ?? false
         }
     }
 
-    /// `relo://security/request/<id>`: one phone (`dev_…`) or computer (`key_…`) waiting for approval.
+    /// `relo://security/request/<id>`: one phone (`dev_…`), computer (`key_…`) or browser (`brw_…`) waiting for approval.
     public static func accessRequestURL(id: String) -> URL? {
         guard isAccessRequestID(id) else { return nil }
         return URL(string: "relo://security/request/\(id)")
@@ -75,6 +85,6 @@ public enum ReloDeepLink {
     }
 
     static func isAccessRequestID(_ id: String) -> Bool {
-        id.range(of: #"^(dev|key)_[A-Za-z0-9-]{8,64}$"#, options: .regularExpression) != nil
+        id.range(of: #"^(dev|key|brw)_[A-Za-z0-9-]{8,64}$"#, options: .regularExpression) != nil
     }
 }

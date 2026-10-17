@@ -32,11 +32,11 @@ suite("new devices are approved on a trusted phone",() => {
     return { status: response.status,body: await response.json().catch(() => null) as any };
   }
   /** A phone with keys, registered `minutesAgo` minutes ago. */
-  async function phone(name: string,minutesAgo: number,model: string | null = null,isSimulator = false) {
+  async function phone(name: string,minutesAgo: number,model: string | null = null,isSimulator = false,notifications = "authorized") {
     const id = (await db.query<{ id: string }>(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
       app_version,app_build,os_version,apns_environment,notification_authorization,apns_token,registered_at,model,is_simulator) VALUES ($1,$2,$3,$4,
-      'com.example.relo.notifications','1','1','26','sandbox','authorized','fixture-alert',now()-make_interval(mins => $5),$6,$7) RETURNING id`,
-    [principalId,randomUUID(),randomUUID(),name,minutesAgo,model,isSimulator])).rows[0]!.id;
+      'com.example.relo.notifications','1','1','26','sandbox',$8,'fixture-alert',now()-make_interval(mins => $5),$6,$7) RETURNING id`,
+    [principalId,randomUUID(),randomUUID(),name,minutesAgo,model,isSimulator,notifications])).rows[0]!.id;
     const credential = generateToken();
     await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['device:self','inbox:read'])",
       [id,hashToken(credential)]);
@@ -105,6 +105,32 @@ suite("new devices are approved on a trusted phone",() => {
     expect(await notices()).toEqual([{ title: "New computer wants access",deep_link: `relo://security/request/key_${await laptopId()}`,targets: [trusted.id] }]);
     const body = await db.query(`SELECT e.payload FROM notification_events e WHERE e.principal_id=$1`,[principalId]);
     expect(body.rows[0].payload.computerApproval).toEqual({ clientId: `key_${await laptopId()}` });
+  });
+
+  test("a phone with notifications off neither blocks the notice nor receives it; until one can, the next pass asks again",async () => {
+    const cipher = createNotificationContentCipher("device-approvals-secret-with-32-characters");
+    const targets = async () => (await db.query(`SELECT array_agg(t.device_id) AS targets FROM notification_events e
+      JOIN notification_event_targets t ON t.notification_event_id=e.id WHERE e.principal_id=$1 GROUP BY e.id`,[principalId])).rows;
+    const quiet = await phone("Old iPhone",120,null,false,"denied");
+    const ipad = await phone("iPad",5);
+    expect(await requestAllPendingApprovals(db,"sandbox",cipher)).toBe(0);
+    expect(await targets()).toEqual([]);
+    expect((await db.query("SELECT approval_requested_at FROM device_identity_keys WHERE device_id=$1",[ipad.id])).rows[0].approval_requested_at).toBeNull();
+    const trusted = await phone("iPhone",60);
+    expect(await requestAllPendingApprovals(db,"sandbox",cipher)).toBe(1);
+    expect(await targets()).toEqual([{ targets: [trusted.id] }]);
+    expect(quiet.id).not.toBe(trusted.id);
+
+    const studio = generateToken(),laptop = generateToken();
+    for (const [label,token] of [["Studio Mac",studio],["Laptop",laptop]] as const) {
+      await db.query("INSERT INTO principal_api_keys(principal_id,label,token_hash,scopes) VALUES ($1,$2,$3,ARRAY['devices:read'])",
+        [principalId,label,hashToken(token)]);
+      expect((await call(token,"PUT","/api/clients/self/keys",{ identityKey: p256() })).status).toBe(200);
+    }
+    const computerNotice = (await db.query(`SELECT array_agg(t.device_id ORDER BY t.device_id) AS targets FROM notification_events e
+      JOIN notification_event_targets t ON t.notification_event_id=e.id WHERE e.principal_id=$1 AND e.title='New computer wants access'
+      GROUP BY e.id`,[principalId])).rows;
+    expect(computerNotice).toEqual([{ targets: [ipad.id,trusted.id].sort() }]);
   });
 
   test("declining signs the newer device out",async () => {

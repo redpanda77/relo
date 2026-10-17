@@ -1,0 +1,1017 @@
+/* now: owned by one area; imported at the end of index.css so it can refine the base rules.
+   Now's layout and the shared work card (components/organisms/work-card.tsx, used by History too).
+   Layout by the page's own width (the split-page container; inbox-view.tsx mirrors the breakpoints):
+   - under 1100px: stacked. A compact deck (the core and one row of readouts), then the work, with
+     the iPhone's order so the first live card is above the fold on a phone;
+   - 1100px+: the deck is a 400px sticky column; the work is a fluid column up to 880px;
+   - 1400px+: Sessions moves to a 320px rail on the right;
+   - 1500px+: Running goes two across. */
+
+/* ---------- Rhythm: 28px between sections, 12px from a caption to its content ---------- */
+
+.split-page-body { --section-gap: 28px; }
+/* A fold is one quiet line that belongs to what is above it: tight, not a new section. Blocks are
+   wrapped (each fades in and out on its own), so the rule reads the wrapper's slot. */
+.split-page-body > [data-now-slot="fold"] + [data-now-slot="fold"] { margin-top: 12px; }
+.now-probe { display: none; }
+
+/* ---------- Tones the work card adds ---------- */
+
+.tone-cyan-quiet { --tone: color-mix(in srgb, var(--neon-cyan) 70%, transparent); }
+
+/* ---------- Stacked (phones, portrait tablets, narrow windows) ---------- */
+
+/* A compact deck: a short core so the first card is on screen. */
+.now-deck-stage { height: clamp(340px, 60vw, 400px); }
+@media (max-width: 639px) {
+  .now-deck { gap: 4px; }
+  .now-deck-stage { height: 330px; }
+}
+
+/* index.css splits from 940px; Now splits from 1100px, so between them it stays stacked. */
+@container split-page (min-width: 940px) and (max-width: 1099.98px) {
+  .split-page-grid { grid-template-columns: minmax(0, 1fr); }
+  .split-page-aside { position: static; height: auto; padding-bottom: 0; }
+  .split-page-body {
+    max-width: calc(880px + var(--page-gutter) * 2);
+    padding-top: var(--section-gap);
+    padding-left: var(--page-gutter);
+  }
+  .now-deck-stage {
+    height: 360px;
+    min-height: 0;
+    margin-right: calc(var(--page-gutter) * -1);
+  }
+}
+
+/* ---------- Split: the deck is a 400px column beside the work ---------- */
+
+@container split-page (min-width: 1100px) {
+  .split-page-grid { grid-template-columns: 400px minmax(0, 1fr); }
+  .split-page-aside {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    padding-bottom: var(--page-top);
+  }
+  .split-page-aside::-webkit-scrollbar { display: none; }
+  /* A narrower inset than the page gutter, so four readouts fit the 400px column. */
+  .split-page-aside { padding-inline: 24px; }
+  .split-page-aside .now-deck-stage { margin-inline: -24px; }
+  /* One 40px gutter between the deck, the work and the rail: the deck's 24px inset plus 16px here. */
+  .split-page-body {
+    max-width: calc(880px + var(--page-gutter) + 16px);
+    padding-top: calc(var(--page-top) + 12px);
+    padding-left: 16px;
+  }
+  .now-deck { height: auto; min-height: 100%; gap: 12px; }
+  /* The corner modules start on the line the work column's first card starts. */
+  .now-deck-head { margin-bottom: -8px; }
+  .now-deck-stage {
+    height: 440px;
+    min-height: 0;
+    margin-right: 0;
+  }
+}
+
+/* The header is part of the sky: the stage runs up behind the title and the sync status, so the
+   core, the title and the corner modules sit in one field instead of a header over a box. */
+.now-deck-stage { margin-top: -48px; }
+
+/* The rest of the deck column: one sentence, today's strip, agent time and the spectrum. */
+.now-deck-more {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 8px;
+}
+.now-deck-sentence {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
+/* ---------- Wide: Sessions in a 320px rail on the right ---------- */
+
+@container split-page (min-width: 1400px) {
+  .split-page-body {
+    position: relative;
+    max-width: calc(880px + 40px + 320px + var(--page-gutter) + 16px);
+    padding-right: calc(var(--page-gutter) + 320px + 40px);
+  }
+  .split-page-body > .now-rail {
+    position: absolute;
+    top: calc(var(--page-top) + 12px);
+    right: var(--page-gutter);
+    bottom: calc(var(--page-top) + 24px);
+    width: 320px;
+    margin-top: 0;
+  }
+  .now-rail-inner {
+    position: sticky;
+    top: calc(var(--page-top) + 12px);
+    max-height: calc(100dvh - var(--page-top) * 2);
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+}
+
+/* ---------- The deck's centre: old and new counts share one cell to crossfade ---------- */
+
+.now-deck-centre {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  grid-template-areas: "number" "label";
+}
+.now-deck-centre-number { grid-area: number; position: relative; isolation: isolate; }
+.now-deck-centre-label { grid-area: label; }
+@media (max-width: 639px) {
+  .now-deck-centre .hud-number { font-size: 3.5rem; }
+  .now-deck-centre-label { margin-top: 4px; }
+}
+
+/* No filter on the number, at rest or in motion: its glow is a painted radial layer behind it that
+   breathes on the page's heartbeat (opacity and scale only), twice as fast when it needs you. */
+.now-deck-centre .hud-number,
+.now-deck-centre .hud-breathe,
+.now-deck-centre .hud-breathe-fast { filter: none; animation: none; }
+.now-deck-centre-number::before {
+  content: "";
+  position: absolute;
+  inset: -45% -35%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--centre-glow, transparent), transparent 72%);
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease-out);
+  pointer-events: none;
+}
+.now-deck-centre[data-live] .now-deck-centre-number::before {
+  opacity: 0.55;
+  animation: now-centre-glow var(--period-breath) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
+}
+.now-deck-centre[data-live][data-urgent] .now-deck-centre-number::before {
+  animation-duration: calc(var(--period-breath) / 2);
+}
+@keyframes now-centre-glow {
+  0%, 100% { opacity: 0.35; transform: scale(0.92); }
+  50% { opacity: 0.75; transform: scale(1.06); }
+}
+
+/* Readouts light and dim on the slow fade, never snap. */
+.readout-label,
+.readout-value { transition: color var(--dur-slow) var(--ease-out); }
+
+/* ---------- The HUD: four corner modules around the core, as on the iPhone ----------
+   Each readout is an instrument part: an L-shaped bracket that closes the corner, a mono label
+   with its index tag (01..04), the number in light rounded numerals, and a ten-cell gauge of how
+   many items it counts. Live ones glow in their meaning's colour (--tone). The markup is the same
+   four [data-readout] nodes the server's first frame paints, so only this CSS draws the HUD. */
+.now-deck-instruments { container: now-instruments / inline-size; }
+.now-deck-readouts {
+  display: grid;
+  height: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, auto);
+  justify-content: space-between;
+  align-content: space-between;
+  counter-reset: hud;
+}
+.now-deck-readouts > [data-readout] {
+  --arm: 12px;
+  position: relative;
+  counter-increment: hud;
+  gap: 4px;
+  padding: 8px 0 0 10px;
+  align-self: start;
+  justify-self: start;
+}
+.now-deck-readouts > [data-readout]:nth-child(even) {
+  align-items: flex-end;
+  justify-self: end;
+  padding: 8px 10px 0 0;
+  text-align: right;
+}
+.now-deck-readouts > [data-readout]:nth-child(n + 3) {
+  align-self: end;
+  padding-top: 0;
+  padding-bottom: 8px;
+}
+/* The bracket closes the stage's outer corner. */
+.now-deck-readouts > [data-readout]::before {
+  content: "";
+  position: absolute;
+  width: var(--arm);
+  height: var(--arm);
+  border: 0 solid rgb(255 255 255 / 0.28);
+  transition: border-color var(--dur-slow) var(--ease-out), filter var(--dur-slow) var(--ease-out);
+}
+.now-deck-readouts > [data-readout][data-lit]::before {
+  border-color: color-mix(in srgb, var(--tone) 75%, transparent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--tone) 55%, transparent));
+}
+.now-deck-readouts > [data-readout]:nth-child(1)::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+.now-deck-readouts > [data-readout]:nth-child(2)::before { top: 0; right: 0; border-width: 1px 1px 0 0; }
+.now-deck-readouts > [data-readout]:nth-child(3)::before { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
+.now-deck-readouts > [data-readout]:nth-child(4)::before { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+/* The label, with its index tag on the side that faces the core's outside. */
+.now-deck-readouts .readout-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+.now-deck-readouts .readout-label::before,
+.now-deck-readouts .readout-label::after {
+  display: inline-block;
+  padding: 1px 3px;
+  border: 0.5px solid rgb(255 255 255 / 0.3);
+  border-radius: 2px;
+  color: var(--muted-foreground);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.2;
+  vertical-align: 1px;
+}
+.now-deck-readouts > [data-readout]:nth-child(odd) .readout-label::before { content: counter(hud, decimal-leading-zero); margin-right: 6px; }
+.now-deck-readouts > [data-readout]:nth-child(even) .readout-label::after { content: counter(hud, decimal-leading-zero); margin-left: 6px; }
+.now-deck-readouts .readout-value { font-size: 2rem; font-weight: 300; }
+/* The gauge: ten cells, one per item, lit in the module's colour. */
+.now-deck-readouts > [data-readout] > .readout-value::after {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 4px;
+  margin-top: 7px;
+  background: linear-gradient(90deg, var(--tone, var(--muted-foreground)) calc(var(--n, 0) * 10%), rgb(255 255 255 / 0.14) 0);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 6.4px);
+  mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 6.4px);
+}
+.now-deck-readouts > [data-readout]:nth-child(even) > .readout-value::after { margin-left: auto; }
+.now-deck-readouts > [data-readout]:not([data-lit]) > .readout-value::after {
+  background: rgb(255 255 255 / 0.14);
+}
+
+/* ---------- Lists use the width they get ---------- */
+
+/* Live cards stack 12px apart; Running goes two across on very wide pages. */
+.now-card-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@container split-page (min-width: 1500px) {
+  .now-running .now-card-grid { grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); }
+}
+
+/* "Show 3 more" under Since you looked, and View history under Today's log: quiet text buttons in
+   the link colour (cyan means running, so it never marks a link). */
+.now-more {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding-inline: 4px;
+  margin-top: 4px !important;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.now-more:hover { opacity: 0.8; }
+
+/* ---------- Folds on Now: one tight glass line that opens into its rows ---------- */
+
+.now-fold {
+  border-radius: 20px;
+  overflow: hidden;
+}
+.split-page-body .now-fold:not(.now-fold-inline) {
+  position: relative;
+  background: var(--sheet-fill);
+  border: 1px solid var(--sheet-border);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+}
+.now-fold > .fold-summary {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.now-fold > .fold-summary:hover { background: rgb(255 255 255 / 0.03); }
+.now-fold > .fold-body { padding-top: 0; }
+/* Rows inside a fold sit in the fold's glass: no second frame, a hairline above the first. */
+.now-fold .work-list,
+.now-fold .now-session-list {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.now-fold > .fold-body > .work-list > li:first-child::before,
+.now-fold > .fold-body > .now-session-list > li:first-child::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 1px;
+  background: var(--divider);
+}
+.now-fold-inline { border-radius: 0; }
+.now-session-list + .now-fold-inline { box-shadow: inset 0 1px 0 var(--divider); }
+
+/* ---------- The work card (WorkCard) ---------- */
+
+.work-card {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  outline: 1.5px solid transparent;
+  outline-offset: -1.5px;
+  transition:
+    --tone var(--dur-slow) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    translate var(--dur-fast) var(--ease-out),
+    scale var(--spring-press-dur) var(--spring-press),
+    outline-color 600ms var(--ease-out);
+}
+.work-card[data-variant="live"] {
+  height: 100%;
+  overflow: hidden;
+  border-radius: 20px;
+}
+/* Needs you: the border takes the tone and the sheet an even whisper of it (no corner wash, no
+   glow): the chip and the glyph say what it is. The tint fades in when a card turns (or arrives)
+   needing the owner. */
+.work-card[data-tint] { border-color: color-mix(in srgb, var(--tone) 30%, var(--hairline)); }
+.work-card[data-tint]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--tone) 5%, transparent);
+  pointer-events: none;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+@starting-style {
+  .work-card[data-tint]::before { opacity: 0; }
+}
+
+.work-card-hit {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border-radius: inherit;
+  outline: none;
+}
+.work-card-hit[role="button"] { cursor: pointer; }
+.work-card-hit:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.work-card[data-variant="row"] .work-card-hit {
+  align-items: center;
+  min-height: 44px;
+  padding: 12px 16px;
+  border-radius: 0;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.work-card[data-variant="row"] .work-card-hit[role="button"]:hover { background: rgb(255 255 255 / 0.035); }
+
+@media (hover: hover) {
+  .work-card[data-variant="live"]:has(> .work-card-hit[role="button"]:hover) {
+    translate: 0 -1px;
+    border-color: var(--hairline-strong);
+  }
+  .work-card[data-tint]:has(> .work-card-hit[role="button"]:hover) {
+    border-color: color-mix(in srgb, var(--tone) 45%, var(--hairline));
+  }
+}
+.work-card[data-variant="live"]:has(> .work-card-hit[role="button"]:active) {
+  scale: 0.985;
+  transition-duration: var(--dur-micro);
+}
+
+.work-card-lead {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  gap: 14px;
+  min-width: 0;
+}
+.now-needs-glyph { width: 40px; height: 40px; }
+.now-needs-glyph svg { width: 20px; height: 20px; }
+
+.work-card-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 1 · where it runs: source · project › topic on one line; the topic shrinks first. */
+.work-origin {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.work-origin-source { display: inline-flex; flex-shrink: 0; align-items: center; }
+.work-origin-project {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.work-origin-topic {
+  min-width: 0;
+  flex-shrink: 1000;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.work-sep {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+
+/* 2 · the title; 3 · the status in the producer's words. */
+.work-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.work-title-encrypted {
+  display: flex;
+  max-width: 100%;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--muted-foreground);
+}
+.work-title-encrypted > span:last-child,
+.work-title-encrypted .sealed-opening-words {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.work-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.work-summary[data-lines="4"] { -webkit-line-clamp: 4; line-clamp: 4; color: color-mix(in srgb, var(--foreground) 82%, transparent); }
+.work-note {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
+/* The needs-you chip: the one place a mono label sits on a card. */
+.work-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tone);
+}
+
+/* 6 · how it stands: the state in its tone, then muted facts, when, and where. */
+.work-standing {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.work-state {
+  font-weight: 600;
+  color: var(--tone);
+  white-space: nowrap;
+}
+.work-state svg,
+.work-computer svg {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+.work-computer,
+.work-standing time { white-space: nowrap; }
+.work-computer svg { margin-right: 3px; }
+
+.work-chevron {
+  flex-shrink: 0;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  transition: translate var(--dur-fast) var(--ease-out);
+}
+.work-card-hit:hover > .work-chevron,
+.work-row:hover > .work-chevron { translate: 2px 0; }
+
+/* Under a needs-you card: the countdown and the answer buttons, outside the open target. */
+.work-card-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+.work-card-lead + .work-card-foot,
+.work-card-hit:has(> .work-card-lead) + .work-card-foot { padding-left: calc(16px + 40px + 14px); }
+.work-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+.work-countdown svg { width: 13px; height: 13px; }
+.work-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.work-actions > button,
+.work-actions > .contents > button { flex: 1 1 0; min-width: 7rem; }
+[data-decided] .work-actions {
+  opacity: 0.35;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+@media (max-width: 639px) {
+  .work-card-hit:has(> .work-card-lead) + .work-card-foot { padding-left: 16px; }
+}
+
+/* Moving work shimmers its state, "Running" and its mark, in its own colour: a highlight crosses
+   the word while the mark brightens just before it (colour and background position only). */
+.work-card[data-live] .work-state svg {
+  animation: work-state-pulse 2.8s ease-in-out infinite;
+}
+.work-card[data-live] .work-state-label {
+  background: linear-gradient(100deg, var(--tone) 38%, color-mix(in srgb, var(--tone) 25%, white) 50%, var(--tone) 62%) 100% 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: work-state-sweep 2.8s linear infinite;
+}
+@keyframes work-state-sweep {
+  0% { background-position: 100% 0; }
+  70%, 100% { background-position: 0 0; }
+}
+@keyframes work-state-pulse {
+  0%, 100% { color: var(--tone); }
+  18% { color: color-mix(in srgb, var(--tone) 25%, white); }
+  36% { color: var(--tone); }
+}
+
+/* ---------- Work lists: one glass container, hairlines inset 16px ---------- */
+
+.work-list {
+  overflow: hidden;
+  border-radius: 20px;
+}
+.work-list > li { position: relative; }
+.work-list > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  z-index: 1;
+  height: 1px;
+  background: var(--divider);
+  pointer-events: none;
+}
+
+/* The compact log row (WorkRow, iOS LogRow). */
+.work-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 10px 12px;
+  text-align: left;
+  outline: 1.5px solid transparent;
+  outline-offset: -1.5px;
+  transition: background-color var(--dur-fast) var(--ease-out), --tone var(--dur-slow) var(--ease-out), outline-color 600ms var(--ease-out);
+}
+button.work-row:hover,
+button.work-row:focus-visible { background: rgb(255 255 255 / 0.035); }
+.work-row-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.work-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.work-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.work-row-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Sessions: one glass card per computer, its name as the caption ---------- */
+
+.now-sessions {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@container split-page (min-width: 1100px) and (max-width: 1399.98px) {
+  .now-sessions { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
+}
+.now-session-group { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.now-session-computer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.now-session-computer svg { width: 12px; height: 12px; flex-shrink: 0; }
+.now-session-card {
+  overflow: hidden;
+  border-radius: 20px;
+}
+.now-session-list > li { position: relative; }
+.now-session-list > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 1px;
+  background: var(--divider);
+}
+.now-session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 12px 16px;
+}
+.now-session-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.now-session-tool { display: inline-flex; flex-shrink: 0; align-items: center; }
+.now-session-name { min-width: 0; flex-shrink: 1000; overflow: hidden; text-overflow: ellipsis; }
+.now-session-context {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--foreground);
+}
+/* Alone on its line (no name, no work) the where-it-runs line leads, as a title. */
+.now-session-title[data-lead] { font-size: 14px; line-height: 18px; color: var(--foreground); }
+.now-session-work {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--foreground);
+  cursor: pointer;
+  text-underline-offset: 2px;
+}
+.now-session-work:hover { text-decoration: underline; }
+.now-session-standing {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  transition: --tone var(--dur-slow) var(--ease-out);
+}
+.now-session-state { font-weight: 500; color: var(--tone); }
+.now-session-icon {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+[data-session-phase="working"] .now-session-icon {
+  animation: breathe var(--period-breath) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
+}
+
+/* ---------- State changes in place: meaning colours crossfade ---------- */
+
+/* Cards and chips already ease --tone (motion.css); dots, glyphs and rows follow on the same fade,
+   so running → needs you (cyan → orange) or running → done (cyan → mint) is one wash. */
+.ink-dot,
+.signal-glyph,
+.sync-status,
+.sync-dot { transition: --tone var(--dur-slow) var(--ease-out), color var(--dur-slow) var(--ease-out), background-color var(--dur-slow) var(--ease-out); }
+
+/* Steps fill from their left edge as one completes (transform only); the sweep runs through the
+   done segments only (masked by them), never the track. */
+.step-bar > span[data-step] {
+  position: relative;
+  overflow: hidden;
+  transition: background-color var(--dur-slow) var(--ease-out);
+}
+.step-bar > span[data-step="done"] { background: rgb(255 255 255 / 0.1); }
+.step-bar > span[data-step]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--tone, var(--neon-cyan));
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 420ms var(--ease-out);
+}
+.step-bar > span[data-step="done"]::after { transform: scaleX(1); }
+/* The sweep: a band of light over the done segments' width, masked to their shapes. */
+.step-bar > .step-sweep {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  --seg: calc((100% - (var(--steps) - 1) * 3px) / var(--steps));
+  -webkit-mask:
+    repeating-linear-gradient(90deg, #000 0 var(--seg), transparent var(--seg) calc(var(--seg) + 3px)),
+    linear-gradient(#000, #000) 0 0 / calc(var(--seg) * var(--done) + (var(--done) - 1) * 3px) 100% no-repeat;
+  -webkit-mask-composite: source-in;
+  mask:
+    repeating-linear-gradient(90deg, #000 0 var(--seg), transparent var(--seg) calc(var(--seg) + 3px)),
+    linear-gradient(#000, #000) 0 0 / calc(var(--seg) * var(--done) + (var(--done) - 1) * 3px) 100% no-repeat;
+  mask-composite: intersect;
+}
+.step-sweep::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 32%, rgb(255 255 255 / 0.55) 50%, transparent 68%);
+  mix-blend-mode: plus-lighter;
+  transform: translateX(-70%);
+  animation: now-step-sweep 2.8s linear infinite;
+}
+.step-meter-fill > .step-sweep { position: absolute; inset: 0; overflow: hidden; }
+@keyframes now-step-sweep {
+  0% { transform: translateX(-70%); }
+  70%, 100% { transform: translateX(70%); }
+}
+.step-meter-fill { transition: clip-path 600ms var(--ease-out), background-color var(--dur-slow) var(--ease-out); }
+
+/* ---------- Needs you arrives: one ring, once ---------- */
+
+.now-card-slot { position: relative; }
+.now-card-slot[data-announce]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  pointer-events: none;
+  animation: now-announce 700ms var(--ease-out) 1 both;
+}
+@keyframes now-announce {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--neon-orange) 70%, transparent); }
+  to { box-shadow: 0 0 0 8px color-mix(in srgb, var(--neon-orange) 0%, transparent); }
+}
+
+/* ---------- The open detail's source keeps a ring while its sheet is open ---------- */
+
+/* An inset outline, so a row inside a clipped glass list keeps it too; it fades out on close. */
+.work-card[data-open],
+.work-row[data-open] { outline-color: color-mix(in srgb, var(--tone) 85%, transparent); }
+.work-card[data-variant="row"][data-open],
+.work-row[data-open] { border-radius: 14px; }
+/* The first and last rows follow the glass list's own curve (20px less its 1px border), or the list's
+   clip cuts the ring's corners. */
+.work-list > li:first-child > .work-card[data-variant="row"][data-open],
+.work-list > li:first-child > .work-row[data-open] { border-top-left-radius: 19px; border-top-right-radius: 19px; }
+.work-list > li:last-child > .work-card[data-variant="row"][data-open],
+.work-list > li:last-child > .work-row[data-open] { border-bottom-left-radius: 19px; border-bottom-right-radius: 19px; }
+
+/* ---------- Finished work arrives in Since you looked: a wash in its tone ---------- */
+
+.work-card-hit[data-arrived]::after,
+.work-row[data-arrived]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tone) 22%, transparent), transparent 80%);
+  opacity: 0;
+  animation: now-arrive-wash 1.2s var(--ease-out) 0.3s 1 both;
+}
+@keyframes now-arrive-wash {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ---------- Folds: the chevron nudges toward a changed count ---------- */
+
+.fold-nudge { animation: now-fold-nudge 420ms var(--ease-out) 1; }
+@keyframes now-fold-nudge {
+  0%, 100% { translate: 0 0; }
+  40% { translate: 3px 0; }
+}
+
+/* ---------- Sync: one ring per successful sync ---------- */
+
+.sync-dot { width: 6px; height: 6px; }
+.sync-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid var(--tone);
+  pointer-events: none;
+  animation: now-sync-ping 600ms var(--ease-out) 1 both;
+}
+@keyframes now-sync-ping {
+  from { opacity: 0.6; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.4); }
+}
+
+/* ---------- Spectrum and Today strip: transform and flex, never width or height ---------- */
+
+.spectrum-segment { min-width: 4px; overflow: hidden; transition: flex-grow 600ms var(--ease-out); }
+.spectrum-label { opacity: 0; transition: opacity var(--dur-base) var(--ease-out); }
+.spectrum-label[data-fits] { opacity: 0.85; }
+.strip-bar {
+  transform-origin: bottom center;
+  transition: transform 800ms var(--ease-out);
+}
+
+/* ---------- Reduced motion: state changes are instant, nothing travels or loops ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .now-deck-centre-number::before,
+  .now-deck-centre[data-live] .now-deck-centre-number::before,
+  .step-sweep::before,
+  .work-card[data-live] .work-state svg,
+  .work-card[data-live] .work-state-label,
+  .now-card-slot[data-announce]::after,
+  .work-card-hit[data-arrived]::after,
+  .work-row[data-arrived]::after,
+  [data-session-phase="working"] .now-session-icon,
+  .fold-nudge,
+  .sync-ping { animation: none !important; }
+  .step-sweep,
+  .now-card-slot[data-announce]::after,
+  .work-card-hit[data-arrived]::after,
+  .work-row[data-arrived]::after,
+  .sync-ping { display: none; }
+  .step-meter-fill,
+  .step-bar > span[data-step]::after,
+  .spectrum-segment,
+  .strip-bar,
+  .readout-label,
+  .readout-value,
+  .ink-dot,
+  .signal-glyph,
+  .work-card,
+  .work-row,
+  .work-card[data-tint]::before { transition: none !important; }
+}
+
+/* A section caption's one muted detail ("SESSIONS 0 · MACBOOK PRO"). */
+.now-section-detail {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  margin-left: 4px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.now-section-detail svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+/* Reduced motion: the state keeps its solid colour. */
+@media (prefers-reduced-motion: reduce) {
+  .work-card[data-live] .work-state-label { background: none; color: var(--tone); }
+}
+
+/* ---------- The centre's word: a HUD plate, never loose text on the plasma ----------
+   A small bracketed plate in the index tags' language: dark glass so the word reads over any
+   plasma, near-white text lit by the meaning's colour, hairlines either side. No dot: the plate
+   and its colour say the state. */
+.now-deck-centre-label { margin-top: 10px; }
+.hud-center {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px 3px 12px;
+  border: 0.5px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  border-radius: 3px;
+  background: rgb(6 8 14 / 0.62);
+  color: color-mix(in srgb, var(--tone) 35%, white);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 14px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--tone) 22%, transparent);
+}
+.hud-center::before,
+.hud-center::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--tone) 60%, transparent));
+}
+.hud-center::before { right: 100%; margin-right: 4px; }
+.hud-center::after { left: 100%; margin-left: 4px; transform: scaleX(-1); }
+
+/* A needs-you card's chip and origin on one line: "PERMISSION · [logo] · relo". */
+.work-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+.work-head > .work-chip { flex-shrink: 0; margin: 0; }
+.work-head > .work-origin { min-width: 0; }

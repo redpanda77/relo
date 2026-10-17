@@ -1,0 +1,8 @@
+// relo hook: bin/relo.mjs runs it straight from harness/entry.mjs; the entry documents it.
+
+export const HARNESS_COMMANDS = [
+  { name: "hook", describe: { "agent": "The harness sending the event (set by the installed hook entry)." },  root: true, summary: "Hook entry point (optional; only `relo setup --level guide` installs it, never typed; cards, questions and notifications work identically without it): reads the harness hook JSON on stdin, updates this session's local phase (open|working|waiting|stopped|ended) and queues a snapshot only when the phase changes (plus a heartbeat at most every 5 minutes while working): the session id hash, phase and its times, open-tool time, project, computer and account, sent in the background with this computer's harness credential. Never prompts, tool names or tool input/output. Prints nothing and always exits 0. EVENT: start|prompt|tool-start|tool-end|wait|stop|end|subagent-start|subagent-stop|compact (subagents roll up into their session), or a local role: remind|restore|turn.",
+    positionals: "EVENT", options: ["agent"] },
+  { name: "statusline", describe: {}, root: true, summary: "Claude Code's status line, wrapped (only `relo setup --level optimize` installs it, never typed): reads the status line JSON on stdin, keeps this session's context use and cost locally (and tells the phone only after a real move), runs the status line command you had before with the same input, and prints its output unchanged; with none it prints a short line of its own. Never fails the status line, never touches the network.",
+    positionals: "", options: [] },
+];

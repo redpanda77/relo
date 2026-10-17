@@ -1,10 +1,18 @@
 import {
+  absenceText,
+  SEALED_CARD_PLACEHOLDERS,
+  type ComputerIcon,
   nowSummarySchema,
   type NowItem,
   type NowSummary,
   type SessionRow,
   type SinceYouLooked,
 } from "@relo/notification-contracts"
+
+import { hashSlot } from "@/features/inbox/activity-model"
+import { displayNameOrNull } from "@/lib/encrypted"
+import { projectColor } from "@/lib/project-palette"
+import { stepsCaption, workOutcome, type WorkOutcome, type WorkTone } from "@/lib/work-outcome"
 
 /**
  * Now, as the server derived it. Every string the Dashboard shows on Now comes from here, and each
@@ -26,7 +34,7 @@ const HISTORY_WINDOW_MS = 8 * 60 * 60_000
 function clock(value: string): string {
   const date = new Date(value)
   if (!Number.isFinite(date.valueOf())) return ""
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date)
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)
 }
 
 function sameDay(a: Date, b: Date) {
@@ -66,73 +74,145 @@ export function sinceLine(summary: Pick<NowSummary, "sinceYouLooked" | "serverTi
   return { text: `${prefix}: ${parts.join(", ")}`, muted: false }
 }
 
-export type NowTone = "cyan" | "yellow" | "orange" | "red" | "mint" | "neutral"
+/** A sealed card's placeholder title (the server's SEALED_CARD_PLACEHOLDERS, or a sealed question's). */
+const SEALED_TITLES = new Set<string>([SEALED_CARD_PLACEHOLDERS.title, "Encrypted question"])
+const SEALED_STATUSES = new Set<string>([SEALED_CARD_PLACEHOLDERS.status, "Open Relo on your iPhone to read this question."])
 
-/** One row of a Now list. */
-export type NowRowView = {
+/** True for a card whose text is sealed end to end: the Dashboard holds no key, so it shows a lock instead. */
+export function isSealedItem(item: Pick<NowItem, "title">): boolean {
+  return SEALED_TITLES.has(item.title.trim())
+}
+
+/**
+ * One Now card, ready for `WorkCard`: words, tone and meter from the server's owner state (named by
+ * lib/work-outcome.ts), facts as the iPhone's NowScreenModel writes them. Instants that tick
+ * ("updated 3 min ago") come back through `relative`, so a leaf can keep them current.
+ */
+export type NowCardView = {
   id: string
   title: string
-  chip: { label: string; tone: NowTone } | null
-  /** The status line under the title. */
-  line: string | null
-  /** A dimmed row ("working quietly"). */
-  dim: boolean
-  /** The steps or progress shimmer: moving work only. */
-  shimmer: boolean
+  /** Sealed end to end: the title is a placeholder and the summary is dropped. */
+  encrypted: boolean
+  summary: string | null
+  tone: WorkTone
+  state: WorkOutcome | null
+  /** A needs-you card's mono chip ("QUESTION", "MISSED 18:40", "PERMISSION"); nothing else has one. */
+  chip: string | null
+  /** A needs-you card's note under its summary (what a late answer means, where to answer). */
+  note: string | null
+  facts: string[]
+  /** Moving work: a live "running 12:40" from the server's start instant. */
+  runningSince: string | null
+  /** Otherwise the clock time that matters for the state (since your turn, finished, last seen). */
+  at: string | null
+  meter: { steps: (NonNullable<NowItem["steps"]> & { currentIndex?: number | null; fill?: number | null }) | null; live: boolean; finished: boolean } | null
+  /** The steps sweep and the live hairline: moving work only. */
+  live: boolean
+  /** Where it runs: the computer of the session that holds it (closes the standing line, as on iOS). */
+  computer: string | null
+  /** That computer's icon, when the server sent one. */
+  computerIcon: ComputerIcon | null
+  origin: { source: string | null; project: string | null; projectColor: string | null; topic?: string | null }
 }
 
-function lastSeen(item: NowItem) {
-  return clock(item.owner.evidenceAt ?? item.declaredAt)
+function evidence(item: NowItem) {
+  return item.owner.evidenceAt ?? item.declaredAt
 }
 
-/** Row copy by owner state (spec 6.2). Quiet rows never say "Running". */
-export function nowRowView(item: NowItem, relative: (iso: string) => string): NowRowView {
-  const base = { id: item.id, title: item.title, dim: false, shimmer: false }
-  const status = item.status
+/** Card copy by owner state (spec 6.2; iOS NowScreenModel rows). Quiet cards never say "Running". */
+export function nowCardView(item: NowItem, relative: (iso: string) => string, topic: string | null = null, computer: string | null = null): NowCardView {
+  const encrypted = isSealedItem(item)
+  const status = encrypted || !item.status || SEALED_STATUSES.has(item.status.trim()) ? null : item.status
+  const state = workOutcome({ state: item.owner.state, needsYou: item.owner.needsYou })
+  const project = displayNameOrNull(item.project)
+  // The plan's count is the server's `progress` (top-level steps, the current one and its fraction); the older
+  // `steps` (whole-plan window) only when a server sends no `progress`. Nothing is counted here.
+  const plan = item.progress && item.progress.total > 0 ? item.progress : null
+  const steps = plan
+    ? { done: plan.done, total: plan.total, current: encrypted ? null : (item.steps?.current ?? plan.stepLabel ?? null), currentIndex: plan.current, fill: plan.fill }
+    : item.steps && item.steps.total > 0 ? { ...item.steps, current: encrypted ? null : item.steps.current } : null
+  const finished = item.owner.state === "done"
+  const view: NowCardView = {
+    id: item.id,
+    title: item.title,
+    encrypted,
+    summary: status,
+    tone: state?.tone ?? "neutral",
+    state,
+    chip: null,
+    note: null,
+    facts: [],
+    runningSince: null,
+    at: evidence(item),
+    meter: steps ? { steps, live: false, finished } : null,
+    live: false,
+    computer,
+    computerIcon: item.computerIcon ?? null,
+    origin: {
+      source: displayNameOrNull(item.sourceName),
+      project,
+      projectColor: project ? projectColor(hashSlot(project)) : null,
+      // The session's own name, unless the card is titled the same.
+      topic: topic && topic !== item.title ? topic : null,
+    },
+  }
+  const caption = stepsCaption(steps, { finished })
+  if (caption) view.facts.push(caption)
   switch (item.owner.state) {
     case "needs_you": {
       const reason = item.owner.needsYou
+      view.at = item.question?.askedAt ?? item.declaredAt
       if (reason === "missed_question") {
-        return { ...base, chip: { label: `MISSED ${clock(item.question?.askedAt ?? item.declaredAt)}`, tone: "orange" },
-          line: "Late answers reach the session marked late. An approval here is not permission: the session must ask again." }
+        view.chip = `MISSED ${clock(item.question?.askedAt ?? item.declaredAt)}`.trim()
+        view.note = "Late answers reach the session marked late. An approval here is not permission: the session must ask again."
+      } else if (reason === "permission") {
+        view.chip = "PERMISSION"
+        // One line: what it waits on and where to answer it.
+        view.summary = "Permission prompt open · answer it on your computer"
+      } else {
+        view.chip = "QUESTION"
       }
-      if (reason === "permission") {
-        return { ...base, chip: { label: "PERMISSION", tone: "orange" },
-          line: `${item.sourceName ?? "The session"} is waiting for a permission prompt. Answer it on your computer.` }
-      }
-      return { ...base, chip: { label: "QUESTION", tone: "orange" }, line: status }
+      // The chip names the state; the standing line keeps the facts.
+      view.state = null
+      break
     }
-    case "failed":
-      return { ...base, chip: { label: "FAILED", tone: "red" }, line: status }
-    case "done":
-      return { ...base, chip: { label: "DONE", tone: "mint" }, line: status }
-    case "left_unfinished":
-      return { ...base, chip: { label: "STOPPED WITHOUT FINISHING", tone: "neutral" }, line: `last update ${lastSeen(item)}` }
-    case "dropped":
-      return { ...base, chip: { label: "DROPPED", tone: "neutral" }, line: status }
-    case "waiting_on_you":
-      return { ...base, chip: null, line: `Your turn · since ${lastSeen(item)}` }
     case "moving":
-      return { ...base, chip: null, shimmer: true, line: status ? `${status} · ${relative(item.declaredAt)}` : `updated ${relative(item.declaredAt)}` }
+      view.live = true
+      view.runningSince = item.startedAt
+      view.at = null
+      if (view.meter) view.meter.live = true
+      break
     case "working_quietly":
-      return { ...base, chip: null, dim: true, line: `Working quietly · updated ${relative(item.declaredAt)}` }
+      view.facts.push(`updated ${relative(evidence(item))}`)
+      view.at = null
+      break
     case "stale":
-      return { ...base, chip: null, line: `Quiet · updated ${relative(item.declaredAt)}` }
+      view.facts.push(`updated ${relative(evidence(item))}`)
+      view.at = null
+      break
     case "stopped_responding":
-      return { ...base, chip: null, line: `Stopped responding at ${item.steps?.current ?? status ?? "its last step"}, last seen ${lastSeen(item)}` }
+      view.facts = [`at ${steps?.current ?? status ?? "its last step"}`, `last seen ${clock(evidence(item))}`]
+      view.at = null
+      break
     case "no_signal":
-      return { ...base, chip: null, line: `No signal since ${lastSeen(item)}` }
-    case "paused":
-      return { ...base, chip: null, line: `Paused${status ? ` · ${status}` : ""}` }
+      view.facts.push(`since ${clock(evidence(item))}`)
+      view.at = null
+      break
+    case "left_unfinished":
+      view.facts.push(`last update ${clock(evidence(item))}`)
+      view.at = null
+      break
     default:
-      return { ...base, chip: null, line: status }
+      break
   }
+  // Why it dimmed or left, in the server's reason (one line, first among the facts).
+  if (item.owner.absence) view.facts.unshift(absenceText(item.owner.absence, { computer }))
+  return view
 }
 
-export type NowFold = "waitingOnYou" | "quiet" | "paused"
+export type NowFold = "quiet" | "paused"
 
 export const FOLD_LABEL: Record<NowFold, string> = {
-  waitingOnYou: "Waiting on you",
   quiet: "Quiet",
   paused: "Paused",
 }
@@ -140,38 +220,79 @@ export const FOLD_LABEL: Record<NowFold, string> = {
 export type NowBlock =
   | { kind: "sinceYouLooked"; text: string; muted: boolean; recent: NowItem[]; more: NowItem[] }
   | { kind: "needsYou"; items: NowItem[] }
+  | { kind: "waitingOnYou"; items: NowItem[] }
   | { kind: "fold"; fold: NowFold; count: number; items: NowItem[] }
   | { kind: "running"; title: "Running" | "Last known"; items: NowItem[] }
   | { kind: "sessions"; sessions: NowSummary["sessions"] }
   | { kind: "allClear"; text: string }
 
 /**
- * The fixed block order: Since you looked, Needs you, Waiting on you, Running, Quiet, Paused,
- * Sessions. A block with nothing to show is omitted; All clear when nothing is open.
+ * The fixed block order: Needs you, Waiting on you, Running, Since you looked (finished work never
+ * sits above running work), Quiet, Paused, Sessions. Waiting on you is an open section (the owner's turn is shown, never folded); Quiet and
+ * Paused fold. A block with nothing to show is omitted; All clear when nothing is open.
  */
 export function nowBlocks(summary: NowSummary, options: { offline?: boolean } = {}): NowBlock[] {
   const since = sinceLine(summary)
-  const blocks: NowBlock[] = [
-    { kind: "sinceYouLooked", text: since.text, muted: since.muted, recent: summary.recent.slice(0, 3), more: summary.recent.slice(3) },
-  ]
+  const blocks: NowBlock[] = []
   if (summary.needsYou.length) blocks.push({ kind: "needsYou", items: summary.needsYou })
-  if (summary.folds.waitingOnYou) blocks.push({ kind: "fold", fold: "waitingOnYou", count: summary.folds.waitingOnYou, items: summary.waitingOnYou })
+  if (summary.waitingOnYou.length) blocks.push({ kind: "waitingOnYou", items: summary.waitingOnYou })
   if (summary.running.length) blocks.push({ kind: "running", title: options.offline ? "Last known" : "Running", items: summary.running })
+  blocks.push({ kind: "sinceYouLooked", text: since.text, muted: since.muted, recent: summary.recent.slice(0, 3), more: summary.recent.slice(3) })
   if (summary.folds.quiet) blocks.push({ kind: "fold", fold: "quiet", count: summary.folds.quiet, items: summary.quiet })
   if (summary.folds.paused) blocks.push({ kind: "fold", fold: "paused", count: summary.folds.paused, items: summary.paused })
   if (summary.sessions.sessions.length) blocks.push({ kind: "sessions", sessions: summary.sessions })
-  const open = summary.needsYou.length + summary.folds.waitingOnYou + summary.running.length + summary.folds.quiet + summary.folds.paused
+  const open = summary.needsYou.length + summary.waitingOnYou.length + summary.running.length + summary.folds.quiet + summary.folds.paused
   if (open === 0) blocks.push({ kind: "allClear", text: "Standing by" })
   return blocks
 }
 
-/** HUD counts from the server's summary. */
+/**
+ * A linked browser opens every card sealed for it, so what it still cannot open was sealed before the
+ * link: unreadable here, it is not shown (the iPhone reads it). Display only: an item that needs the
+ * owner stays, and the counts drop exactly the items left out. Nothing left out: the same summary.
+ */
+export function withoutUnreadable(summary: NowSummary): NowSummary {
+  const readable = (list: NowItem[]) => list.filter((item) => !isSealedItem(item))
+  const recent = readable(summary.recent)
+  const waitingOnYou = readable(summary.waitingOnYou)
+  const running = readable(summary.running)
+  const quiet = readable(summary.quiet)
+  const paused = readable(summary.paused)
+  const dropped = summary.recent.length - recent.length + summary.waitingOnYou.length - waitingOnYou.length
+    + summary.running.length - running.length + summary.quiet.length - quiet.length + summary.paused.length - paused.length
+  if (dropped === 0) return summary
+  const left = (state: NowItem["owner"]["state"]) =>
+    summary.recent.filter((item) => item.owner.state === state).length - recent.filter((item) => item.owner.state === state).length
+  const since = summary.sinceYouLooked
+  return {
+    ...summary,
+    sinceYouLooked: {
+      ...since,
+      finished: since.finished - left("done"),
+      failed: since.failed - left("failed"),
+      stoppedWithoutFinishing: since.stoppedWithoutFinishing - left("left_unfinished"),
+      waitingOnYou: waitingOnYou.length,
+    },
+    recent,
+    waitingOnYou,
+    running,
+    quiet,
+    paused,
+    folds: {
+      ...summary.folds,
+      waitingOnYou: waitingOnYou.length,
+      quiet: summary.folds.quiet - (summary.quiet.length - quiet.length),
+      paused: summary.folds.paused - (summary.paused.length - paused.length),
+    },
+  }
+}
+
+/** The deck's readouts, all from the server's summary: SESSIONS · WAITING · RUNNING · NEEDS YOU. */
 export function nowCounts(summary: NowSummary) {
   return {
     needsYou: summary.needsYou.length,
     running: summary.running.length,
     sessionsWorking: summary.sessions.sessions.filter((row) => row.phase === "working").length,
-    waitingOnYou: summary.folds.waitingOnYou,
-    done: summary.sinceYouLooked.finished,
+    waitingOnYou: summary.waitingOnYou.length,
   }
 }

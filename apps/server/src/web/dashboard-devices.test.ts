@@ -1,7 +1,7 @@
 import { createHmac,randomBytes,randomUUID } from "node:crypto";
 import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
 // @ts-expect-error The CLI's crypto module is plain JavaScript; the test uses it as the reference signer.
-import { approveDeviceSigningInput,b64u,generateKeyPair,prekeySigningInput,signBytes } from "../../../../packages/cli/src/e2ee.mjs";
+import { approveDeviceSigningInput,b64u,generateKeyPair,prekeySigningInput,signBytes } from "../../../../packages/cli/src/crypto/e2ee.mjs";
 import { createAccountAuth } from "../account-auth.js";
 import { createApp } from "../app.js";
 import { resetAuthAttempts } from "../auth-throttle.js";
@@ -33,7 +33,7 @@ function totp(base32: string,at = Date.now()): string {
 type Keys = { privateKey: Buffer; publicKey: Buffer };
 
 // Account → Security → Devices, and approving a new phone from a linked browser.
-suite("Dashboard devices (docs/END-TO-END-ENCRYPTION.md, Approving from a linked browser)",() => {
+suite("Dashboard devices (docs/ENCRYPTION-PROTOCOL.md, Approving from a linked browser)",() => {
   let db: Database,authDb: Database,app: ReturnType<typeof createApp>;
   let session: string,principalId: string;
   const apiKey = "dashboard_devices_owner_abcdefghijklmnopqrstuvwxyz_0123";

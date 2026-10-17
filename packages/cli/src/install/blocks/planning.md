@@ -1,0 +1,3 @@
+- Size the plan to the work: one sitting is 3 to 6 milestones (`--plan "Find the cause,Fix it,Test it"`). Unsure: plan how you will find out, then `--add "…"`.
+- A large body of work: phases are the steps (`--plan "Explore,Design,Build,Verify"`); entering one, add its steps under it (`--add "Read the setup code,Map the hooks" --under s1`). `--detail "…"` says why a step matters.
+- Steps are milestones in order and only your own work; what the owner must do is an `ask` or `--waiting`, never a `deliver` (refused while steps are open; `--drop-rest` skips them). Parallel work is one step with a count: `--progress 2/6`. `--plan "…"` lists what is left; `--add "…" --after s3` inserts.

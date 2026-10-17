@@ -12,6 +12,7 @@ import { internalId, publicId } from "../ids.js";
 import { loadDeliveryEvidence } from "../delivery-evidence.js";
 import { mobileInboxHistoryWindow,inboxReadMetadata,encodeInboxHistoryCursor,decodeInboxHistoryCursor,projectedInboxLiveActivity,inboxActivityProjectionSql,inboxActivityJoinSql,inboxItemResource } from "./resources.js";
 import type { ApiRouteContext } from "./route-context.js";
+import { visibilityDeviceId } from "../owner-overview.js";
 
 /** The phone inbox read API: change stream, current state, pending decisions, history and read state. */
 export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
@@ -52,6 +53,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
     const auth = context.get("auth");
     return context.json(await loadInboxSnapshot(db, {
       principalId: auth.principalId, ...(auth.deviceId ? { deviceId: auth.deviceId } : {}),
+      ...(auth.ownerOverview ? { ownerOverview: true } : {}),
     }));
   });
 
@@ -72,13 +74,15 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
       cursor?.id ?? null,
     ];
     if (auth.deviceId) queryValues.push(auth.deviceId);
+    // Bounded by this phone's delivery targets; an overview device reads the whole account (owner-overview.ts).
+    const targeted = visibilityDeviceId(auth) !== undefined;
     const result = await db.query<any>(
       `WITH scoped AS MATERIALIZED (
          SELECT retained.id,retained.created_at FROM (
            SELECT e.id,e.created_at
            FROM notification_events e
            WHERE e.principal_id=$1
-             ${auth.deviceId ? `AND (e.target_mode='broadcast' OR EXISTS (
+             ${targeted ? `AND (e.target_mode='broadcast' OR EXISTS (
                SELECT 1 FROM notification_event_targets target
                WHERE target.notification_event_id=e.id AND target.device_id=$4
              ))` : ""}
@@ -128,7 +132,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
     const hasMore = pageRows.length > limit;
     const rows = pageRows.slice(0,limit);
     const last = rows.at(-1);
-    const readMetadata = await inboxReadMetadata(db,auth.principalId,auth.deviceId);
+    const readMetadata = await inboxReadMetadata(db,auth.principalId,visibilityDeviceId(auth));
     return context.json({
       items: rows.map((row: any) => inboxItemResource(
         row,auth,integratedDependencies?.credentialDerivationSecret,notificationContentCipher ?? undefined,
@@ -146,7 +150,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
     const auth=context.get("auth");
     const input=inboxReadItemsRequestSchema.parse(await context.req.json());
     return context.json(await markReadItems(db,{principalId:auth.principalId,
-      ...(auth.deviceId ? {deviceId:auth.deviceId} : {})},input.notificationIds));
+      ...(auth.deviceId ? {deviceId:auth.deviceId} : {}),...(auth.ownerOverview ? {ownerOverview:true} : {})},input.notificationIds));
   });
 
   app.get("/api/inbox/live-activities/active", requireScope("inbox:read"), async (context) => {
@@ -217,7 +221,7 @@ export function registerInboxRoutes(app: Hono, shared: ApiRouteContext): void {
        FROM notification_events e ${inboxActivityJoinSql}
        LEFT JOIN interaction_requests r ON r.notification_event_id=e.id
        WHERE e.id=$1 AND e.principal_id=$2
-         ${auth.deviceId ? `AND (e.target_mode='broadcast' OR EXISTS (
+         ${visibilityDeviceId(auth) ? `AND (e.target_mode='broadcast' OR EXISTS (
            SELECT 1 FROM notification_event_targets target
            WHERE target.notification_event_id=e.id AND target.device_id=$3
          ))` : ""}`,

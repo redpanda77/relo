@@ -1,7 +1,7 @@
 import type { Handler } from "hono";
 import type { Database } from "../db.js";
 import { internalId, publicId } from "../ids.js";
-import { isoDate,secureHtml } from "./http.js";
+import { isoDate,secureHtml,dashboardDocumentOptions,type DashboardDocumentOptions } from "./http.js";
 
 export type ActivityHistoryBootstrap = {
   version: 1;
@@ -94,7 +94,7 @@ type ActivityHistoryDependencies = {
   db: Database;
   releaseIdentity: string;
   getAccount(headers: Headers): Promise<ActivityHistoryAccount | null>;
-  renderDocument(bootstrap: ActivityHistoryBootstrap): Promise<string>;
+  renderDocument(bootstrap: ActivityHistoryBootstrap,options?: DashboardDocumentOptions): Promise<string>;
 };
 
 function count(value: unknown): number {
@@ -121,10 +121,11 @@ export function createDashboardActivityHistoryHandler(
          a.created_at,a.updated_at,a.ended_at,a.requester_service_id,a.requester_credential_id,
          a.lifecycle_provider,a.lifecycle_run_id,
          CASE WHEN a.requester_service_id IS NOT NULL THEN 'Service - '||COALESCE(s.title,'revoked')
-              WHEN a.requester_credential_id IS NOT NULL THEN 'Client - '||COALESCE(k.label,'revoked')
+              WHEN a.requester_credential_id IS NOT NULL THEN 'Client - '||COALESCE(comp.display_name,k.label,'revoked')
               ELSE 'Dashboard' END AS requester_label
        FROM live_activities a LEFT JOIN webhook_services s ON s.id=a.requester_service_id
        LEFT JOIN principal_api_keys k ON k.id=a.requester_credential_id
+       LEFT JOIN computers comp ON comp.login_key_id=k.id
        WHERE a.id=$1 AND a.principal_id=$2`,
       [activityId, account.principalId],
     );
@@ -286,6 +287,6 @@ export function createDashboardActivityHistoryHandler(
       })),
     };
 
-    return secureHtml(context, await renderDocument(bootstrap));
+    return secureHtml(context, await renderDocument(bootstrap,dashboardDocumentOptions(context)));
   };
 }

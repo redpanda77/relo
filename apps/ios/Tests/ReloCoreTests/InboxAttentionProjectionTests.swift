@@ -43,7 +43,6 @@ struct InboxAttentionProjectionTests {
         #expect(project([work]).nextTransitionAt == now.addingTimeInterval(30))
         let after = project([work], at: now.addingTimeInterval(30))
         #expect(after.activities == [work])
-        #expect(InboxAttentionProjection.isStale(work, now: now.addingTimeInterval(30)))
         #expect(work.activitySummary?.state == "active")
     }
     @Test("Queued decisions retain their request identity") func queuedIdentity() {

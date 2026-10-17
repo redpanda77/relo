@@ -29,7 +29,10 @@ export async function continueQuestionBeyondCard(client: SubjectTransaction,inpu
       content: prepareNotificationContent(question.detail
         ? { body: `${question.prompt}\n\n${question.detail}`,summary: question.prompt,bodyFormat: "markdown" }
         : { body: question.prompt }),
-      imageUrl: null,deepLink: null,payload: { context: card.context ?? {} },
+      imageUrl: null,deepLink: null,
+      // A sealed question stays sealed when it continues: the same envelopes (and so the same context a
+      // phone or linked browser binds its answer to) as the card's copies, like a sealed question in Relo.
+      payload: { context: card.context ?? {},...(question.sealed ? { privacy: "private",sealed: question.sealed } : {}) },
       deviceIds: card.target_device_ids,originHash: null,quiet: true,
       interaction: { kind: question.type,prompt: question.prompt,actionSeconds: question.expiresInSeconds,
         options: question.options },

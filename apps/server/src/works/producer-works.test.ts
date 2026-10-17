@@ -4,6 +4,7 @@ import { createApp } from "../app.js";
 import { hashToken } from "../auth.js";
 import { bootstrapOwner } from "../bootstrap.js";
 import { createDatabase,type Database } from "../db.js";
+import { setEndToEndRequired } from "../end-to-end-policy.js";
 import { migrate } from "../migrate.js";
 import { leaseEvidence,parseLeaseSeconds } from "./lease.js";
 
@@ -52,6 +53,8 @@ suite("Script and service works: producer scope, idempotency, leases",() => {
     return { status: response.status,body: await response.json().catch(() => null) as any };
   }
   const key = () => ({ "idempotency-key": randomUUID() });
+  /** A service route reads its secret only from this header. */
+  const bearer = (value: string) => ({ authorization: `Bearer ${value}` });
 
   test("script start requires Idempotency-Key and replays by it",async () => {
     expect((await request("POST",`/api/producers/${P}/works`,{ goal: "Deploy" })).body.error).toBe("idempotency_key_required");
@@ -59,6 +62,40 @@ suite("Script and service works: producer scope, idempotency, leases",() => {
     expect(first.status).toBe(201);
     const again = await request("POST",`/api/producers/${P}/works`,{ goal: "Deploy",plan: { op: "set",steps: [{ label: "Build" },{ label: "Ship" }] } },{ "idempotency-key": "p-1" });
     expect(again.body).toMatchObject({ replayed: true,work: { id: first.body.work.id } });
+  });
+
+  test("script update applies every plan command: revise keeps done steps, next, add, step",async () => {
+    const work = (await request("POST",`/api/producers/${P}/works`,{ goal: "Deploy",plan: { op: "set",steps: [{ label: "Build" },{ label: "Ship" }] } },key())).body.work;
+    const path = `/api/producers/${P}/works/${work.id}`;
+    expect((await request("PATCH",path,{ plan: { op: "next" } })).status).toBe(200);
+    const revised = await request("PATCH",path,{ plan: { op: "revise",labels: ["Ship","Verify"] } });
+    expect(revised.body.work.plan.steps.map((step: { label: string; state: string }) => [step.label,step.state]))
+      .toEqual([["Build","done"],["Ship","current"],["Verify","open"]]);
+    const added = await request("PATCH",path,{ plan: { op: "add",steps: [{ label: "Announce" }] } });
+    const announce = added.body.work.plan.steps.find((step: { label: string }) => step.label === "Announce");
+    expect((await request("PATCH",path,{ plan: { op: "step",id: announce.id } })).body.work.plan.steps.find((step: { id: string }) => step.id === announce.id).state).toBe("current");
+    expect((await request("PATCH",path,{ plan: { op: "bogus" } })).body.error).toBe("invalid_request");
+  });
+
+  test("a script's sealed work stores no text, takes no readable text, and readable script text waits for end-to-end",async () => {
+    const card = { v: 1,kind: "card" };
+    const sealed = (await request("POST",`/api/producers/${P}/works`,{ goal: { sealed: true },plan: { op: "set",steps: [{ id: "s1" },{ id: "s2" }] },
+      sealed: card,producerSealed: { v: 1 } },key())).body.work;
+    const row = (await db.query("SELECT sealed_text,goal,status,plan FROM works WHERE producer_key=$1",[P])).rows[0];
+    expect(row).toMatchObject({ sealed_text: true,goal: null,status: null });
+    expect(row.plan.steps.every((step: { label?: string }) => step.label === undefined)).toBe(true);
+    const path = `/api/producers/${P}/works/${sealed.id}`;
+    expect((await request("PATCH",path,{ status: "Shipping" })).body.error).toBe("invalid_request");
+    expect((await request("PATCH",path,{ status: { sealed: true },plan: { op: "next" },sealed: card })).status).toBe(200);
+    expect((await request("POST",`${path}/finish`,{ outcome: { sealed: true },sealed: card })).body.work.lifecycle).toBe("finished");
+    // On an account that requires end-to-end encryption, readable script text is refused before any write; a service
+    // (which cannot seal) posts readable text only with the owner's leave for it (plan 10 A3).
+    await setEndToEndRequired(db,principalId,true);
+    expect((await request("POST",`/api/producers/${Q}/works`,{ goal: "Deploy" },key()))).toMatchObject({ status: 409,body: { error: "end_to_end_required" } });
+    expect((await request("POST",`/api/producers/${Q}/works`,{ goal: { readable: "Deploy" } },key())).status).toBe(409);
+    expect((await request("POST","/hooks/works",{ goal: "Signup",producerKey: "signup-1" },{ ...key(),...bearer(hook) })).status).toBe(409);
+    await db.query("UPDATE webhook_services SET readable_allowed=true WHERE principal_id=$1",[principalId]);
+    expect((await request("POST","/hooks/works",{ goal: "Signup",producerKey: "signup-1" },{ ...key(),...bearer(hook) })).status).toBe(201);
   });
 
   test("a producer cannot see another producer's work, and scripts carry no session",async () => {
@@ -92,18 +129,48 @@ suite("Script and service works: producer scope, idempotency, leases",() => {
   });
 
   test("service works: secret-scoped, producerKey and Idempotency-Key required, lease on start",async () => {
-    expect((await request("POST",`/hooks/${hook}/works`,{ producerKey: "signup-4711",goal: "Approve signup" })).body.error).toBe("idempotency_key_required");
-    expect((await request("POST",`/hooks/${hook}/works`,{ goal: "Approve signup" },key())).body.error).toBe("invalid_producer_key");
-    const started = await request("POST",`/hooks/${hook}/works`,{ producerKey: "signup-4711",goal: "Approve signup",leaseSeconds: 900 },key());
+    expect((await request("POST","/hooks/works",{ producerKey: "signup-4711",goal: "Approve signup" },bearer(hook))).body.error).toBe("idempotency_key_required");
+    expect((await request("POST","/hooks/works",{ goal: "Approve signup" },{ ...key(),...bearer(hook) })).body.error).toBe("invalid_producer_key");
+    const started = await request("POST","/hooks/works",{ producerKey: "signup-4711",goal: "Approve signup",leaseSeconds: 900 },{ ...key(),...bearer(hook) });
     expect(started.status).toBe(201);
     expect((await db.query("SELECT lease_until FROM works")).rows[0].lease_until).not.toBeNull();
     const id = started.body.work.id;
-    expect((await request("GET",`/hooks/${otherHook}/works/${id}`)).status).toBe(404);
-    expect((await request("GET",`/hooks/hook_${"Z".repeat(43)}/works/${id}`)).status).toBe(404);
-    expect((await request("PATCH",`/hooks/${hook}/works/${id}`,{ status: "Checking the domain" })).body.work.status).toBe("Checking the domain");
-    expect((await request("POST",`/hooks/${hook}/works/${id}/pause`)).body.work.lifecycle).toBe("paused");
+    expect((await request("GET",`/hooks/works/${id}`,undefined,bearer(otherHook))).status).toBe(404);
+    expect((await request("GET",`/hooks/works/${id}`,undefined,bearer(`hook_${"Z".repeat(43)}`))).status).toBe(404);
+    expect((await request("PATCH",`/hooks/works/${id}`,{ status: "Checking the domain" },bearer(hook))).body.work.status).toBe("Checking the domain");
+    expect((await request("POST",`/hooks/works/${id}/pause`,undefined,bearer(hook))).body.work.lifecycle).toBe("paused");
     expect((await db.query("SELECT lease_until FROM works")).rows[0].lease_until).toBeNull();
-    expect((await request("GET",`/hooks/${hook}/works?state=paused`)).body.works).toHaveLength(1);
+    expect((await request("GET","/hooks/works?state=paused",undefined,bearer(hook))).body.works).toHaveLength(1);
+  });
+
+  test("a script's and a service's work project their card the same way: start, steps advance, end",async () => {
+    await db.query(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
+      app_version,app_build,os_version,apns_environment,notification_authorization,live_activity_authorization,apns_token,
+      live_activity_push_to_start_token) VALUES ($1,$2,$3,'Phone','com.example.relo.notifications','1','1','26','sandbox',
+      'authorized','authorized','fixture-alert','fixture-start')`,[principalId,randomUUID(),randomUUID()]);
+    const producers = [
+      { name: "script",base: `/api/producers/${P}/works`,start: {},auth: {},source: "bootstrap-owner" },
+      { name: "service",base: "/hooks/works",start: { producerKey: "nightly-backup" },auth: bearer(hook),source: "Signup bot" },
+    ];
+    for (const producer of producers) {
+      const started = await request("POST",producer.base,{ ...producer.start,goal: `Nightly backup by ${producer.name}`,
+        context: { project: "Backups" },plan: { op: "set",steps: [{ label: "Dump" },{ label: "Upload" }] } },{ ...key(),...producer.auth });
+      expect(started.status,producer.name).toBe(201);
+      const id = started.body.work.id as string;
+      const card = async () => (await db.query("SELECT * FROM live_activities WHERE work_id=$1",[id.slice(4)])).rows[0];
+      /** Which step the card shows as current (1-based). */
+      const steps = (row: any) => {
+        const items = ((row.presentation?.components ?? []).find((component: any) => component.type === "steps")?.items ?? []) as Array<{ state: string }>;
+        return { current: items.findIndex((item) => item.state === "current") + 1 };
+      };
+      expect(await card(),producer.name).toMatchObject({ state: "active",title: `Nightly backup by ${producer.name}` });
+      expect(steps(await card())?.current,producer.name).toBe(1);
+      await request("PATCH",`${producer.base}/${id}`,{ status: "Uploading",plan: { op: "next" } },producer.auth);
+      expect(await card(),producer.name).toMatchObject({ status: "Uploading" });
+      expect(steps(await card())?.current,producer.name).toBe(2);
+      await request("POST",`${producer.base}/${id}/finish`,{ result: "finished",outcome: "Backed up" },producer.auth);
+      expect(await card(),producer.name).toMatchObject({ state: "ended",status: "Backed up" });
+    }
   });
 
   test("producer reads never write",async () => {

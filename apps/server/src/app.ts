@@ -19,9 +19,14 @@ import type { Database } from "./db.js";
 import { internalId } from "./ids.js";
 import { registerMobileAccountRoutes } from "./mobile-auth.js";
 import { registerMobileSignInRoutes } from "./mobile-sign-in.js";
-import { consumeRateLimit } from "./rate-limit.js";
-import { registerServiceApiRoutes, registerWebhookRoutes } from "./services.js";
+import { registerServiceApiRoutes } from "./webhooks/admin.js";
+import { registerWebhookRoutes } from "./webhooks/index.js";
+import { registerRequestPolicy } from "./request-policy.js";
+import { registerComputerRoutes } from "./api/computer-routes.js";
+import { registerCredentialRoutes } from "./api/credential-routes.js";
 import { registerWebAuthRoutes } from "./web.js";
+import { registerDashboardEventRoutes } from "./web/dashboard-events.js";
+import { getOwnerAccount } from "./web/owner-account.js";
 
 import {
   ApnsPayloadTooLargeError,
@@ -35,13 +40,15 @@ import {
   createNotificationContentCipher } from "./notification-content.js";
 
 import { registerDeviceRoutes } from "./api/device-routes.js";
+import { registerComputerInviteRoutes,registerPublicComputerInviteRoutes } from "./api/computer-invite-routes.js";
+import { bundledCli } from "./computer-invites.js";
 import { registerAgentSessionRoutes } from "./api/agent-session-routes.js";
 import { registerInboxRoutes } from "./api/inbox-routes.js";
 import { registerNowRoutes } from "./api/now-routes.js";
 import { registerNotificationRoutes } from "./api/interaction-routes.js";
 import { registerWorkRoutes } from "./works/index.js";
 import { registerScriptWorkRoutes } from "./works/script-routes.js";
-import { registerServiceWorkRoutes } from "./works/service-routes.js";
+import { registerServiceWorkRoutes } from "./webhooks/works.js";
 import type { ApiRouteContext } from "./api/route-context.js";
 import { publicErrorPage, publicErrorPageSecurityPolicy, wantsHtmlPage } from "./web/public-page.js";
 export { inboxItemResource } from "./api/resources.js";
@@ -108,8 +115,11 @@ export function createApp(
 
   if (integratedDependencies) {
     registerWebAuthRoutes(app, db, integratedDependencies);
+    registerDashboardEventRoutes(app, { hub: integratedDependencies.currentChanges, appOrigin: new URL(integratedDependencies.appUrl).origin,
+      getAccount: headers => getOwnerAccount(db, integratedDependencies.accountAuth, headers) });
     registerMobileAccountRoutes(app, db, integratedDependencies.accountAuth, integratedDependencies.credentialDerivationSecret);
     registerPublicDeviceAuthorizationRoutes(app, db, integratedDependencies.accountAuth, integratedDependencies.appUrl);
+    registerPublicComputerInviteRoutes(app, db, integratedDependencies.appUrl);
     registerMobileSignInRoutes(app, db, integratedDependencies.accountAuth, integratedDependencies.appUrl);
     registerIdempotentMachineRevokeRoute(app, db);
   }
@@ -184,45 +194,19 @@ export function createApp(
     return context.json({ state: result.state,replayed: result.kind === "replayed",respondedAt: result.respondedAt });
   });
 
+  // The newest CLI this server hands out rides on every API reply (x-relo-cli-latest), read once at start: a CLI behind it
+  // updates itself (or tells its agent how) without asking the server anything more.
+  const latestCli = bundledCli()?.version;
+  if (latestCli) app.use("/api/*", async (context,next) => { await next(); context.header("x-relo-cli-latest",latestCli); });
+
   app.use("/api/*", authenticate(db));
 
-  app.use("/api/*", async (context,next) => {
-    if (!["POST","PUT","PATCH","DELETE"].includes(context.req.method)) return next();
-    const path = new URL(context.req.url).pathname;
-    if (!/^\/api\/(?:notifications|interactions|live-activities|services)(?:\/|$)/.test(path)) {
-      return next();
-    }
-    const auth = context.get("auth");
-    let family = "authenticated-mutations";
-    if (/^\/api\/notifications\/[^/]+\/interactions$/.test(path)) {
-      const body = await context.req.json().catch(() => null);
-      if (["approve","deny","yes","no","answer","choose"].includes(body?.kind)) family = "decision-responses";
-    }
-    const account = await consumeRateLimit(db,{
-      scope: "account", id: auth.principalId, family, limit: 300,
-    });
-    if (!account.allowed) {
-      context.header("retry-after",String(account.retryAfterSeconds));
-      return context.json({ error: "rate_limited", scope: "account", retryAfterSeconds: account.retryAfterSeconds },429);
-    }
-    const scopedId = auth.credentialId ?? auth.deviceId;
-    if (scopedId) {
-      const scope = auth.credentialId ? "client" as const : "device" as const;
-      const credential = await consumeRateLimit(db,{
-        scope, id: scopedId, family, limit: scope === "client" ? 60 : 120,
-      });
-      if (!credential.allowed) {
-        context.header("retry-after",String(credential.retryAfterSeconds));
-        return context.json({ error: "rate_limited", scope, retryAfterSeconds: credential.retryAfterSeconds },429);
-      }
-    }
-    return next();
-  });
+  registerRequestPolicy(app,db,"/api/*");
 
   registerServiceApiRoutes(app,db,integratedDependencies?.appUrl);
   registerDeliveryObservabilityRoutes(app,db,apnsMode);
   registerContextResourceRoutes(app,db);
-  registerDoctorRoutes(app,db,apnsMode);
+  registerDoctorRoutes(app,db,apnsMode,integratedDependencies?.appUrl);
 
   registerMachineAuthRoutes(app, db);
 
@@ -230,10 +214,13 @@ export function createApp(
     db,apnsMode,dependencies,integratedDependencies,notificationContentCipher,encryptedTransportToken,callbackEncryption,
   };
   registerDeviceRoutes(app,routeContext);
+  registerComputerInviteRoutes(app,routeContext);
   registerNotificationRoutes(app,routeContext);
   registerInboxRoutes(app,routeContext);
   registerNowRoutes(app,routeContext);
   registerAgentSessionRoutes(app,routeContext);
+  registerCredentialRoutes(app,routeContext);
+  registerComputerRoutes(app,routeContext);
   registerWorkRoutes(app,routeContext);
   registerScriptWorkRoutes(app,routeContext); registerServiceWorkRoutes(app,routeContext);
 

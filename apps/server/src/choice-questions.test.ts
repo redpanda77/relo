@@ -6,7 +6,7 @@ import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase, type Database } from "./db.js";
 import { callbackPayload } from "./interaction-callbacks.js";
 import { migrate } from "./migrate.js";
-import { createWebhookService } from "./services.js";
+import { createWebhookService } from "./webhooks/admin.js";
 import { createTransportTokenEncryption } from "./token-encryption.js";
 
 /** docs/CHOICE-QUESTIONS.md: 2-4 options, only to phones that can show them. */
@@ -165,12 +165,13 @@ suite("choice questions", () => {
   test("a webhook service can ask with options and read which one was picked", async () => {
     const device = await phone("New iPhone",["choice_questions"]);
     const service = await createWebhookService(db,principalId,"CI","http://127.0.0.1:8180");
-    const hook = new URL(service.webhookUrl).pathname;
-    const sent = await json(await app.request(hook,{ method: "POST",headers: { "content-type": "application/json" },
+    const hook = "/hooks";
+    const auth = { authorization: `Bearer ${service.secret}` };
+    const sent = await json(await app.request(hook,{ method: "POST",headers: { "content-type": "application/json",...auth },
       body: JSON.stringify({ title: "Deploy",body: "Which release?",context: { project: "CI",threadName: "Deploys" },
         response: { type: "choice",options,expiresInSeconds: 120 } }) }),201);
     expect((await choose(device,sent.eventId,"rollback")).status).toBeLessThan(300);
-    const read = await json(await app.request(`${hook}/events/${sent.eventId}`),200);
+    const read = await json(await app.request(`${hook}/events/${sent.eventId}`,{ headers: auth }),200);
     expect(read.event.response).toMatchObject({ status: "replied",action: "choose",optionId: "rollback",label: "Roll back" });
   });
 

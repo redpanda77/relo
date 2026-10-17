@@ -1,7 +1,8 @@
 # ADR 0008: Relo design framework
 
-Status: accepted, 14 October 2026, and implemented. Refines [ADR 0007](0007-presence-messages-work-separation.md)
-(presence, messages and work are separate). The state model it produced is summarized in
+Status: accepted, 14 October 2026, and implemented. Lifecycle amended by
+[ADR 0012](0012-working-layer.md) (rounds, `deliver`, handoff, plan trees, setup depths). Refines [ADR 0007](0007-presence-messages-work-separation.md)
+(presence, messages and work are separate). [ADR 0009](0009-cli-structure.md) applies it to the CLI's code. The state model it produced is summarized in
 [ARCHITECTURE.md](../ARCHITECTURE.md#state-model); the detailed design and build list are
 maintained privately alongside this repository.
 
@@ -21,14 +22,18 @@ change is checked against.
 2. **Producers keep control and autonomy.** Agents, scripts and apps own their declared lifecycle
    (start, continue, extend or revise plans, pause, resume, finish, fail). Plans exist for the owner's
    visibility, traceability and reporting, never to force a way of working.
+   *Amended by ADR 0012: the lifecycle verbs gain `deliver` (close a round, work stays open) and
+   `handoff`; `finish` ends the goal only.*
 3. **Poka-yoke and simple.** The right action is the easy one; wrong actions are impossible by
    construction, not discouraged by prose. Every degree of freedom is weighed against the misuse it allows.
 4. **Plans emerge.** A producer that is unsure shows how it will find out, then extends or revises in
    place. No placeholders: they carry no information.
+   *Amended by ADR 0012: the plan is a tree of rounds and nested steps, not a flat list.*
 5. **Card UX: fresh, visible only while relevant, informative.** The owner's questions, in order:
    does anything need me, did something finish or fail, is it moving, what happened while I was away.
 6. **Continuity.** Unfinished work is findable by the session or producer that owns it; the CLI keeps
    short-lived per-session state the producer can query.
+   *Amended by ADR 0012: continuity also runs through restore hooks and a single-use handoff handle.*
 7. **Harnesses are optional and separate.** Hooks are off by default and offered at setup with their
    depth explained. When enabled they own observed session state and help the agent keep its declared
    state current (reminders, memory after compaction, waking it with an answer). They never write
@@ -55,7 +60,7 @@ change is checked against.
 | Family | Entities | State source | Module rule |
 |---|---|---|---|
 | **Producers** | agent sessions (any agent), scripts (short-lived: CLI, CI, cron), apps (long-lived services: API, webhooks, callbacks) | declared | one module each: identity, CLI or API surface, validation, routes, policy |
-| **Harnesses** | Claude Code and Gemini CLI today (Codex, Cursor, OpenCode later), via hooks | observed | one adapter per harness; events only |
+| **Harnesses** | Claude Code, Gemini CLI and OpenCode (its events through Relo's plugin) today (Codex, Cursor later), via hooks | observed | one adapter per harness; events only |
 | **Owner surfaces** | iPhone app, Lock Screen and Dynamic Island, Watch, Dashboard, notifications, the CLI used by the owner | display derived state only | no surface computes policy, timers or phases |
 | **Devices and trust** | phones, computers, linked browsers; keys, approvals | observed (device facts) and the owner's trust decisions | separate from sessions, cards and messages |
 | **Messages** | notices, questions, answers (signed by the phone) | declared (asker) and owner (answer) | own lifecycle; reference work, never own or end it |
@@ -107,6 +112,11 @@ time, leases) instead of an event stream.
   keys. No type can act as another.
 - **Isolation.** Session isolation (agents never see other sessions), account isolation (ADR 0004), the
   encryption boundary (ADR 0005: the server never reads content).
+- **Owner administration** (15 October 2026). Isolation is the default, never a wall the owner must climb
+  alone: `relo admin` crosses sessions as the owner's terminal does (every work and card, the Sessions
+  view, ending a card). The owner runs it, or asks an agent to; an agent never uses it on its own. Ending
+  is limited to hanging work (paused, or quiet 20 minutes) so no running agent loses its card, and a work
+  is named by its full listed id. The server keeps this on owner routes, which refuse a session key.
 - **Consent.** Anything that changes behaviour beyond the defaults (hook levels, mirroring the agent's
   own questions, callbacks to private addresses) is explicit, explained and reversible.
 - **One contract.** Relo has no compatibility matrix ([ARCHITECTURE.md](../ARCHITECTURE.md#one-current-product-contract)): a contract change lands in the server, CLI and apps together, and a field kept only for an already released iPhone build is marked with the build that lets it go.
@@ -114,6 +124,36 @@ time, leases) instead of an event stream.
   (why is this card hidden?), without revealing content.
 - **Tests.** Each module alone; contract tests at every interface; invariant tests for every
   principle (one source never writes another's fields; one type cannot call another's surface).
+
+## Decision: the approvals exception
+
+Hooks own observed state and never write declared state. One opt-in hook is the single exception, and it is
+narrow: `relo setup --level guide --approvals on` adds a `PermissionRequest` hook (`relo hook permission`). When the
+harness is about to ask the owner for permission, the hook asks the same question on the owner's phone and
+Dashboard, and returns the owner's decision to the harness.
+
+- It is the session's proxy, not a new writer: it runs the session's own `relo ask` and `relo interaction wait`
+  as child processes (injected `runRelo`), so hook logic still reaches no client, outbox or card writer
+  (`reachability.test.mjs`). The question is sealed like any other, and it is the only place a hook reads a
+  tool's name and input: the owner cannot decide what they cannot see.
+- Only an approved answer (signed by a phone this computer verified) allows; only a denied answer denies. No
+  answer, a failed ask or any error prints nothing, so the harness's own terminal prompt is exactly as it was.
+- The harness races the hook against its terminal dialog. If the owner answers there, the hook is ended and
+  the question is withdrawn, so a stale "needs you" never lingers.
+- It is off at every other level; presence never asks.
+
+## Amendment: the Relo MCP server's leave and heartbeat
+
+The Relo MCP server (`relo mcp`) is a second writer of observed state, and only of two facts: that its harness
+exited, and, once a minute, that a session of its harness waiting at a permission prompt is still there (a
+`heartbeat` snapshot: last seen and `heartbeat_at` only; each wait proves its own heartbeat, and a session that
+never sent one keeps "needs you until answered"). It runs as a child of the harness, so it lives exactly as long as the session's process. When its client
+closes stdin and the harness process is confirmed gone, it ends the observed sessions of that process (end
+reason `mcp`) through the same state machine and outbox as a hook. It writes nothing else: no cards, plans,
+questions or other observed fields. `agent/mcp.mjs` imports no harness module; `cli.mjs`, the composition
+root, wires it to the harness entry (`reachability.test.mjs`). The ownership matrix reads: Session (observed) is
+ended by its harness (a hook or the MCP leave), or derived "ended"; a waiting session's liveness comes from the
+MCP heartbeat.
 
 ## Checklist for a new module or change
 

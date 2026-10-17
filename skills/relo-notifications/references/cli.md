@@ -2,7 +2,7 @@
 
 `relo schema --json` is the exact grammar (every command, flag, enum, limit and exit code; `relo schema work`
 prints just the work verbs plus the exit codes, and an unknown name gets a "Did you mean …?" hint); this
-page explains behavior. Use the installed `relo` (or `reloctl`); do not install or upgrade it mid-task.
+page explains behavior. Use the installed `relo`; do not install or upgrade it mid-task.
 
 ## Contents
 
@@ -24,12 +24,16 @@ relo work start --goal "Ship the 0.17 release" --plan "Bump versions,Run local g
 relo work update --status "Gates running" --next-step
 relo work update --progress 3/5
 relo work update --add "Write release notes"
+relo work update --add "Sign the build" --under s3
+relo work update --detail "Signing needs the new certificate"
 relo work update --plan "Run local gates,Write release notes,Tag and publish"
 relo work update --step "Tag and publish"
 relo work update --waiting "CI"
 relo work update --not-waiting --status "CI green"
 relo work pause --status "Waiting for the owner's design review"
 relo work resume
+relo work deliver --outcome "0.17 is on TestFlight"
+relo work start --round "Add the release notes" --plan "Draft them,Review them"
 relo work finish --outcome "0.17 is live"
 relo work finish --outcome "Gates failed on the upload test" --failed
 relo state
@@ -37,11 +41,14 @@ relo state
 
 | Command | Flags | Notes |
 | --- | --- | --- |
-| `relo work start` | `--goal TEXT` (required), `--plan "A,B,C"`, `--progress n/m`, `--status TEXT`, `--new`, `--dry-run`, `--json` | when this session has an open work it continues it: goal, plan, progress and status are ignored and the echo says why |
-| `relo work update` | `--status`, `--goal`, `--next-step` or `--step X`, `--plan "…"`, `--add "…"`, `--progress n/m`, `--waiting TEXT` or `--not-waiting`, `--dry-run`, `--json` | at least one change |
+| `relo work start` | `--goal TEXT` (required, except with `--round`), `--round TEXT`, `--plan "A,B,C"`, `--progress n/m`, `--status TEXT`, `--new`, `--dry-run`, `--json` | when this session has an open work it continues it: goal, plan, progress and status are ignored and the echo says why. After a `deliver`, `--round` opens the next round of that goal; without it the start is refused |
+| `relo work update` | `--status`, `--goal`, `--next-step` or `--step X`, `--plan "…"`, `--add "…"` (with `--under sN` or `--after sN`), `--detail TEXT`, `--progress n/m`, `--waiting TEXT` or `--not-waiting`, `--dry-run`, `--json` | at least one change; none of the plan changes on a delivered round |
+| `relo work deliver` | `--outcome TEXT` (required), `--drop-rest`, `--dry-run`, `--json` | ends this request (refused while top-level steps are open, naming them; `--drop-rest` skips them): the round closes, the owner gets the outcome as one quiet notification and it is their turn; the work stays open for `start --round` |
+| `relo work handoff` | `--next TEXT` (required, up to 107 characters), `--dry-run`, `--json` | hands this session's open work to a fresh session on this computer: the card, the plan and the open round stay, the status reads `Handing off: <next>`, nothing is announced. Prints `relo work start --from <handle>` (single use, 24 hours, same computer); this session no longer owns the work. Needs the server (never queued). Refused on a delivered round |
+| `relo work start --from HANDLE` | no other flag | in the fresh session: takes over the handed-off work (the old session loses it, this session's own open work is parked). Refused when the handle is unknown, used, expired or from another computer; the pending copy on this computer is then dropped |
 | `relo work pause` | `--status TEXT` (required: why), `--json` | takes the card off the Lock Screen; Now › Paused |
 | `relo work resume` | `[wrk_…]`, `--json` | default: the most recent paused or parked work of this session |
-| `relo work finish` | `--outcome TEXT` (required), `--failed` or `--dropped`, `--work wrk_…`, `--json` | default: the open work; open steps become skipped |
+| `relo work finish` | `--outcome TEXT` (required), `--failed` or `--dropped`, `--work wrk_…`, `--json` | ends the goal; default: the open work; open steps become skipped |
 | `relo state` | `--sync`, `--json` | this session's open, paused and parked work; local unless `--sync` |
 | scripts only | `--producer KEY`, `--idempotency-key`, `relo work heartbeat --lease 15m` | see [services.md](services.md) |
 
@@ -55,7 +62,18 @@ Plan rules:
 - `--progress n/m` (integers, `m ≥ 1`) attaches to the current step on a planned work and clears
   when the step changes; on a work without a plan it is the whole job's count. On `start` with
   `--plan` it attaches to the first step. Percentages and fractions are refused.
-- Limits: 30 steps (any state), labels 80, goal 120, status 120, outcome 200, waiting 60 characters.
+- Nesting: a value with line breaks nests by indentation, two spaces (or a tab) per level, up to
+  <!--f:work.planMaxDepth short-->3<!--/f--> levels: `--plan "Build it\n  Parse the rows\n  Write the rows\nVerify it"`. Use it
+  only when a step cannot be finished in one go; flat stays the default. `--add "…" --under s3` adds
+  last under a step. Only a step without sub-steps is current: `--next-step` goes from leaf to leaf, a
+  parent is done when its children are, and a step added under the current one takes over.
+- `--detail "…"` (up to <!--f:work.detailMax short-->200<!--/f--> characters) explains the current step; the owner opens it from the plan.
+- Rounds: one goal is one work; each request is a round. `deliver` closes it (refused while
+  top-level steps are open unless `--drop-rest`); `start --round "…" [--plan "…"]` opens the next (without `--plan` it carries the unfinished steps). An open round is never started again:
+  that start continues it and notes that `--round` was ignored.
+- A refused `finish` or `deliver` stays on every echo (`Refused earlier: …`) until an accepted one;
+  for an over-long outcome the `Next` line holds your own text cut to fit.
+- Limits: <!--f:work.planMaxSteps-->30<!--/f--> steps per round (<!--f:work.planMaxNodes short-->120<!--/f--> in all rounds), labels <!--f:work.stepLabelMax short-->80<!--/f-->, goal <!--f:work.goalMax short-->120<!--/f-->, status <!--f:work.statusMax short-->120<!--/f-->, outcome <!--f:work.outcomeMax short-->200<!--/f-->, waiting <!--f:work.waitingMax short-->60<!--/f--> characters.
   Placeholder words ("Step 2", "todo", "done", "in progress"), paths and secrets are refused, and so is
   a step the owner performs ("Owner approves the release"): that is an `ask` or a note.
 - `--dry-run` validates locally and prints `Dry run: nothing was sent.` and the computed echo.
@@ -63,7 +81,7 @@ Plan rules:
 ## Order of application
 
 Within one `update` the changes apply in a fixed order: 1 `--next-step` · 2 `--plan` · 3 `--add` ·
-4 `--step X` · 5 `--progress` · 6 text fields (`--status`, `--goal`, `--waiting`). `--next-step` and
+4 `--step X` · 5 `--detail` · 6 `--progress` · 7 text fields (`--status`, `--goal`, `--waiting`). `--next-step` and
 `--step` are exclusive, as are `--waiting` and `--not-waiting`. Because `--next-step` goes first,
 "I finished this, and the rest now looks like this" is one command:
 `relo work update --next-step --plan "Patch token refresh,Add regression test,Run tests"`.
@@ -88,8 +106,12 @@ Parked: <short id> "<goal>" (paused HH:MM) → relo work resume <id>  |  relo wo
 Next: <the exact command>
 ```
 
+A nested plan indents its steps; closed rounds fold to one line, `[✓] Round 1 "<title>": <outcome>`
+(round 1 is titled by the goal), and the open round gets a `Round n "<title>"` header once there are
+two. A refused finish or deliver puts `Refused earlier: …` on the first line.
+
 Lifecycle is `open`, `paused` or `finished`; disposition is `started`, `continuing`, `updated`,
-`paused`, `resumed`, `done`, `failed` or `dropped`.
+`paused`, `resumed`, `delivered`, `round_opened`, `handed_off`, `taken_over`, `done`, `failed` or `dropped`.
 
 `--json` prints one line instead:
 `{"ok":true,"disposition":"updated","work":{"id":"wrk_…","lifecycle":"open","version":4,"step":"2/3","progress":{"done":3,"total":5}},"parked":[…],"echo":"…"}`
@@ -106,6 +128,7 @@ Next: <the exact command>
 With `--json` (or piped, for scripts) it is `{"ok":false,"error":{"code","message","state","next"}}`.
 Branch on the exit code, then run the `Next` command.
 
+<!--generated:exit-codes-->
 | Exit | Meaning |
 | ---: | --- |
 | `0` | Success, or the owner approved / said yes |
@@ -117,6 +140,7 @@ Branch on the exit code, then run the `Next` command.
 | `6` | Network unreachable: retry the same command |
 | `7` | No phone could receive it |
 | `8` | Closed without an answer (expired, canceled): do not act |
+<!--/generated-->
 
 ## Which work a command addresses
 
@@ -150,10 +174,10 @@ relo ask "Which release goes out today?" --option "1.4" --option "1.5 beta" --op
   explanation: markdown, up to 4,000 characters, in the stdin JSON as `detail` too. The owner reads it
   with the question in Relo; the Lock Screen and the notification show only the question.
 - The question appears on this session's open work with answer buttons, a countdown and an alert; the
-  command waits for the answer. A question waits 5 minutes by default; `--expires-in` asks for longer
-  (for example `2h` or `1d`), up to the server's limit (7 days unless the admin set another; a longer
+  command waits for the answer. A question waits <!--f:question.defaultSeconds-->5 minutes<!--/f--> by default; `--expires-in` asks for longer
+  (for example `2h` or `1d`), up to the server's limit (<!--f:question.serverCapSeconds-->7 days<!--/f--> unless the admin set another; a longer
   ask is refused with `question_wait_too_long`). Past the Lock Screen's 8-hour limit the same question keeps waiting in Relo's Needs you. Unanswered, it expires. The command
-  waits for `--timeout` (default the question's lifetime up to 5 minutes; **100s inside an agent
+  waits for `--timeout` (default the question's lifetime up to <!--f:question.defaultSeconds-->5 minutes<!--/f-->; **<!--f:question.agentWaitSeconds short-->100s<!--/f--> inside an agent
   session**, because an agent's shell tool kills longer commands). If that passes first, it exits 4 with
   `{"error":{"message":"No answer yet; the question is still open.","hint":"relo interaction wait int_… --timeout 100s","details":{"state":"timeout","id":"int_…"}}}`:
   run the hint. Exit 8 (state `expired` or `canceled`) means closed without an answer: do not act.
@@ -167,7 +191,7 @@ relo ask "Which release goes out today?" --option "1.4" --option "1.5 beta" --op
   `interaction cancel`. Updates sent meanwhile succeed and show once it is answered.
 - Services that cannot block (scripts only; an agent waits on the answer instead) can pass `--no-wait --callback-url https://… --callback-token-file PATH`:
   Relo POSTs `{type, eventId, interactionId, correlationId, kind, status, action, respondedAt}` with
-  `Authorization: Bearer <token>`, retried after 30s, 2m, 10m and 1h. Expired or canceled questions
+  `Authorization: Bearer <token>`, retried 10 times over about <!--f:callback.giveUpSeconds-->3 days<!--/f--> (<!--f:callback.retryDelaysSeconds-->30s, 2m, 10m, 1h, 3h, 6h, 12h, 24h, 24h<!--/f-->). Expired or canceled questions
   never call back. `--correlation-id` is echoed in the callback. Every retry of one answer carries the
   same `Relo-Delivery-Id` (handle each once) and `Relo-Signature: t=UNIX,v1=HEX`, the HMAC-SHA256 of
   `UNIX.BODY` keyed by the token: check it and reject an old `t`. Callbacks to private or local
@@ -201,8 +225,10 @@ relo notify "Nightly backup failed" --summary "Backup failed" --markdown --url "
   `relo auth login` in an agent context prints the link and returns; finish with `relo auth login --wait`;
   `relo auth status` shows who is signed in (`"source":"RELO_TOKEN"` when it came from the
   environment). `--full` prints every check and the scopes.
+- `relo config` prints this computer's settings, each with its effective value and where it comes from (default, config file, environment variable). Read-only.
 - `relo devices list` lists phones; `--device ID` targets one.
-- `relo services create/list`: see [services.md](services.md).
+- `relo services create/list/edit/rotate/revoke`: see [services.md](services.md).
+- `relo auth token create/list/rotate/revoke`: CI tokens for pipelines, owner-only; never run them yourself unasked, since each prints a secret (use `--secret-file`).
 
 ## Other command output
 
@@ -218,7 +244,6 @@ These commands print one compact JSON line when piped; omitted keys are absent o
 | `auth status` | `{"ok":true,"signedIn":true,"server","client","expiresAt"}`; `missingScopes` only when one is missing |
 | `services list` | `{"ok":true,"services":[{"id","title","prefix","createdAt"}]}`, secrets never included |
 | `setup` | `{"ok":true,"file","action":"created\|appended\|updated\|unchanged\|kept\|moved\|removed","from?","skill":{…},"hint?"}`; owner's choice, see [install.md](install.md) |
-| `skill install\|remove\|status` | `{"ok":true,"agent","dir","version","action":"installed\|updated\|unchanged\|removed\|absent","archived?"}`; see [install.md](install.md) |
 | `update` | `--check`: `{"ok":true,"current","latest","updateAvailable"}`; success `{"ok":true,"from","to","verified":true}`. Owner's choice |
 | `devices list` | `{"ok":true,"devices":[{"id","name","liveActivities","lastSeenAt"}]}` |
 | profiles | `relo auth login --profile NAME`, `relo auth switch NAME`, `RELO_PROFILE=NAME` |
@@ -228,15 +253,20 @@ piped or with `--json`, otherwise plain text.
 
 ## Retries and idempotency
 
-A supplied `--idempotency-key` is 1-200 characters from letters, digits, `.`, `_`, `:`, `-`. Scripts must pass one on `work start` and `ask` when piped;
+A supplied `--idempotency-key` is 1-200 characters from letters, digits, `.`, `_`, `:`, `-`. Scripts must pass one on `work start` when piped (optional on `ask`);
 agents never pass one (the CLI owns it). Reuse the same key only to retry the identical command (exit `6`); a replay returns the first result without
 a second push. Change it when the content changes.
 
 ## Deprecated and removed
 
-`relo activity start|update|end|status|get` are refused inside an agent session (the refusal names the
-`relo work` command to use); there are no aliases. Translate:
+`relo activity start` and `relo activity update` are gone for everyone, and the remaining card commands are the
+owner's; there are no aliases. Translate:
 `activity start --title T` → `work start --goal T`; `--steps "A,B"` → `--plan "A,B"`;
 `--step-current N` → `--step sN`; `activity end --status T` → `work finish --outcome T`
 (`--symbol warning` → `--failed`); `activity status` → `relo state`. `--topic`, `--name`, `--style`,
 `--privacy` and the timing flags are gone: Relo finds the work and times every card itself.
+
+## Cleaning up other sessions' cards
+
+Only when the owner asks. `relo admin works` lists every open work; `relo admin finish wrk_… --dropped --outcome "…"`
+ends a hanging one. Never otherwise. Details: [troubleshooting](troubleshooting.md).

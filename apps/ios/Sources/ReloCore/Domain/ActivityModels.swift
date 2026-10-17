@@ -359,7 +359,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
                 ? .init(kind: "active", tone: "live", icon: LiveActivityPresentation.SemanticIcon(rawValue: symbol.rawValue) ?? .active)
                 : .init(kind: "needs_action", tone: "attention", icon: .needsAction),
             behavior: behavior,
-            appearance: .init(theme: style == "terminal" || style == "shell" ? .dark : .system),
+            appearance: .init(),
             privacy: effectivePrivacy == .private ? .private : .standard
         )
     }
@@ -411,7 +411,7 @@ public struct LiveActivityCommand: Codable, Equatable, Sendable {
         progress = decodedPresentation.components.lazy.compactMap { component -> Double? in
             switch component {
             case let .progressBar(_, _, value, _): value
-            case let .steps(_, _, items): Double(items.filter { $0.state == .complete }.count) / Double(items.count)
+            case let .steps(_, _, items, window): Double(window.before + items.filter { $0.state == .complete }.count) / Double(window.total(items.count))
             case .image: nil
             }
         }.first

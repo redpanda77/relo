@@ -43,7 +43,7 @@ All of it is on a server the owner runs, end-to-end encrypted to the owner's dev
 - **Total privacy for confidential work.** Agents work on client code, unreleased plans and personal
   matters, so anything leaving the owner's machines must stay private. Content is end-to-end
   encrypted on the producer's computer and opens only on the owner's devices; the server (even the
-  owner's own) cannot read it. The server wipes it after a few hours, and the phone's keys rotate
+  owner's own) cannot read it. The server wipes it after the window the owner sets (10 hours by default), and the phone's keys rotate
   every 10 hours, so even an old copy can never be opened again.
 
 Lead with why the owner should care. The technology (end-to-end encryption, signatures,

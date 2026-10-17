@@ -9,7 +9,6 @@ app and layouts
   Landing (signed out)
   Authentication
   Now and History
-  Projects
   Connections
   Test Lab
   Account
@@ -40,7 +39,6 @@ Every page is a server route that renders the same Vite document with a JSON boo
 | `/dashboard` (Now) | `inbox-overview` | `features/inbox` |
 | `/dashboard/inbox/notifications[/:id]` (History, detail) | `notification-history`, `notification-detail` | `features/inbox` |
 | `/dashboard/inbox/delivery` | `delivery-history` | `features/inbox` |
-| `/dashboard/projects[/:projectId]` | `projects` | `features/projects` |
 | `/dashboard/connections` | `connections` | `features/connections` |
 | `/dashboard/testing[/runs/:activityId]`, `…/history` | `test-lab`, `activity-history` | `features/test-lab` |
 | `/dashboard/account` | `account` | `features/account` |
@@ -53,9 +51,9 @@ Signed in, `/` and `/sign-in` redirect to `/dashboard`. Retired paths (`/dashboa
 1. `app` reads the bootstrap, chooses the active capability and composes `layouts/dashboard-shell.tsx`.
 2. `features/<capability>` owns its pages and domain-specific composition. Account composes the smaller settings features (`two-factor`, `devices`, `encryption-policy`, `presentation-policy`, `linked-browser`, `pending-devices`).
 3. `state`, `services` and a feature's own `*-service.ts` own decoding, fetching, polling, pending operations, and recoverable errors.
-4. `components/organisms`, `molecules`, and `atoms` contain reusable product presentation below the feature boundary; they import feature types only.
+4. `components/organisms`, `molecules`, and `atoms` contain reusable product presentation below the feature boundary; they import feature types only. `components/page.tsx` holds the page templates (`Page`, `SplitPage`) and the frosted `List`/`Row`.
 5. `components/ui` contains generated shadcn/ui source and imports no feature code.
-6. `lib` contains small deterministic primitives (status-to-tone mapping, formatting) and the browser's end-to-end encryption (`lib/e2ee`).
+6. `lib` contains small deterministic primitives (status-to-tone mapping, formatting, the day-to-core mapping in `orb-theme.ts`), the Relo core's three.js scene (`orb-scene.ts`, only ever loaded as its own chunk), and the browser's end-to-end encryption (`lib/e2ee`).
 
 Dependencies point down this list. Presentation components do not read bootstrap JSON, query the database, or infer lifecycle truth. Bootstrap and API shapes come from `@relo/notification-contracts`; each feature's `types.ts` re-exports them.
 
@@ -76,8 +74,7 @@ Dependencies point down this list. Presentation components do not read bootstrap
 | Landing | Signed-out page: hero scene, value proposition, demos | Static; the `auth` bootstrap chooses it |
 | Authentication | Two-step sign-in, sign-up (open or by approval), first-owner creation | `features/auth/auth-service.ts` and the `auth` bootstrap |
 | Now and History | Needs you, sessions, live work, history, detail, delivery, answers | `services/inbox-service.ts`, inbox bootstraps, snapshot and action hooks |
-| Projects | Projects, aliases, merge and split | `services/projects-service.ts` and the `projects` bootstrap |
-| Connections | Services, phones, clients, secrets, revocation | `services/connections-service.ts` and the `connections` bootstrap |
+| Connections | Phones, computers (name, icon, setup, phone appearance), CI tokens, webhooks, revocation | `services/connections-service.ts` and the `connections` bootstrap |
 | Test Lab | Monitor, New Run Sheet, Run Details Sheet, previews, history | `services/test-lab-service.ts`, draft and polling hooks |
 | Account | Security (two-factor, devices, encryption), command line, server, shared access, preferences, sign-in, deletion | `services/account-service.ts`, the settings features' own services, and the `account` bootstrap |
 | Documentation | Workflow guidance and stable machine-readable links | The `docs` bootstrap |
@@ -110,7 +107,7 @@ Before extracting or splitting an existing shared component:
 - `apps/server/src/web.ts` is the route registry.
 - `apps/server/src/web/dashboard-app.ts` renders the document and bootstrap, serves `/assets/*` from `apps/dashboard/dist`, and lists the landing chunk's preloads from the Vite manifest.
 - `apps/server/src/web/dashboard-auth.ts` chooses landing or form for `/` and `/sign-in`.
-- `dashboard-inbox.ts`, `dashboard-projects.ts`, `dashboard-connections.ts`, `dashboard-system.ts` and `dashboard-activity-history.ts` own capability-specific projections without defining lifecycle policy.
+- `dashboard-inbox.ts`, `dashboard-connections.ts`, `dashboard-system.ts` and `dashboard-activity-history.ts` own capability-specific projections without defining lifecycle policy.
 - The Test Lab projection is still inline in `web.ts` (`testLabPage`).
 - The iPhone's browser sign-in (`/mobile/sign-in`), CLI authorization (`/cli/authorize`) and the 404/500 pages are server-rendered pages, not part of this app; they mirror its tokens through `web/public-page.ts`.
 - Relo server receives exact committed archives. Working-tree or partial-index builds are not deployment inputs.

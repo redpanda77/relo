@@ -1,11 +1,13 @@
 import "./hermetic-env.mjs";
+import { loginKeyStoreEnv } from "./cli-fixtures.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { EXIT, run } from "../src/cli.mjs";
-import { loadConfig, switchProfile, writeConfig } from "../src/config.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
+import { run } from "../src/cli.mjs";
+import { loadConfig, switchProfile, writeConfig } from "../src/shared/config.mjs";
 
 const HOME_TOKEN = `relo_${"h".repeat(43)}`;
 const WORK_TOKEN = `relo_${"w".repeat(43)}`;
@@ -36,7 +38,7 @@ async function box({ legacy = true, env = {} } = {}) {
     revokeAuth: async () => { state.tokens.push(`revoked:${config.token}`); return { revoked: true }; },
   });
   state.clientName = "Studio";
-  const deps = { env: { RELO_CONFIG_PATH: path, ...env }, clientFactory: client, computerName: () => "Studio", openBrowser: () => {}, stderr: () => {},
+  const deps = { env: { RELO_CONFIG_PATH: path, ...loginKeyStoreEnv(), ...env }, clientFactory: client, computerName: () => "Studio", openBrowser: () => {}, stderr: () => {},
     sleep: async () => {}, now: () => 1_000_000 };
   return { dir, path, state, deps, read: async () => JSON.parse(await readFile(path, "utf8")), run: (argv, extra = {}) => cli(argv, { ...deps, ...extra, env: { ...deps.env, ...(extra.env ?? {}) } }) };
 }

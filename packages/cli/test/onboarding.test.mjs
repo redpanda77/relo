@@ -1,15 +1,27 @@
 import "./hermetic-env.mjs";
+import { loginKeyStoreEnv } from "./cli-fixtures.mjs";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { EXIT, GUIDE, HELP, VERSION, run } from "../src/cli.mjs";
-import { COMMANDS, OPTIONS } from "../src/schema.mjs";
-import { ApiError, AuthError } from "../src/errors.mjs";
-import { agentSession, cardKey, detectAccount, detectAgent, inAgentContext } from "../src/identity.mjs";
+import { qrText } from "../src/shared/qr.mjs";
+import { ApiError, AuthError, EXIT } from "../src/shared/errors.mjs";
+import { GUIDE, HELP } from "../src/help.mjs";
+import { run } from "../src/cli.mjs";
+import { VERSION } from "../src/version.mjs";
+import { COMMANDS } from "../src/registry.mjs";
+import { OPTIONS } from "../src/shared/options.mjs";
+import { cardKey } from "../src/messages/card-context.mjs";
+import { detectAccount } from "../src/shared/identity.mjs";
+import { cardOwner, detectAgent, detectCaller, waitsShort } from "../src/caller.mjs";
 import { cardDependencies, fakeCards, fakeHome } from "./fake-cards.mjs";
+
+/** The card key the caller of `env` gets: its own card's owner comes from the caller (as its message port says). */
+const keyFor = ({ env = {}, ...rest }) => cardKey({ ...rest, env, owner: cardOwner(detectCaller(env)) });
+const ownerOf = (env) => cardOwner(detectCaller(env));
+
 
 const PHONE = "dev_abcdefghijkl";
 const SPARE = "dev_mnopqrstuvwx";
@@ -71,18 +83,18 @@ test("agent harnesses are recognized only by confirmed markers", () => {
 });
 
 test("RELO_SESSION gives a script or the owner's shell one card per session, never a harness", () => {
-  assert.deepEqual(agentSession({ RELO_SESSION: " s-42 " }), { agent: "relo", id: "s-42" });
-  assert.deepEqual(agentSession({ RELO_SESSION: "s", CLAUDE_CODE_SESSION_ID: "c" }), { agent: "claude-code", id: "c" });
-  assert.equal(agentSession({ RELO_SESSION: "s", GEMINI_CLI: "1" }), null);
-  assert.equal(agentSession({ GEMINI_CLI: "1" }), null);
-  const a = cardKey({ env: { RELO_SESSION: "one" }, context: { providerName: "Aider", project: "p", threadName: "t" } });
-  const b = cardKey({ env: { RELO_SESSION: "one" }, context: { providerName: "Aider", project: "p", threadName: "other" } });
-  const c = cardKey({ env: { RELO_SESSION: "two" }, context: {} });
+  assert.deepEqual(ownerOf({ RELO_SESSION: " s-42 " }), { label: "relo", id: "s-42" });
+  assert.deepEqual(ownerOf({ RELO_SESSION: "s", CLAUDE_CODE_SESSION_ID: "c" }), { label: "claude-code", id: "c" });
+  assert.equal(ownerOf({ RELO_SESSION: "s", GEMINI_CLI: "1" }), undefined);
+  assert.equal(ownerOf({ GEMINI_CLI: "1" }), undefined);
+  const a = keyFor({ env: { RELO_SESSION: "one" }, context: { providerName: "Aider", project: "p", threadName: "t" } });
+  const b = keyFor({ env: { RELO_SESSION: "one" }, context: { providerName: "Aider", project: "p", threadName: "other" } });
+  const c = keyFor({ env: { RELO_SESSION: "two" }, context: {} });
   assert.equal(a, b);
   assert.notEqual(a, c);
-  assert.equal(inAgentContext({ RELO_SESSION: "s" }), true);
-  assert.equal(inAgentContext({ GEMINI_CLI: "1" }), true);
-  assert.equal(inAgentContext({}), false);
+  assert.equal(waitsShort(detectCaller({ RELO_SESSION: "s" })), true);
+  assert.equal(waitsShort(detectCaller({ GEMINI_CLI: "1" })), true);
+  assert.equal(waitsShort(detectCaller({})), false);
 });
 
 test("ask waits 100s for any detected harness or RELO_SESSION, not only Claude and Codex", async () => {
@@ -114,22 +126,6 @@ test("accounts work for any harness: RELO_ACCOUNT, and a nickname keyed by the h
 
 // ---- steps vs progress -------------------------------------------------------------------------
 
-test("--progress N/TOTAL labels itself 'N of TOTAL' unless a label is given", async () => {
-  const { client, calls: all } = fakeCards();
-  const calls = new Proxy(all, { get: (target, name) => target.filter((call) => call.op !== "get")[name] });
-  const deps = cardDependencies(client, { env: { RELO_SESSION: "p" } });
-  await cli(["activity", "start", "--title", "Translate the book", "--status", "Translating chapters", "--progress", "3/20", ...topic], deps);
-  assert.equal(calls[0].body.progressLabel, "3 of 20");
-  await cli(["activity", "update", "--progress", "4/20"], deps);
-  assert.equal(calls[1].body.progressLabel, "4 of 20");
-  await cli(["activity", "update", "--progress", "5/20", "--progress-label", "Chapters"], deps);
-  assert.equal(calls[2].body.progressLabel, "Chapters");
-  await cli(["activity", "update", "--progress", "40%"], deps);
-  assert.equal(calls[3].body.progressLabel, undefined);
-  await cli(["activity", "update", "--status", "Reviewing chapter four"], deps);
-  assert.equal(calls[4].body.progressLabel, undefined);
-});
-
 // ---- login through an agent's shell ------------------------------------------------------------
 
 function authorizationStart() {
@@ -151,7 +147,7 @@ async function loginBox({ env = {}, polls = [] } = {}) {
       return { accessToken: TOKEN, credential: { id: "key_0123456789ab", clientName: "Studio", prefix: "relo_ssss", scopes: SCOPES } };
     },
   };
-  const deps = { env: { RELO_API_URL: "http://192.168.1.10:8180", ...env }, configPath: () => path, clientFactory: () => client,
+  const deps = { env: { RELO_API_URL: "http://192.168.1.10:8180", ...loginKeyStoreEnv(), ...env }, configPath: () => path, clientFactory: () => client,
     computerName: () => "Studio", now: () => state.now, sleep: async (ms) => { state.now += ms; },
     openBrowser: (url) => state.opened.push(url), stderr: () => {},
     writeConfig: async (_path, value) => { state.written.push(value); } };
@@ -163,7 +159,7 @@ test("auth login --no-wait stores the pending sign-in privately and prints the l
   const out = await cli(["auth", "login", "--no-wait"], box.deps);
   assert.equal(out.exitCode, EXIT.OK);
   assert.deepEqual(out.line, { ok: true, state: "pending", url: "http://192.168.1.10:8180/cli/authorize?code=ABCD-EFGH",
-    code: "ABCD-EFGH", next: "relo auth login --wait" });
+    code: "ABCD-EFGH", qr: qrText("http://192.168.1.10:8180/cli/authorize?code=ABCD-EFGH"), next: "relo auth login --wait" });
   assert.equal((await stat(box.pending)).mode & 0o777, 0o600);
   assert.equal(JSON.stringify(out.line).includes(DEVICE_CODE), false);
   assert.equal(box.state.opened.length, 0);
@@ -425,13 +421,23 @@ test("a rejected sign-in is a login step with exit 3", async () => {
   assert.equal(out.line.next.run, "relo auth login --no-wait");
 });
 
-test("help and schema state the steps-vs-progress rule and the any-harness wording", () => {
+test("help and schema state the plan and count rule and the any-harness wording", () => {
   assert.match(GUIDE, /Steps are milestones in order\. Parallel work \(subagents, several jobs\) is one step with a count/u);
+  // The plan belongs to the goal: deliver means this request is done; an owner check mid-plan is an ask or --waiting.
+  assert.match(GUIDE, /deliver = this request is done/u);
+  assert.match(GUIDE, /the owner must act mid-plan: ask or --waiting/u);
+  assert.match(GUIDE, /deliver is refused while top-level steps\nare open \(--drop-rest skips them/u);
+  assert.doesNotMatch(GUIDE, /More to come or the owner must act/u);
+  const reporting = readFileSync(new URL("../src/install/blocks/reporting.md", import.meta.url), "utf8");
+  assert.match(reporting, /A new request from the owner opens a round[^\n]*an answer, a check or "go on" continues the plan/u);
+  assert.doesNotMatch(reporting, /The owner's next message/u);
+  const planning = readFileSync(new URL("../src/install/blocks/planning.md", import.meta.url), "utf8");
+  assert.match(planning, /what the owner must do is an `ask` or `--waiting`, never a `deliver` \(refused while steps are open; `--drop-rest` skips them\)/u);
+  assert.match(planning, /--after s3/u);
   assert.match(GUIDE, /relo state/u);
   assert.match(HELP, /RELO_SESSION/u);
-  assert.match(OPTIONS.steps.description, /never both/iu);
   assert.match(OPTIONS.progress.description, /done\/total/u);
-  assert.match(OPTIONS.progress.description, /never both/iu);
+  assert.match(OPTIONS.progress.description, /one step with a count/u);
   assert.ok(COMMANDS.find((command) => command.name === "test"));
   assert.match(GUIDE, /Gemini CLI/u);
 });

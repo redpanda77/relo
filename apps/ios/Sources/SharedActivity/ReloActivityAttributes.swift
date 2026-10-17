@@ -164,8 +164,8 @@ struct ReloActivityAttributes: Codable {
             for component in presentation.components {
                 switch component {
                 case let .progressBar(_, _, value, _): return value
-                case let .steps(_, _, items):
-                    return Double(items.filter { $0.state == .complete }.count) / Double(items.count)
+                case let .steps(_, _, items, window):
+                    return Double(window.before + items.filter { $0.state == .complete }.count) / Double(window.total(items.count))
                 case .image: continue
                 }
             }
@@ -260,4 +260,69 @@ struct ReloActivityAttributes: Codable {
 
 #if os(iOS)
 extension ReloActivityAttributes: ActivityAttributes {}
+#endif
+
+/// The Live Activity of "Connect a computer" (docs/internal/product/plan/13-onboarding-wizard.md, journey E): the
+/// phone starts it when the command is shown, the server pushes its state as the computer connects, and tapping it
+/// opens the wizard. It belongs to this phone's wizard, never to a work card.
+struct ReloSetupActivityAttributes: Codable {
+    /// `cin_…`: the code this activity follows.
+    var inviteId: String
+
+    struct ContentState: Codable, Hashable {
+        /// The invite state: waiting, redeemed, key_published, reported, tested or expired.
+        var state: String
+        var computerName: String?
+        /// The agents set up there, as `claude-code` or `claude-code (guide)`.
+        var agents: [String]
+        var updatedAt: Date
+
+        init(state: String, computerName: String? = nil, agents: [String] = [], updatedAt: Date = Date()) {
+            self.state = state
+            self.computerName = computerName
+            self.agents = agents
+            self.updatedAt = updatedAt
+        }
+
+        private enum CodingKeys: String, CodingKey { case state, computerName, agents, updatedAt }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            state = try values.decode(String.self, forKey: .state)
+            computerName = try values.decodeIfPresent(String.self, forKey: .computerName)
+            agents = try values.decodeIfPresent([String].self, forKey: .agents) ?? []
+            // A push carries seconds or an ISO 8601 string, the app's own update a Date.
+            if let seconds = try? values.decode(Double.self, forKey: .updatedAt) {
+                updatedAt = ActivityKitTimestamp.date(fromUnixSeconds: seconds)
+            } else if let string = try? values.decode(String.self, forKey: .updatedAt),
+                      let date = ActivityKitTimestamp.date(fromISO8601: string) {
+                updatedAt = date
+            } else {
+                updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+            }
+        }
+
+        /// The first line of every surface.
+        var headline: String {
+            switch state {
+            case "redeemed", "key_published": computerName.map { "\($0) is connecting…" } ?? "Your computer is connecting…"
+            case "reported", "tested": computerName.map { "✓ \($0) connected" } ?? "✓ Computer connected"
+            case "expired": "Code expired"
+            default: "Waiting for your computer…"
+            }
+        }
+
+        /// "Claude Code (guide)", once the computer has reported.
+        var agentsLine: String? {
+            let lines = agents.map(ReloComputerSetup.agentLine)
+            return lines.isEmpty ? nil : lines.joined(separator: ", ")
+        }
+
+        var isConnected: Bool { state == "reported" || state == "tested" }
+        var isExpired: Bool { state == "expired" }
+    }
+}
+
+#if os(iOS)
+extension ReloSetupActivityAttributes: ActivityAttributes {}
 #endif

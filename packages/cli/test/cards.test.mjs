@@ -1,33 +1,20 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { execute, EXIT, cardKey } from "../src/cli.mjs";
+import { execute } from "../src/cli.mjs";
+import { EXIT } from "../src/shared/errors.mjs";
+import { cardKey } from "../src/messages/card-context.mjs";
+import { producerPathKey } from "../src/script/producer.mjs";
 import { cardDependencies, fakeCards } from "./fake-cards.mjs";
 
 const session = { CLAUDE_CODE_SESSION_ID: "session-1234" };
 const topic = ["--topic", "Release 0.7.57"];
 
-test("a start the server reports as an existing card continues it and leaves the card as it was", async () => {
-  const { client, cards } = fakeCards();
-  const start = client.startActivity;
-  client.startActivity = async (...args) => ({ ...(await start(...args)), disposition: "existing" });
-  const continued = await execute(["activity", "start", "--title", "Nightly export", "--status", "Applying migrations", ...topic], cardDependencies(client));
-  assert.equal(continued.data.disposition, "continuing");
-  assert.equal(cards.size, 1);
-});
-
 test("outside a session the card is source › project › topic", async () => {
-  const { client, cards } = fakeCards();
-  const deps = cardDependencies(client);
-  await execute(["activity", "start", "--title", "Nightly export", "--status", "Applying migrations", ...topic], deps);
-  assert.equal((await execute(["activity", "start", "--title", "Nightly export", "--status", "Applying migrations", ...topic], deps)).data.disposition, "continuing");
-  await execute(["activity", "start", "--title", "Homepage redesign", "--status", "Applying migrations", "--topic", "Homepage"], deps);
-  assert.equal(cards.size, 2);
-  assert.equal(cardKey({ context: { providerName: "Codex", project: "relo", threadName: "X" }, env: {} }),
-    cardKey({ context: { providerName: "Codex", project: "relo", threadName: "X" }, env: {} }));
-  await assert.rejects(execute(["activity", "update", "--status", "Applying migrations"], deps),
-    (error) => error.exitCode === EXIT.USAGE && /--topic/.test(error.details.hint));
-  await execute(["activity", "update", "--status", "Testing", ...topic], deps);
+  const same = { providerName: "Codex", project: "relo", threadName: "X" };
+  assert.equal(cardKey({ context: same, env: {} }), cardKey({ context: same, env: {} }));
+  assert.notEqual(cardKey({ context: same, env: {} }), cardKey({ context: { ...same, threadName: "Y" }, env: {} }));
+  assert.equal(cardKey({ context: { providerName: "Codex", project: "relo" }, env: {} }), undefined, "no topic, no card");
 });
 
 test("invariant: a question never creates a card; with none running it is a notification with answer buttons", async () => {
@@ -68,3 +55,17 @@ test("notify is one-shot: it cannot ask", async () => {
     /not valid for this command/);
 });
 
+
+test("a script asks on its own work's card: the producer's open work, found by its RELO_SESSION key", async () => {
+  const { client, calls } = fakeCards();
+  const { activity } = await client.startActivity({ title: "Nightly export", status: "Running" }, "k");
+  const asked = [];
+  client.request = async (method, path, options) => {
+    asked.push([method, path, options?.query?.state]);
+    return { works: [{ id: "wrk_1", lifecycle: "open", card: { id: activity.id, state: "active" } }] };
+  };
+  const out = await execute(["ask", "Ship the export?", "--approval", "--no-wait", ...topic], cardDependencies(client, { env: { RELO_SESSION: "nightly" } }));
+  assert.equal(out.data.card.id, activity.id, "on the work's card, not a notification");
+  assert.equal(calls.at(-1).op, "ask");
+  assert.deepEqual(asked, [["GET", `/api/producers/${producerPathKey("nightly")}/works`, "open"]]);
+});

@@ -12,7 +12,7 @@ import {
   publicConfig,
   removeConfig,
   writeConfig,
-} from "../src/config.mjs";
+} from "../src/shared/config.mjs";
 
 const TOKEN = `klb_${"s".repeat(44)}`;
 

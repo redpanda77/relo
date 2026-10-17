@@ -2,7 +2,7 @@ import type { ApnsMode } from "./activities.js";
 import type { Database } from "./db.js";
 
 /**
- * Content no reader can open any more (docs/END-TO-END-ENCRYPTION.md, "Retention"): when a phone's
+ * Content no reader can open any more (docs/ENCRYPTION-PROTOCOL.md, "Retention"): when a phone's
  * identity key changes, or a phone or linked browser is removed, what was sealed only to the readers
  * that are gone is deleted: the unreadable notices, with their pending questions. An active card keeps
  * running and only loses its unreadable envelopes (ADR 0007). Anything another phone or a linked

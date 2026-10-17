@@ -204,6 +204,8 @@ private struct ReloWaitingPulse: View {
 /// Every fact about the message. Hold a value to copy it.
 struct ReloAboutRows: View {
     let rows: [(label: String, value: String, monospaced: Bool)]
+    /// The computer's icon, drawn before the "Computer" row's value.
+    var computerIcon: ComputerIcon? = nil
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
@@ -211,7 +213,7 @@ struct ReloAboutRows: View {
                 HStack(alignment: .firstTextBaseline, spacing: 16) {
                     Text(row.label).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
                     Spacer(minLength: 12)
-                    Text(row.value)
+                    (row.label == "Computer" ? ComputerMark.text(icon: computerIcon, name: row.value) : Text(row.value))
                         .font(row.monospaced ? .caption.monospaced() : .subheadline)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.trailing)

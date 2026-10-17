@@ -61,7 +61,7 @@ struct ReloDeckField: View {
 /// The deck's footer: where the data stands, then today's proportions edge to edge. It names
 /// what the colors mean without repeating the corner counts.
 struct ReloDeckFooter: View {
-    enum Sync: Equatable { case live(Date), syncing, offline }
+    enum Sync: Equatable { case live(Date), syncing, offline(Date?) }
     let sync: Sync
     let pendingResponses: Int
     let mix: NowMix
@@ -99,7 +99,8 @@ struct ReloDeckFooter: View {
         let (color, text): (Color, String) = if let trouble { (ReloHoloTheme.color(.attention), trouble) } else { switch sync {
         case let .live(at): (ReloHoloTheme.color(.done), "LIVE · SYNCED \(at.formatted(date: .omitted, time: .shortened))")
         case .syncing: (ReloHoloTheme.color(.running), "SYNCING")
-        case .offline: (ReloHoloTheme.color(.attention), "OFFLINE · SAVED WORK")
+        case let .offline(at): (ReloHoloTheme.color(.attention),
+                                at.map { "OFFLINE · AS OF \($0.formatted(date: .omitted, time: .shortened))" } ?? "OFFLINE")
         } }
         return HStack(spacing: 6) {
             Circle().fill(color).frame(width: 6, height: 6)

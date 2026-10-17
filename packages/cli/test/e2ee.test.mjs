@@ -2,7 +2,7 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { answerSigningInput, b64u, fromB64u, generateKeyPair, hpkeOpen, hpkeSeal, keyId, openEnvelope, prekeySigningInput, safetyNumber, sealEnvelope, validateEnvelopeShape, verifyAnswer, verifyBytes, verifyPrekey, linkSigningInput } from "../src/e2ee.mjs";
+import { answerSigningInput, b64u, fromB64u, generateKeyPair, hpkeOpen, hpkeSeal, keyId, openEnvelope, prekeySigningInput, safetyNumber, sealEnvelope, validateEnvelopeShape, verifyAnswer, verifyBytes, verifyPrekey, linkSigningInput } from "../src/crypto/e2ee.mjs";
 
 const fixtureText = readFileSync(new URL("../../contracts/fixtures/e2ee-v1.json", import.meta.url), "utf8");
 const fixture = JSON.parse(fixtureText);

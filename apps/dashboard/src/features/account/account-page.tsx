@@ -1,6 +1,17 @@
-import { Page } from "@/components/page"
 import { useRef, useState } from "react"
-import { Copy, Terminal } from "lucide-react"
+import { Info, LogOut, Terminal } from "lucide-react"
+
+import { IconTile } from "@/components/atoms/icon-tile"
+import { StatusChip } from "@/components/atoms/status-chip"
+import { List, Row, Section } from "@/components/list"
+import { ActionButton } from "@/components/molecules/action-button"
+import { CopyButton } from "@/components/molecules/copy-button"
+import { Notice } from "@/components/molecules/notice"
+import {
+  OperationStatus,
+  type OperationState,
+} from "@/components/molecules/operation-status"
+import { IndexedSections, Page } from "@/components/page"
 
 import {
   AlertDialog,
@@ -27,19 +38,13 @@ import { ServerAdminCard } from "@/features/account/server-admin"
 import { EncryptionPolicyCard } from "@/features/encryption-policy/encryption-policy-card"
 import { TwoFactorCard } from "@/features/two-factor/two-factor-card"
 import { DevicesSection } from "@/features/devices/devices-section"
-import { PresentationPolicyControl } from "@/features/presentation-policy/presentation-policy-control"
+import { ColorAppearance } from "@/features/presentation-policy/color-appearance"
+import { signOutThisBrowser } from "@/lib/sign-out"
+import { focusAndSelect } from "@/lib/use-shake"
 import {
   createHttpAccountService,
   type AccountService,
 } from "@/services/account-service"
-
-type OperationState =
-  | { status: "idle" }
-  | { status: "pending" }
-  | { status: "error"; message: string }
-  | { status: "success"; message: string }
-
-const idle: OperationState = { status: "idle" }
 
 function Field({
   label,
@@ -52,35 +57,58 @@ function Field({
   return (
     <div className="grid gap-2">
       <Label htmlFor={name}>{label}</Label>
-      <Input id={name} name={name} className="min-h-11" {...props} />
+      <Input id={name} name={name} {...props} />
     </div>
   )
 }
 
-function OperationMessage({ state }: { state: OperationState }) {
-  if (state.status === "idle" || state.status === "pending") return null
-  return (
-    <p
-      className={
-        state.status === "error"
-          ? "text-sm text-destructive"
-          : "text-sm text-[var(--status-success)]"
-      }
-      role={state.status === "error" ? "alert" : "status"}
-    >
-      {state.message}
-    </p>
-  )
-}
+const idle: OperationState = { status: "idle" }
 
-/** A titled settings group, as on the iPhone's Settings screen. */
-function AccountGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  const id = `account-${title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`
+/** The account page's sections, in order; the wide layout lists them in a sticky index. */
+const SECTIONS = [
+  { id: "computers", title: "Computers" },
+  { id: "security", title: "Security" },
+  { id: "command-line", title: "Command line (advanced)" },
+  { id: "server", title: "Server" },
+  { id: "shared-access", title: "Shared access" },
+  { id: "preferences", title: "Preferences" },
+  { id: "sign-in", title: "Sign-in" },
+  { id: "danger-zone", title: "Danger zone" },
+] as const
+
+function SignOutRow() {
+  const [state, setState] = useState<OperationState>(idle)
   return (
-    <section aria-labelledby={id} className="grid gap-4">
-      <h2 id={id} className="micro px-1">{title}</h2>
-      {children}
-    </section>
+    <List label="This browser">
+      <Row
+        leading={<IconTile icon={LogOut} />}
+        title="Sign out of this browser"
+        meta="Ends this session and forgets this browser's keys."
+        busy={state.status === "pending"}
+        actions={
+          <ActionButton
+            type="button"
+            variant="outline"
+            size="sm"
+            phase={state.status}
+            pendingLabel="Signing out…"
+            successLabel={null}
+            onClick={() => {
+              setState({ status: "pending" })
+              signOutThisBrowser()
+                .then(() => window.location.assign("/"))
+                .catch((cause: unknown) =>
+                  setState({ status: "error", message: cause instanceof Error ? cause.message : "Sign out failed" })
+                )
+            }}
+          >
+            Sign out
+          </ActionButton>
+        }
+      >
+        <OperationStatus state={state} pendingLabel="Signing out…" className="px-4 pb-3 text-xs" />
+      </Row>
+    </List>
   )
 }
 
@@ -101,7 +129,8 @@ export function AccountPage({
   const [userState, setUserState] = useState<OperationState>(idle)
   const [cliCopyStatus, setCliCopyStatus] = useState("")
   const [users, setUsers] = useState(initial.users)
-  const cliLoginCommand = `relo auth login --api-url ${JSON.stringify(initial.account.serverOrigin)} --json`
+  // Installs the CLI this server hands out (with Node.js 22 if missing), then signs in with the link and QR code.
+  const cliLoginCommand = `curl -fsSL ${initial.account.serverOrigin}/install.sh | sh && ~/.local/bin/relo auth login --api-url ${JSON.stringify(initial.account.serverOrigin)}`
   const deletionInput = useRef<{
     password: string
     confirmation: string
@@ -130,6 +159,8 @@ export function AccountPage({
         message:
           cause instanceof Error ? cause.message : "Password change failed",
       })
+      // The button shakes; the current password is ready to retype.
+      focusAndSelect(form.elements.namedItem("currentPassword") as HTMLInputElement | null)
     }
   }
 
@@ -183,142 +214,168 @@ export function AccountPage({
     }
   }
 
-  async function copyCliLoginCommand() {
-    try {
-      if (!navigator.clipboard?.writeText)
-        throw new Error("Clipboard API unavailable")
-      await navigator.clipboard.writeText(cliLoginCommand)
-      setCliCopyStatus("Login command copied.")
-    } catch {
-      cliCommandInput.current?.focus()
-      cliCommandInput.current?.select()
-      setCliCopyStatus(
-        "Automatic clipboard access is unavailable. The command is selected for manual copy."
-      )
-    }
+  function cliCopyFailed() {
+    cliCommandInput.current?.focus()
+    cliCommandInput.current?.select()
+    setCliCopyStatus(
+      "Automatic clipboard access is unavailable. The command is selected for manual copy."
+    )
   }
 
   const host = typeof window === "undefined" ? "" : window.location.host
+  const hasShared = users.some((user) => user.role === "member")
+  const sections = SECTIONS.filter(
+    (section) =>
+      (section.id !== "server" || initial.server) &&
+      (section.id !== "shared-access" || hasShared)
+  )
   return (
     <Page title={initial.shell.title}>
-      <div className="grid gap-10">
-        <section aria-label="Signed in" className="glass flex flex-col items-center gap-1 rounded-[20px] px-6 py-8 text-center">
-          <span aria-hidden="true" className="brand-orb mb-3 size-[72px] shadow-[0_0_60px_rgb(124_107_255/0.35)]" />
-          <p className="text-xl font-bold tracking-tight">{initial.account.name}</p>
-          <p className="text-sm text-muted-foreground">{initial.account.email}</p>
-          <p className="micro mt-3 inline-flex items-center gap-2">
+      <section
+        aria-label="Signed in"
+        className="glass flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card px-5 py-4"
+      >
+        <span aria-hidden="true" className="brand-orb size-10" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold tracking-tight">{initial.account.name}</p>
+          <p className="truncate text-sm text-muted-foreground">{initial.account.email}</p>
+        </div>
+        {host ? (
+          <span className="hairline-chip" title="This server">
             <span className="ink-dot tone-mint" aria-hidden="true" />
-            <span className="normal-case tracking-normal font-mono text-[12px]">{host}</span>
-          </p>
-        </section>
+            {host}
+          </span>
+        ) : null}
+      </section>
 
-        <AccountGroup title="Security">
-          <section id="devices" aria-labelledby="account-devices" className="grid gap-3">
-            <div className="px-1">
-              <h3 id="account-devices" className="text-base font-semibold">Devices</h3>
-              <p className="text-sm text-muted-foreground">Everything signed in to your account, and what each one can read.</p>
-            </div>
-            <DevicesSection accountId={initial.shell.account.id} />
-          </section>
+      <IndexedSections label="Account sections" sections={sections}>
+        <Section id="computers" title="Computers" description="The computers and servers that report to you, and the agents set up on each.">
+          <DevicesSection accountId={initial.shell.account.id} scope="computers" />
+        </Section>
 
-          <EncryptionPolicyCard />
-
-          <TwoFactorCard />
-        </AccountGroup>
-
-        <AccountGroup title="Command line">
-
-          <Card id="connect-cli">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Terminal className="size-5 text-primary" aria-hidden="true" />
-                Connect the CLI
-              </CardTitle>
-              <CardDescription>
-                Run this once on each computer that should send notifications
-                through this Relo server.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-5">
-              <div className="grid gap-2">
-                <Label htmlFor="cli-login-command">Login command</Label>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <Input
-                    ref={cliCommandInput}
-                    id="cli-login-command"
-                    value={cliLoginCommand}
-                    readOnly
-                    spellCheck={false}
-                    className="min-h-11 font-mono text-xs"
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                  <Button
-                    type="button"
-                    className="min-h-11"
-                    onClick={() => void copyCliLoginCommand()}
-                  >
-                    <Copy aria-hidden="true" />
-                    Copy command
-                  </Button>
-                </div>
-                <p
-                  className="min-h-5 text-sm text-muted-foreground"
-                  aria-live="polite"
-                >
-                  {cliCopyStatus}
+        <Section id="security" title="Security">
+          <div className="grid gap-4">
+            <section id="devices" aria-labelledby="account-devices" className="grid scroll-mt-6 gap-3">
+              <div>
+                <h3 id="account-devices" className="text-[17px] font-semibold tracking-tight">Devices</h3>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Your phones and browsers, and what each one can read.
                 </p>
               </div>
+              <DevicesSection accountId={initial.shell.account.id} />
+            </section>
+            <EncryptionPolicyCard />
+            <TwoFactorCard />
+          </div>
+        </Section>
 
+        <Section id="command-line" title="Command line (advanced)">
+          <Card id="connect-cli">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2.5">
+                <IconTile icon={Terminal} tone="violet" />
+                Install without a code
+              </CardTitle>
+              <CardDescription>
+                For advanced use. For a new computer, start with Connect a computer (Computers → Add a computer):
+                one command with no sign-in, and it sets up the agents too. This is the install without a code: it
+                installs the CLI from this server, then runs relo auth login, which shows a code to approve here or
+                on your iPhone.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              <Label htmlFor="cli-login-command">Install and sign in</Label>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <Input
+                  ref={cliCommandInput}
+                  id="cli-login-command"
+                  value={cliLoginCommand}
+                  readOnly
+                  spellCheck={false}
+                  className="font-mono text-xs"
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+                <CopyButton
+                  value={cliLoginCommand}
+                  label="Copy command"
+                  variant="default"
+                  announce={false}
+                  onCopied={() => setCliCopyStatus("Login command copied.")}
+                  onFailed={cliCopyFailed}
+                />
+              </div>
+              <p className="min-h-5 text-sm text-muted-foreground" aria-live="polite">
+                {cliCopyStatus}
+              </p>
             </CardContent>
           </Card>
-
-        </AccountGroup>
+        </Section>
 
         {initial.server ? (
-          <AccountGroup title="Server">
+          <Section id="server" title="Server">
             <ServerAdminCard initial={initial.server} service={service} />
-          </AccountGroup>
+          </Section>
         ) : null}
 
-          {users.some(user => user.role === "member") ? (
-          <AccountGroup title="Shared access">
-          <Card>
-            <CardHeader><CardTitle>Shared access</CardTitle><CardDescription>
-              These people were added to your account before accounts became separate, so they see your data.
-              Disable them, revoke their sessions and phones, or set a replacement password. New people get their own account.
-            </CardDescription></CardHeader>
-            <CardContent className="grid gap-6">
-              <div className="grid gap-3">{users.map(user => <div key={user.id} className="grid gap-3 rounded-xl border p-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                <div><div className="flex flex-wrap items-center gap-2"><strong>{user.name}</strong><span className="rounded-full bg-muted px-2 py-0.5 text-xs">{user.role}</span>{user.disabled && <span className="text-xs text-destructive">disabled</span>}</div>
-                  <p className="text-sm text-muted-foreground">{user.email} · {user.sessions} session{user.sessions === 1 ? "" : "s"} · {user.devices} phone{user.devices === 1 ? "" : "s"}</p></div>
-                <div className="flex flex-wrap gap-2">
-                  <form className="flex gap-2" onSubmit={event => { event.preventDefault(); const value = new FormData(event.currentTarget).get("newPassword"); void userAction(user.id,"reset",String(value ?? "")); event.currentTarget.reset() }}>
-                    <Input name="newPassword" type="password" minLength={8} maxLength={128} required placeholder="New password" className="min-h-11 w-40" />
-                    <Button type="submit" variant="outline" className="min-h-11">Reset</Button>
-                  </form>
-                  <Button variant="outline" className="min-h-11" onClick={() => void userAction(user.id,"revoke")}>Revoke access</Button>
-                  {user.role !== "owner" && <Button variant={user.disabled ? "outline" : "destructive"} className="min-h-11" onClick={() => void userAction(user.id,"toggle")}>{user.disabled ? "Enable" : "Disable"}</Button>}
-                </div>
-              </div>)}</div>
-              <OperationMessage state={userState} />
-            </CardContent>
-          </Card>
-          </AccountGroup>
-          ) : null}
+        {hasShared ? (
+          <Section
+            id="shared-access"
+            title="Shared access"
+            description="These people were added to your account before accounts became separate, so they see your data. Disable them, revoke their sessions and phones, or set a replacement password. New people get their own account."
+          >
+            <div className="grid gap-3">
+              <List label="People with shared access" items={users} getKey={(user) => user.id}>
+                {(user) => (
+                  <Row
+                    wrap
+                    title={
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        {user.name}
+                        <StatusChip tone="neutral" variant="hairline">{user.role}</StatusChip>
+                        {user.disabled ? <StatusChip tone="red">Disabled</StatusChip> : null}
+                      </span>
+                    }
+                    meta={`${user.email} · ${user.sessions} session${user.sessions === 1 ? "" : "s"} · ${user.devices} phone${user.devices === 1 ? "" : "s"}`}
+                  >
+                    <div className="flex flex-wrap gap-2 px-4 pb-3.5">
+                      <form
+                        className="flex gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          const value = new FormData(event.currentTarget).get("newPassword")
+                          void userAction(user.id, "reset", String(value ?? ""))
+                          event.currentTarget.reset()
+                        }}
+                      >
+                        <Input name="newPassword" type="password" minLength={8} maxLength={128} required placeholder="New password" aria-label={`New password for ${user.name}`} className="w-40" />
+                        <Button type="submit" variant="outline">Reset</Button>
+                      </form>
+                      <Button variant="outline" onClick={() => void userAction(user.id, "revoke")}>Revoke access</Button>
+                      {user.role !== "owner" ? (
+                        <Button variant={user.disabled ? "outline" : "destructive"} onClick={() => void userAction(user.id, "toggle")}>
+                          {user.disabled ? "Enable" : "Disable"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </Row>
+                )}
+              </List>
+              <OperationStatus state={userState} pendingLabel="" />
+            </div>
+          </Section>
+        ) : null}
 
-        <AccountGroup title="Preferences">
-
+        <Section id="preferences" title="Preferences">
           <Card>
             <CardHeader>
-              <CardTitle>Live Activity defaults</CardTitle>
+              <CardTitle>Card appearance</CardTitle>
               <CardDescription>
-                Set production appearance once. CLI clients and webhook services
-                inherit this policy unless they have a scoped override.
+                Computers and webhooks use these unless you change them.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <PresentationPolicyControl
-                scopeLabel="Account"
+              <ColorAppearance
+                inheritLabel="Use the Relo default"
                 initialPolicy={initial.account.liveActivityPolicy}
                 initialSource={initial.account.liveActivityPolicySource}
                 canInherit
@@ -327,75 +384,76 @@ export function AccountPage({
               />
             </CardContent>
           </Card>
+        </Section>
 
-        </AccountGroup>
-
-        <AccountGroup title="Sign-in">
-          <Card>
-            <CardHeader>
-              <CardTitle>Change password</CardTitle>
-              <CardDescription>
-                Confirm your current password. You can revoke every other
-                signed-in session at the same time.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-5">
-              <form
-                ref={passwordForm}
-                id="password-form"
-                className="grid max-w-xl gap-4"
-                aria-busy={passwordState.status === "pending"}
-                onSubmit={changePassword}
-              >
-                <Field
-                  label="Current password"
-                  name="currentPassword"
-                  type="password"
-                  autoComplete="current-password"
-                  minLength={8}
-                  maxLength={128}
-                  required
-                />
-                <Field
-                  label="New password"
-                  name="newPassword"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={8}
-                  maxLength={128}
-                  required
-                />
-                <Label className="min-h-11 w-fit cursor-pointer gap-3 pr-3">
-                  <input
-                    name="revokeOtherSessions"
-                    type="checkbox"
-                    className="size-5 accent-primary"
-                    defaultChecked
-                  />
-                  <span>Sign out other sessions</span>
-                </Label>
-                <Button
-                  type="submit"
-                  className="min-h-11 w-full sm:w-fit"
-                  disabled={passwordState.status === "pending"}
+        <Section id="sign-in" title="Sign-in">
+          <div className="grid gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Change password</CardTitle>
+                <CardDescription>
+                  Confirm your current password. You can revoke every other
+                  signed-in session at the same time.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-5">
+                <form
+                  ref={passwordForm}
+                  id="password-form"
+                  className="grid max-w-xl gap-4"
+                  aria-busy={passwordState.status === "pending"}
+                  onSubmit={changePassword}
                 >
-                  {passwordState.status === "pending"
-                    ? "Changing password…"
-                    : "Change password"}
-                </Button>
-                <OperationMessage state={passwordState} />
-              </form>
-              <p className="max-w-3xl rounded-xl bg-muted/50 p-4 text-sm leading-6 text-muted-foreground">
-                Email reset is intentionally unavailable. A protected Relo server
-                recovery command can replace the owner password and revoke every
-                active session; see the operations guide.
-              </p>
-            </CardContent>
-          </Card>
+                  <Field
+                    label="Current password"
+                    name="currentPassword"
+                    type="password"
+                    autoComplete="current-password"
+                    minLength={8}
+                    maxLength={128}
+                    required
+                  />
+                  <Field
+                    label="New password"
+                    name="newPassword"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={8}
+                    maxLength={128}
+                    required
+                  />
+                  <Label className="min-h-9 w-fit cursor-pointer gap-3 pr-3 pointer-coarse:min-h-11">
+                    <input
+                      name="revokeOtherSessions"
+                      type="checkbox"
+                      className="size-5 accent-primary"
+                      defaultChecked
+                    />
+                    <span>Sign out other sessions</span>
+                  </Label>
+                  <ActionButton
+                    type="submit"
+                    className="w-full sm:w-fit"
+                    phase={passwordState.status}
+                    pendingLabel="Changing password…"
+                    successLabel="Changed"
+                  >
+                    Change password
+                  </ActionButton>
+                  <OperationStatus state={passwordState} pendingLabel="" />
+                </form>
+                <Notice variant="quiet" tone="neutral" icon={<Info />}>
+                  Email reset is intentionally unavailable. A protected Relo server
+                  recovery command can replace the owner password and revoke every
+                  active session; see the operations guide.
+                </Notice>
+              </CardContent>
+            </Card>
+            <SignOutRow />
+          </div>
+        </Section>
 
-        </AccountGroup>
-
-        <AccountGroup title="Danger zone">
+        <Section id="danger-zone" title="Danger zone">
           <Card className="border-destructive/40">
             <CardHeader>
               <CardTitle>Delete account</CardTitle>
@@ -429,20 +487,22 @@ export function AccountPage({
                   pattern="DELETE"
                   required
                 />
-                <Button
+                <ActionButton
                   type="submit"
                   variant="destructive"
-                  className="min-h-11 w-full sm:w-fit"
-                  disabled={deletionState.status === "pending"}
+                  className="w-full sm:w-fit"
+                  phase={deletionState.status}
+                  pendingLabel="Deleting account…"
+                  successLabel={null}
                 >
                   Delete account
-                </Button>
-                <OperationMessage state={deletionState} />
+                </ActionButton>
+                <OperationStatus state={deletionState} pendingLabel="" />
               </form>
             </CardContent>
           </Card>
-        </AccountGroup>
-      </div>
+        </Section>
+      </IndexedSections>
 
       <AlertDialog
         open={deletionDialogOpen}
@@ -461,13 +521,11 @@ export function AccountPage({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel
-              className="min-h-11"
               disabled={deletionState.status === "pending"}
             >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              className="min-h-11"
               variant="destructive"
               disabled={deletionState.status === "pending"}
               onClick={(event) => {

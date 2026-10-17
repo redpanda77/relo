@@ -217,9 +217,9 @@ export async function startServiceActivity(db:Database,actor:Extract<ActivityAct
            target_device_ids,start_idempotency_key,start_request_hash,context,expires_at,stale_at,
            start_replace_requested,start_replaced_count,presentation,presentation_sha256,origin_hash,generation,
            lifecycle_provider,lifecycle_run_id,presentation_policy,presentation_policy_source,
-           presentation_preset_id,presentation_preset_revision,stale_after_seconds,producer_type,created_at,updated_at,declared_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,'service',statement_timestamp(),statement_timestamp(),statement_timestamp()) RETURNING *`,
-        [lockedService.principal_id,lockedService.id,input.key ?? null,input.title,input.status,input.detail ?? null,input.progress ?? null,input.symbol,input.style,storedPresentation.privacy,input.accentColor,targetIds,key ?? `server:${randomUUID()}`,hash,input.context ?? null,expiresAt,staleAt,input.replace,blockers.rows.length,input.presentation,storedPresentation.presentationHash,originHash,generation,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,presentationPolicy,presentationPolicy.source,presentationPolicy.presetId,presentationPolicy.presetRevision,input.staleAfterSeconds],
+           presentation_preset_id,presentation_preset_revision,stale_after_seconds,producer_type,work_id,created_at,updated_at,declared_at
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,'service',$31,statement_timestamp(),statement_timestamp(),statement_timestamp()) RETURNING *`,
+        [lockedService.principal_id,lockedService.id,input.key ?? null,input.title,input.status,input.detail ?? null,input.progress ?? null,input.symbol,input.style,storedPresentation.privacy,input.accentColor,targetIds,key ?? `server:${randomUUID()}`,hash,input.context ?? null,expiresAt,staleAt,input.replace,blockers.rows.length,input.presentation,storedPresentation.presentationHash,originHash,generation,input.lifecycle?.provider ?? null,input.lifecycle?.runId ?? null,presentationPolicy,presentationPolicy.source,presentationPolicy.presetId,presentationPolicy.presetRevision,input.staleAfterSeconds,command.cardIdentity?.workId ?? null],
       );
       const delivery = await createActivityCommands(client,{ occurredAt: input.occurredAt,
         principalId: lockedService.principal_id,

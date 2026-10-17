@@ -1,4 +1,4 @@
-/** Byte helpers for relo.e2e.v1 on WebCrypto (the browser port of packages/cli/src/e2ee.mjs). */
+/** Byte helpers for relo.e2e.v1 on WebCrypto (the browser port of packages/cli/src/crypto/e2ee.mjs). */
 
 export type Bytes = Uint8Array<ArrayBuffer>
 

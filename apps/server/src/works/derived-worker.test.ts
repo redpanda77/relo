@@ -70,6 +70,22 @@ suite("derived worker over works",() => {
     expect(rows.find((row) => row.work_id === internal(works[0].id))?.state).not.toBe("not_presented");
   });
 
+  test("a hook that moves a card pushes one update with the new state; the next pass pushes nothing",async () => {
+    await startWork(call,{},sessions[0]);
+    const updates = async () => Number((await db.query(
+      `SELECT count(*) FROM notification_events WHERE payload#>>'{liveActivity,operation}'='update' AND idempotency_key LIKE '%:restale'`)).rows[0].count);
+    const { rows: [{ principal_id: principalId }] } = await db.query("SELECT principal_id FROM works LIMIT 1");
+    expect((await retireByPolicy(db,"sandbox")).restaled).toBe(0);
+    // The session's permission prompt arrives from a hook: the card needs you, with no producer write.
+    await db.query(`INSERT INTO agent_sessions (principal_id,session_hash,harness,phase,phase_since,last_seen_at,seq,started_at)
+      VALUES ($1,$2,'claude-code','waiting',now()+interval '1 second',now()+interval '1 second',1,now())`,[principalId,sessions[0]]);
+    const later = new Date(Date.now() + 5_000);
+    expect((await retireByPolicy(db,"sandbox",200,{ now: later })).restaled).toBe(1);
+    expect(await updates()).toBe(1);
+    expect((await retireByPolicy(db,"sandbox",200,{ now: later })).restaled).toBe(0);
+    expect(await updates()).toBe(1);
+  });
+
   test("a time-only derived change between passes wakes the account once; no change wakes nobody",async () => {
     const work = await startWork(call,{},sessions[0]);
     const worker = createDerivedWorker(db,"sandbox");

@@ -448,6 +448,40 @@ describe("clean-room APNs provider", () => {
     expect(result.payloadBytes).toBe(request.body.byteLength);
   });
 
+  it("constructs a silent background push on the ordinary topic at priority 5 with only the caller's data", async () => {
+    const transport = new ScriptedTransport([[response(200)]]);
+    const p = provider(transport);
+    const result = await p.sendBackground({
+      recipient: recipient("abc"),
+      customData: { relo: { settled: ["ntf_123e4567-e89b-42d3-a456-426614174000"] } },
+      expiration: 1_900_000_000,
+      apnsId: UUID,
+    });
+    expect(result.category).toBe("accepted");
+    const request = transport.connections[0]!.requests[0]!;
+    expect(request.headers).toMatchObject({
+      "apns-topic": "com.example.app",
+      "apns-push-type": "background",
+      "apns-priority": "5",
+      "apns-expiration": "1900000000",
+      "apns-id": UUID,
+    });
+    expect(request.headers["apns-collapse-id"]).toBeUndefined();
+    expect(JSON.parse(Buffer.from(request.body).toString())).toEqual({
+      aps: { "content-available": 1 },
+      relo: { settled: ["ntf_123e4567-e89b-42d3-a456-426614174000"] },
+    });
+  });
+
+  it("refuses a background push at priority 10, with aps in its data, or with no data, before transport", async () => {
+    const transport = new ScriptedTransport([]);
+    const p = provider(transport);
+    expect((await p.sendBackground({ recipient: recipient(), customData: { relo: {} }, priority: 10 })).category).toBe("validation");
+    expect((await p.sendBackground({ recipient: recipient(), customData: { aps: { alert: "x" } } })).category).toBe("validation");
+    expect((await p.sendBackground({ recipient: recipient(), customData: {} })).category).toBe("validation");
+    expect(transport.connections).toHaveLength(0);
+  });
+
   it("rejects malformed paths, UUIDs, priority, expiration, and oversized payloads before transport", async () => {
     const transport = new ScriptedTransport([]);
     const p = provider(transport);

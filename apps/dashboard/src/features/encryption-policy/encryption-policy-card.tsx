@@ -11,6 +11,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { IconTile } from "@/components/atoms/icon-tile"
+import { CrossfadeText } from "@/components/atoms/animated-height"
+import { OperationStatus } from "@/components/molecules/operation-status"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
@@ -37,7 +40,7 @@ function summary(policy: EncryptionPolicy): string {
 }
 
 /**
- * Account → Security: whether CLI keys must seal text (docs/END-TO-END-ENCRYPTION.md, E6.1). Only the
+ * Account → Security: whether CLI keys must seal text (docs/ENCRYPTION-PROTOCOL.md, E6.1). Only the
  * owner signed in here can turn it off; a CLI key can only make it stricter (HARDENING gap 5).
  */
 export function EncryptionPolicyCard({ service = httpService }: { service?: EncryptionPolicyService }) {
@@ -74,7 +77,7 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><Lock className="size-4" aria-hidden="true" />End-to-end encryption</CardTitle>
+        <CardTitle className="flex items-center gap-2.5"><IconTile icon={Lock} tone="violet" />End-to-end encryption</CardTitle>
         <CardDescription>
           Require computers to seal notices, questions and cards so the Relo server cannot read them.
         </CardDescription>
@@ -97,8 +100,12 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
             ))}
           </NativeSelect>
         </div>
-        {policy ? <p className="text-sm text-muted-foreground" role="status">{summary(policy)}</p> : null}
-        {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+        {policy ? (
+          <p className="text-sm text-muted-foreground" role="status">
+            <CrossfadeText>{summary(policy)}</CrossfadeText>
+          </p>
+        ) : null}
+        <OperationStatus error={error || null} />
       </CardContent>
       <AlertDialog open={confirmOff} onOpenChange={setConfirmOff}>
         <AlertDialogContent>

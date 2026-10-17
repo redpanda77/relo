@@ -961,13 +961,17 @@ suite("Relo API persistence boundaries", () => {
     });
     expect(created.status).toBe(201);
     const body = await created.json() as any;
-    expect(body.webhookUrl).toMatch(/^http:\/\/localhost\/hooks\/hook_[A-Za-z0-9_-]{43}$/);
+    expect(body.endpoint).toBe("http://localhost/hooks");
+    expect(body.secret).toMatch(/^hook_[A-Za-z0-9_-]{43}$/);
+    expect(body.endpoint).not.toContain(body.secret);
+    expect(body).not.toHaveProperty("webhookUrl");
     expect(body.service).toMatchObject({
       title: "Builds",
       imageUrl: "https://example.test/builds.png",
       destinationUrl: "https://example.test/builds",
     });
-    expect(body.service.prefix).not.toBe(body.webhookUrl.split("/").at(-1));
+    expect(body.service.prefix).toBe(body.secret.slice(0,13));
+    expect(body.service.prefix).not.toBe(body.secret);
 
     const own = await (await request("/api/services",ownerOneToken)).json() as any;
     const foreign = await (await request("/api/services",ownerTwoToken)).json() as any;
@@ -991,11 +995,18 @@ suite("Relo API persistence boundaries", () => {
       method: "POST", body: "{}",
     });
     expect(rotated.status).toBe(200);
-    expect((await rotated.json() as any).webhookUrl).not.toBe(body.webhookUrl);
+    const rotatedBody = await rotated.json() as any;
+    expect(rotatedBody.endpoint).toBe("http://localhost/hooks");
+    expect(rotatedBody.secret).toMatch(/^hook_[A-Za-z0-9_-]{43}$/);
+    expect(rotatedBody.secret).not.toBe(body.secret);
     expect((await request(`/api/services/${body.service.id}`,ownerOneToken,{
       method: "DELETE", body: "{}",
     })).status).toBe(200);
     expect((await (await request("/api/services",ownerOneToken)).json() as any).services).toEqual([]);
+    // A revoked service stays revoked: rotating it does not bring it back.
+    expect((await request(`/api/services/${body.service.id}/rotate`,ownerOneToken,{
+      method: "POST", body: "{}",
+    })).status).toBe(404);
   });
 
   test("service webhooks target devices and expose a secret-bound response lifecycle", async () => {
@@ -1005,7 +1016,9 @@ suite("Relo API persistence boundaries", () => {
       body: JSON.stringify({ title: "Deployments" }),
     });
     const service = await created.json() as any;
-    const hookPath = new URL(service.webhookUrl).pathname;
+    const hookPath = "/hooks";
+    const secret = service.secret as string;
+    const auth = { authorization: `Bearer ${secret}` };
     const requestBody = JSON.stringify({
       title: "Approval needed",
       body: "Continue deployment?",
@@ -1013,7 +1026,7 @@ suite("Relo API persistence boundaries", () => {
       deviceIds: [phone.deviceId],
       response: { type: "approval", expiresInSeconds: 300, correlationId: "deploy-42" },
     });
-    const headers = { "content-type": "application/json", "idempotency-key": "w" };
+    const headers = { "content-type": "application/json", "idempotency-key": "w", ...auth };
     const sent = await createApp(db).request(hookPath,{ method: "POST", headers, body: requestBody });
     expect(sent.status).toBe(201);
     const body = await sent.json() as any;
@@ -1029,14 +1042,13 @@ suite("Relo API persistence boundaries", () => {
     const replay = await createApp(db).request(hookPath,{ method: "POST", headers, body: requestBody });
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ ok: true, eventId: body.eventId, idempotent: true });
-    // HARDENING gap 7: the secret may travel in a header instead of the path; same service, same event.
-    const secret = hookPath.split("/").at(-1)!;
+    // The secret may travel in either header; same service, same event.
     const viaHeader = await createApp(db).request("/hooks",{ method: "POST",
-      headers: { ...headers, authorization: `Bearer ${secret}` }, body: requestBody });
+      headers: { "content-type": "application/json", "idempotency-key": "w", "x-relo-webhook-secret": secret }, body: requestBody });
     expect(viaHeader.status, await viaHeader.clone().text()).toBe(200);
     expect(await viaHeader.json()).toMatchObject({ ok: true, eventId: body.eventId, idempotent: true });
     const wrongHeader = await createApp(db).request("/hooks",{ method: "POST",
-      headers: { ...headers, "x-relo-webhook-secret": `hook_${"A".repeat(43)}` }, body: requestBody });
+      headers: { "content-type": "application/json", "idempotency-key": "w", "x-relo-webhook-secret": `hook_${"A".repeat(43)}` }, body: requestBody });
     expect(wrongHeader.status).toBe(404);
     const conflict = await createApp(db).request(hookPath,{
       method: "POST", headers, body: JSON.stringify({ ...JSON.parse(requestBody), body: "Changed" }),
@@ -1048,22 +1060,22 @@ suite("Relo API persistence boundaries", () => {
       "UPDATE delivery_jobs SET state='accepted',accepted_at=now(),updated_at=now() WHERE notification_event_id=$1",
       [body.eventId.slice("ntf_".length)],
     );
-    const pending = await createApp(db).request(resultPath);
+    const pending = await createApp(db).request(resultPath,{ headers: auth });
     expect(pending.headers.get("cache-control")).toBe("private, no-store");
     expect(await pending.json()).toMatchObject({ event: {
       delivery: { queued: 0, acceptedByProvider: 1, permanentlyFailed: 0, canceled: 0 },
       response: { status: "pending", correlationId: "deploy-42" },
     } });
-    const canceled = await createApp(db).request(`${resultPath}/cancel`,{ method: "POST" });
+    const canceled = await createApp(db).request(`${resultPath}/cancel`,{ method: "POST", headers: auth });
     expect(canceled.status).toBe(200);
     expect(await canceled.json()).toEqual({ ok: true, eventId: body.eventId, status: "canceled" });
-    expect(await (await createApp(db).request(resultPath)).json()).toMatchObject({
+    expect(await (await createApp(db).request(resultPath,{ headers: auth })).json()).toMatchObject({
       event: { response: { status: "canceled" } },
     });
 
     const expiring = await createApp(db).request(hookPath,{
       method: "POST",
-      headers: { "content-type": "application/json","idempotency-key": "e" },
+      headers: { "content-type": "application/json","idempotency-key": "e", ...auth },
       body: requestBody,
     });
     const expiringBody = await expiring.json() as any;
@@ -1071,7 +1083,7 @@ suite("Relo API persistence boundaries", () => {
       "UPDATE interaction_requests SET expires_at=now()-interval '1 second' WHERE notification_event_id=$1",
       [expiringBody.eventId.slice("ntf_".length)],
     );
-    const expired = await createApp(db).request(`${hookPath}/events/${expiringBody.eventId}`);
+    const expired = await createApp(db).request(`${hookPath}/events/${expiringBody.eventId}`,{ headers: auth });
     expect(await expired.json()).toMatchObject({ event: { response: { status: "expired" } } });
   });
 
@@ -1096,7 +1108,7 @@ suite("Relo API persistence boundaries", () => {
     } });
     expect((await request(path,ownerTwoToken)).status).toBe(404);
     const firstCancel = await request(`${path}/cancel`,ownerOneToken,{ method: "POST", body: "{}" });
-    const replayCancel = await request(path,ownerOneToken,{ method: "DELETE", body: "{}" });
+    const replayCancel = await request(`${path}/cancel`,ownerOneToken,{ method: "POST", body: "{}" });
     expect(firstCancel.status).toBe(200);
     expect(replayCancel.status).toBe(200);
     const canceledBody = await replayCancel.json() as any;
@@ -1993,14 +2005,6 @@ suite("Relo API persistence boundaries", () => {
   test("task activity starts serialize per target, replace blockers, and allow terminal key reuse", async () => {
     const firstPhone = await pair(ownerOneToken,"18181818-1818-4818-8818-181818181818",true);
     const secondPhone = await pair(ownerOneToken,"19191919-1919-4919-8919-191919191919",true);
-    await db.query(
-      `UPDATE owner_principals SET live_activity_policy=$2::jsonb
-       WHERE id=(SELECT principal_id FROM devices WHERE id=$1)`,
-      [firstPhone.deviceId.slice("dev_".length),{
-        preset: "automatic",theme: "system",symbol: "automatic",
-        colorStrategy: "thread",accentColor: "#5ED8B7",privateActivityPolicy: "on_request",
-      }],
-    );
     const start = (suffix: string, deviceId: string, extras: Record<string,unknown> = {}) => request(
       "/api/live-activities",ownerOneToken,{
         method: "POST", headers: { "idempotency-key": `serialized-start-${suffix}-12345678` },

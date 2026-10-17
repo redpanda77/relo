@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const REQUIRED_REFERENCES = ["cards.md", "cli.md", "security.md", "services.md", "troubleshooting.md", "install.md"];
+export const REQUIRED_REFERENCES = ["cards.md", "cli.md", "security.md", "services.md", "troubleshooting.md", "install.md", "efficiency.md"];
 const MAX_SKILL_LINES = 100;
 // Guidance that must stay in SKILL.md itself, not only in a reference.
 const REQUIRED_GUIDANCE = [
@@ -72,6 +72,11 @@ export function validateSkill(root = defaultRoot) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result = validateSkill(process.argv[2] ? resolve(process.argv[2]) : defaultRoot);
+  // The source skill's numbers and exit codes are generated from the CLI (scripts/generate-facts.mjs).
+  if (!process.argv[2]) {
+    const { staleFiles } = await import("./generate-facts.mjs");
+    for (const file of staleFiles()) result.errors.push(`${file} has stale generated facts: node scripts/generate-facts.mjs`);
+  }
   if (result.errors.length) {
     for (const error of result.errors) console.error(`error: ${error}`);
     process.exitCode = 1;

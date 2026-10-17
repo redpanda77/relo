@@ -1,10 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { allowedCliScopes, limitedAcrossBuckets, normalizeUserCode } from "./device-authorization.js";
+import { LOGIN_SCOPES } from "@relo/notification-contracts";
+import { limitedAcrossBuckets, normalizeUserCode } from "./device-authorization.js";
 import { persistedMobileAuthorization } from "./mobile-auth.js";
 
 describe("frozen authentication wire values", () => {
   test("matches the complete CLI allowlist including explicit non-default scopes", () => {
-    expect([...allowedCliScopes].sort()).toEqual([
+    expect([...LOGIN_SCOPES].sort()).toEqual([
       "activities:read",
       "activities:write",
       "devices:read",

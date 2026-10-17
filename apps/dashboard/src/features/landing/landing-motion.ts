@@ -23,22 +23,7 @@ const ASK_COMMAND = 'relo ask "Deploy to production?" --approval'
 
 /** Everything the demos write into React-owned DOM, restored when the motion is torn down. */
 const DEMO_NODES =
-  "[data-live-step],[data-live-badge],[data-live-status],[data-island-label],[data-ask-command],[data-ask-badge],[data-ask-approve],[data-seal-cipher],[data-seal-plain]"
-
-const sealMessages = [
-  "Migration finished · 3 tables, 0 errors",
-  "Deploy to production? · waiting on you",
-  "Release notes published · v2.4.0",
-]
-
-function hex(length: number) {
-  let out = ""
-  for (let i = 0; i < length; i++) {
-    out += "0123456789abcdef"[Math.floor(Math.random() * 16)]
-    if (i % 4 === 3 && i < length - 1) out += "·"
-  }
-  return out
-}
+  "[data-live-step],[data-live-badge],[data-live-status],[data-island-label],[data-ask-command],[data-ask-badge],[data-ask-approve],[data-plan-step],[data-plan-eta]"
 
 /** Plays a looping timeline only while its element is on screen. */
 function whileVisible(element: Element | null, timeline: gsap.core.Timeline) {
@@ -149,24 +134,39 @@ function askDemo(root: HTMLElement) {
   whileVisible(demo, timeline)
 }
 
-function sealDemo(root: HTMLElement) {
-  const seal = root.querySelector("[data-seal]")
-  const cipher = root.querySelector("[data-seal-cipher]")
-  const plain = root.querySelector("[data-seal-plain]")
-  if (!seal || !cipher || !plain) return
-  const timeline = gsap.timeline({ repeat: -1, paused: true })
-  for (const message of sealMessages) {
-    timeline
-      .to(cipher, { duration: 1, scrambleText: { text: hex(48), chars: "0123456789abcdef", speed: 0.8 } })
-      .to(plain, { duration: 1.3, scrambleText: { text: message, chars: "0123456789abcdef", revealDelay: 0.3, speed: 0.5 } }, "<0.2")
-      .to({}, { duration: 2.4 })
+const planEta = ["About 6 min left", "About 5 min left", "About 4 min left", "About 2 min left", "About 1 min left", "Finished"]
+
+/** The feature card's plan: steps tick by, one step is added mid-run, the plan carries on. */
+function planDemo(root: HTMLElement) {
+  const plan = root.querySelector("[data-plan]")
+  const steps = [...root.querySelectorAll<HTMLElement>("[data-plan-step]")]
+  const added = root.querySelector<HTMLElement>("[data-plan-added]")
+  const eta = root.querySelector("[data-plan-eta]")
+  if (!plan || !added || !eta || steps.length === 0) return
+  const addedAt = steps.indexOf(added)
+
+  const setStep = (current: number) => {
+    steps.forEach((step, index) => {
+      step.dataset.state = index < current ? "done" : index === current ? "now" : "next"
+    })
+    eta.textContent = planEta[Math.min(current, planEta.length - 1)]!
   }
-  whileVisible(seal, timeline)
+
+  const timeline = gsap.timeline({ repeat: -1, paused: true, repeatDelay: 0.4 })
+  timeline
+    .call(() => setStep(0))
+    // Clipped only while it grows, so the current step's ring is never cut off.
+    .set(added, { height: 0, opacity: 0, overflow: "hidden" })
+  for (let current = 1; current <= steps.length; current++) {
+    timeline.call(() => setStep(current), undefined, "+=1.3")
+    // While the step before it runs, the agent realises it needs one more and adds it in place.
+    if (current === addedAt - 1) timeline.to(added, { height: "auto", opacity: 1, duration: 0.6, ease: "expo.out", onComplete: () => gsap.set(added, { overflow: "visible" }) }, "+=0.7")
+  }
+  timeline.to({}, { duration: 2.4 })
+  whileVisible(plan, timeline)
 }
 
 export type LandingMotion = {
-  /** Stops or resumes every GSAP loop (the page's "Pause motion" control). */
-  setPaused(paused: boolean): void
   dispose(): void
 }
 
@@ -179,7 +179,8 @@ export function setupLandingMotion(
   const hero = root.querySelector<HTMLElement>("[data-landing-hero]")
   const snapshot = [...root.querySelectorAll<HTMLElement>(DEMO_NODES)].map((node) => ({
     node,
-    text: node.textContent,
+    // Only leaf nodes get their text back: restoring text on a node with children would erase them.
+    text: node.childElementCount === 0 ? node.textContent : null,
     style: node.getAttribute("style"),
     state: node.dataset.state,
   }))
@@ -287,7 +288,17 @@ export function setupLandingMotion(
 
     liveDemo(root)
     askDemo(root)
-    sealDemo(root)
+    planDemo(root)
+
+    // The feature diagrams loop in CSS, and only while their card is on screen.
+    gsap.utils.toArray<HTMLElement>(".bento-card").forEach((card) => {
+      ScrollTrigger.create({
+        trigger: card,
+        start: "top bottom",
+        end: "bottom top",
+        onToggle: (self) => card.toggleAttribute("data-playing", self.isActive),
+      })
+    })
   }
 
   const context = gsap.context(() => {})
@@ -295,8 +306,9 @@ export function setupLandingMotion(
     removers.splice(0).forEach((remove) => remove())
     context.revert()
     root.classList.remove("motion-ready")
+    root.querySelectorAll("[data-playing]").forEach((card) => card.removeAttribute("data-playing"))
     for (const { node, text, style, state } of snapshot) {
-      node.textContent = text
+      if (text !== null) node.textContent = text
       if (style === null) node.removeAttribute("style")
       else node.setAttribute("style", style)
       if (state === undefined) delete node.dataset.state
@@ -313,8 +325,7 @@ export function setupLandingMotion(
   }
 
   // Bento cards light up under the pointer.
-  const bento = root.querySelector<HTMLElement>("[data-bento]")
-  if (bento) {
+  for (const bento of root.querySelectorAll<HTMLElement>("[data-bento]")) {
     listen(bento, "pointermove", (event) => {
       const card = (event.target as Element).closest<HTMLElement>(".bento-card")
       if (!card) return
@@ -325,10 +336,6 @@ export function setupLandingMotion(
   }
 
   return {
-    setPaused(paused) {
-      if (paused) gsap.globalTimeline.pause()
-      else gsap.globalTimeline.resume()
-    },
     dispose: teardown,
   }
 }

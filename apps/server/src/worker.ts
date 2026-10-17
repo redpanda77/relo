@@ -73,6 +73,8 @@ import { createNotificationContentCipher } from "./notification-content.js";
 import { runScheduledContentRetention } from "./notification-retention.js";
 import { purgeAllUnreadableContent } from "./unreadable-content.js";
 import { requestAllPendingApprovals } from "./device-approvals.js";
+import { runInviteActivityLoop } from "./computer-invite-activity.js";
+import { runSettlePushLoop } from "./notifications/settle-pushes.js";
 
 function projectLiveActivityInteraction(
   job: ClaimedDeliveryJob,
@@ -185,6 +187,7 @@ if (config.APNS_MODE === "disabled") {
   await recordWorkerHeartbeat(db,{
     mode: "disabled",configured: false,pollMs: config.WORKER_POLL_MS,
     releaseIdentity: config.RELO_RELEASE_IDENTITY,
+    retentionHours: config.RELO_CONTENT_RETENTION_HOURS ?? null,
   });
   await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
   const disabledDerived = createDerivedWorker(db,"disabled");
@@ -192,6 +195,7 @@ if (config.APNS_MODE === "disabled") {
     await recordWorkerHeartbeat(db,{
       mode: "disabled",configured: false,pollMs: config.WORKER_POLL_MS,
       releaseIdentity: config.RELO_RELEASE_IDENTITY,
+      retentionHours: config.RELO_CONTENT_RETENTION_HOURS ?? null,
     });
     const cycle = emptyApnsWorkerCycle();
     const swept = await quarantineAbandonedProcessingClaims(db);
@@ -240,10 +244,11 @@ if (config.APNS_MODE === "disabled") {
     await recordWorkerHeartbeat(db,{
       mode: config.APNS_MODE,configured: true,pollMs: config.WORKER_POLL_MS,
       releaseIdentity: config.RELO_RELEASE_IDENTITY,
+      retentionHours: config.RELO_CONTENT_RETENTION_HOURS ?? null,
     });
     await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
     let maintenanceFailure: unknown;
-    const derived = createDerivedWorker(db,config.APNS_MODE);
+    const derived = createDerivedWorker(db,config.APNS_MODE,notificationContentCipher);
     let derivedNextAt: Date | null = null;
     const maintenance = (async () => {
       while (!shutdown.signal.aborted) {
@@ -253,6 +258,7 @@ if (config.APNS_MODE === "disabled") {
         await recordWorkerHeartbeat(db,{
           mode: config.APNS_MODE,configured: true,pollMs: config.WORKER_POLL_MS,
           releaseIdentity: config.RELO_RELEASE_IDENTITY,
+          retentionHours: config.RELO_CONTENT_RETENTION_HOURS ?? null,
         });
         const cycle = emptyApnsWorkerCycle();
         const swept = await quarantineAbandonedProcessingClaims(db);
@@ -274,6 +280,23 @@ if (config.APNS_MODE === "disabled") {
       if (error instanceof Error && error.name === "AbortError" && shutdown.signal.aborted) return;
       maintenanceFailure = error;
       shutdown.abort();
+    });
+    // A notification that stopped being active is removed from the phones it was shown on (silent pushes).
+    const settleLoop = runSettlePushLoop(db,{
+      sender: apns,encryption: tokenEncryption,environment: apnsEnvironment,
+      pollMs: config.WORKER_POLL_MS,signal: shutdown.signal,
+      log: (cycle) => console.info(apnsOperationalLog("apns_worker_cycle",{ mode: config.APNS_MODE,wakeReason: "settle",
+        settleClaimed: cycle.claimed,settleSent: cycle.sent,settleSkipped: cycle.skipped,
+        settleRetried: cycle.retried,settleFailed: cycle.failed,settleRequeued: cycle.requeued })),
+    }).catch((error) => {
+      console.warn(JSON.stringify({ event: "settle_push_loop_failed",
+        message: error instanceof Error ? error.message : String(error) }));
+    });
+    // The phone's wizard Live Activity moves with the invite it made.
+    const inviteActivityLoop = runInviteActivityLoop(db,{
+      sender: apns,encryption: tokenEncryption,environment: apnsEnvironment,pollMs: config.WORKER_POLL_MS,signal: shutdown.signal,
+    }).catch((error) => {
+      console.warn(JSON.stringify({ event: "invite_activity_loop_failed",message: error instanceof Error ? error.message : String(error) }));
     });
     const dispatcher = new DeliveryDispatcher<ClaimedDeliveryJob>({
       concurrency,
@@ -465,6 +488,8 @@ if (config.APNS_MODE === "disabled") {
     } finally {
       shutdown.abort();
       await maintenance;
+      await settleLoop;
+      await inviteActivityLoop;
     }
     if (maintenanceFailure) throw maintenanceFailure;
   } finally {

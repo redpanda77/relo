@@ -2,14 +2,12 @@ import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { b64u, fromB64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/e2ee.mjs";
-import { ensureIdentity, saveKeyStore, trustKey } from "../src/keystore.mjs";
-import {
-  cachedStepLabels, fitCardText, forgetCardText, loadCardText, mergedCardText, placeholderCardBody, saveCardText,
-  SEALED_CARD_STATUS, SEALED_CARD_TITLE, sealCardRequest, withCardTextLock,
-} from "../src/seal-card.mjs";
+import { sealedCardDirectory } from "../src/crypto/paths.mjs";
+import { b64u, fromB64u, generateKeyPair, keyId, openEnvelope, prekeySigningInput, signBytes } from "../src/crypto/e2ee.mjs";
+import { ensureIdentity, saveKeyStore, trustKey } from "../src/crypto/keystore.mjs";
+import { cachedStepLabels, fitCardText, forgetCardText, loadCardText, mergedCardText, placeholderCardBody, saveCardText, sealCardRequest, SEALED_CARD_STATUS, SEALED_CARD_TITLE, withCardTextLock } from "../src/crypto/seal-card.mjs";
 
 const apiUrl = "https://relo.example";
 const cardId = "act_00000000-0000-4000-8000-000000000001";
@@ -44,7 +42,7 @@ test("the card cache is private, per card, and forgotten when the card ends", as
     assert.equal(statSync(join(directory, `${cardId}.json`)).mode & 0o777, 0o600);
     assert.equal(statSync(directory).mode & 0o777, 0o700);
     assert.deepEqual(await loadCardText(directory, cardId), { title: "x", steps: ["Build", "Test"] });
-    const dependencies = { env: { RELO_SEALED_CARD_DIR: directory } };
+    const dependencies = { env: { RELO_STATE_DIR: dirname(directory) } };
     assert.deepEqual(await cachedStepLabels(cardId, 2, dependencies), ["Build", "Test"]);
     assert.equal(await cachedStepLabels(cardId, 1, dependencies), undefined, "a mismatched cache never stands in for labels");
     assert.equal(await cachedStepLabels("act_00000000-0000-4000-8000-000000000009", 2, dependencies), undefined, "nor does a missing one");
@@ -58,7 +56,7 @@ test("the card cache is private, per card, and forgotten when the card ends", as
 
 test("the account's phone opens the whole card text from its own envelope", async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-seal-card-"));
-  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_SEALED_CARD_DIR: join(folder, "cards") };
+  const env = { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") };
   const device = phone("dev_00000000-0000-4000-8000-00000000000a");
   const dependencies = { configPath: () => join(folder, "config.json"), env };
   const client = { listDeviceKeys: async () => ({ devices: [device.resource] }), publishClientKey: async () => ({}) };
@@ -69,7 +67,7 @@ test("the account's phone opens the whole card text from its own envelope", asyn
     assert.equal(plain.body, body);
     await sealCardRequest({ body, cardId: null, key: "k0", client, config: { apiUrl }, dependencies, notes: [] });
     const { store } = await ensureIdentity(env.RELO_KEY_STORE_PATH);
-    await saveCardText(env.RELO_SEALED_CARD_DIR, cardId, { title: "Deploy 0.12", status: "Building", steps: ["Build", "Ship"] });
+    await saveCardText(sealedCardDirectory({ env }), cardId, { title: "Deploy 0.12", status: "Building", steps: ["Build", "Ship"] });
     // The server's "Step n" labels (read back for --next-step) are never sealed as the card's text.
     const sealed = await sealCardRequest({ body: { status: "Shipping", steps: { labels: ["Step 1", "Step 2"], current: 2, labelsFromServer: true } },
       cardId, key: "k2", client, config: { apiUrl }, dependencies, notes: [] });
@@ -81,7 +79,7 @@ test("the account's phone opens the whole card text from its own envelope", asyn
       expectedKind: "card" });
     assert.deepEqual(opened.content, { title: "Deploy 0.12", status: "Shipping", steps: ["Build", "Ship"] });
     // Without a matching cache the text carries no labels at all: the phone keeps the ones it has.
-    await saveCardText(env.RELO_SEALED_CARD_DIR, cardId, { title: "Deploy 0.12", steps: ["Build", "Test", "Ship"] });
+    await saveCardText(sealedCardDirectory({ env }), cardId, { title: "Deploy 0.12", steps: ["Build", "Test", "Ship"] });
     const mismatched = await sealCardRequest({ body: { status: "Shipping", steps: { labels: ["Step 1", "Step 2"], current: 2, labelsFromServer: true } },
       cardId, key: "k3", client, config: { apiUrl }, dependencies, notes: [] });
     const reopened = openEnvelope(mismatched.body.sealed.alerts[0], { deviceId: device.resource.deviceId,

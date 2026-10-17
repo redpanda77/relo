@@ -1,6 +1,6 @@
 // "Did you mean …?" for mistyped commands and options. Candidates come from schema.mjs, which
 // test/schema.test.mjs pins to what the CLI really accepts.
-import { COMMANDS } from "./schema.mjs";
+import { COMMANDS, findCommand, optionsOf } from "./registry.mjs";
 
 /** Optimal-string-alignment distance: insert, delete, substitute or swap two neighbours. */
 export function editDistance(a, b) {
@@ -33,20 +33,17 @@ export function closest(word, candidates, maximum = 2) {
 const publicCommands = COMMANDS.filter((command) => !command.internal);
 const GLOBAL_OPTIONS = ["json", "full", "help"];
 
-function commandFor(words) {
-  const two = words.slice(0, 2).join(" ");
-  return COMMANDS.find((command) => command.name === two || command.alias === words[0] && command.name.endsWith("send"))
-    ?? COMMANDS.find((command) => command.name === words[0]);
-}
+const commandFor = (words) => findCommand(words[0], words[1]);
 
 /** A hint for `Unknown option: --name`, given the positionals typed so far. */
 export function optionHint(name, words, allOptions = []) {
   const command = commandFor(words);
-  const valid = command ? [...command.options, ...GLOBAL_OPTIONS] : [...new Set([...allOptions, ...GLOBAL_OPTIONS])];
+  const options = command ? optionsOf(command) : [];
+  const valid = command ? [...options, ...GLOBAL_OPTIONS] : [...new Set([...allOptions, ...GLOBAL_OPTIONS])];
   const near = closest(name, valid);
   if (near) return `Did you mean --${near}?`;
-  if (command && command.options.length > 0 && command.options.length <= 12) {
-    return `Options for ${command.name}: ${command.options.map((option) => `--${option}`).join(" ")}`;
+  if (command && options.length > 0 && options.length <= 12) {
+    return `Options for ${command.name}: ${options.map((option) => `--${option}`).join(" ")}`;
   }
   return "Every flag: relo help all";
 }
@@ -54,6 +51,12 @@ export function optionHint(name, words, allOptions = []) {
 const groups = [...new Set(COMMANDS.map((command) => command.name.split(" ")[0]))];
 const actionsOf = (group) => COMMANDS.filter((command) => command.name.startsWith(`${group} `))
   .map((command) => command.name.split(" ")[1]);
+
+/** `relo hooks` with no action: a group whose commands all take one (the message names them, not "Unknown command"). */
+export function missingAction(group, action) {
+  if (action !== undefined || COMMANDS.some((command) => command.name === group)) return false;
+  return actionsOf(group).length > 0;
+}
 
 /**
  * Whether `group action` can be a command at all; a hint when it cannot, else undefined.
@@ -73,7 +76,7 @@ export function unknownCommandHint(group, action) {
 }
 
 /**
- * `relo schema activity update`, `activity.update`, `ask doctor`: the commands those words name.
+ * `relo schema work update`, `work.update`, `ask doctor`: the commands those words name.
  * A group word alone ("activity") selects every action of the group. Returns { commands } or { error, hint }.
  */
 export function selectSchemaCommands(words) {

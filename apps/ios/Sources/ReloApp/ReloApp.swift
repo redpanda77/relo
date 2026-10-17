@@ -74,6 +74,8 @@ struct ReloApp: App {
                         model.openAccessRequest(id: id)
                     } else if ReloDeepLink.isSecuritySettings(url) {
                         model.openSecuritySettings()
+                    } else if ReloDeepLink.isSetup(url) {
+                        model.openComputerSetup()
                     } else if let identity = ReloDeepLink.activityIdentity(from: url) {
                         Task { await model.openActivity(identity: identity) }
                     }
@@ -125,7 +127,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        // A question answered elsewhere: its notification leaves at once, before the refresh.
+        let settled = SettledNotifications.ids(in: userInfo)
         Task { @MainActor in
+            await SettledNotifications.remove(settled)
             let refreshed = await BackgroundRefreshCoordinator.shared.refresh()
             completionHandler(refreshed ? .newData : .noData)
         }
@@ -141,47 +146,61 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return [.banner, .list, .sound, .badge]
     }
 
+    /// Where a tapped notification leads, read from the response before any work starts (the response itself is
+    /// not Sendable).
+    enum NotificationRoute: Sendable {
+        case approveAccess(String)
+        case openAccess(String)
+        case securitySettings
+        case action(NotificationActionRequest)
+        case open(String)
+        case url(URL)
+        case none
+    }
+
+    // The completion-handler form, not `async`: the async bridge called the completion off the main thread, and UIKit
+    // aborted on it (SIGABRT in -[UIApplication _performBlockAfterCATransactionCommitSynchronizes:]) on every tap that
+    // opened the app. The completion now runs on the main actor, once the route is handled.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
-        didReceive response: UNNotificationResponse
-    ) async {
-        // Copy native callback input before crossing to the UI-owned coordinators.
-        // The async delegate bridge completes exactly when handling finishes.
-        // "New device wants access": Approve right here (iOS already asked for Face ID or the
-        // passcode), or open the request sheet.
-        if response.actionIdentifier != UNNotificationDismissActionIdentifier,
-           let relo = response.notification.request.content.userInfo["relo"] as? [String: Any],
-           let id = ReloDeepLink.accessRequestID(relo: relo) {
-            if response.actionIdentifier == ReloAccessRequestNotification.approveAction {
-                await DeviceAccessActionCoordinator.shared.approve(id)
-            } else {
-                await NotificationNavigationCoordinator.shared.openAccessRequest(id)
-            }
-            return
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
+        let route = Self.route(for: response)
+        Task { @MainActor in
+            await Self.handle(route)
+            completionHandler()
+        }
+    }
+
+    nonisolated private static func route(for response: UNNotificationResponse) -> NotificationRoute {
+        let tapped = response.actionIdentifier != UNNotificationDismissActionIdentifier
+        let relo = response.notification.request.content.userInfo["relo"] as? [String: Any]
+        // "New device wants access": Approve right here (iOS already asked for Face ID or the passcode), or open the
+        // request sheet.
+        if tapped, let relo, let id = ReloDeepLink.accessRequestID(relo: relo) {
+            return response.actionIdentifier == ReloAccessRequestNotification.approveAction ? .approveAccess(id) : .openAccess(id)
         }
         // A notice without a request id opens Settings → Devices, where the device is approved.
-        if response.actionIdentifier != UNNotificationDismissActionIdentifier,
-           let relo = response.notification.request.content.userInfo["relo"] as? [String: Any],
-           ReloDeepLink.opensSecuritySettings(relo: relo) {
-            await NotificationNavigationCoordinator.shared.openSecuritySettings()
-            return
+        if tapped, let relo, ReloDeepLink.opensSecuritySettings(relo: relo) { return .securitySettings }
+        if let notificationID = reloNotificationID(from: response.notification.request.content.userInfo) {
+            if let request = actionRequest(from: response, notificationID: notificationID) { return .action(request) }
+            return tapped ? .open(notificationID) : .none
         }
-        if let notificationID = Self.reloNotificationID(from: response.notification.request.content.userInfo) {
-            let request = Self.actionRequest(from: response, notificationID: notificationID)
-            let shouldNavigate = response.actionIdentifier != UNNotificationDismissActionIdentifier
-            if let request {
-                await BackgroundNotificationActionCoordinator.shared.handle(request)
-            } else if shouldNavigate {
-                await NotificationNavigationCoordinator.shared.open(notificationID)
-            }
-            return
+        guard let value = relo?["deepLink"] as? String, let url = NotificationDestinationPolicy.validatedURL(value) else { return .none }
+        return .url(url)
+    }
+
+    @MainActor private static func handle(_ route: NotificationRoute) async {
+        switch route {
+        case .approveAccess(let id): await DeviceAccessActionCoordinator.shared.approve(id)
+        case .openAccess(let id): await NotificationNavigationCoordinator.shared.openAccessRequest(id)
+        case .securitySettings: await NotificationNavigationCoordinator.shared.openSecuritySettings()
+        case .action(let request): await BackgroundNotificationActionCoordinator.shared.handle(request)
+        case .open(let notificationID): await NotificationNavigationCoordinator.shared.open(notificationID)
+        case .url(let url): await UIApplication.shared.open(url)
+        case .none: break
         }
-        guard
-            let relo = response.notification.request.content.userInfo["relo"] as? [String: Any],
-            let value = relo["deepLink"] as? String,
-            let url = NotificationDestinationPolicy.validatedURL(value)
-        else { return }
-        await MainActor.run { UIApplication.shared.open(url) }
     }
 
     nonisolated private static func reloNotificationID(from userInfo: [AnyHashable: Any]) -> String? {
@@ -228,7 +247,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                                                  options: [.authenticationRequired])
         let accessReview = UNNotificationAction(identifier: ReloAccessRequestNotification.reviewAction, title: "Review",
                                                 options: [.foreground])
+        let browserReview = UNNotificationAction(identifier: ReloBrowserLinkNotification.reviewAction, title: "Review",
+                                                 options: [.foreground])
         let fixed: Set<UNNotificationCategory> = [
+            UNNotificationCategory(identifier: ReloBrowserLinkNotification.categoryIdentifier,
+                                   actions: [browserReview], intentIdentifiers: []),
             UNNotificationCategory(identifier: "RELO_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
             UNNotificationCategory(identifier: ReloAccessRequestNotification.categoryIdentifier,
                                    actions: [accessApprove, accessReview], intentIdentifiers: []),
@@ -296,7 +319,7 @@ final class NotificationNavigationCoordinator: ObservableObject {
         self.notificationID = nil
     }
 
-    /// A tapped notification asked for Settings → Security (held until the app consumes it,
+    /// A tapped notification asked for Settings → Devices (held until the app consumes it,
     /// so a tap that launches Relo still lands there).
     @Published private(set) var securitySettingsPending = false
 

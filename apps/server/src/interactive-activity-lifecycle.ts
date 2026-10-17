@@ -1,11 +1,12 @@
 import { expireLockedRequest } from "./interactions/store.js";
+import { settleQuestionCopies } from "./interactions/settle-copies.js";
 import { lockDecisionActivity } from "./decision-lock.js";
 import { withdrawQuestionFallbacks } from "./activity-commands/question-fallback.js";
 import { retireUnsentActivityFrames } from "./activity-delivery-frame.js";
 import { randomUUID } from "node:crypto";
 import { cancelPendingActivityInteractions,activityProviderTimestamp,activityStartedAt,createActivityCommands,serializeTaskActivity, taskActivityRequestHash, type ApnsMode } from "./activities.js";
 import type { Database } from "./db.js";
-import { internalId,publicId } from "./ids.js";
+import { internalId } from "./ids.js";
 import {
   canonicalPresentation,
   persistedPresentationColumns,
@@ -67,7 +68,14 @@ export async function settleInteractiveLiveActivity(
   }
   // A question-only card (system.interactive.*) is a message: it ends with its answer.
   // Legacy custom presentations stored one request per device. The activity lock
-  // arbitrates their common decision; no sibling prompt may survive its winner.
+  // arbitrates their common decision; no sibling prompt may survive its winner. On expiry the
+  // siblings share the deadline: they expire too (so a late answer from any phone is kept as a fact),
+  // whichever copy the expiry pass happened to reach first.
+  if (input.responseState === "expired") await settleQuestionCopies(query,{
+    scope: { activity: { principalId: input.principalId,activityId } },
+    winner: { notificationEventId: input.notificationEventId,principalId: input.principalId },
+    outcome: { state: "expired" },deadline: "own",
+  });
   await cancelPendingActivityInteractions(query,input.principalId,activityId);
   const stored = terminalPresentationColumnsFromRow(current.rows[0],status,
     input.responseState === "approved" || input.responseState === "yes" ? "success" : "warning");
@@ -210,29 +218,16 @@ async function settleFoldedQuestionCopies(query: Queryable, input: {
   principalId: string; row: any; notificationEventId: string; responseState: InteractiveTerminalState;
 }): Promise<void> {
   // One question, one copy per phone: every copy takes the outcome, so a caller waiting on any
-  // copy sees the real answer and no copy can settle the card a second time.
-  const winner = await query.query(
-    "SELECT response FROM interaction_requests WHERE notification_event_id=$1 AND principal_id=$2",
-    [input.notificationEventId,input.principalId],
-  );
-  const siblings = await query.query(
-    `UPDATE interaction_requests r SET state=$4::interaction_request_state,response=$5::jsonb,responded_at=clock_timestamp()
-     FROM notification_events e
-     WHERE r.notification_event_id=e.id AND r.state='pending' AND e.principal_id=$1
-       AND e.payload#>>'{liveActivity,activityId}'=$2 AND e.id<>$3
-     RETURNING e.id`,
-    [input.principalId,publicId("act",input.row.id),input.notificationEventId,input.responseState,
-      winner.rows[0]?.response ?? null],
-  );
-  const siblingEvents = siblings.rows.map((row: { id: string }) => row.id);
-  if (siblingEvents.length) {
-    await query.query(`UPDATE notification_relevance SET relevance=jsonb_set(relevance,'{status}','"settled"'::jsonb)
-      WHERE notification_event_id=ANY($1::uuid[]) AND superseded_at IS NULL`,[siblingEvents]);
-    await query.query(`UPDATE delivery_jobs SET state='canceled',last_error_code='interaction_settled',
-      last_error_message='The question was settled on another phone',claim_token=NULL,claim_started_at=NULL,
-      claim_phase=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
-      WHERE notification_event_id=ANY($1::uuid[]) AND state IN ('pending','retry')`,[siblingEvents]);
-  }
+  // copy sees the real answer and no copy can settle the card a second time. The copies are made together
+  // with one deadline, so the first copy's expiry is the question's: they all expire.
+  // Each copy also names the copy that was answered (docs/ENCRYPTION-PROTOCOL.md, "Answers on another
+  // copy"): its evidence says which phone answered and its ids are what that phone signed. A copy
+  // settled from elsewhere (a long question answered in Relo) passes on the copy it names.
+  await settleQuestionCopies(query,{
+    scope: { activity: { principalId: input.principalId,activityId: input.row.id } },
+    winner: { notificationEventId: input.notificationEventId,principalId: input.principalId },
+    outcome: { state: input.responseState },deadline: "shared",
+  });
   await cancelPendingActivityInteractions(query,input.principalId,input.row.id);
   await withdrawQuestionFallbacks(query,{ principalId: input.principalId,activityId: input.row.id });
 }

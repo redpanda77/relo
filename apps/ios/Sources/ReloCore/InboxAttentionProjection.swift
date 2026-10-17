@@ -80,13 +80,6 @@ public enum InboxAttentionProjection {
                         nextTransitionAt: deadlines.min())
     }
 
-    /// Overdue means a running activity missed its update. A finished or expired activity is
-    /// never overdue; it is simply over.
-    public static func isStale(_ item: InboxItem, now: Date) -> Bool {
-        guard !activityIsFinished(item, now: now) else { return false }
-        return (item.activitySummary?.staleAt ?? item.liveActivity?.staleAt).map { $0 <= now } ?? false
-    }
-
     public enum ActivityEnding: Equatable, Sendable { case ended, expired }
 
     /// How a Live Activity finished, or `nil` while it may still be running (server evidence only).

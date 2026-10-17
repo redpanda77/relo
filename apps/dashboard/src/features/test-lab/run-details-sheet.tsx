@@ -1,7 +1,12 @@
 import { ArrowUpRight, Send } from "lucide-react"
 import * as React from "react"
 
+import { StatusChip } from "@/components/atoms/status-chip"
+import { StatusDot } from "@/components/atoms/status-dot"
+import { ActionButton, type ActionPhase } from "@/components/molecules/action-button"
+import { ConfirmationAction } from "@/components/molecules/confirmation-action"
 import { DeliveryChain } from "@/components/molecules/delivery-chain"
+import { Fact, FactList } from "@/components/molecules/fact-list"
 import { NotificationPreview } from "@/components/organisms/notification-preview"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,7 +17,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { ConfirmationAction } from "@/features/connections/components"
 import {
   deliveryHeadline,
   deliveryStages,
@@ -20,7 +24,7 @@ import {
 import type { BuilderDraft, TestRun } from "@/features/test-lab/types"
 import type { LaunchRunReceipt } from "@/features/test-lab/launch-receipt"
 import { relativeTime } from "@/lib/format"
-import { cn } from "@/lib/utils"
+import { neonTone } from "@/lib/status-tone"
 import { DEFAULT_BUILDER_DRAFT } from "@/state/use-builder-draft"
 
 function previewDraft(run: TestRun): BuilderDraft {
@@ -83,13 +87,6 @@ function previewDraft(run: TestRun): BuilderDraft {
   }
 }
 
-const headlineClass = {
-  danger: "text-[var(--status-danger)] bg-[color-mix(in_srgb,var(--status-danger)_12%,transparent)]",
-  warning: "text-[var(--status-warning)] bg-[color-mix(in_srgb,var(--status-warning)_12%,transparent)]",
-  active: "text-[var(--status-active)] bg-[color-mix(in_srgb,var(--status-active)_14%,transparent)]",
-  neutral: "text-muted-foreground bg-white/[0.06]",
-} as const
-
 function receiptNote(receipt: LaunchRunReceipt) {
   if (receipt.reused) return "Sent as an update to the test already on this iPhone."
   if (receipt.resumed) return "Sent as a fresh Live Activity, replacing the one that ended."
@@ -104,19 +101,10 @@ function Panel({
   children: React.ReactNode
 }) {
   return (
-    <section className="space-y-4 rounded-2xl border border-border bg-white/[0.03] p-4 sm:p-5">
+    <section className="space-y-4 rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 sm:p-5">
       <h3 className="text-sm font-semibold">{title}</h3>
       {children}
     </section>
-  )
-}
-
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 text-sm break-words">{children}</dd>
-    </div>
   )
 }
 
@@ -146,6 +134,19 @@ export function RunDetailsSheet({
     Math.round((run?.progress ?? 0) * 100)
   )
   const [prompt, setPrompt] = React.useState("")
+  // Which of this sheet's actions ran last and how it went, so only its button shows the work.
+  const [action, setAction] = React.useState<{ key: "update" | "wait" | "end"; phase: ActionPhase } | null>(null)
+  const phase = (key: "update" | "wait" | "end"): ActionPhase => (action?.key === key ? action.phase : "idle")
+  async function act(key: "update" | "wait" | "end", work: () => Promise<void>) {
+    setAction({ key, phase: "pending" })
+    try {
+      await work()
+      setAction({ key, phase: "success" })
+    } catch {
+      // The page says what went wrong; the button shakes.
+      setAction({ key, phase: "error" })
+    }
+  }
   const behavior = run?.presentation?.behavior.type
   const canMutate = Boolean(run?.ownerControlled && run.state === "active")
   const stages = run ? deliveryStages(run) : []
@@ -162,15 +163,9 @@ export function RunDetailsSheet({
     >
       <SheetHeader className="gap-2 border-b border-border px-6 py-5 pr-16">
         {headline ? (
-          <span
-            className={cn(
-              "inline-flex w-fit items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium",
-              headlineClass[headline.tone]
-            )}
-          >
-            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
+          <StatusChip tone={neonTone(headline.tone)} className="w-fit">
             {headline.text}
-          </span>
+          </StatusChip>
         ) : null}
         <SheetTitle className="text-xl">{run?.title ?? "Test not found"}</SheetTitle>
         <SheetDescription id="run-detail-description">
@@ -250,18 +245,19 @@ export function RunDetailsSheet({
                   id="activity-status"
                   value={status}
                   onChange={(event) => setStatus(event.target.value)}
-                  className="min-h-11"
                 />
               </div>
-              <Button
-                className="min-h-11"
+              <ActionButton
                 data-action="update-live-activity"
                 disabled={pending || !status.trim()}
-                onClick={() => void update(run, status, progress)}
+                phase={phase("update")}
+                pendingLabel="Sending…"
+                successLabel="Sent"
+                onClick={() => void act("update", () => update(run, status, progress))}
               >
                 <Send aria-hidden="true" />
                 Send update
-              </Button>
+              </ActionButton>
             </Panel>
           ) : null}
 
@@ -276,27 +272,28 @@ export function RunDetailsSheet({
                     behavior === "approval" ? "Ship build 214?" : "Is the deploy done?"
                   }
                   onChange={(event) => setPrompt(event.target.value)}
-                  className="min-h-11"
                 />
               </div>
-              <Button
-                className="min-h-11"
+              <ActionButton
                 data-action="wait-live-activity"
                 data-kind={behavior}
                 disabled={pending || !prompt.trim()}
-                onClick={() => void wait(run.id, behavior, prompt)}
+                phase={phase("wait")}
+                pendingLabel="Asking…"
+                successLabel="Asked"
+                onClick={() => void act("wait", () => wait(run.id, behavior, prompt))}
               >
                 <Send aria-hidden="true" />
                 {behavior === "approval" ? "Ask for approval" : "Ask yes or no"}
-              </Button>
+              </ActionButton>
             </Panel>
           ) : null}
 
-          <details className="group rounded-2xl border border-border bg-white/[0.02]">
+          <details className="group rounded-xl border border-white/[0.08] bg-white/[0.03]">
             <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium text-muted-foreground hover:text-foreground">
               Technical details
             </summary>
-            <dl className="grid gap-4 border-t border-border p-4 sm:grid-cols-2">
+            <FactList className="border-t border-border p-4">
               <Fact label="Test ID">
                 <span className="font-mono text-xs break-all">{run.id}</span>
               </Fact>
@@ -309,12 +306,8 @@ export function RunDetailsSheet({
                 {run.evidence.provider.apnsJobs === 1 ? "" : "es"},{" "}
                 {run.evidence.provider.durableCommands} queued
               </Fact>
-              {run.detail ? (
-                <div className="sm:col-span-2">
-                  <Fact label="Note">{run.detail}</Fact>
-                </div>
-              ) : null}
-            </dl>
+              {run.detail ? <Fact label="Note" wide>{run.detail}</Fact> : null}
+            </FactList>
           </details>
         </div>
       ) : null}
@@ -326,16 +319,14 @@ export function RunDetailsSheet({
             role="status"
             className="mr-auto flex min-w-0 items-center gap-2 truncate text-xs text-muted-foreground"
           >
-            {run.state === "active" ? (
-              <span
-                className="size-1.5 rounded-full bg-[var(--status-active)] shadow-[0_0_8px_var(--status-active)]"
-                aria-hidden="true"
-              />
-            ) : null}
             {/* Background refreshes stay silent: only owner actions change this text. */}
-            {pending ? "Working…" : run.state === "active" ? "Live" : "Ended"}
+            <StatusDot
+              tone={run.state === "active" ? "cyan" : "neutral"}
+              live={run.state === "active"}
+              label={pending ? "Working…" : run.state === "active" ? "Live" : "Ended"}
+            />
           </span>
-          <Button variant="ghost" className="min-h-11" asChild>
+          <Button variant="ghost" asChild>
             <a
               href={`/dashboard/testing/runs/${encodeURIComponent(run.id)}/history`}
             >
@@ -348,8 +339,11 @@ export function RunDetailsSheet({
               label="End test"
               title="End this test?"
               description={`“${run.title}” is removed from ${run.targetDeviceName ?? "the iPhone"}’s Lock Screen. You can’t undo this.`}
-              pending={pending}
-              onConfirm={() => void finish(run.id)}
+              pending={phase("end") === "pending"}
+              disabled={pending}
+              failed={phase("end") === "error"}
+              pendingLabel="Ending…"
+              onConfirm={() => void act("end", () => finish(run.id))}
             />
           ) : null}
         </div>

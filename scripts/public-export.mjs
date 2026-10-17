@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { copyFile, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,10 +69,22 @@ export async function auditPublicFiles({ paths, manifest, readText, stat }) {
   return blockers;
 }
 
-function trackedPaths(root) {
-  return execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
-    .split("\0")
-    .filter(Boolean);
+/** An archive made by scripts/release/head-gates.sh carries its file list; a checkout (with .git) never uses it. */
+function archiveList(root) {
+  const list = join(root, ".relo-tracked-files");
+  return !existsSync(join(root, ".git")) && existsSync(list) ? list : undefined;
+}
+
+/**
+ * The tracked files: `git ls-files`, or, in a tree without `.git` (a `git archive` of HEAD that the release gates
+ * check), the NUL-separated list in RELO_PUBLIC_FILES_FROM or the archive's own `.relo-tracked-files` (written by
+ * `git ls-tree -r -z --name-only HEAD`).
+ */
+export function trackedPaths(root, { filesFrom = process.env.RELO_PUBLIC_FILES_FROM || archiveList(root), readList = readFileSync } = {}) {
+  const listed = filesFrom
+    ? readList(filesFrom, "utf8")
+    : execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" });
+  return listed.split("\0").filter(Boolean);
 }
 
 async function loadManifest() {

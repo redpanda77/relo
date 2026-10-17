@@ -25,6 +25,6 @@ publicly reachable server and the gaps that are still open.
 ## End-to-end encryption
 
 Relo seals notifications, questions and Live Activity text on the sending computer for the owner's
-trusted iPhones, and the phone signs every answer. The threat model, what the server can still
-see, and the state of each phase are in [docs/END-TO-END-ENCRYPTION.md](docs/END-TO-END-ENCRYPTION.md).
+trusted iPhones, and the phone signs every answer. The threat model and what the server can still
+see are on the [Encryption page](https://github.com/redpanda77/relo/blob/main/docs/site/concepts/encryption.md); the exact protocol is in [docs/ENCRYPTION-PROTOCOL.md](docs/ENCRYPTION-PROTOCOL.md).
 Reports about the protocol or its implementation follow the private advisory flow above.

@@ -6,6 +6,7 @@ import { currentSubjectIdSchema,type CurrentInboxResponse,type CurrentSubjectPro
 import type { Database } from "./db.js";
 import { decisionActivityJoin,pendingDecisionPredicate,type InboxActor } from "./pending-inventory.js";
 import { actorCursorScope,decodeCursor,encodeCursor } from "./cursor.js";
+import { visibilityDeviceId } from "./owner-overview.js";
 
 export type CurrentCursor = { createdAt: string; subjectId: string };
 const cursorSchema=z.tuple([z.literal("current-v1"),z.string(),z.iso.datetime(),currentSubjectIdSchema]);
@@ -18,8 +19,9 @@ function encodeCurrentCursor(cursor: CurrentCursor,actor: InboxActor): string {
   return encodeCursor(["current-v1",actorCursorScope(actor),cursor.createdAt,cursor.subjectId]);
 }
 
-const visibleEvent=`($2::uuid IS NULL OR e.target_mode='broadcast' OR EXISTS (
-  SELECT 1 FROM notification_event_targets target WHERE target.notification_event_id=e.id AND target.device_id=$2))`;
+// $7 is the device whose delivery targets bound the read (owner-overview.ts visibilityDeviceId); $2 the reader's device.
+const visibleEvent=`($7::uuid IS NULL OR e.target_mode='broadcast' OR EXISTS (
+  SELECT 1 FROM notification_event_targets target WHERE target.notification_event_id=e.id AND target.device_id=$7))`;
 const originalParentDeadline=`LEAST(activity.expires_at,CASE WHEN activity.lifecycle_provider IS NOT NULL THEN activity.stale_at END)`;
 const retirement=`CASE
   WHEN e.withdrawn_at IS NOT NULL OR e.state='withdrawn' THEN 'withdrawn'
@@ -72,7 +74,7 @@ const candidatesSql=`WITH clock AS MATERIALIZED (SELECT statement_timestamp() AS
        AND e.payload#>>'{liveActivity,sequence}'=a.sequence::text AND e.state='active' AND e.withdrawn_at IS NULL AND ${visibleEvent}
      ORDER BY e.created_at DESC,e.id DESC LIMIT 1) event ON true
    WHERE a.principal_id=$1 AND a.presentation#>>'{behavior,type}' IN ('progress','informational')
-     AND ($2::uuid IS NULL OR $2::uuid=ANY(a.target_device_ids))
+     AND ($7::uuid IS NULL OR $7::uuid=ANY(a.target_device_ids))
      AND ($3::text[] IS NOT NULL AND 'act_'||a.id::text=ANY($3) OR a.state='active')
  ), selected_candidates AS MATERIALIZED (
    SELECT * FROM canonical UNION ALL SELECT * FROM native
@@ -151,7 +153,8 @@ function projection(row: CurrentRow & {subject_id:string},devicePublicId?: strin
 }
 
 export async function loadCurrentState(db: Database,actor: InboxActor,input:{limit:number;ids?:string[];after?:CurrentCursor}):Promise<CurrentInboxResponse> {
- const result=await db.query<CurrentRow>(querySql,[actor.principalId,actor.deviceId??null,input.ids??null,input.after?.createdAt??null,input.after?.subjectId??null,input.ids?50:input.limit+1]);
+ const result=await db.query<CurrentRow>(querySql,[actor.principalId,actor.deviceId??null,input.ids??null,input.after?.createdAt??null,input.after?.subjectId??null,input.ids?50:input.limit+1,
+  visibilityDeviceId(actor)??null]);
  const metadata=result.rows[0]!;
  const candidates=result.rows.filter((row):row is CurrentRow & {subject_id:string}=>row.subject_id!==null);
  const hasMore=input.ids===undefined && candidates.length>input.limit;

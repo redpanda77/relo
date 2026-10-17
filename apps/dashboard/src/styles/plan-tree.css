@@ -1,0 +1,92 @@
+/* The plan tree (plan 12b): rounds, steps and substeps as one outline. One row shape for every level (U6):
+   mark, label, trailing meta. The rail is drawn by each item, so it runs through that item's opened children
+   without a gap (U11); a label takes the row's width minus its meta and wraps before it clips (U12). */
+
+.plan-tree { --plan-mark: 22px; --plan-indent: 20px; }
+.plan-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.plan-count { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--foreground); }
+
+.plan-list { margin: 0; padding: 0; list-style: none; }
+.plan-list .plan-list { padding-left: var(--plan-indent); }
+
+.plan-item { position: relative; padding-block: 6px; }
+/* The rail: from under this item's mark to the next item's mark, past every opened child. */
+.plan-item:not(:last-child)::before {
+  position: absolute;
+  top: calc(6px + var(--plan-mark) + 4px);
+  bottom: -2px;
+  left: calc(var(--plan-mark) / 2 - 1px);
+  width: 2px;
+  border-radius: 1px;
+  background: rgb(255 255 255 / 0.14);
+  content: "";
+}
+.plan-item[data-tinted="true"]:not(:last-child)::before { background: color-mix(in srgb, var(--neon-cyan) 65%, transparent); }
+.plan-tree[data-finished="true"] .plan-item[data-tinted="true"]:not(:last-child)::before { background: color-mix(in srgb, var(--neon-mint) 60%, transparent); }
+
+.plan-row { display: grid; grid-template-columns: var(--plan-mark) minmax(0, 1fr) auto; column-gap: 10px; align-items: start; }
+.plan-mark {
+  position: relative;
+  display: grid;
+  width: var(--plan-mark);
+  height: var(--plan-mark);
+  place-items: center;
+  margin-top: 1px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  color: var(--muted-foreground);
+  transition: background-color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+}
+.plan-mark[data-mark="done"] { background: var(--neon-cyan); color: #07090e; }
+.plan-tree[data-finished="true"] .plan-mark[data-mark="done"] { background: var(--neon-mint); }
+.plan-mark[data-round="true"][data-mark="done"] { background: color-mix(in srgb, var(--neon-mint) 18%, transparent); color: var(--neon-mint); }
+.plan-mark[data-mark="current"] { border: 2px solid var(--neon-violet); background: color-mix(in srgb, var(--neon-violet) 18%, transparent); }
+.plan-mark[data-mark="current"]::before { width: 8px; height: 8px; border-radius: 999px; background: var(--neon-violet); content: ""; }
+.plan-mark[data-mark="stopped"] { border: 1.5px solid var(--neon-red); color: var(--neon-red); }
+.plan-mark[data-mark="open"] { border: 1.5px solid rgb(255 255 255 / 0.42); }
+.plan-mark[data-mark="skipped"] { border: 1.5px dashed rgb(255 255 255 / 0.42); }
+.plan-mark[data-mark="fold"] { border: 1px dashed rgb(255 255 255 / 0.3); }
+
+.plan-body { min-width: 0; font-size: 14px; line-height: 20px; }
+/* A label is never clamped or cut: it wraps onto as many lines as it needs. */
+.plan-label { display: block; overflow-wrap: anywhere; text-align: left; }
+.plan-label[data-state="current"] { font-weight: 600; }
+.plan-label[data-state="open"], .plan-label[data-state="skipped"] { color: var(--muted-foreground); }
+.plan-label[data-unreadable="true"] { font-style: italic; color: var(--muted-foreground); }
+.plan-label[data-round="true"] { font-weight: 500; }
+button.plan-label { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; border-radius: 6px; }
+button.plan-label:hover { text-decoration: underline; text-decoration-color: rgb(255 255 255 / 0.3); text-underline-offset: 3px; }
+.plan-info { margin-top: 4px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); overflow-wrap: anywhere; white-space: pre-wrap; }
+.plan-info p + p { margin-top: 2px; }
+.plan-outcome { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+
+.plan-meta { display: flex; align-items: center; gap: 8px; min-height: 22px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted-foreground); white-space: nowrap; }
+.plan-toggle {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  margin: -3px -6px -3px 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.plan-toggle:hover { color: var(--foreground); background: rgb(255 255 255 / 0.06); }
+.plan-toggle svg { width: 14px; height: 14px; transition: rotate var(--dur-fast) var(--ease-out); }
+.plan-toggle[aria-expanded="true"] svg { rotate: 90deg; }
+@media (pointer: coarse) { .plan-toggle { width: 40px; height: 40px; margin-block: -9px; } }
+
+.plan-fold { display: flex; align-items: center; gap: 4px; min-height: 22px; padding: 0; border: 0; background: none; color: var(--muted-foreground); font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px; }
+.plan-fold:hover { color: var(--foreground); }
+.plan-fold svg { width: 12px; height: 12px; }
+
+.plan-tree :is(button):focus-visible { outline: 2px solid #a796ff; outline-offset: 2px; }
+.plan-sub { animation: plan-enter var(--dur-base) var(--ease-out) both; }
+@keyframes plan-enter { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-mark, .plan-toggle svg { transition: none !important; }
+  .plan-sub { animation: none !important; }
+}

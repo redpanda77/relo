@@ -1,0 +1,364 @@
+/* pages: owned by one area; imported at the end of index.css so it can refine the base rules. */
+
+/* ---------- Projects: a tile grid on a wide window ---------- */
+/* Below 1280px the index is one frosted List; from 1280px each project is its own glass tile, so
+   a handful of projects fill the width instead of running as four thin 1000px rows. */
+@media (min-width: 1280px) {
+  .project-index {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .project-index > li {
+    overflow: hidden;
+    border: 1px solid var(--sheet-border);
+    border-radius: var(--radius-card);
+    background: var(--sheet-fill);
+    box-shadow: var(--glass-highlight), var(--glass-shadow);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      translate var(--dur-fast) var(--ease-out);
+  }
+  .project-index > li:hover { border-color: var(--hairline-strong); translate: 0 -1px; }
+  .project-index > li > a { height: 100%; flex-wrap: wrap; align-content: flex-start; row-gap: 10px; padding: 16px; }
+  /* In a tile the time moves under the name, aligned with it, and the hover lift replaces the chevron. */
+  .project-index > li > a > span:nth-child(3) { flex-basis: 100%; padding-left: 48px; }
+  .project-index > li > a > svg:last-child { display: none; }
+}
+@media (min-width: 1280px) and (prefers-reduced-motion: reduce) {
+  .project-index > li:hover { translate: none; }
+}
+
+/* ---------- Feedback: rows, actions, choices (the settings pages, Test Lab and History) ---------- */
+
+/* Rows answer the pointer in --dur-fast and sink a hair (.995) when pressed; a press is quick. */
+.row-hit {
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    scale var(--spring-press-dur) var(--spring-press);
+}
+.row-hit:active:not(:disabled) {
+  scale: 0.995;
+  transition:
+    background-color var(--dur-micro) var(--ease-out),
+    scale var(--dur-micro) var(--ease-out);
+}
+/* One highlight glides between a list's rows on a fine pointer; the rows stop lighting themselves. */
+.glide-highlight { background: var(--accent); }
+@media (hover: hover) and (pointer: fine) {
+  .row-glide:hover:not(:focus-visible) { background-color: transparent; }
+}
+.row-chevron { transition: translate var(--dur-fast) var(--ease-out); }
+.group:hover > .row-chevron,
+.group:hover .row-chevron { translate: 2px 0; }
+
+/* ActionButton: a 14px spinner on a steady turn (it keeps turning under reduced motion: it is state). */
+.action-spinner { animation: action-spin 800ms linear infinite; }
+@keyframes action-spin { to { rotate: 360deg; } }
+
+/* Selected pills, segments and rows: the lit fill is one element that slides (SelectionIndicator). */
+.selection-indicator { z-index: -1; border-radius: inherit; }
+.selection-indicator[data-variant="pill"] {
+  inset: -1px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--control-fill-active);
+}
+.selection-indicator[data-variant="segment"] {
+  background: var(--control-fill-active);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+}
+.selection-indicator[data-variant="row"] { border-radius: 0; background: var(--control-fill); }
+.pill {
+  position: relative;
+  isolation: isolate;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    scale var(--spring-press-dur) var(--spring-press);
+}
+.pill:active { scale: var(--press-scale); transition-duration: var(--dur-fast), var(--dur-fast), var(--dur-fast), var(--dur-micro); }
+/* In a pill row with a gliding capsule the pressed pill keeps the plain face; the capsule carries
+   the tint (and arrives a frame later when the choice came from the server). */
+[data-glide-pills] > .pill[aria-pressed="true"] {
+  border-color: var(--control-border);
+  background: rgb(255 255 255 / 0.03);
+}
+/* A segmented control: equal segments on a dark track, the thumb sliding between them. */
+.segmented {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.2);
+}
+.segment {
+  position: relative;
+  isolation: isolate;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 500;
+  transition: color var(--dur-fast) var(--ease-out), scale var(--spring-press-dur) var(--spring-press);
+}
+.segment:hover, .segment[aria-checked="true"] { color: var(--foreground); }
+.segment:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.segment:active { scale: 0.97; transition-duration: var(--dur-fast), var(--dur-micro); }
+/* 30px segments in a 2px inset and a hairline: a 36px track, level with a select beside it. */
+@media (pointer: coarse) { .segment { min-height: 38px; } }
+
+/* A one-time secret comes into focus: blurred and faint to sharp in 420ms, ending at no filter. */
+.secret-reveal { animation: secret-reveal var(--dur-slow) var(--ease-out) both; }
+@keyframes secret-reveal {
+  from { filter: blur(8px); opacity: 0.4; }
+  to { filter: none; opacity: 1; }
+}
+
+/* ProgressBar: the fill scales from its left edge instead of changing width. */
+.progress-track > span {
+  width: 100%;
+  transform-origin: left center;
+  transition: scale var(--dur-slow) var(--ease-out), background-color var(--dur-slow) var(--ease-out);
+}
+
+/* Step markers that become done settle in on the press spring; their connector fills in --dur-base. */
+.step-marker-done { animation: step-done var(--spring-bouncy-dur) var(--spring-bouncy) both; }
+@keyframes step-done { from { scale: 0.8; } }
+.step-connector { transition: background var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out); }
+.stage-node { transition: background-color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out); }
+
+/* Test Lab: the headline dot and words follow a run's state in 200ms. */
+.run-mark { transition: background-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out); }
+.run-headline { transition: color 200ms var(--ease-out); }
+
+/* Waiting for the iPhone: a dot that breathes with every other loop. */
+.waiting-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--neon-cyan);
+  box-shadow: 0 0 8px var(--neon-cyan);
+  animation: breathe var(--period-breath) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
+}
+/* A QR that has been read: a checkmark draws over it before the page moves on. */
+.qr-done {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: rgb(255 255 255 / 0.82);
+  color: #0c7a4b;
+  animation: qr-done-in var(--dur-fast) var(--ease-out) both;
+}
+@keyframes qr-done-in { from { opacity: 0; } }
+
+/* Inputs and selects answer focus in --dur-fast. */
+[data-slot="input"] {
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-hit,
+  .row-chevron,
+  .pill,
+  .segment,
+  .progress-track > span,
+  .step-connector,
+  .stage-node,
+  .run-mark,
+  .run-headline,
+  [data-slot="input"] { transition: none !important; }
+  .row-hit:active,
+  .pill:active,
+  .segment:active { scale: none; }
+  .group:hover .row-chevron { translate: none; }
+  .secret-reveal,
+  .step-marker-done,
+  .waiting-dot,
+  .qr-done { animation: none !important; }
+}
+
+/* ---------- A section index beside a long settings page (Account, Connections; page.tsx) ---------- */
+
+.section-index { display: none; }
+.section-index ul {
+  position: sticky;
+  top: 2.5rem;
+  display: grid;
+  gap: 2px;
+}
+.section-index a {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  padding-inline: 12px;
+  border-radius: 10px;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.section-index a:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+@media (min-width: 1024px) {
+  .section-index-layout {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 48px;
+  }
+  .section-index { display: block; }
+}
+
+/* ---------- Linking this browser (linked-browser/link-browser-card.tsx) ---------- */
+
+/* Now's card: the sheet with a violet glow rising from the lock, never a plain strip. */
+.link-card {
+  --tone: var(--neon-violet);
+  position: relative;
+  display: grid;
+  gap: 18px;
+  overflow: hidden;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--tone) 26%, var(--hairline));
+  border-radius: var(--radius-card);
+  background:
+    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--tone) 16%, transparent) 0%, transparent 55%),
+    color-mix(in srgb, var(--tone) 4%, var(--sheet-fill));
+  box-shadow: var(--glass-highlight);
+}
+@media (min-width: 640px) {
+  .link-card { padding: 22px 24px; }
+}
+/* The lock beside the label and title; the lede and the actions share the title's left edge. On a phone the lede
+   and actions run the card's full width instead, all from the lock's edge, so nothing sits half indented. */
+.link-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "mark titles" ". lede";
+  column-gap: 14px;
+  align-items: center;
+}
+.link-mark { grid-area: mark; }
+.link-titles { grid-area: titles; min-width: 0; }
+.link-lede { grid-area: lede; }
+.link-mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--tone) 16%, transparent);
+  box-shadow: 0 0 24px -6px var(--tone), inset 0 1px 0 rgb(255 255 255 / 0.12);
+  color: var(--tone);
+}
+.link-mark svg { width: 19px; height: 19px; }
+.link-eyebrow {
+  color: color-mix(in srgb, var(--tone) 80%, white);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.link-title {
+  margin-top: 2px;
+  color: var(--foreground);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.link-lede {
+  max-width: 60ch;
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.link-flow { display: grid; gap: 14px; }
+.link-card .link-flow { padding-left: 54px; }
+@media (max-width: 479px) {
+  .link-head { grid-template-areas: "mark titles" "lede lede"; }
+  .link-lede { margin-top: 12px; }
+  .link-card .link-flow { padding-left: 0; }
+  /* Equal, full-width buttons under the text (the primary first). */
+  .link-card .link-flow > .link-actions > * { flex: 1 1 0; min-width: max-content; }
+}
+.link-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.link-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.link-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.link-status[data-done="true"] { color: var(--neon-mint); }
+.link-status-check { display: grid; place-items: center; }
+.link-note {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* The link code: the one thing to compare, set like a security code (tabular mono, tracked groups). */
+.link-code-panel {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  background: rgb(0 0 0 / 0.22);
+}
+.link-code-label {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.link-code {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: clamp(22px, 6vw, 28px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.15;
+}
+.link-code-loading { color: var(--muted-foreground); }
+.link-code-hint {
+  max-width: 52ch;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.link-code-hint strong { color: var(--foreground); font-weight: 600; }
+/* A lone text button under the code lines up its words with the text above, not its hover pad. */
+.link-flow > .link-actions:has(> [data-variant="ghost"]:only-child) { margin-left: -10px; }
