@@ -76,13 +76,14 @@ still trusted again with a notice (gap 4).
 
 ### 4. The CLI re-trusts a changed or replaced phone (accepted trade-off)
 
-By default the CLI follows WhatsApp: a changed identity key behind a pinned phone, and the account's
+On a private server the CLI follows WhatsApp by default: a changed identity key behind a pinned phone, and the account's
 new phone once every phone it trusted has left the account, are trusted again with a visible notice
 ("security code changed", "phone set up again"; `packages/cli/src/crypto/trust.mjs`). A compromised server,
 or anyone with the account password (gap 1), can therefore swap in its own phone key, read new
-content and accept approvals signed by it. `relo keys strict on` holds both as pending until a
-person runs `relo keys verify`. This is the owner's accepted trade-off (ADR 0005: Signal/WhatsApp-style
-automatic trust, encryption always on); strict mode is the option for anyone who wants verification.
+content and accept approvals signed by it. Strict key trust holds both as pending until a
+person runs `relo keys verify`. It is on by default when the server is on a public address and off on a private
+network; `relo keys strict on|off` sets it by hand. Automatic trust on a private server is the owner's accepted
+trade-off (ADR 0005: Signal/WhatsApp-style trust, encryption always on).
 
 ### 4a. A linked browser can approve a new phone (accepted trade-off)
 
@@ -124,8 +125,9 @@ with the secret in it.
    Security for each of them, the admin first.
 2. Keep registration Closed or Approval (a public origin no longer allows Open).
 3. Set `RELO_CLIENT_IP_HEADER` to the header your proxy overwrites, never `x-forwarded-for`.
-4. Run `relo keys strict on` on every computer. After that, a changed key or a phone set up again
-   needs `relo keys verify` before computers seal to it.
+4. Strict key trust is on by default for a public address; check it with `relo keys status` on every computer
+   (set it by hand with `relo keys strict on`). A changed key or a phone set up again then needs
+   `relo keys verify` before computers seal to it.
 5. Keep the API bound to `127.0.0.1` and reach it only through the proxy or tunnel.
 6. Put a proxy-level login in front of the browser pages if your proxy offers one; see
    [Remote access](SELF-HOSTING.md#choose-an-origin).

@@ -44,7 +44,7 @@ from its exact output.
 ## Only connecting another computer?
 
 The server and the phone are done once. For each further computer, **Connect a computer** (iPhone: Settings →
-Add a computer; Dashboard: Settings → Computers → Add a computer; or `relo auth invite` on a signed-in
+Devices → Add a computer; Dashboard: Account → Computers → Add a computer; or `relo auth invite` on a signed-in
 computer) gives one command that installs, signs in and sets up, or a prompt for your agent:
 
 ```sh

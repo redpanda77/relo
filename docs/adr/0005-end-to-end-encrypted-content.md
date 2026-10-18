@@ -21,8 +21,8 @@ it by hand.
 
 ## Decision
 
-- **Content is sealed on the sender's machine.** The CLI seals content to device keys held in the
-  Secure Enclave of the owner's paired iPhones, using HPKE (RFC 9180) with P-256 and AES-256-GCM.
+- **Content is sealed on the sender's machine.** The CLI seals content to the device keys of the owner's paired iPhones (the identity key lives in the
+  Secure Enclave), using HPKE (RFC 9180) with P-256 and AES-256-GCM.
   The server stores and relays the sealed envelopes. It never holds a key that opens them.
 - **The server's view is limited to metadata.** It sees accounts, devices, timing, size buckets,
   state enums, and opaque project and topic handles. Every server decision that reads text today
@@ -30,7 +30,7 @@ it by hand.
 - **Trust is automatic.** Following WhatsApp and Signal, by the owner's decision, endpoints trust
   each other's keys on first use. A later key change is accepted and shown as a "security code
   changed" notice. Comparing the security code, and a strict mode that blocks on change, are
-  optional.
+  optional. Strict mode is on by default for a server on a public address and off on a private network.
 - **New devices are linked from a trusted phone.** The account's first phone is trusted on first
   use. A later phone, or a web browser, receives sealed content only after a trusted phone approves
   it (one tap, or a QR scan for a browser), so the server cannot add a device of its own.

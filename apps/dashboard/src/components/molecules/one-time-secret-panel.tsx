@@ -4,7 +4,7 @@ import * as React from "react"
 import { AnimatedHeight } from "@/components/atoms/animated-height"
 import { CopyButton } from "@/components/molecules/copy-button"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
@@ -66,25 +66,6 @@ function SecretCard({ value, onDismiss }: { value: OneTimeSecret; onDismiss(): v
             </div>
           </div>
         ))}
-        <div className="flex flex-col gap-2 sm:flex-row">
-          {secrets.map((field) => (
-            <CopyButton
-              key={field.label}
-              value={field.value}
-              label={`Copy ${field.label.toLowerCase()}`}
-              variant="default"
-              announce={false}
-              onCopied={() => {
-                setManual(null)
-                setStatus(`${field.label} copied.`)
-              }}
-              onFailed={() => fallback(field)}
-            />
-          ))}
-          <Button type="button" variant="outline" onClick={onDismiss}>
-            Dismiss and clear
-          </Button>
-        </div>
         {manualField ? (
           <div className="space-y-2">
             <Label htmlFor={`${id}-manual`}>Copy manually</Label>
@@ -98,10 +79,35 @@ function SecretCard({ value, onDismiss }: { value: OneTimeSecret; onDismiss(): v
             />
           </div>
         ) : null}
-        <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
-          {status}
-        </p>
       </CardContent>
+      <CardFooter
+        meta={
+          <p className="text-sm text-muted-foreground" role="status" aria-live="polite">
+            {status}
+          </p>
+        }
+        actions={
+          <>
+            {secrets.map((field) => (
+              <CopyButton
+                key={field.label}
+                value={field.value}
+                label={`Copy ${field.label.toLowerCase()}`}
+                variant="default"
+                announce={false}
+                onCopied={() => {
+                  setManual(null)
+                  setStatus(`${field.label} copied.`)
+                }}
+                onFailed={() => fallback(field)}
+              />
+            ))}
+            <Button type="button" variant="outline" onClick={onDismiss}>
+              Dismiss and clear
+            </Button>
+          </>
+        }
+      />
     </Card>
   )
 }

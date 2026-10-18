@@ -185,7 +185,7 @@
 /* ---------- Cards and chips ---------- */
 
 /* Chips and dots change meaning by their tone; colour, fill and glow derive from it and follow. */
-.outcome-badge,
+.badge,
 .status-dot {
   transition: --tone var(--dur-slow) var(--ease-out);
 }
@@ -229,7 +229,7 @@
   .fold-chevron,
   .fold > .fold-body,
   .fold[open] > .fold-body,
-  .outcome-badge,
+  .badge,
   .status-dot,
   .fold-summary,
   .nav-link,

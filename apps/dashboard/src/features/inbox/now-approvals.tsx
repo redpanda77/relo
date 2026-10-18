@@ -92,20 +92,18 @@ export function ConnectionRequests({ approvals, actions }: { approvals: readonly
             <WorkCard
               tone={tone}
               title={`Connect ${request.clientName}`}
-              chip={decision ? null : "CONNECTION REQUEST"}
+              eyebrow={decision ? null : "CONNECTION REQUEST"}
               summary={[`Code ${request.userCode}`, scopes, until].filter(Boolean).join(" · ")}
               summaryLines={4}
-              glyph={<SignalGlyph icon={KeyRound} color="var(--tone)" className="now-needs-glyph" />}
+              glyph={<SignalGlyph icon={KeyRound} color="var(--tone)" />}
               tint
               live={!decision}
               state={decision === "approve" ? { label: "Approved", icon: Check } : decision === "deny" ? { label: "Denied", icon: X } : null}
               deadline={decision ? null : request.approvalExpiresAt}
               actions={
-                <div className="approval-actions contents">
+                <>
                   <Button
-                    size="sm"
                     variant="ghost"
-                    className="min-h-11 sm:min-h-9"
                     data-action="deny-approval"
                     data-code={code}
                     disabled={pending}
@@ -114,8 +112,6 @@ export function ConnectionRequests({ approvals, actions }: { approvals: readonly
                     <DecisionIcon pending={pending && choice === "deny"} icon={X} /> Deny
                   </Button>
                   <Button
-                    size="sm"
-                    className="min-h-11 sm:min-h-9"
                     data-action="approve-approval"
                     data-code={code}
                     disabled={pending}
@@ -124,11 +120,11 @@ export function ConnectionRequests({ approvals, actions }: { approvals: readonly
                     <DecisionIcon pending={pending && choice === "approve"} icon={Check} /> Approve
                   </Button>
                   {error ? (
-                    <p role="alert" className="basis-full text-xs text-destructive">
+                    <p role="alert" className="text-xs text-destructive">
                       {error}
                     </p>
                   ) : null}
-                </div>
+                </>
               }
             />
           </div>

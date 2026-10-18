@@ -26,7 +26,7 @@ relo state --producer deploy-bot
   lease (<!--f:lease.minSeconds-->1 minute<!--/f--> to <!--f:lease.maxSeconds-->1 hour<!--/f-->, default <!--f:lease.defaultSeconds-->15 minutes<!--/f-->). The echo says until when: renew before then. Agents cannot
   heartbeat; a session shows it is alive through its own updates.
 - **Long waits**: `--expires-in 30m` keeps the question open that long and `--timeout 30m` blocks
-  for it (at most the question's lifetime; default <!--f:question.defaultSeconds-->5 minutes<!--/f-->). Exit `0` approved, `5` denied, `8`
+  for it, in slices of at most 90 seconds, because the public edge cuts a single request at about 100 seconds (at most the question's lifetime; default <!--f:question.defaultSeconds-->5 minutes<!--/f-->). Exit `0` approved, `5` denied, `8`
   expired or canceled, `4` still open when the wait ended (`relo interaction wait ID` resumes it),
   `1` server, `6` network. Only exit `0` with state `approved` is permission. An agent waits about
   <!--f:question.agentWaitSeconds short-->100s<!--/f--> per command and resumes with `relo interaction wait ID`.

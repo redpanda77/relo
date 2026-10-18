@@ -37,7 +37,7 @@ service. Each one declares its own intent: a goal, a plan of steps it grows as i
 real words, a question, and finally an outcome. Nothing else writes those fields. The server never
 guesses them, and optional hooks never change them.
 
-- **Agents** run `relo work start`, `relo work update`, `relo ask` and `relo work finish`. The CLI
+- **Agents** run `relo work start`, `relo work update`, `relo ask`, `relo work deliver` (a request is done; `relo work start --round` opens the next) and `relo work finish` (the goal is done). The CLI
   knows which session is calling from the harness itself, so each session sees and changes only its
   own work.
 - **Scripts and jobs** use the same commands with a producer key (`--producer nightly-backup`), so a

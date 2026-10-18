@@ -2,7 +2,8 @@ import ReloCore
 import SwiftUI
 
 /// The answer area of every question, on Now and on its detail page: the sender's choices as one row of
-/// equal buttons, and one status line under them. From the tap to "Sent" nothing moves: the chosen button
+/// equal buttons, and one status line under them (on a card the line moves up: the phase and the countdown
+/// sit in the card's header corner, `Phase.corner`, and only a failure or a closed request adds a note). From the tap to "Sent" nothing moves: the chosen button
 /// spins and then carries a check, the others dim, and only the line's words change. A failure says why
 /// and leaves the buttons live; a closed request keeps only its line.
 struct ReloDecisionActions: View {
@@ -31,8 +32,16 @@ struct ReloDecisionActions: View {
         case closed(String, symbol: String = "clock.badge.xmark")
     }
 
+    enum Style {
+        /// The detail page: full-size buttons, the status line under them.
+        case page
+        /// A card: compact equal-split actions; the card's header carries the countdown and the phase.
+        case card
+    }
+
     let choices: [Choice]
     let phase: Phase
+    var style: Style = .page
     /// The choice the owner sent, when known (the feedback's action); a tap here sets it too.
     var sent: NotificationInteractionAction? = nil
     var deadline: Date? = nil
@@ -58,9 +67,9 @@ struct ReloDecisionActions: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: ReloLayout.footerGap) {
             if case .closed = phase {} else { buttons }
-            statusLine
+            if style == .page { statusLine } else if let note = phase.note { cardNote(note) }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: phase)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: tapped)
@@ -69,13 +78,20 @@ struct ReloDecisionActions: View {
 
     @ViewBuilder private var buttons: some View {
         if typeSize.isAccessibilitySize {
-            VStack(spacing: 8) { buttonRow }
+            VStack(spacing: ReloLayout.inlineGap) { buttonRow }
         } else {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { buttonRow }
-                VStack(spacing: 8) { buttonRow }
+                HStack(spacing: style == .card ? ReloLayout.inlineGap : ReloLayout.footerGap) { buttonRow }
+                VStack(spacing: ReloLayout.inlineGap) { buttonRow }
             }
         }
+    }
+
+    private func cardNote(_ note: Phase.Note) -> some View {
+        Label(note.text, systemImage: note.symbol)
+            .font(ReloLayout.cardMeta).foregroundStyle(note.color)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var buttonRow: some View {
@@ -98,11 +114,11 @@ struct ReloDecisionActions: View {
                 .overlay(alignment: .leading) {
                     if chosen && phase == .recorded {
                         Image(systemName: "checkmark").font(.subheadline.weight(.bold))
-                            .padding(.leading, 14).transition(.opacity)
+                            .padding(.leading, ReloLayout.cardInset - 2).transition(.opacity)
                     }
                 }
             }
-            .buttonStyle(.relo(choice.prominent ? .primary : .secondary))
+            .modifier(ChoiceButtonStyle(style: style, prominent: choice.prominent))
             .disabled(!live && !chosen)
             .allowsHitTesting(live)
             .accessibilityHint(live ? "Sends this answer to Relo" : "")
@@ -161,6 +177,19 @@ struct ReloDecisionActions: View {
     }
 }
 
+/// The answer button's look: the page's full-size button, or a card's compact equal-split action.
+private struct ChoiceButtonStyle: ViewModifier {
+    let style: ReloDecisionActions.Style
+    let prominent: Bool
+
+    func body(content: Content) -> some View {
+        switch style {
+        case .page: content.buttonStyle(.relo(prominent ? .primary : .secondary))
+        case .card: content.buttonStyle(.cardAction(prominent ? .primary : .secondary, fill: true))
+        }
+    }
+}
+
 extension ReloDecisionActions.Choice {
     /// A yes/no or approval question's two answers, the sender's labels, the affirmative one prominent.
     static func binary(_ actions: BinaryNotificationActionPresentation) -> [Self] {
@@ -175,6 +204,36 @@ extension ReloDecisionActions.Choice {
 }
 
 extension ReloDecisionActions.Phase {
+    struct Note: Equatable {
+        var text: String
+        var symbol: String
+        var color: Color
+    }
+
+    /// What a card's header corner says while this phase lasts: the countdown while answerable, then the
+    /// words for the send ("Sending…", "Sent").
+    func corner(deadline: Date?) -> CardCorner {
+        switch self {
+        case .ready:
+            if let deadline, deadline > .now { return .countdown(deadline) }
+            return .none
+        case .checking: return .phase("Checking…", symbol: "arrow.triangle.2.circlepath", color: .reloSecondaryText)
+        case .sending: return .phase("Sending…", symbol: "arrow.up.circle", color: .reloSecondaryText)
+        case .waiting: return .phase("Saved here", symbol: "clock.arrow.circlepath", color: .reloSecondaryText)
+        case .recorded: return .phase("Sent", symbol: "checkmark.circle", color: .reloDone)
+        case .failed, .closed: return .none
+        }
+    }
+
+    /// A sentence a card cannot fit in its corner: why nothing was recorded, why it is closed, when it sends.
+    var note: Note? {
+        switch self {
+        case .waiting: Note(text: "Saved here; it sends when Relo is reachable", symbol: "clock.arrow.circlepath", color: .reloSecondaryText)
+        case let .failed(text): Note(text: text, symbol: "exclamationmark.circle", color: .reloErrorText)
+        case let .closed(text, symbol): Note(text: text, symbol: symbol, color: .reloSecondaryText)
+        default: nil
+        }
+    }
     /// The phase of an answer sent from this iPhone, when there is one: sending, stored, recorded or failed.
     static func answer(_ feedback: NotificationResponseFeedback?, submitting: Bool) -> Self? {
         if submitting || feedback?.phase == .sending { return .sending }

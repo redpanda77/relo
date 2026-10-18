@@ -10,7 +10,7 @@ const fixture = JSON.parse(readFileSync(new URL("../fixtures/card-line-v1.json",
 test("card-line-v1 fixture is versioned and covers the required cases",() => {
   assert.equal(fixture.version,1);
   const names = fixture.cases.map((entry) => entry.name);
-  for (const required of ["step with a count","count complete gets a check","skipped steps are neither done nor to go","no plan: the label alone"]) {
+  for (const required of ["step with a count","count complete gets a check","skipped steps are neither done nor open","no plan: the label alone"]) {
     assert.ok(names.includes(required),required);
   }
 });

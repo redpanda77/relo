@@ -12,14 +12,15 @@ Node.js 22 or newer is required.
 
 | Still happening, or waiting on the owner | Finished, and worth a buzz |
 | --- | --- |
-| **The work**: `relo work start` → `update` → `finish`, plus `relo ask` | **A notification**: `relo notify`, only when no work is open |
+| **The work**: `relo work start` → `update` → `deliver` (a request done) → `finish` (the goal done), plus `relo ask` | **A notification**: `relo notify`, only when no work is open |
 | One open work per agent session, always current, carries the questions | One-shot, never a question, never progress |
 
 An agent reports its work with `relo work`: one goal, a plan of milestones it grows as it learns, a status,
-and an outcome. The CLI identifies the session from the harness (Claude Code `CLAUDE_CODE_SESSION_ID`, Codex
+and an outcome. Each request is a round: `deliver` ends it, `start --round "<next request>"` opens the next one on
+the same card, and `finish` ends the goal. The CLI identifies the session from the harness (Claude Code `CLAUDE_CODE_SESSION_ID`, Codex
 `CODEX_THREAD_ID`, OpenCode `OPENCODE_SESSION_ID`; `RELO_SESSION=<stable id>` only outside a detected harness, such as a script), so every
 command from one session addresses that session's work and nothing else: a session never sees another's.
-Harnesses without a session id (Gemini CLI, Cursor) get a handle from `relo work start`; later
+Harnesses without a session id (Gemini CLI, Cursor, Copilot, Amp) get a handle from `relo work start`; later
 commands pass it as `--work <handle>`.
 Steps are the agent's own work; what the owner must do is a question or a note. Subagents run no relo
 commands: the orchestrating agent owns the work and counts them in one step.
@@ -29,8 +30,9 @@ relo work start --goal "Deploy 0.7.57" --plan "Build the image,Run the tests,Shi
 relo work update --status "Image pushed" --next-step
 relo work update --add "Verify the health check"                  # the plan grows in place
 relo work start --goal "Render 20 chapters" --progress 3/20 --new   # a counted job (another goal: --new)
-relo ask "Deploy 0.7.57 to production?" --approval      # buttons on the card; waits up to 5 minutes (100s inside an agent session)
-relo work finish --outcome "0.7.57 is live on production"           # --failed or --dropped when it did not succeed
+relo ask "Deploy 0.7.57 to production?" --approval      # buttons on the card; waits up to 5 minutes (100s inside an agent session; the CLI waits in slices of at most 90s)
+relo work deliver --outcome "0.7.57 is live on production"          # this request is done; the next one: relo work start --round "…"
+relo work finish --outcome "0.7.57 is live on production"           # the goal is done (--failed or --dropped when it did not succeed)
 relo state                                               # what this session has open (and what is still queued)
 relo notify "Nightly backup failed" --topic "Backups"    # only when no work is open
 ```
@@ -78,14 +80,15 @@ path. A published release (GitHub Releases of `redpanda77/relo`, tag `cli-v<vers
 `npm install --global https://github.com/redpanda77/relo/releases/download/cli-v<version>/relo-cli-<version>.tgz`.
 
 Each release carries `relo-cli-<version>.tgz` (the skill is bundled inside), `SHA256SUMS`, `sbom.cdx.json` and
-`manifest.json`. `relo update` is the owner's command; nothing updates by itself, and an agent runs it only after the
-owner agrees, never mid-task:
+`manifest.json`. `relo update` is the owner's command. A CLI installed with the install script updates itself in the background
+after the command that noticed a new version (`RELO_NO_UPDATE_CHECK=1` turns that off); an npm install does not, so
+an agent runs `relo update` only after the owner agrees, never mid-task:
 
 ```bash
-relo update --check      # {"ok":true,"current":"0.10.0","latest":"0.10.1","updateAvailable":true}; installs nothing
-relo update              # {"ok":true,"from":"0.10.0","to":"0.10.1","verified":true}
+relo update --check      # {"ok":true,"current":"0.17.48","latest":"0.17.49","updateAvailable":true}; installs nothing
+relo update              # {"ok":true,"from":"0.17.48","to":"0.17.49","verified":true}
 relo update --rollback   # back to the previous release, kept in ~/.local/share/relo/cli-releases/
-relo update --version 0.10.0 --dry-run
+relo update --version 0.17.48 --dry-run
 ```
 
 Its source is the signed-in server when it hands out a CLI (`/cli/version`, `/cli/relo-cli.tgz`), else GitHub
@@ -94,7 +97,7 @@ launcher it unpacks the new version beside the old one and points the launcher a
 `npm install --global` on the verified file; a mismatch installs nothing. `RELO_RELEASES_URL` points it at another
 releases API (a self-hoster's mirror). `relo doctor` compares your version with the latest release at most once a day (2 s timeout,
 cached in `~/.local/share/relo/update-check.json`, off with `RELO_NO_UPDATE_CHECK=1`) and shows
-`"warnings":{"update":{"state":"behind","latest":"0.10.1","hint":"relo update"}}`; it never changes `ready`, and that
+`"warnings":{"update":{"state":"behind","latest":"0.17.49","hint":"relo update"}}`; it never changes `ready`, and that
 cache file is the only thing doctor writes.
 
 Maintainers build a release with `npm run release:cli` at the repository root (clean tree, checks, pack, SBOM,
@@ -136,7 +139,7 @@ A yes/no answer is never permission, and exit `0` alone never authorizes an acti
 ## Retries
 
 A supplied `--idempotency-key` is 1-200 characters from letters, digits, `.`, `_`, `:` and `-`. Agents never
-pass one (the CLI owns it); scripts must on `work start` and `ask` when piped. Before the first send of a
+pass one (the CLI owns it); scripts must on `work start` when piped (on `ask` it is optional). Before the first send of a
 question or notification, the CLI durably records the original occurrence in private files under the local
 Relo state directory, so a retry with the same key replays the identical command even after a restart.
 Changed content needs a new key. The records hold no body, URL or credential; if they cannot be written the
@@ -220,7 +223,7 @@ Hooks are optional: notify and track install none, and without them Relo works f
 ## MCP server (optional)
 
 `relo mcp` is a stdio MCP server in this package (no dependencies, same credentials) for harnesses without a shell, such as
-Claude desktop and Cursor chat. Tools: `relo_work_start`, `relo_work_update`, `relo_work_finish`, `relo_work_state`, `relo_ask`,
+Claude desktop and Cursor chat. Tools: `relo_work_start`, `relo_work_update`, `relo_work_deliver`, `relo_work_handoff`, `relo_work_finish`, `relo_work_state`, `relo_ask`,
 `relo_interaction_wait`, `relo_notify`, `relo_doctor`. `relo_ask` waits up to 5 minutes and sends MCP progress
 notifications every ~15 s when the client asked for them. One work per connection.
 

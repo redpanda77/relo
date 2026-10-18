@@ -27,7 +27,7 @@ export const GUIDE = `Relo puts your work on the owner's iPhone: one open work p
   relo admin works                                               # only when the owner asks: every session's work
 Steps are milestones in order. Parallel work (subagents, several jobs) is one step with a count: --progress 2/6.
 A counted job without a plan: --progress 3/10. --plan "…" lists what is left (done steps stay; left-out steps
-are skipped); --step "…" jumps; update applies --next-step, --plan, --add, --step, --progress, then text.
+are skipped); --step "…" jumps; update applies --next-step, --plan, --add, --step, --detail, --progress, then text.
 A repeat start continues the open work; another goal: start --new (the old one is parked: relo work resume).
 Done and nothing left: finish (Done; a later start --round starts a fresh card). deliver = this request is done (their
 turn, one quiet notification); the owner must act mid-plan: ask or --waiting. deliver is refused while top-level steps
@@ -63,7 +63,7 @@ The first non-empty value wins:
      else the name of a custom ${CONFIG_FOLDERS} folder (~/.claude-work -> "work").
      Nothing in an agent's config folder is ever read, only its name.
 
-The topic is never guessed: name the work as the owner would ("Release 0.7.55", "Homepage redesign"),
+The topic is not guessed from your task. Inside a session it defaults to the session's name (else its work's goal); otherwise you give it. Name the work as the owner would ("Release 0.7.55", "Homepage redesign"),
 not a step ("Running tests"). Generic values ("Project", "Task", "Unknown") are rejected.
 Computer and account are optional context: omitted when nothing identifies them.
 
@@ -117,7 +117,7 @@ Questions: exit 0 approved/yes/chosen, 5 denied/no, 4 still open (relo interacti
   (expired, canceled): do not act. A question never starts or ends a work's card: with none running it goes out as a
   notification with the answer buttons. Answers also arrive by --callback-url, relo listen or relo interaction wait ID.
 
-Cards on the phone: a start alerts and a question on a card alerts again; other updates are silent. A card that stops
+Cards on the phone: a card's first appearance alerts once (the phone needs an alert to start a Live Activity) and a question on a card alerts again; other updates are silent. A card that stops
   updating is dimmed after ${factText("card.freshSeconds")} and leaves the Lock Screen after ${FACTS.card.retireSeconds / 60}.
 
 Links (--url): https:// pages, an app scheme (your-app://incidents/42) or shortcuts://run-shortcut?name=...

@@ -1,6 +1,6 @@
 # Test gates
 
-Everything is verified locally. `scripts/gates.sh` runs the contracts, server typecheck, CLI, skill,
+The maintainer verifies everything locally; for contributors, `.github/workflows/ci.yml` is the gate on a pull request. `scripts/gates.sh` runs the contracts, server typecheck, CLI, skill,
 Dashboard, owner-surface and public-boundary gates; `scripts/gates.sh --db` adds the server database
 suite on a throwaway PostgreSQL it creates and removes ([DEVELOPMENT.md](DEVELOPMENT.md#local-gates)).
 A skipped database suite is not a pass. The native gate is separate:

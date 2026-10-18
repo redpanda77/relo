@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { COMPUTER_ICON_META } from "@/components/atoms/computer-icon-meta"
 import { IconTile } from "@/components/atoms/icon-tile"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { StatusDot } from "@/components/atoms/status-dot"
 import { List, Row } from "@/components/list"
 import { ActionButton } from "@/components/molecules/action-button"
@@ -196,7 +196,7 @@ function DeviceItem({
       title={
         <span className="inline-flex max-w-full flex-wrap items-center gap-2">
           {device.name}
-          {thisBrowser ? <StatusChip tone="violet" variant="hairline">This browser</StatusChip> : null}
+          {thisBrowser ? <Badge tone="violet" variant="hairline">This browser</Badge> : null}
         </span>
       }
       status={<StatusDot tone={status.tone} label={status.text} className="text-muted-foreground" />}

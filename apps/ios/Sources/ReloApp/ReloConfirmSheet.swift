@@ -32,7 +32,7 @@ struct ReloConfirmSheet: View {
     @State private var problem: String?
 
     var body: some View {
-        ReloSheet(cancelTitle: spec.cancelTitle, busy: working) {
+        ReloSheet(cancelTitle: spec.cancelTitle, busy: working, pairsActions: spec.alternative == nil) {
             ReloSheetHeader(symbol: spec.symbol, tint: spec.destructive ? .reloDestructive : .reloAttention,
                             title: spec.title, message: spec.message)
         } content: {

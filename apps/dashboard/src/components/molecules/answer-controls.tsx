@@ -17,17 +17,20 @@
  *   Don't have these? `useAnswerableQuestion(id)` (hooks/use-answerable-question.ts) loads them (`GET /api/dashboard/questions/:id`).
  * - `onAnswered?(answer)`: called once the server recorded the answer (`state`, `late`, `replayed`)
  * - `showPrompt?` (default true): render the question line above the buttons
+ * - `countdown?` (default true): render the time left beside the buttons; a card that shows it in its
+ *   header's corner passes false
  * - `link?`, `service?`: the browser link and the HTTP service; tests inject fakes, pages omit them
  *
- * Rendering: the countdown (13px, muted, timer icon), then the buttons (gap 12, 32px tall and 44px on
- * touch; outline, then primary). An approval says "This lets <source> proceed." and asks to confirm
+ * Rendering: one wrapping row, gap 8: the countdown (the card set's Countdown) leading, the buttons
+ * (card action height; outline, then primary) trailing. In a card footer (`.card-actions`) the
+ * buttons lay straight into the footer beside the metadata. An approval says "This lets <source> proceed." and asks to confirm
  * before it signs. A browser that is not linked shows "Link this browser from your iPhone to answer
  * here" with a link to Account → Devices; a sealed question sealed only to phones, or one it cannot
  * open, says to answer on the iPhone and shows no buttons. The computer still decides whether a browser's answer counts (never in strict mode).
  */
-import { Timer } from "lucide-react"
 import * as React from "react"
 
+import { Countdown } from "@/components/card"
 import { ActionButton, type ActionPhase } from "@/components/molecules/action-button"
 import { Button } from "@/components/ui/button"
 import { currentBrowserLink, type BrowserLink, type BrowserLinkState } from "@/lib/e2ee/browser-link"
@@ -68,6 +71,7 @@ export function AnswerControls({
   question,
   onAnswered,
   showPrompt = true,
+  countdown: showCountdown = true,
   link: givenLink,
   service,
   className,
@@ -75,6 +79,7 @@ export function AnswerControls({
   question: AnswerableQuestion
   onAnswered?: (answer: SubmittedAnswer) => void
   showPrompt?: boolean
+  countdown?: boolean
   link?: AnswerLink | null
   service?: AnswerService
   className?: string
@@ -160,14 +165,8 @@ export function AnswerControls({
     }
   }
 
-  const countdown =
-    left === "" ? null : (
-      <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground" data-slot="answer-countdown">
-        <Timer className="size-3.5" aria-hidden />
-        {left ?? "Expired"}
-      </p>
-    )
-  const promptLine = showPrompt && prompt ? <p className="text-sm font-medium text-foreground">{prompt}</p> : null
+  const countdown = showCountdown && left !== "" ? <Countdown deadline={question.expiresAt} /> : null
+  const promptLine = showPrompt && prompt ? <p className="basis-full text-sm font-medium text-foreground">{prompt}</p> : null
 
   let body: React.ReactNode
   if (answered) {
@@ -196,15 +195,14 @@ export function AnswerControls({
     body = <p className="text-sm text-muted-foreground">This browser can&apos;t read this question. Answer it on your iPhone.</p>
   } else if (confirming) {
     body = (
-      <div className="grid gap-2">
-        <p className="text-sm text-foreground">This lets {source} proceed.</p>
-        <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="outline" className="h-8" disabled={Boolean(running)} onClick={() => setConfirming(null)}>
+      <>
+        <p className="mr-auto text-sm text-foreground">This lets {source} proceed.</p>
+        <div className="answer-buttons" role="group" aria-label="Confirm">
+          <Button type="button" variant="outline" disabled={Boolean(running)} onClick={() => setConfirming(null)}>
             Back
           </Button>
           <ActionButton
             type="button"
-            className="h-8"
             phase={phase && sameChoice(phase.choice, confirming) ? phase.phase : "idle"}
             pendingLabel="Signing…"
             successLabel="Answered"
@@ -213,13 +211,13 @@ export function AnswerControls({
             {confirming.label}
           </ActionButton>
         </div>
-      </div>
+      </>
     )
   } else {
     const waiting = state.status === "starting" || (question.encrypted && opened === null)
     const choice = question.kind !== "approval" && question.actions.every((entry) => entry.action === "choose")
     body = (
-      <div className="flex flex-wrap gap-3" role="group" aria-label="Answer">
+      <div className="answer-buttons" role="group" aria-label="Answer">
         {question.actions.map((entry, index) => {
           const primary = !choice && index === question.actions.length - 1
           return (
@@ -227,7 +225,6 @@ export function AnswerControls({
               key={`${entry.action}:${entry.optionId ?? ""}`}
               type="button"
               variant={primary ? "default" : "outline"}
-              className="h-8"
               disabled={waiting || Boolean(running && !sameChoice(running, entry))}
               phase={phase && sameChoice(phase.choice, entry) ? phase.phase : "idle"}
               pendingLabel="Signing…"
@@ -243,12 +240,12 @@ export function AnswerControls({
   }
 
   return (
-    <div className={cn("grid gap-2", className)} data-slot="answer-controls">
+    <div className={cn("answer-controls", className)} data-slot="answer-controls">
       {promptLine}
       {answered ? null : countdown}
       {body}
       {error ? (
-        <p className="text-[13px] text-destructive" role="alert">
+        <p className="basis-full text-[13px] text-destructive" role="alert">
           {error}
         </p>
       ) : null}

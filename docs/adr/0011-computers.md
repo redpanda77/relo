@@ -1,6 +1,6 @@
 # ADR 0011: Computers
 
-Status: accepted, 16 October 2026; implemented in phases (plan: `docs/internal/product/plan/11-computers.md`).
+Status: accepted, 16 October 2026; implemented in phases.
 Applies [ADR 0008](0008-relo-design-framework.md) ("Devices and trust": observed device facts and the owner's
 trust decisions) and [ADR 0010](0010-shared-server-modules.md) (one module per concern).
 

@@ -32,7 +32,8 @@ enum ReloSheetSizing {
     case detents(Set<PresentationDetent>)
 }
 
-/// The bottom-sheet scaffold: header, optional body, a vertical action stack, a built-in Cancel. It sits on
+/// The bottom-sheet scaffold: header, optional body, a vertical action stack (or, for a confirmation with one
+/// action, Cancel and the action side by side), a built-in Cancel. It sits on
 /// the surface color (the backdrop belongs to full pages) and shows the drag indicator. Fitted sheets measure
 /// their unstretched content, so the sheet ends where the last button does.
 struct ReloSheet<Header: View, Content: View, Actions: View>: View {
@@ -40,26 +41,22 @@ struct ReloSheet<Header: View, Content: View, Actions: View>: View {
     var cancelIdentifier = "sheet-cancel"
     var busy = false
     var sizing: ReloSheetSizing = .fitted
+    /// Two actions in one row: Cancel beside the sheet's single action. Stacked at accessibility sizes.
+    var pairsActions = false
     @ViewBuilder var header: Header
     @ViewBuilder var content: Content
     @ViewBuilder var actions: Actions
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var contentHeight: CGFloat?
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: ReloLayout.sectionSpacing) {
                 header
                 content
-                VStack(spacing: 10) {
-                    actions
-                    if let cancelTitle {
-                        Button(cancelTitle) { dismiss() }
-                            .buttonStyle(.reloSecondary)
-                            .accessibilityIdentifier(cancelIdentifier)
-                    }
-                }
-                .disabled(busy)
+                actionStack
+                    .disabled(busy)
             }
             .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 12)
             .background(GeometryReader { proxy in
@@ -76,6 +73,28 @@ struct ReloSheet<Header: View, Content: View, Actions: View>: View {
         .interactiveDismissDisabled(busy)
     }
 
+    @ViewBuilder private var actionStack: some View {
+        if pairsActions, !typeSize.isAccessibilitySize, cancelTitle != nil {
+            HStack(spacing: ReloLayout.footerGap) {
+                cancelButton
+                actions
+            }
+        } else {
+            VStack(spacing: ReloLayout.footerGap) {
+                actions
+                cancelButton
+            }
+        }
+    }
+
+    @ViewBuilder private var cancelButton: some View {
+        if let cancelTitle {
+            Button(cancelTitle) { dismiss() }
+                .buttonStyle(.reloSecondary)
+                .accessibilityIdentifier(cancelIdentifier)
+        }
+    }
+
     private var detents: Set<PresentationDetent> {
         switch sizing {
         case .fitted: [contentHeight.map { .height($0) } ?? .medium]
@@ -86,10 +105,10 @@ struct ReloSheet<Header: View, Content: View, Actions: View>: View {
 
 extension ReloSheet where Content == EmptyView {
     init(cancelTitle: String? = "Cancel", cancelIdentifier: String = "sheet-cancel", busy: Bool = false,
-         sizing: ReloSheetSizing = .fitted,
+         sizing: ReloSheetSizing = .fitted, pairsActions: Bool = false,
          @ViewBuilder header: () -> Header, @ViewBuilder actions: () -> Actions) {
         self.init(cancelTitle: cancelTitle, cancelIdentifier: cancelIdentifier, busy: busy, sizing: sizing,
-                  header: header, content: { EmptyView() }, actions: actions)
+                  pairsActions: pairsActions, header: header, content: { EmptyView() }, actions: actions)
     }
 }
 

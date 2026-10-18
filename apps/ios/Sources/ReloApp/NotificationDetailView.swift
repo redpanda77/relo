@@ -24,25 +24,25 @@ struct NotificationDetailView: View {
     private var stale: Bool { nowItem?.owner.state == .stale }
     /// A sealed item this iPhone could not open says why, instead of an empty body.
     private var messageText: String? { currentItem.content?.body ?? presentation.subtitle ?? currentItem.unreadableLine }
-    /// Where and when, below the work itself: the reference facts, one per row.
-    private var detailRows: [(label: String, value: String, monospaced: Bool)] {
+    /// Where and when, below the work itself. The header already says source, project and session, so the
+    /// facts hold only what it does not; when it started, how long it took and its updates read as one fact.
+    private var detailFacts: [ReloFact] {
         let context = InboxHierarchyProjection.context(for: currentItem)
         let row = HistoryRowProjection.row(currentItem, now: model.attentionDate)
-        var rows: [(label: String, value: String, monospaced: Bool)] = []
+        var facts: [ReloFact] = []
         if let interaction = currentItem.interaction, interaction.state == .pending {
-            rows.append(("Respond by", interaction.expiresAt.formatted(date: .omitted, time: .shortened), false))
+            facts.append(ReloFact(label: "Respond by", value: interaction.expiresAt.formatted(date: .omitted, time: .shortened)))
         }
-        if let task = context?.taskTitle, !task.isEmpty, task != presentation.title { rows.append(("Task", task, false)) }
-        if let topic = row.topic { rows.append(("Session", topic, false)) }
-        rows.append(("Source", row.source.name, false))
-        if let project = row.project { rows.append(("Project", project.name, false)) }
-        if let computer = context?.computer ?? row.origin, !computer.isEmpty { rows.append(("Computer", computer, false)) }
-        let started = row.startedAt ?? currentItem.createdAt
-        rows.append(("Started", started.formatted(date: .abbreviated, time: .shortened), false))
-        if let duration = row.duration { rows.append(("Took", ReloMissionTimeline.format(duration), true)) }
-        if let updates = row.updates, updates > 1 { rows.append(("Updates", "\(updates)", false)) }
-        if currentItem.kind != .liveActivity { rows.append(("Type", row.type, false)) }
-        return rows
+        if let task = context?.taskTitle, !task.isEmpty, task != presentation.title { facts.append(ReloFact(label: "Task", value: task)) }
+        if let computer = context?.computer ?? row.origin, !computer.isEmpty {
+            facts.append(ReloFact(label: "Computer", value: computer, isComputer: true))
+        }
+        var ran = [(row.startedAt ?? currentItem.createdAt).formatted(date: .abbreviated, time: .shortened)]
+        if let duration = row.duration { ran.append("took \(ReloDuration.format(duration))") }
+        if let updates = row.updates, updates > 1 { ran.append("\(updates) updates") }
+        facts.append(ReloFact(label: "Started", value: ran.joined(separator: " · ")))
+        if currentItem.kind != .liveActivity { facts.append(ReloFact(label: "Type", value: row.type)) }
+        return facts
     }
 
     private var asksNow: Bool { currentItem.interaction?.state == .pending }
@@ -143,7 +143,7 @@ struct NotificationDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ReloMissionTimeline(item: currentItem, steps: steps, window: window, outline: planOutline,
                                     progress: measuredProgress, status: presentation.status, now: model.attentionDate,
-                                    serverOutcome: nowItem.flatMap(HistoryServerOutcome.init(item:)),
+                                    serverOutcome: nowItem.flatMap(ReloStateStyle.init(item:)),
                                     waiting: currentItem.isDeclaredWaiting,
                                     updates: { stepUpdates(for: $0) })
                 ReloActivityVisual(item: currentItem, accountID: model.credential?.accountId, mediaOnly: true)
@@ -161,7 +161,7 @@ struct NotificationDetailView: View {
                 }
                 if let imageURL = currentItem.validatedSourceImageURL {
                     ReloRemoteImage(url: imageURL, accountID: model.credential?.accountId, altText: "Image from \(currentItem.sourceName)")
-                        .clipShape(RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous))
                 }
                 if let url = currentItem.validatedDestinationURL {
                     Link(destination: url) {
@@ -177,12 +177,12 @@ struct NotificationDetailView: View {
                             Image(systemName: "arrow.up.right").font(.caption.weight(.bold))
                         }
                         .foregroundStyle(Color.reloInteractive)
-                        .padding(12).frame(minHeight: 44)
-                        .background { RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous).fill(Color.reloInteractive.opacity(0.10)) }
+                        .padding(ReloLayout.rowInset).frame(minHeight: 44)
+                        .background { RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous).fill(Color.reloInteractive.opacity(0.10)) }
                     }
                 }
             }
-            .padding(ReloLayout.cardInset + 2)
+            .padding(ReloLayout.cardInset)
             .frame(maxWidth: .infinity, alignment: .leading)
             .reloCard(tint: kind.color)
             .reloEntrance(1)
@@ -194,7 +194,7 @@ struct NotificationDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 ReloIdentityHeader(item: currentItem, title: presentation.title, kind: kind, status: statusLine,
-                                   serverOutcome: nowItem.flatMap(HistoryServerOutcome.init(item:)),
+                                   serverOutcome: nowItem.flatMap(ReloStateStyle.init(item:)),
                                    now: model.attentionDate)
                     .reloEntrance(0)
                 // A question leads with the question; the work it belongs to follows.
@@ -208,6 +208,10 @@ struct NotificationDetailView: View {
                 if currentItem.interaction != nil && !pending {
                     ResponseControls(model: model, item: currentItem).reloEntrance(2)
                 }
+                // Said once, here, where the late answer is given; the Missed card on Now only offers it.
+                if nowItem?.question?.standing == .missed {
+                    CardNote(NowScreenModel.lateAnswerNote, symbol: "clock.badge.xmark").reloEntrance(2)
+                }
                 if currentItem.kind != .liveActivity {
                     ReloDetailSection(title: "Delivery") {
                         ReloDeliveryTimelineView(timeline: .make(currentItem))
@@ -215,7 +219,7 @@ struct NotificationDetailView: View {
                     .reloEntrance(3)
                 }
                 ReloDetailSection(title: "Details") {
-                    ReloAboutRows(rows: detailRows, computerIcon: model.computerIcon(forOrigin: detailRows.first { $0.label == "Computer" }?.value))
+                    ReloFacts(facts: detailFacts, computerIcon: model.computerIcon(forOrigin: detailFacts.first { $0.isComputer }?.value))
                 }
                 .reloEntrance(4)
                 if endedHere {

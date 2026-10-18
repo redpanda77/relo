@@ -56,9 +56,9 @@ Plan rules:
 - `--plan "A,B,C"` lists **what is left**, in order, matched by label (case-insensitive). Done steps
   stay done; a listed skipped step reopens; an unlisted open or current step is skipped (run
   `--next-step` in the same command to mark the current one done first).
-- `--add "D,E"` appends after the last open step; with no current step the first added becomes current.
+- `--add "D,E"` appends at the end of the round (or after `--after sN`); with no current step the first added becomes current.
 - `--next-step`: current → done, the next open step → current. `--step X` (an id like `s4`, or a
-  label) jumps: forward skips the steps passed over; back to a done step reopens it.
+  label) jumps: forward marks the steps passed over as done; back to a done step reopens it.
 - `--progress n/m` (integers, `m ≥ 1`) attaches to the current step on a planned work and clears
   when the step changes; on a work without a plan it is the whole job's count. On `start` with
   `--plan` it attaches to the first step. Percentages and fractions are refused.
@@ -68,6 +68,8 @@ Plan rules:
   last under a step. Only a step without sub-steps is current: `--next-step` goes from leaf to leaf, a
   parent is done when its children are, and a step added under the current one takes over.
 - `--detail "…"` (up to <!--f:work.detailMax short-->200<!--/f--> characters) explains the current step; the owner opens it from the plan.
+- `--round TEXT` is one line of at most 80 characters.
+- `--plan` and `--add` split on commas; a comma inside (), [] or quotes stays in the label, and a value with line breaks is one step per line (an unclosed bracket is refused).
 - Rounds: one goal is one work; each request is a round. `deliver` closes it (refused while
   top-level steps are open unless `--drop-rest`); `start --round "…" [--plan "…"]` opens the next (without `--plan` it carries the unfinished steps). An open round is never started again:
   that start continues it and notes that `--round` was ignored.
@@ -149,9 +151,9 @@ Never an id you have to remember: the session is read from the harness, never ch
 only outside a detected harness (a script, the owner's shell). Session, source, project, computer and
 account are automatic.
 
-- `update` and `pause` always act on this session's open work and take no id.
+- `update` and `pause` always act on this session's open work and take no id (a caller with a handle passes `--work <handle>`).
 - `finish --work wrk_…` and `resume wrk_…` reach a parked work of this session only.
-- No session id (Gemini CLI, Cursor, OpenCode, nested harnesses): `relo work start` prints a handle
+- No session id (Gemini CLI, Cursor, Copilot, Amp, nested harnesses): `relo work start` prints a handle
   (`Handle: wrk_8f2c1a9e.<token>`); pass `--work <handle>` to every later command for that work.
 - Commands that show every session (`relo sessions`, `relo listen`) are for the owner and are refused
   inside an agent session.
@@ -177,7 +179,7 @@ relo ask "Which release goes out today?" --option "1.4" --option "1.5 beta" --op
   command waits for the answer. A question waits <!--f:question.defaultSeconds-->5 minutes<!--/f--> by default; `--expires-in` asks for longer
   (for example `2h` or `1d`), up to the server's limit (<!--f:question.serverCapSeconds-->7 days<!--/f--> unless the admin set another; a longer
   ask is refused with `question_wait_too_long`). Past the Lock Screen's 8-hour limit the same question keeps waiting in Relo's Needs you. Unanswered, it expires. The command
-  waits for `--timeout` (default the question's lifetime up to <!--f:question.defaultSeconds-->5 minutes<!--/f-->; **<!--f:question.agentWaitSeconds short-->100s<!--/f--> inside an agent
+  waits for `--timeout` (the CLI asks the server in short slices of at most 90 seconds, never one long request; default the question's lifetime up to <!--f:question.defaultSeconds-->5 minutes<!--/f-->; **<!--f:question.agentWaitSeconds short-->100s<!--/f--> inside an agent
   session**, because an agent's shell tool kills longer commands). If that passes first, it exits 4 with
   `{"error":{"message":"No answer yet; the question is still open.","hint":"relo interaction wait int_… --timeout 100s","details":{"state":"timeout","id":"int_…"}}}`:
   run the hint. Exit 8 (state `expired` or `canceled`) means closed without an answer: do not act.
@@ -239,7 +241,7 @@ These commands print one compact JSON line when piped; omitted keys are absent o
 | `ask`, `interaction get/wait/cancel` | `{"ok":true,"id":"int_…","state":"approved"}`; `fallback` when no work is open |
 | `notify` / `notify withdraw` | `{"ok":true,"id":"ntf_…","devices":1}` / `{"ok":true,"id":"ntf_…","state":"withdrawn"}` |
 | `doctor` | `{"ok":true,"ready":true}`, or `{"ok":true,"ready":false,"next":{"step":"login\|phone\|test\|skill","run","why"}}`; failures add `"checks":{"server":{"state","hint"}}` |
-| `auth login` | in an agent context or with `--no-wait`: `{"ok":true,"state":"pending","url","code","next":"relo auth login --wait"}`; `--wait` and a blocking login end with the signed-in line |
+| `auth login` | in an agent context or with `--no-wait`: `{"ok":true,"state":"pending","url","code","qr","next":"relo auth login --wait"}`; `--wait` and a blocking login end with the signed-in line |
 | `test` | `{"ok":true,"verified":true}` (`"already":true` when the phone passed before) |
 | `auth status` | `{"ok":true,"signedIn":true,"server","client","expiresAt"}`; `missingScopes` only when one is missing |
 | `services list` | `{"ok":true,"services":[{"id","title","prefix","createdAt"}]}`, secrets never included |

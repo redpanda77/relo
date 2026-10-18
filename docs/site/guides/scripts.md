@@ -123,7 +123,7 @@ if relo ask "Restore last night's backup over production?" --approval \
 fi
 ```
 
-Only exit 0 with state `approved` is permission. Waiting, resuming and callbacks:
+The CLI waits in slices of at most 90 seconds, so a long `--timeout` is not one long request. Only exit 0 with state `approved` is permission. Waiting, resuming and callbacks:
 [Questions from code](/docs/guides/asking).
 
 ## CI

@@ -2,9 +2,10 @@
  * The one Lock Screen line (plan 2.25). Every surface that echoes what the owner sees (CLI echo,
  * Dashboard, iPhone) renders this same string from the same work, held by fixtures/card-line-v1.json.
  *
- * With a plan and a current step: "Step i · n to go · <label> · d of t" (count only when the current
+ * With a plan and a current step: "Step i of n · <label> · d of t" (count only when the current
  * step carries one; "t of t ✓" once it is complete). Skipped steps never count: they are neither
- * done nor to go. Without a current step the line is the label alone (waiting reason, status or goal),
+ * done nor open (n counts done, current and open steps).
+ * Without a current step the line is the label alone (waiting reason, status or goal),
  * with a work-level count when one exists. Never a plan-wide percent; never a placeholder.
  */
 export type CardLineStep = {
@@ -34,8 +35,8 @@ export function cardLine(work: CardLineWork): string {
   const current = steps[currentIndex];
   if (current) {
     const index = steps.filter((step) => step.state === "done").length + 1;
-    const toGo = steps.slice(currentIndex + 1).filter((step) => step.state === "open").length;
-    const parts = [`Step ${index}`,`${toGo} to go`];
+    const total = steps.filter((step) => step.state !== "skipped").length;
+    const parts = [`Step ${index} of ${total}`];
     if (current.label) parts.push(current.label);
     if (current.progress) parts.push(count(current.progress));
     return parts.join(" · ");

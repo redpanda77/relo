@@ -69,7 +69,7 @@ Work wrk_8f2c1a9e "Ship the 0.17 release" (open, continuing)
   [ ] s3 Tag and publish
 Note: open work is "Ship the 0.17 release". You passed "Release 0.17". Nothing changed.
 Note: same goal → relo work update --goal "Release 0.17"; new goal → relo work start --new --goal "Release 0.17"
-Owner sees: on the Lock Screen, "Step 2 · 1 to go · Run local gates · 3 of 5"
+Owner sees: on the Lock Screen, "Step 2 of 5 · Run local gates · 3 of 5"
 Next: relo work update --progress 4/5  |  relo work update --next-step
 ```
 
@@ -80,7 +80,7 @@ Work wrk_5d0e7b21 "Fix the flaky upload test" (open, started)
   [>] s1 Reproduce the failure
   [ ] s2 Find the cause
 Note: parked wrk_8f2c1a9e "Ship the 0.17 release"; its card left the Lock Screen.
-Owner sees: on the Lock Screen, "Step 1 · 1 to go · Reproduce the failure"
+Owner sees: on the Lock Screen, "Step 1 of 2 · Reproduce the failure"
 Parked: wrk_8f2c1a9e "Ship the 0.17 release" (paused 10:44) → relo work resume wrk_8f2c1a9e  |  relo work finish --work wrk_8f2c1a9e --outcome "…"
 Next: relo work update --next-step  |  relo work finish --outcome "…"
 ```
@@ -141,7 +141,7 @@ Avoid: step narration ("Calling the read tool"), raw commands, paths, or anythin
 background job such as a deploy) is `--waiting "CI"`, cleared with `--not-waiting`: the card is not
 dimmed while it waits, and a turn that ends under it stays moving instead of "waiting on you" (up to an hour).
 
-Update on real milestones only. Updates are silent on the phone; only questions alert, and the
+Update on real milestones only. A work's first appearance on the Lock Screen alerts once, updates are silent, questions alert again, and the
 deliver or finish outcome is the one notification.
 
 ## Questions on the work
@@ -202,13 +202,13 @@ relo work update --add "Handle quoted fields" --under s3 --detail "Quotes inside
         Quotes inside quoted fields break the split
     [ ] s4 Write the rows
   [ ] s5 Verify it
-Owner sees: on the Lock Screen, "Step 2 · 2 to go · Parse the rows › Handle quoted fields"
+Owner sees: on the Lock Screen, "Step 2 of 5 · Parse the rows › Handle quoted fields"
 ```
 
 ## What the owner sees
 
 Every echo has an `Owner sees:` line computed by the server, so you learn what your writes cause:
-moving work shows "Step 2 · 1 to go · <current step>" on the Lock Screen; no update for 20 min dims
+moving work shows "Step 2 of 5 · <current step>" on the Lock Screen; no update for 20 min dims
 the card; 60 min without one takes it off the Lock Screen (any update brings it back); a paused work
 shows only in Now › Paused; a done work shows its final card for 15 min with one quiet notification;
 a failed one for 60 min with an alert; a dropped one goes to History only.

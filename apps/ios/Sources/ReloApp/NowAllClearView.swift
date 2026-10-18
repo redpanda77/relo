@@ -81,13 +81,12 @@ private struct TodayLog: View {
     @State private var shown = false
 
     var body: some View {
-        VStack(spacing: 6) {
+        CardGroup {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                LogRow(row: row) { openItem(row.item.id) }
+                LogRow(row: row, divider: index > 0) { openItem(row.item.id) }
                     .opacity(shown ? 1 : 0)
-                    .offset(y: shown || reduceMotion ? 0 : 10)
                     .animation(reduceMotion ? nil : .smooth(duration: 0.5).delay(Double(index) * 0.07), value: shown)
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                    .transition(.opacity)
             }
         }
         .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: rows.map(\.id))
@@ -95,66 +94,49 @@ private struct TodayLog: View {
     }
 }
 
+/// One line of today's log on the standard surface: the title and when it happened, then how it ended.
 private struct LogRow: View {
     let row: HistoryRow
+    let divider: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 12) {
-                glyph
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(row.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
-                    ReloMonoLabel(detail).lineLimit(1)
+            CardRow(divider: divider) {
+                HStack(spacing: ReloLayout.itemSpacing) {
+                    glyph
+                    VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
+                        HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
+                            Text(row.title).font(ReloLayout.cardTitle).foregroundStyle(.primary).lineLimit(1)
+                            Spacer(minLength: 0)
+                            Text(row.at, style: .time).font(ReloLayout.cardMeta).monospacedDigit()
+                                .foregroundStyle(Color.reloSecondaryText).fixedSize()
+                        }
+                        Text.cardMeta(detail).font(ReloLayout.cardMeta).lineLimit(1)
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Text(row.at.formatted(date: .omitted, time: .shortened))
-                    .font(.system(.caption2, design: .monospaced).monospacedDigit())
-                    .foregroundStyle(Color.reloSecondaryText.opacity(0.8))
             }
-            .padding(.horizontal, 12).padding(.vertical, 10).frame(minHeight: 52)
-            .background(RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous).fill(Color.primary.opacity(0.04)))
-            .contentShape(Rectangle())
         }
         .buttonStyle(ReloPressStyle())
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens details")
     }
 
-    private var signal: NowSignal { NowSignal.of(row.outcome) }
-
-    private var symbol: String {
-        switch row.outcome {
-        case .done: "checkmark"
-        case .stopped: "exclamationmark"
-        case .expired, .ended, .replaced, .unanswered: "minus"
-        case .answered: "checkmark.bubble.fill"
-        default: "text.bubble.fill"
-        }
-    }
-
     private var glyph: some View {
-        let tone = ReloHoloTheme.color(signal)
-        return Image(systemName: symbol)
-            .font(.system(size: 11, weight: .bold)).foregroundStyle(tone)
+        let style = ReloStateStyle.glyph(outcome: row.outcome)
+        return Image(systemName: style.symbol)
+            .font(.system(size: 11, weight: .bold)).foregroundStyle(style.color) // design: a mark sized to the dot it sits in
             .frame(width: 28, height: 28)
-            .background(Circle().fill(tone.opacity(0.14)))
+            .background(Circle().fill(style.color.opacity(0.14)))
             .accessibilityHidden(true)
     }
 
-    private var detail: String {
+    private var detail: [String] {
         var parts: [String] = []
         if let label = row.outcome.label { parts.append(label) } else { parts.append(row.source.name) }
-        if let duration = row.duration { parts.append(Self.duration(duration)) }
+        if let duration = row.duration { parts.append(ReloDuration.format(duration)) }
         if let updates = row.updates, updates > 0 { parts.append("\(updates) updates") }
-        return parts.joined(separator: " · ").uppercased()
-    }
-
-    static func duration(_ seconds: TimeInterval) -> String {
-        let value = Int(seconds.rounded())
-        if value < 60 { return "\(max(value, 1))s" }
-        if value < 3600 { return "\(value / 60)m" }
-        return "\(value / 3600)h \(value % 3600 / 60)m"
+        return parts
     }
 }
 

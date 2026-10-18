@@ -9,7 +9,7 @@
         { "id": "s3", "state": "current", "label": "Resize", "progress": { "done": 2, "total": 6 } },
         { "id": "s4", "state": "open", "label": "Upload" }
       ] } },
-      "expected": "Step 3 · 1 to go · Resize · 2 of 6"
+      "expected": "Step 3 of 4 · Resize · 2 of 6"
     },
     {
       "name": "count complete gets a check",
@@ -17,7 +17,7 @@
         { "id": "s1", "state": "current", "label": "Resize", "progress": { "done": 6, "total": 6 } },
         { "id": "s2", "state": "open", "label": "Upload" }
       ] } },
-      "expected": "Step 1 · 1 to go · Resize · 6 of 6 ✓"
+      "expected": "Step 1 of 2 · Resize · 6 of 6 ✓"
     },
     {
       "name": "step without a count",
@@ -27,10 +27,10 @@
         { "id": "s3", "state": "open", "label": "Deploy" },
         { "id": "s4", "state": "open", "label": "Verify" }
       ] } },
-      "expected": "Step 2 · 2 to go · Test"
+      "expected": "Step 2 of 4 · Test"
     },
     {
-      "name": "skipped steps are neither done nor to go",
+      "name": "skipped steps are neither done nor open",
       "work": { "goal": "Ship", "plan": { "steps": [
         { "id": "s1", "state": "done", "label": "Build" },
         { "id": "s2", "state": "skipped", "label": "Lint" },
@@ -38,7 +38,7 @@
         { "id": "s4", "state": "skipped", "label": "Bench" },
         { "id": "s5", "state": "open", "label": "Deploy" }
       ] } },
-      "expected": "Step 2 · 1 to go · Test"
+      "expected": "Step 2 of 3 · Test"
     },
     {
       "name": "last step",
@@ -46,7 +46,7 @@
         { "id": "s1", "state": "done", "label": "Build" },
         { "id": "s2", "state": "current", "label": "Deploy" }
       ] } },
-      "expected": "Step 2 · 0 to go · Deploy"
+      "expected": "Step 2 of 2 · Deploy"
     },
     {
       "name": "sealed step has no label and no placeholder",
@@ -54,7 +54,7 @@
         { "id": "s1", "state": "current", "progress": { "done": 1, "total": 4 } },
         { "id": "s2", "state": "open" }
       ] } },
-      "expected": "Step 1 · 1 to go · 1 of 4"
+      "expected": "Step 1 of 2 · 1 of 4"
     },
     {
       "name": "no plan: the label alone",

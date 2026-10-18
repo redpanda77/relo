@@ -33,7 +33,7 @@ The full guide is in the docs, which every Relo server also serves at `/docs`:
 3. **[Connect this computer](docs/site/get-started/cli.md)**: install the CLI release (Node.js 22+),
    `relo auth login`, then `relo doctor`.
 4. **[See your first card](docs/site/get-started/first-card.md)**: `relo test`, then a real
-   `relo work start`, `relo work update` and `relo work finish`.
+   `relo work start`, `relo work update` and `relo work deliver` (then `relo work finish` when the goal is done).
 5. **[Tell your agents](docs/site/get-started/agents.md)**: `relo setup` writes a short block and the
    skill for every agent harness on the computer. Hooks and MCP are optional.
 

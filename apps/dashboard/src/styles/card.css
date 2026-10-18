@@ -1,0 +1,527 @@
+/* ==========================================================================
+   The card set (components/card/): the one card every surface builds on.
+
+   Anatomy, top to bottom: header (eyebrow · origin, one trailing corner), title, status, note,
+   footer (metadata leading, actions trailing). A field never gets a row of its own: a lone short
+   field rides the header's corner, several share the footer. Tokens live in index.css (--card-*).
+   Phones are not a second layout: the same rows, narrower; the card is a size container, and the
+   glyph, the footer and the buttons answer to the card's width, not the window's.
+   ========================================================================== */
+
+.card {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  container: card / inline-size;
+  border-radius: var(--card-radius);
+  outline: 1.5px solid transparent;
+  outline-offset: -1.5px;
+  transition:
+    --tone var(--dur-slow) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    translate var(--dur-fast) var(--ease-out),
+    scale var(--spring-press-dur) var(--spring-press),
+    outline-color 600ms var(--ease-out);
+}
+.card[data-variant="live"] {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+.card[data-variant="live"] > .card-hit { flex: 1 1 auto; }
+.card[data-variant="plain"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-section-gap);
+  overflow: hidden;
+  padding: var(--card-pad);
+}
+.card[data-variant="row"] { border-radius: 0; }
+
+/* Needs you: the border takes the tone and the sheet an even whisper of it (no corner wash, no
+   glow): the eyebrow and the glyph say what it is. The tint fades in when a card turns (or arrives)
+   needing the owner. */
+.card[data-tint] { border-color: color-mix(in srgb, var(--tone) 30%, var(--hairline)); }
+.card[data-tint]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--tone) 5%, transparent);
+  pointer-events: none;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+@starting-style {
+  .card[data-tint]::before { opacity: 0; }
+}
+
+/* The open target: everything but the footer. */
+.card-hit {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: var(--card-pad);
+  border-radius: inherit;
+  outline: none;
+}
+.card-hit[role="button"] { cursor: pointer; }
+.card-hit:focus-visible { box-shadow: inset 0 0 0 2px var(--ring); }
+.card-hit:has(+ .card-foot) { padding-bottom: var(--card-foot-gap); }
+
+.card[data-variant="row"] .card-hit {
+  align-items: center;
+  min-height: 52px;
+  padding: 10px var(--card-pad);
+  border-radius: 0;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.card[data-variant="row"] .card-hit[role="button"]:hover { background: rgb(255 255 255 / 0.035); }
+
+@media (hover: hover) {
+  .card[data-variant="live"]:has(> .card-hit[role="button"]:hover) {
+    translate: 0 -1px;
+    border-color: var(--hairline-strong);
+  }
+  .card[data-tint]:has(> .card-hit[role="button"]:hover) {
+    border-color: color-mix(in srgb, var(--tone) 45%, var(--hairline));
+  }
+}
+.card[data-variant="live"]:has(> .card-hit[role="button"]:active) {
+  scale: 0.985;
+  transition-duration: var(--dur-micro);
+}
+
+/* The leading glyph: 28px. A live card gives its width back to the words when it is narrow. */
+.card-lead { display: grid; flex-shrink: 0; place-items: center; }
+@container card (max-width: 419.98px) {
+  .card[data-variant="live"] .card-lead { display: none; }
+}
+
+.card-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--card-gap);
+  min-width: 0;
+}
+
+/* ---------- Header: eyebrow · origin on the left, one corner on the right ---------- */
+
+.card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  min-width: 0;
+}
+.card-header > * { grid-column: 1; min-width: 0; }
+.card-header > .card-action { grid-column: 2; grid-row: 1; justify-self: end; }
+.card-header-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+}
+.card-eyebrow {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tone, var(--muted-foreground));
+}
+/* The header's right corner: a time, a state, a countdown, a computer. */
+.card-action { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.card-corner {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.card-corner svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+/* Origin: source · project › topic on one line; the topic shrinks first, then the project. */
+.card-origin {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.card-origin-source { display: inline-flex; flex-shrink: 0; align-items: center; }
+.card-origin-project {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.card-origin-topic {
+  min-width: 0;
+  flex-shrink: 1000;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-sep { flex-shrink: 0; color: color-mix(in srgb, var(--muted-foreground) 60%, transparent); }
+
+/* ---------- Words: title, status, note ---------- */
+
+.card-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--card-title-size);
+  line-height: var(--card-title-lh);
+  font-weight: 600;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.card-title[data-lines="1"] { -webkit-line-clamp: 1; line-clamp: 1; }
+.card-title-encrypted {
+  display: flex;
+  max-width: 100%;
+  font-size: var(--card-title-size);
+  line-height: var(--card-title-lh);
+  color: var(--muted-foreground);
+}
+.card-title-encrypted > span:last-child,
+.card-title-encrypted .sealed-opening-words {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-description,
+.card-status {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--card-status-size);
+  line-height: var(--card-status-lh);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.card-description { display: block; max-width: 65ch; -webkit-line-clamp: unset; line-clamp: unset; }
+.card-status[data-lines="1"] { -webkit-line-clamp: 1; line-clamp: 1; }
+.card-status[data-lines="4"] { -webkit-line-clamp: 4; line-clamp: 4; color: color-mix(in srgb, var(--foreground) 82%, transparent); }
+.card-note {
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
+/* ---------- Meta: the state in its tone, then muted facts, joined by dots ---------- */
+
+.card-meta {
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.card-meta time,
+.card-computer { white-space: nowrap; }
+.card-state { font-weight: 600; color: var(--tone); white-space: nowrap; }
+.card-state svg,
+.card-computer svg {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+.card-computer svg { margin-right: 3px; }
+
+/* Moving work shimmers its state, "Running" and its mark, in its own colour: a highlight crosses
+   the word while the mark brightens just before it (colour and background position only). */
+.card[data-live] .card-state svg { animation: card-state-pulse 2.8s ease-in-out infinite; }
+.card[data-live] .card-state-label {
+  background: linear-gradient(100deg, var(--tone) 38%, color-mix(in srgb, var(--tone) 25%, white) 50%, var(--tone) 62%) 100% 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: card-state-sweep 2.8s linear infinite;
+}
+@keyframes card-state-sweep {
+  0% { background-position: 100% 0; }
+  70%, 100% { background-position: 0 0; }
+}
+@keyframes card-state-pulse {
+  0%, 100% { color: var(--tone); }
+  18% { color: color-mix(in srgb, var(--tone) 25%, white); }
+  36% { color: var(--tone); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card[data-live] .card-state-label { background: none; color: var(--tone); }
+}
+
+/* ---------- Footer: metadata leading, actions trailing, one row while they fit ---------- */
+
+.card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px var(--card-foot-gap);
+  min-width: 0;
+}
+.card[data-variant="live"] > .card-foot { padding: 0 var(--card-pad) var(--card-pad); }
+.card-foot-meta { flex: 1 1 auto; min-width: 0; }
+.card-foot-meta[data-open] { cursor: pointer; }
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+}
+.card-actions [data-slot="button"] {
+  height: var(--card-action-h);
+  min-height: var(--card-action-h);
+}
+.card-actions > [role="alert"] { flex: 1 1 100%; }
+/* Answer controls inside a footer lay their buttons straight into it. */
+.card-actions [data-answer-slot],
+.card-actions [data-slot="answer-controls"],
+.card-actions [data-slot="answer-controls"] > [role="group"] { display: contents; }
+.card-actions [data-slot="answer-controls"] > p:not([role="alert"]) { flex: 1 1 100%; }
+[data-decided] .card-actions {
+  opacity: 0.35;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+/* Buttons that no longer fit beside the metadata drop under it, equal and as wide as the card. */
+@container card (max-width: 479.98px) {
+  .card-foot > .card-actions { flex: 1 1 auto; }
+  .card-actions > [data-slot="button"],
+  .card-actions [role="group"] > [data-slot="button"] { flex: 1 1 0; min-width: max-content; }
+}
+
+/* AnswerControls standing alone (the detail's footer): the time left leads, the buttons trail. */
+.answer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.answer-controls > .card-corner { margin-right: auto; }
+.answer-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.answer-controls [data-slot="button"] {
+  height: var(--card-action-h);
+  min-height: var(--card-action-h);
+}
+
+/* The meter docks on the card's bottom edge: it costs no row. */
+.card-progress { position: absolute; inset: auto 0 0; pointer-events: none; }
+.card-progress .step-bar,
+.card-progress .step-meter { margin: 0; border-radius: 0; }
+
+.card-chevron {
+  flex-shrink: 0;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  transition: translate var(--dur-fast) var(--ease-out);
+}
+.card-hit:hover > .card-chevron { translate: 2px 0; }
+
+/* ---------- The row: one design for every list item (a log line, a settled card, a session) ---------- */
+
+.card-row-text { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+.card-row-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.card-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.card-row-top > .card-corner { align-self: center; }
+.card-row-top > .card-origin { flex: 1 1 auto; }
+.card-row-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+}
+.card-row-sub { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.card-row-sub > .card-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-row-sub > .card-origin { flex: 1 1 0; justify-content: flex-end; }
+.card-row-link {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: var(--card-status-size);
+  line-height: var(--card-status-lh);
+  font-weight: 500;
+  color: var(--foreground);
+  cursor: pointer;
+  text-underline-offset: 2px;
+}
+.card-row-link:hover { text-decoration: underline; }
+
+/* ---------- Lists: one glass container, hairlines inset by the card's padding ---------- */
+
+.card-list { overflow: hidden; border-radius: var(--card-radius); }
+.card-list > li { position: relative; }
+.card-list > li + li::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--card-pad);
+  right: 0;
+  z-index: 1;
+  height: 1px;
+  background: var(--divider);
+  pointer-events: none;
+}
+.card-frame { overflow: hidden; border-radius: var(--card-radius); }
+
+/* ---------- The open detail's source keeps a ring while its sheet is open ---------- */
+
+/* An inset outline, so a row inside a clipped glass list keeps it too; it fades out on close. */
+.card[data-open] { outline-color: color-mix(in srgb, var(--tone) 85%, transparent); }
+.card[data-variant="row"][data-open] { border-radius: 14px; }
+/* The first and last rows follow the glass list's own curve (the card radius less its 1px border),
+   or the list's clip cuts the ring's corners. */
+.card-list > li:first-child > .card[data-variant="row"][data-open] {
+  border-top-left-radius: calc(var(--card-radius) - 1px);
+  border-top-right-radius: calc(var(--card-radius) - 1px);
+}
+.card-list > li:last-child > .card[data-variant="row"][data-open] {
+  border-bottom-left-radius: calc(var(--card-radius) - 1px);
+  border-bottom-right-radius: calc(var(--card-radius) - 1px);
+}
+
+/* ---------- Finished work arrives in Since you looked: a wash in its tone ---------- */
+
+.card-hit[data-arrived]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tone) 22%, transparent), transparent 80%);
+  opacity: 0;
+  animation: now-arrive-wash 1.2s var(--ease-out) 0.3s 1 both;
+}
+
+/* ---------- Badge: one chip for state and labels, everywhere ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  min-height: 20px;
+  padding: 0 8px 0 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  color: color-mix(in srgb, var(--tone) 88%, white);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.badge svg { width: 12px; height: 12px; }
+/* Hairline is quieter, for a chip that sits beside a title in a dense row. */
+.badge[data-variant="hairline"] {
+  border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent);
+  background: transparent;
+}
+.badge[data-mono] { font-family: var(--font-mono); font-size: 11px; }
+:where(.badge) { --tone: #a4a4b6; }
+
+/* ---------- Strip: one tinted note ---------- */
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--tone) 7%, rgb(255 255 255 / 0.03));
+  font-size: 12px;
+  line-height: 16px;
+  color: color-mix(in srgb, var(--foreground) 90%, transparent);
+}
+:where(.strip) { --tone: #a4a4b6; }
+.strip[data-variant="bordered"] {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--tone) 26%, var(--hairline));
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--tone) 6%, transparent);
+  font-size: 14px;
+  line-height: 22px;
+}
+.strip-icon { flex-shrink: 0; color: var(--tone); }
+.strip-icon svg { width: 14px; height: 14px; }
+.strip-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--tone) 80%, white);
+}
+.strip-body { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+.strip-end { margin-left: auto; flex-shrink: 0; }
+
+/* ---------- Motion preferences ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .card[data-live] .card-state svg,
+  .card[data-live] .card-state-label,
+  .card-hit[data-arrived]::after { animation: none; }
+  .card-hit[data-arrived]::after { opacity: 0; }
+  .card,
+  .card[data-tint]::before { transition: none !important; }
+}

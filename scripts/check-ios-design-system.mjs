@@ -28,7 +28,7 @@ const rules={
 };
 // Files still being moved onto the templates: the most each may hold. Lower these, never raise them.
 const BASELINE={
-  'CurrentAttentionView.swift':{'system button style':3,'system dialog':1,'hand tracking':2},
+  'CurrentAttentionView.swift':{'system dialog':1},
   'NowView.swift':{'system button style':1},
 };
 

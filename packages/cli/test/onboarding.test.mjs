@@ -104,7 +104,7 @@ test("ask waits 100s for any detected harness or RELO_SESSION, not only Claude a
     const deps = { ...cardDependencies(fake.client, { env, identity: { providerName: "Gemini CLI", project: "relo" } }), now: () => clock.now };
     const out = await cli(["ask", "Ship?", "--approval", ...topic], deps);
     assert.equal(out.exitCode, EXIT.TERMINAL, JSON.stringify(env));
-    assert.equal(clock.polls[0], 100, JSON.stringify(env));
+    assert.equal(clock.polls[0], 90, JSON.stringify(env));
   }
 });
 
@@ -288,11 +288,11 @@ test("relo test: no explains the checks, exit 5, and verifies nothing", async ()
 });
 
 test("relo test: no answer in an agent context waits 100s, exits 4 and resumes the same question", async () => {
-  const box = testSetup({ answerAfterPolls: 3, env: { GEMINI_CLI: "1" } });
+  const box = testSetup({ answerAfterPolls: 5, env: { GEMINI_CLI: "1" } });
   const first = await cli(["test"], box.deps);
   assert.equal(first.exitCode, EXIT.TERMINAL);
   assert.equal(first.line.error.details.state, "timeout");
-  assert.equal(box.clock.polls[0], 100);
+  assert.equal(box.clock.polls[0], 90);
   const pending = box.memory.state.config.pendingTest;
   assert.match(pending.interactionId, /^int_/u);
   const asks = () => box.calls.filter((call) => ["ask", "question"].includes(call.op)).length;

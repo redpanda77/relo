@@ -4,33 +4,29 @@ import UIKit
 
 // MARK: - Header
 
-/// What it is and how it stands, read top to bottom: where it runs, the title, the state the server
-/// derived (with how long it has run), then the latest status in its own words. Where, when and
-/// which computer live in Details at the bottom. Hold the header to copy the item's ID.
+/// What it is and how it stands in three rows: where it runs with the state trailing (and its timer while it
+/// runs), the title, then the latest status in its own words. Where, when and which computer live in Details
+/// at the bottom. Hold the header to copy the item's ID.
 struct ReloIdentityHeader: View {
     let item: InboxItem
     let title: String
     let kind: ReloMessageKind
     let status: String?
     /// The server's state for this work (Now summary); it wins over the card's own declared state.
-    var serverOutcome: HistoryServerOutcome? = nil
+    var serverOutcome: ReloStateStyle? = nil
     let now: Date
-
-    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var row: HistoryRow { HistoryRowProjection.row(item, now: now) }
     /// The badge tells the truth (U4): a work that declared it waits is Waiting, never Running.
     private var waiting: Bool {
         item.isDeclaredWaiting && (serverOutcome.map { $0.label == "Running" || $0.label == "Waiting" } ?? (row.outcome == .running))
     }
-    private var badge: (label: String, color: Color, symbol: String) {
-        if waiting { return ("Waiting", .reloWarning, "hourglass") }
-        if let serverOutcome { return (serverOutcome.label, serverOutcome.color, serverOutcome.symbol) }
-        return (item.kind == .liveActivity ? (row.outcome.label ?? kind.label) : kind.label, kind.color, kind.symbol)
+    private var badge: ReloStateStyle {
+        if waiting { return .waiting }
+        if let serverOutcome { return serverOutcome }
+        return ReloStateStyle(label: item.kind == .liveActivity ? (row.outcome.label ?? kind.label) : kind.label,
+                              color: kind.color, symbol: kind.symbol)
     }
-    private var badgeLabel: String { badge.label }
-    private var badgeColor: Color { badge.color }
-    private var badgeSymbol: String { badge.symbol }
     /// Running work shows its live timer next to the badge; the system ticks it. Waiting work does not run.
     private var runningSince: Date? {
         guard !waiting, row.outcome == .running, serverOutcome == nil || serverOutcome?.label == "Running",
@@ -38,27 +34,28 @@ struct ReloIdentityHeader: View {
         return started
     }
 
+    private var corner: CardCorner {
+        // A badge that only repeats the type ("Message") says nothing; the timer may still stand alone.
+        let showsBadge = badge.label.caseInsensitiveCompare(row.type) != .orderedSame
+        switch (showsBadge, runningSince) {
+        case let (true, since?): return .badgeTimer(badge, since: since)
+        case (true, nil): return .badge(badge)
+        case let (false, since?): return .timer(since: since)
+        case (false, nil): return .none
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            origin
+        VStack(alignment: .leading, spacing: ReloLayout.itemSpacing) {
+            CardHeader(origin: ReloCardOrigin(source: row.source.name, sourceSymbol: row.source.systemImageName,
+                                              project: row.project?.name,
+                                              projectColor: ReloProjectPalette.color(for: row.project, fallback: .reloSecondaryText),
+                                              topic: row.topic),
+                       corner: corner)
             Text(title)
                 .font(.title2.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            let line = typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
-            line {
-                if badgeLabel.caseInsensitiveCompare(row.type) != .orderedSame { badgeView }
-                if let runningSince {
-                    HStack(spacing: 4) {
-                        Text("for")
-                        Text(timerInterval: runningSince...Date.distantFuture, countsDown: false, showsHours: true)
-                            .monospacedDigit()
-                    }
-                    .font(.subheadline).foregroundStyle(Color.reloSecondaryText)
-                    .fixedSize()
-                }
-            }
             if let status, !status.isEmpty {
                 Text(status).font(.body).foregroundStyle(Color.primary.opacity(0.86))
                     .fixedSize(horizontal: false, vertical: true)
@@ -70,81 +67,6 @@ struct ReloIdentityHeader: View {
         .contextMenu {
             Button { UIPasteboard.general.string = item.id } label: { Label("Copy ID", systemImage: "doc.on.doc") }
         }
-    }
-
-    /// Source · project › session, as on the cards; the project carries its color.
-    private var origin: some View {
-        let source = row.source
-        return ActivityChipFlow(spacing: 4) {
-            SourceMark(name: source.name, fallbackSymbol: source.systemImageName, size: 17)
-            if let project = row.project {
-                Text("·").accessibilityHidden(true)
-                Text(project.name).foregroundStyle(projectColor(project))
-            }
-            if let topic = row.topic {
-                ReloChevron()
-                Text(topic)
-            }
-        }
-        .font(.subheadline.weight(.medium))
-        .foregroundStyle(Color.reloSecondaryText)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var badgeView: some View {
-        HStack(spacing: 6) {
-            Image(systemName: badgeSymbol).font(.caption.weight(.bold))
-            Text(badgeLabel).font(.subheadline.weight(.semibold))
-        }
-        .foregroundStyle(badgeColor)
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background { Capsule().fill(badgeColor.opacity(0.14)) }
-        .overlay { Capsule().strokeBorder(badgeColor.opacity(0.35), lineWidth: 0.5) }
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(badgeLabel)
-    }
-
-    private func projectColor(_ project: InboxProjectIdentity) -> Color {
-        guard let slot = project.paletteSlot else { return .reloSecondaryText }
-        switch slot % 3 {
-        case 0: return .reloInteractive
-        case 1: return .reloSignalIndigo
-        default: return .reloSignalCoral
-        }
-    }
-}
-
-/// Wraps its children onto as many lines as they need.
-private struct ActivityChipFlow: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        layout(in: proposal.width ?? .infinity, subviews: subviews).size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = layout(in: bounds.width, subviews: subviews)
-        for (index, origin) in result.origins.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y),
-                                  proposal: ProposedViewSize(width: result.sizes[index].width, height: result.sizes[index].height))
-        }
-    }
-
-    private func layout(in width: CGFloat, subviews: Subviews) -> (size: CGSize, origins: [CGPoint], sizes: [CGSize]) {
-        var origins: [CGPoint] = [], sizes: [CGSize] = []
-        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, maxX: CGFloat = 0
-        for subview in subviews {
-            var size = subview.sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
-            if width.isFinite { size.width = min(size.width, width) }
-            sizes.append(size)
-            if x > 0, x + size.width > width { x = 0; y += lineHeight + spacing; lineHeight = 0 }
-            origins.append(CGPoint(x: x, y: y))
-            x += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-            maxX = max(maxX, x - spacing)
-        }
-        return (CGSize(width: maxX, height: y + lineHeight), origins, sizes)
     }
 }
 
@@ -163,7 +85,7 @@ struct ReloMissionTimeline: View {
     let status: String
     let now: Date
     /// How the work stands, from the server (the same as the badge): a paused work's plan stops at its step.
-    var serverOutcome: HistoryServerOutcome? = nil
+    var serverOutcome: ReloStateStyle? = nil
     /// The work declared it waits on something: its current step shows a pause (U4).
     var waiting = false
     /// The work's card updates sent while a step was current (4.6), newest first.
@@ -332,12 +254,6 @@ struct ReloMissionTimeline: View {
             Text(status).font(.subheadline.monospaced()).foregroundStyle(Color.reloSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    static func format(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded())
-        let (h, m, s) = (total / 3600, total % 3600 / 60, total % 60)
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 }
 

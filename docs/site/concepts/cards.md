@@ -66,7 +66,7 @@ that stopped responding, and show "your turn" when an agent's turn ended and it 
 
 | Event | On your phone |
 | --- | --- |
-| A work starts | the card appears |
+| A work starts | the card appears, with one alert the first time it shows on the Lock Screen |
 | An update, a new step, a count | silent: the card changes in place |
 | A question on the work | time-sensitive alert; breaks through Focus |
 | Finished | one quiet notification with the outcome |

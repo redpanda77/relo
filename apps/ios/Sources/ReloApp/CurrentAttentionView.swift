@@ -114,7 +114,7 @@ struct NowCardModel: Equatable, Sendable {
     var computer: String?
     var computerIcon: ComputerIcon? = nil
     /// Set on settled and parked work (Since you looked, Quiet, Paused): the badge then reads and colors
-    /// as on History and the detail page (`HistoryServerOutcome`).
+    /// as on History and the detail page (`ReloStateStyle`).
     var ownerState: NowOwnerState? = nil
 }
 
@@ -172,6 +172,9 @@ enum NowBlock: Equatable, Identifiable, Sendable {
 
 enum NowScreenModel {
     static let defaultWindow: TimeInterval = 8 * 3_600
+
+    /// What answering a missed question means. Said once, on the page where the late answer is given.
+    static let lateAnswerNote = "Late answers reach the session marked late. An approval here is not permission: the session must ask again."
 
     static func make(_ input: NowScreenInput, isOffline: Bool, openFolds: Set<String>,
                      calendar: Calendar = .current, locale: Locale = .current) -> [NowBlock] {
@@ -284,7 +287,7 @@ enum NowScreenModel {
 
     /// Settled and parked work on the shared card: how it stands (as History says it), when, and where its plan got to.
     private static func settledCard(_ item: NowItemInput) -> NowCardModel {
-        var model = card(item, at: item.evidenceAt, badge: HistoryServerOutcome.make(state: item.state, standing: nil)?.label,
+        var model = card(item, at: item.evidenceAt, badge: ReloStateStyle.make(state: item.state, standing: nil)?.label,
                          note: nil, caption: stepsCaption(item.steps, standing: standing(of: item.state)))
         model.ownerState = item.state
         return model
@@ -295,18 +298,21 @@ enum NowScreenModel {
         case .missedQuestion:
             let chip = item.expiresAt.map { "MISSED \(clock($0, locale: locale))" } ?? "MISSED"
             return NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: chip,
-                               tone: .needsYou, lines: [item.status, origin(item)].compactMap { $0 }.filter { !$0.isEmpty },
-                               footnote: "Late answers reach the session marked late. An approval here is not permission: the session must ask again.",
-                               reason: .missedQuestion, questionID: item.questionID)
+                               tone: .needsYou, lines: [item.status].compactMap { $0 }.filter { !$0.isEmpty },
+                               reason: .missedQuestion, questionID: item.questionID,
+                               // The header's corner reads "Missed 14:02": the time the answer was due.
+                               card: card(item, at: item.expiresAt ?? item.evidenceAt, badge: "Missed", note: nil, caption: nil))
         case .permission:
             let computer = item.computer ?? "your computer"
             return NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: "PERMISSION",
                                tone: .needsYou,
                                lines: ["\(item.source) is waiting for a permission prompt on \(computer)."],
-                               footnote: "Answer it on your computer.", reason: .permission)
+                               footnote: "Answer it on your computer.", reason: .permission,
+                               card: card(item, at: item.evidenceAt, badge: "Permission", note: nil, caption: nil))
         case .question:
             return NowRowModel(id: item.id, notificationID: item.notificationID, title: item.title, chip: nil,
-                               tone: .needsYou, lines: [item.status, origin(item)].compactMap { $0 }, reason: .question)
+                               tone: .needsYou, lines: [item.status].compactMap { $0 }.filter { !$0.isEmpty }, reason: .question,
+                               card: card(item, at: item.evidenceAt, badge: "Needs you", note: nil, caption: nil))
         }
     }
 
@@ -492,15 +498,15 @@ extension NowScreenInput {
 }
 
 extension NowTone {
+    /// The tone's color, from the one state table (`ReloStateStyle`).
     var color: Color {
         switch self {
-        case .needsYou: ReloHoloTheme.color(.needsYou)
-        case .running: ReloHoloTheme.color(.running)
-        case .runningQuiet: ReloHoloTheme.color(.running).opacity(0.7)
-        case .attention: ReloHoloTheme.color(.attention)
-        case .failed: ReloHoloTheme.color(.failed)
-        case .done: ReloHoloTheme.color(.done)
-        case .sessions: ReloHoloTheme.sessions
+        case .needsYou: ReloStateStyle.needsYou.color
+        case .running, .sessions: ReloStateStyle.running.color
+        case .runningQuiet: ReloStateStyle.running.color.opacity(0.7)
+        case .attention: ReloStateStyle.yourTurn.color
+        case .failed: ReloStateStyle.failed.color
+        case .done: ReloStateStyle.done.color
         case .secondary: Color.reloSecondaryText
         }
     }
@@ -584,11 +590,11 @@ struct CurrentAttentionView: View {
                 case let .fold(fold, count, rows, open):
                     foldSection(fold, count: count, rows: rows, open: open)
                 case let .waitingOnYou(rows):
-                    section("Waiting on you", count: rows.count, color: ReloHoloTheme.color(.attention)) {
+                    section("Waiting on you", count: rows.count, color: ReloStateStyle.yourTurn.color) {
                         ForEach(rows) { row in workCard(row) }
                     }
                 case let .running(title, rows):
-                    section(title, count: rows.count, color: ReloHoloTheme.color(.running)) {
+                    section(title, count: rows.count, color: ReloStateStyle.running.color) {
                         ForEach(rows) { row in workCard(row) }
                     }
                 case let .sessions(sessions):
@@ -622,14 +628,12 @@ struct CurrentAttentionView: View {
     @ViewBuilder
     private var persistenceWarning: some View {
         if model.currentState?.persistence == .unavailable {
-            VStack(spacing: 10) {
-                Label("This iPhone couldn't save current work. Unlock it and retry; fetched requests can still be reviewed.",
-                      systemImage: "externaldrive.badge.exclamationmark")
-                    .font(.footnote).foregroundStyle(Color.reloErrorText)
-                Button("Retry saving") { model.retryCurrentStorage() }
-                    .buttonStyle(.bordered).tint(.reloInteractive).frame(minHeight: 44)
+            ReloCard(tint: .reloWarning) {
+                CardFooter(meta: Text("This iPhone couldn't save current work. Unlock it and retry; fetched requests can still be reviewed.")
+                    .foregroundColor(.reloErrorText)) {
+                    CardAction("Retry saving", kind: .primary) { model.retryCurrentStorage() }
+                }
             }
-            .frame(maxWidth: .infinity)
         }
     }
 
@@ -647,7 +651,7 @@ struct CurrentAttentionView: View {
 
     private func section<Content: View>(_ title: String, count: Int?, color: Color,
                                         @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ReloLayout.itemSpacing) {
             NowSectionCaption(title: title, count: count, color: color)
             content()
         }
@@ -663,7 +667,7 @@ struct CurrentAttentionView: View {
     // MARK: Since you looked
 
     private func sinceSection(line: String?, spoken: String?, recent: [NowRowModel], more: Int) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: ReloLayout.itemSpacing) {
             if let line {
                 Text(line)
                     .font(.subheadline.weight(.medium))
@@ -671,18 +675,16 @@ struct CurrentAttentionView: View {
                     .accessibilityLabel(spoken ?? line)
             }
             if !recent.isEmpty {
-                VStack(spacing: 0) {
+                CardGroup {
                     ForEach(Array(recent.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 { Divider().padding(.leading, 16) }
-                        foldedRow(row)
+                        foldedRow(row, divider: index > 0)
                     }
                     if more > 0 || openFolds.contains("recent") {
-                        Divider().padding(.leading, 16)
                         foldLine(label: more > 0 ? "Show \(more) more" : "Show fewer", color: .reloInteractive,
                                  open: openFolds.contains("recent"), accessibility: nil) { toggle("recent") }
+                            .cardDivider()
                     }
                 }
-                .reloCard()
             }
         }
     }
@@ -691,11 +693,11 @@ struct CurrentAttentionView: View {
 
     private func needsSection(screen: CurrentInboxPresentation, rows: [NowRowModel]) -> some View {
         let count = (screen.actionableCount ?? screen.needsMe.count) + rows.count
-        return section("Needs you", count: count > 0 ? count : nil, color: ReloHoloTheme.color(.needsYou)) {
+        return section("Needs you", count: count > 0 ? count : nil, color: ReloStateStyle.needsYou.color) {
             ForEach(requests(screen)) { item in requestCard(item).transition(.opacity) }
             ForEach(rows) { row in needsCard(row) }
             if let error = model.nowDismissError {
-                Text(error).font(.footnote).foregroundStyle(Color.reloErrorText)
+                Text(error).font(ReloLayout.cardStatus).foregroundStyle(Color.reloErrorText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if model.currentState?.snapshot.pending?.metadata?.hasMore == true {
@@ -705,60 +707,59 @@ struct CurrentAttentionView: View {
             }
             if model.currentState?.pendingConnection == .offline {
                 Text("Couldn't refresh requests. Saved requests stay visible and are checked again when you reconnect.")
-                    .font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                    .font(ReloLayout.cardStatus).foregroundStyle(Color.reloSecondaryText)
             }
         }
     }
 
-    /// A missed question (late answers allowed, never permission) or a permission prompt.
+    /// The origin line of a card built from a row model: `source · project › session`.
+    private func origin(of card: NowCardModel?) -> ReloCardOrigin? {
+        card.map { ReloCardOrigin(source: $0.origin.first ?? "", project: $0.origin.dropFirst().first,
+                                  topic: $0.origin.count > 2 ? $0.origin[2] : nil) }
+    }
+
+    /// A missed question (late answers allowed, never permission) or a permission prompt: header (where it
+    /// ran, "Missed 14:02"), the question, what it said, and one footer row carrying the actions.
     private func needsCard(_ row: NowRowModel) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let chip = row.chip { chipText(chip, tone: row.tone) }
-            Text(row.title).font(.headline).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true)
-            ForEach(row.lines, id: \.self) { line in
-                Text(line).font(.subheadline).foregroundStyle(Color.reloSecondaryText).lineLimit(4)
-            }
-            if row.reason == .missedQuestion, let id = row.notificationID {
-                if let decision = model.currentPresentation.needsMe.first(where: { $0.notificationId == id }) {
-                    CurrentDecisionButtons(model: model, decision: decision)
-                } else {
-                    Button("Answer late") { Task { await model.openNotification(notificationID: id) } }
-                        .buttonStyle(.bordered).tint(.reloInteractive).frame(minHeight: 44)
+        let style: ReloStateStyle = switch row.reason {
+        case .missedQuestion?: .missed
+        case .permission?: .permission
+        default: .needsYou
+        }
+        return ReloCard(tint: style.color) {
+            CardHeader(origin: origin(of: row.card),
+                       corner: row.reason == .missedQuestion ? row.card.map { .badgeAt(style, $0.at) } ?? .badge(style) : .badge(style))
+            CardTitle(row.title, style: .hero)
+            ForEach(row.lines, id: \.self) { line in CardStatusLine(line, lines: 4) }
+            if row.reason == .missedQuestion {
+                CardFooter(meta: nil) {
+                    if let questionID = row.questionID {
+                        // Dismisses here; it never opens the notification.
+                        CardAction("Dismiss", kind: .quiet) { Task { await model.dismissMissedQuestion(questionID: questionID) } }
+                    }
+                    if let id = row.notificationID {
+                        CardAction("Answer late", kind: .primary) { Task { await model.openNotification(notificationID: id) } }
+                    }
                 }
-            }
-            if let footnote = row.footnote {
-                Text(footnote).font(.footnote).foregroundStyle(Color.reloSecondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if row.reason == .missedQuestion, let questionID = row.questionID {
-                // Dismisses here; it never opens the notification.
-                Button("Dismiss") { Task { await model.dismissMissedQuestion(questionID: questionID) } }
-                    .buttonStyle(.borderless)
-                    .font(.footnote.weight(.semibold)).tint(.reloInteractive).frame(minHeight: 44)
+            } else if let footnote = row.footnote {
+                CardFooter(meta: Text(footnote))
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .reloCard(tint: ReloHoloTheme.color(.needsYou))
     }
 
+    /// A live question: header (source, the countdown or the send phase), the question, its summary, then the
+    /// answer buttons as the footer. The text opens the full request.
     private func requestCard(_ item: PendingCurrentDecision) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // The text opens the full request; the answer buttons are right here.
+        let answer = CurrentDecisionPresenter(model: model, decision: item)
+        return ReloCard(tint: ReloStateStyle.needsYou.color) {
             Button {
                 Task { await model.openNotification(notificationID: item.notificationId) }
             } label: {
-                HStack(alignment: .top, spacing: 14) {
-                    ReloSignalGlyph(symbol: symbol(for: item.interaction.type), color: ReloHoloTheme.color(.needsYou), size: 40)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(item.source).font(.caption.weight(.semibold)).foregroundStyle(Color.reloSecondaryText)
-                        Text(item.title).font(.headline).foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if !item.summary.isEmpty, item.summary != item.title {
-                            Text(item.summary).font(.subheadline).foregroundStyle(.primary).lineLimit(4)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
+                    CardHeader(origin: ReloCardOrigin(source: item.source),
+                               corner: answer.phase.corner(deadline: item.interaction.expiresAt))
+                    CardTitle(item.title, style: .hero)
+                    if !item.summary.isEmpty, item.summary != item.title { CardStatusLine(item.summary, color: .primary, lines: 4) }
                 }
                 .contentShape(Rectangle())
             }
@@ -766,8 +767,6 @@ struct CurrentAttentionView: View {
             .accessibilityHint("Opens the full request")
             CurrentDecisionButtons(model: model, decision: item)
         }
-        .padding(16)
-        .reloCard(tint: ReloHoloTheme.color(.needsYou))
     }
 
     // MARK: Folds
@@ -783,17 +782,13 @@ struct CurrentAttentionView: View {
     private func foldSection(_ fold: NowFold, count: Int, rows: [NowRowModel], open: Bool) -> some View {
         let title = foldTitle(fold)
         let color = Color.reloSecondaryText
-        return VStack(spacing: 0) {
+        return CardGroup {
             foldLine(label: "\(title) (\(count))", color: color, open: open,
                      accessibility: "\(title), \(count) \(count == 1 ? "item" : "items")") { toggle(fold.rawValue) }
             if open {
-                ForEach(rows) { row in
-                    Divider().padding(.leading, 16)
-                    foldedRow(row)
-                }
+                ForEach(rows) { row in foldedRow(row, divider: true) }
             }
         }
-        .reloCard()
         .transition(.opacity)
     }
 
@@ -801,14 +796,14 @@ struct CurrentAttentionView: View {
     private func foldLine(label: String, color: Color, open: Bool, accessibility: String?,
                           action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Text(label).font(.footnote.weight(.medium)).foregroundStyle(color)
-                Spacer(minLength: 8)
+            HStack(spacing: ReloLayout.inlineGap) {
+                Text(label).font(ReloLayout.cardStatus.weight(.medium)).foregroundStyle(color)
+                Spacer(minLength: ReloLayout.inlineGap)
                 Image(systemName: open ? "chevron.up" : "chevron.down")
-                    .font(.caption.weight(.semibold)).foregroundStyle(color)
+                    .font(ReloLayout.cardMeta.weight(.semibold)).foregroundStyle(color)
                     .accessibilityHidden(true)
             }
-            .padding(.horizontal, 16).padding(.vertical, 12).frame(minHeight: 44)
+            .padding(.horizontal, ReloLayout.cardInset).padding(.vertical, ReloLayout.rowInset).frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -819,51 +814,28 @@ struct CurrentAttentionView: View {
 
     // MARK: Rows
 
-    private func chipText(_ text: String, tone: NowTone) -> some View {
-        Text(text)
-            .font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(1.0)
-            .foregroundStyle(tone.color)
-    }
-
+    /// A row inside a grouped card (Since you looked, folds): the shared work card, unframed.
     @ViewBuilder
-    private func listRow(_ row: NowRowModel) -> some View {
-        let content = HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                if let chip = row.chip { chipText(chip, tone: row.tone) }
-                Text(row.title).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
-                ForEach(row.lines, id: \.self) { line in
-                    Text(line).font(.caption).foregroundStyle(Color.reloSecondaryText).lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if row.notificationID != nil { ReloChevron() }
-        }
-        .padding(.horizontal, 16).padding(.vertical, 12).frame(minHeight: 52)
-        .contentShape(Rectangle())
-
-        if let notificationID = row.notificationID {
-            Button { Task { await model.openNotification(notificationID: notificationID) } } label: { content }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .combine).accessibilityHint("Opens details")
-        } else {
-            content.accessibilityElement(children: .combine)
-        }
-    }
-
-    /// A row inside a grouped card (Since you looked, folds): a work reads as the shared card, unframed.
-    @ViewBuilder
-    private func foldedRow(_ row: NowRowModel) -> some View {
-        if row.card != nil { workCard(row, framed: false) } else { listRow(row) }
+    private func foldedRow(_ row: NowRowModel, divider: Bool) -> some View {
+        workCard(row, surface: .row).cardDivider(divider)
     }
 
     /// One work card: the shared card History uses too (`ReloWorkCard`).
     @ViewBuilder
-    private func workCard(_ row: NowRowModel, framed: Bool = true) -> some View {
+    private func workCard(_ row: NowRowModel, surface: ReloCardPlacement = .card) -> some View {
         let card = row.card
-        let outcome = card?.ownerState.flatMap { HistoryServerOutcome.make(state: $0, standing: nil) }
+        let outcome = card?.ownerState.flatMap { ReloStateStyle.make(state: $0, standing: nil) }
         let color = outcome?.color ?? row.tone.color
-        let state = card?.badge.map { ReloCardState(label: $0, color: color,
-                                                     symbol: $0 == "Your turn" ? "hand.raised.fill" : $0 == "Waiting" ? "hourglass" : nil) }
+        // How it stands: a settled or parked work reads as History says it; the rest by the badge it carries;
+        // work with none is simply running.
+        let state: ReloStateStyle? = outcome ?? card?.badge.map { badge in
+            switch badge {
+            case "Your turn": ReloStateStyle.yourTurn
+            case "Waiting": ReloStateStyle.waiting
+            case "Unconfirmed": ReloStateStyle.unconfirmed
+            default: ReloStateStyle.running.labelled(badge)
+            }
+        } ?? (row.startedAt != nil ? ReloStateStyle.running : nil)
         // The session's name comes from the Sessions list; a session not listed there keeps the name its card carries.
         let topic = card.flatMap { $0.origin.count > 2 ? $0.origin[2] : nil } ?? row.notificationID.flatMap { id in
             (model.historyItems.first { $0.id == id } ?? model.items.first { $0.id == id })
@@ -871,22 +843,20 @@ struct CurrentAttentionView: View {
         }.flatMap { $0 == row.title ? nil : $0 }
         let inner = ReloWorkCard(
             origin: card.map { ReloCardOrigin(source: $0.origin.first ?? "", project: $0.origin.dropFirst().first,
-                                              projectColor: .reloSignalIndigo, topic: topic) },
+                                              projectColor: ReloStateStyle.running.color, topic: topic) },
             at: card?.at, title: row.title, summary: outcome != nil ? card?.status : card?.status ?? row.lines.first,
             steps: row.steps, progress: row.progress, color: color, shimmer: row.shimmer,
             state: state, facts: [card?.note, card?.caption].compactMap { $0 },
             runningSince: card?.badge == nil && outcome == nil ? row.startedAt : nil, computer: card?.computer,
-            computerIcon: card?.computerIcon)
-            .padding(16)
-        let body = Group { if framed { inner.reloCard() } else { inner } }
+            computerIcon: card?.computerIcon, surface: surface)
 
         if let notificationID = row.notificationID {
-            Button { Task { await model.openNotification(notificationID: notificationID) } } label: { body }
+            Button { Task { await model.openNotification(notificationID: notificationID) } } label: { inner }
                 .buttonStyle(ReloPressStyle())
                 .accessibilityElement(children: .combine).accessibilityHint("Opens details")
                 .swipeToEnd(enabled: row.endable) { endTarget = EndWorkTarget(id: row.id, title: row.title) }
         } else {
-            body.accessibilityElement(children: .combine)
+            inner.accessibilityElement(children: .combine)
                 .swipeToEnd(enabled: row.endable) { endTarget = EndWorkTarget(id: row.id, title: row.title) }
         }
     }
@@ -895,71 +865,69 @@ struct CurrentAttentionView: View {
 
     @ViewBuilder
     private func sessionsSection(_ block: NowSessionsBlock) -> some View {
-        section("Sessions", count: block.working, color: ReloHoloTheme.sessions) {
+        section("Sessions", count: block.working, color: ReloStateStyle.running.color) {
             ForEach(block.groups) { group in
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: ReloLayout.inlineGap) {
                     HStack(spacing: 5) {
                         ComputerMark(icon: group.icon, tint: Color.reloSecondaryText).imageScale(.small)
                         Text(group.title)
                     }
-                    .font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.0)
-                    .foregroundStyle(Color.reloSecondaryText).textCase(.uppercase)
-                    VStack(spacing: 0) {
+                    .reloEyebrow()
+                    .foregroundStyle(Color.reloSecondaryText)
+                    CardGroup {
                         ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
-                            if index > 0 { Divider().padding(.leading, 16) }
-                            sessionRow(row)
+                            sessionRow(row, divider: index > 0)
                         }
                         if !group.idle.isEmpty {
                             let key = "idle:\(group.title)"
                             let open = openFolds.contains(key)
-                            if !group.rows.isEmpty { Divider().padding(.leading, 16) }
                             foldLine(label: open ? "Hide idle" : "Idle (\(group.idle.count))", color: Color.reloSecondaryText,
                                      open: open, accessibility: "Idle, \(group.idle.count) sessions") { toggle(key) }
+                                .cardDivider(!group.rows.isEmpty)
                             if open {
-                                ForEach(group.idle) { row in
-                                    Divider().padding(.leading, 16)
-                                    sessionRow(row)
-                                }
+                                ForEach(group.idle) { row in sessionRow(row, divider: true) }
                             }
                         }
                     }
-                    .reloCard()
                 }
             }
         }
     }
 
-    /// A session reads like a work card, one kind of fact per line: where it runs (tool as its logo,
-    /// project; the computer is the group's heading), its name, the work it holds, then how it stands
-    /// and when it was last seen.
+    /// A session in two rows: where it runs (tool as its logo, project, its name) with how it stands and when
+    /// it was last seen in the corner ("● Working 11:42 PM"), then the work it holds and, if the owner opted in,
+    /// its usage. The computer is the group's heading.
     @ViewBuilder
-    private func sessionRow(_ row: NowSessionRowModel) -> some View {
-        let content = HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+    private func sessionRow(_ row: NowSessionRowModel, divider: Bool) -> some View {
+        let standing = ReloStateStyle(label: row.chip, color: row.tone.color, symbol: "circle.fill")
+        let corner: CardCorner = row.lastSeenAt.map { .badgeAt(standing, $0) } ?? .badge(standing)
+        let usage = showsUsage ? row.usage : nil
+        let content = HStack(alignment: .center, spacing: ReloLayout.itemSpacing) {
+            VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
                 if let context = row.context {
-                    // As on the work cards: tool · project › session name on one line, the work it holds under it.
-                    HStack(alignment: .center, spacing: 5) {
-                        sessionContext(context)
-                        Text("›").foregroundStyle(Color.reloSecondaryText.opacity(0.6)).accessibilityHidden(true)
-                        Text(row.title).truncationMode(.tail)
-                    }
-                    .font(.caption.weight(.medium)).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
-                    if let work = row.workTitle {
-                        Text(work).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+                    CardHeader(origin: sessionOrigin(context, name: row.title), corner: corner)
+                    if row.workTitle != nil || usage != nil {
+                        sessionLine(title: row.workTitle, usage: usage, heavy: row.heavyContext)
                     }
                 } else {
-                    Text(row.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
-                    if let work = row.workTitle, work != row.title {
-                        Text(work).font(.footnote).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                    HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
+                        Text(row.title).font(ReloLayout.cardTitle).foregroundStyle(.primary).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        CardHeader(origin: nil, corner: corner)
+                            .fixedSize()
+                    }
+                    if row.workTitle.map({ $0 != row.title }) == true || usage != nil {
+                        sessionLine(title: row.workTitle.flatMap { $0 == row.title ? nil : $0 }, usage: usage, heavy: row.heavyContext)
                     }
                 }
-                sessionStanding(row).font(.caption)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if row.notificationID != nil { ReloChevron() }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12).frame(minHeight: 52)
+        .padding(.horizontal, ReloLayout.cardInset).padding(.vertical, ReloLayout.rowInset)
+        .frame(minHeight: ReloLayout.rowMinHeight)
         .contentShape(Rectangle())
+        .cardDivider(divider)
 
         if let notificationID = row.notificationID {
             Button { Task { await model.openNotification(notificationID: notificationID) } } label: { content }
@@ -970,64 +938,44 @@ struct CurrentAttentionView: View {
         }
     }
 
-    /// "● Working · 11:42 PM": the state in its color, then when the session was last seen.
-    private func sessionStanding(_ row: NowSessionRowModel) -> Text {
-        var text = (Text(Image(systemName: "circle.fill")).font(.system(size: 6)) + Text(" ") + Text(row.chip))
-            .foregroundColor(row.tone.color).fontWeight(.medium)
-        if let seen = row.lastSeenAt {
-            text = text + Text(" · ").foregroundColor(Color.reloSecondaryText)
-                + Text(seen, style: .time).foregroundColor(Color.reloSecondaryText).monospacedDigit()
+    /// The work a session holds, its usage trailing on the same line.
+    private func sessionLine(title: String?, usage: String?, heavy: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
+            if let title { Text(title).font(ReloLayout.cardTitle).foregroundStyle(.primary).lineLimit(2) }
+            Spacer(minLength: 0)
+            if let usage {
+                Text(usage).font(ReloLayout.cardMeta).monospacedDigit()
+                    .foregroundStyle(heavy ? NowTone.attention.color : Color.reloSecondaryText).lineLimit(1).fixedSize()
+            }
         }
-        if showsUsage, let usage = row.usage {
-            text = text + Text(" · ").foregroundColor(Color.reloSecondaryText)
-                + Text(usage).foregroundColor(row.heavyContext ? NowTone.attention.color : Color.reloSecondaryText).monospacedDigit()
-        }
-        return text
     }
 
-    /// "Claude Code · relo" with the tool as its logo when it has one.
-    @ViewBuilder
-    private func sessionContext(_ context: String) -> some View {
+    /// "Claude Code · relo" as the tool's logo, the project and the session's own name.
+    private func sessionOrigin(_ context: String, name: String) -> ReloCardOrigin {
         let parts = context.components(separatedBy: " · ")
-        if let first = parts.first, SourceLogo(sourceName: first) != nil {
-            HStack(alignment: .center, spacing: 5) {
-                SourceMark(name: first, size: 14)
-                if parts.count > 1 { Text("· " + parts.dropFirst().joined(separator: " · ")) }
-            }
-        } else {
-            Text(context)
-        }
+        return ReloCardOrigin(source: parts.first ?? context, project: parts.count > 1 ? parts.dropFirst().joined(separator: " · ") : nil,
+                              projectColor: .reloSecondaryText, topic: name)
     }
 
     private func moreButton(_ title: String, busy: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: ReloLayout.inlineGap) {
                 if busy { ProgressView().controlSize(.small) }
                 Text(title)
             }
-            .font(.subheadline.weight(.semibold))
-            .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.bordered).tint(.reloInteractive).disabled(busy)
-    }
-
-    private func symbol(for kind: CurrentDecision.Kind) -> String {
-        switch kind {
-        case .approval: "checkmark.seal.fill"
-        case .yesNo: "arrow.triangle.branch"
-        case .text: "text.bubble.fill"
-        case .choice: "list.bullet.circle.fill"
-        }
+        .buttonStyle(.reloSecondary).disabled(busy)
     }
 }
 
-/// Approve/Deny, Yes/No or a choice's options for a request in Needs you, with the sender's own labels:
-/// the same answer area as the detail page, so a tap never reflows the card.
-private struct CurrentDecisionButtons: View {
-    @Bindable var model: AppModel
+/// What a request in Needs you offers, from the model: the sender's choices and where the answer stands.
+/// The card reads the phase for its header; the buttons read both.
+@MainActor
+struct CurrentDecisionPresenter {
+    let model: AppModel
     let decision: PendingCurrentDecision
 
-    private var choices: [ReloDecisionActions.Choice] {
+    var choices: [ReloDecisionActions.Choice] {
         if decision.interaction.type == .choice, let options = decision.interaction.options { return ReloDecisionActions.Choice.options(options) }
         if let item = model.items.first(where: { $0.id == decision.notificationId }),
            let labelled = BinaryNotificationActionPresentation(
@@ -1043,9 +991,9 @@ private struct CurrentDecisionButtons: View {
         return BinaryNotificationActionPresentation(kind: kind, style: "standard").map(ReloDecisionActions.Choice.binary) ?? []
     }
 
-    private var draft: CurrentDecisionDraft? { model.currentDecision(notificationID: decision.notificationId) }
+    var draft: CurrentDecisionDraft? { model.currentDecision(notificationID: decision.notificationId) }
 
-    private var phase: ReloDecisionActions.Phase {
+    var phase: ReloDecisionActions.Phase {
         let feedback = model.responseFeedback(for: decision.notificationId)
         let availability = draft.map { model.decisionAvailability($0.identity) } ?? .unverified
         if let answer = ReloDecisionActions.Phase.answer(
@@ -1054,15 +1002,24 @@ private struct CurrentDecisionButtons: View {
         }
         return .unavailable(availability)
     }
+}
+
+/// Approve/Deny, Yes/No or a choice's options for a request in Needs you, with the sender's own labels:
+/// the same answer area as the detail page, so a tap never reflows the card.
+private struct CurrentDecisionButtons: View {
+    @Bindable var model: AppModel
+    let decision: PendingCurrentDecision
+
+    private var presenter: CurrentDecisionPresenter { CurrentDecisionPresenter(model: model, decision: decision) }
 
     var body: some View {
-        ReloDecisionActions(choices: choices, phase: phase,
+        ReloDecisionActions(choices: presenter.choices, phase: presenter.phase, style: .card,
                             sent: model.responseFeedback(for: decision.notificationId)?.action,
                             deadline: decision.interaction.expiresAt) { send($0) }
     }
 
     private func send(_ choice: ReloDecisionActions.Choice) {
-        guard let draft, model.respondingNotificationID == nil else { return }
+        guard let draft = presenter.draft, model.respondingNotificationID == nil else { return }
         Task {
             NotificationResponseHaptics.decisionStarted()
             await model.respond(to: draft.identity, action: choice.action, optionID: choice.optionID)

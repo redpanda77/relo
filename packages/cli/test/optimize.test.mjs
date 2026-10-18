@@ -406,7 +406,7 @@ test("handoff nudge: past the threshold, one line per round, added to the prompt
   const first = await box.prompt();
   assert.equal(first.printed, true);
   assert.match(contextOf(box), /^Relo: open work "Ship it"/u);
-  assert.match(contextOf(box), /\nRelo: Context at 63%: deliver with `relo work handoff --next "…"` and continue in a fresh session\.$/u);
+  assert.match(contextOf(box), /\nRelo: Context at 63%: run `relo work handoff --next "…"` \(do not deliver first: a delivered round refuses it\) and continue in a fresh session\.$/u);
   box.printed.length = 0;
   await box.prompt();
   assert.doesNotMatch(contextOf(box), /Context at/u, "once per round: the second prompt of the round is quiet");
@@ -440,7 +440,7 @@ test("handoff nudge: the threshold is RELO_HANDOFF_THRESHOLD; no reading means n
   const bare = nudgeBox();
   bare.reading({ over: true });
   assert.equal((await bare.prompt()).printed, true, "no open work and no percentage, but past 200K tokens");
-  assert.match(contextOf(bare), /\nRelo: Context is past 200K tokens: deliver with `relo work handoff/u);
+  assert.match(contextOf(bare), /\nRelo: Context is past 200K tokens: run `relo work handoff/u);
   const sub = nudgeBox();
   sub.reading({ pct: 90 });
   assert.equal((await runHarnessRole({ adapter: claudeCode, role: "turn", input: { session_id: "sess-1", agent_id: "sub-1" }, dependencies: sub.dependencies })).printed, false);

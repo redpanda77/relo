@@ -12,7 +12,7 @@ struct ReloMessageKind {
         if let interaction = item.interaction {
             switch interaction.state {
             case .pending:
-                color = .reloSignalCoral
+                color = ReloStateStyle.needsYou.color
                 switch interaction.kind {
                 case .approval: (label, symbol) = ("Approval request", "checkmark.seal.fill")
                 case .yesNo: (label, symbol) = ("Question", "arrow.triangle.branch")
@@ -22,11 +22,11 @@ struct ReloMessageKind {
             case .approved, .yes, .replied:
                 let answered = interaction.chosenLabel.map { "Chose \($0)" }
                     ?? (interaction.state == .replied ? "Replied" : interaction.state == .yes ? "Answered yes" : "Approved")
-                (label, symbol, color) = (answered, "checkmark.circle.fill", .reloDone)
+                (label, symbol, color) = (answered, "checkmark.circle.fill", ReloStateStyle.done.color)
             case .denied, .no:
-                (label, symbol, color) = (interaction.state == .no ? "Answered no" : "Denied", "xmark.circle.fill", .reloErrorText)
+                (label, symbol, color) = (interaction.state == .no ? "Answered no" : "Denied", "xmark.circle.fill", ReloStateStyle.failed.color)
             case .expired, .canceled:
-                (label, symbol, color) = (interaction.state == .expired ? "Expired" : "Canceled", "clock.badge.xmark", .reloInfo)
+                (label, symbol, color) = (interaction.state == .expired ? "Expired" : "Canceled", "clock.badge.xmark", ReloStateStyle.quiet.color)
             }
             return
         }
@@ -34,16 +34,16 @@ struct ReloMessageKind {
         case .liveActivity:
             // An ended card says how it ended: finished, stopped, expired, or (from an older update) ended.
             switch InboxAttentionProjection.activityOutcome(item, now: .now) {
-            case .completed: (label, symbol, color) = ("Completed", "checkmark.circle.fill", .reloDone)
-            case .stopped: (label, symbol, color) = ("Stopped", "exclamationmark.octagon.fill", .reloWarning)
-            case .expired: (label, symbol, color) = ("Expired", "clock.badge.xmark", .reloInfo)
-            case .ended: (label, symbol, color) = ("Ended", "stop.circle", .reloInfo)
+            case .completed: (label, symbol, color) = ("Completed", "checkmark.circle.fill", ReloStateStyle.done.color)
+            case .stopped: (label, symbol, color) = ("Stopped", "exclamationmark.octagon.fill", ReloStateStyle.dropped.color)
+            case .expired: (label, symbol, color) = ("Expired", "clock.badge.xmark", ReloStateStyle.quiet.color)
+            case .ended: (label, symbol, color) = ("Ended", "stop.circle", ReloStateStyle.ended.color)
             case .running:
-                (label, symbol, color) = stale ? ("Update overdue", "clock.badge.exclamationmark", .reloWarning)
-                    : ("Live Activity", "waveform.path", .reloSignalIndigo)
+                (label, symbol, color) = stale ? ("Update overdue", "clock.badge.exclamationmark", ReloStateStyle.waiting.color)
+                    : ("Live Activity", "waveform.path", ReloStateStyle.running.color)
             }
-        case .response: (label, symbol, color) = ("Response", "arrowshape.turn.up.left.fill", .reloInfo)
-        case .notification: (label, symbol, color) = ("Message", "bell.fill", .reloInfo)
+        case .response: (label, symbol, color) = ("Response", "arrowshape.turn.up.left.fill", ReloStateStyle.message.color)
+        case .notification: (label, symbol, color) = ("Message", "bell.fill", ReloStateStyle.message.color)
         }
     }
 }
@@ -156,9 +156,9 @@ struct ReloDeliveryTimelineView: View {
 
     private func color(_ state: NotificationDeliveryTimeline.StepState) -> Color {
         switch state {
-        case .complete: .reloDone
-        case .waiting: .reloSignalIndigo
-        case .failed: .reloErrorText
+        case .complete: ReloStateStyle.done.color
+        case .waiting: ReloStateStyle.running.color
+        case .failed: ReloStateStyle.failed.color
         }
     }
 
@@ -198,38 +198,6 @@ private struct ReloWaitingPulse: View {
                 guard !reduceMotion else { return }
                 withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { expanded = true }
             }
-    }
-}
-
-/// Every fact about the message. Hold a value to copy it.
-struct ReloAboutRows: View {
-    let rows: [(label: String, value: String, monospaced: Bool)]
-    /// The computer's icon, drawn before the "Computer" row's value.
-    var computerIcon: ComputerIcon? = nil
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                if index > 0 { Divider().overlay(Color.white.opacity(0.06)) }
-                HStack(alignment: .firstTextBaseline, spacing: 16) {
-                    Text(row.label).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
-                    Spacer(minLength: 12)
-                    (row.label == "Computer" ? ComputerMark.text(icon: computerIcon, name: row.value) : Text(row.value))
-                        .font(row.monospaced ? .caption.monospaced() : .subheadline)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.trailing)
-                        .lineLimit(row.monospaced ? 1 : nil)
-                        .truncationMode(.middle)
-                        .fixedSize(horizontal: false, vertical: !row.monospaced)
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    Button { UIPasteboard.general.string = row.value } label: { Label("Copy \(row.label)", systemImage: "doc.on.doc") }
-                }
-                .accessibilityElement(children: .combine)
-            }
-        }
-        .padding(.vertical, -10)
     }
 }
 

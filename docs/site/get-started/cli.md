@@ -13,7 +13,7 @@ computer gets its own credential that you can revoke on its own.
 ## The fastest way: one command
 
 Right after you create your account, **Connect a computer** gives you one command with a one-time code
-(later: Dashboard **Settings → Computers → Add a computer**, or iPhone **Settings → Devices → Add a computer**).
+(later: Dashboard **Account → Computers → Add a computer**, or iPhone **Settings → Devices → Add a computer**).
 Run it in a terminal on this computer, or on a server over SSH:
 
 ```sh

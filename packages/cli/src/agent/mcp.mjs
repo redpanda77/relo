@@ -14,6 +14,7 @@ import { ReloApiClient } from "../shared/api-client.mjs";
 import { MCP_SESSION_VARIABLE } from "../caller.mjs";
 import { HARNESSES } from "../harness/catalog.mjs";
 import { OPTIONS } from "../shared/options.mjs";
+import { FACTS } from "../shared/facts.mjs";
 
 export const SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const PROGRESS_INTERVAL_MS = 15_000;
@@ -37,7 +38,7 @@ const CARD_TEXT = "Never put secrets, tokens, absolute paths, commands or raw ou
  * (`choice`: value -> flag), or a wait in seconds for a duration option (`seconds`).
  */
 const identity = {
-  topic: { describe: "The work in the owner's words, e.g. \"Release 0.7.57\" (not a step). Required on the first call of a session; optional afterwards." },
+  topic: { describe: "The work in the owner's words, e.g. \"Release 0.7.57\" (not a step). Optional: inside a session it defaults to the session's name or the work's goal." },
   project: { describe: "Only if the server is not running inside the project's repository: the project or repository name." },
 };
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -53,7 +54,7 @@ const TOOL_SPECS = [
       goal: { describe: "The work in the owner's words, e.g. \"Release 0.7.57\". Required unless you pass round or from." },
       status: { describe: "What is happening now, e.g. \"Building the image\"." },
       round: { describe: "A new request on a goal whose last round you delivered: the request in a few words, e.g. \"Add the dark theme\". Opens the next round of the same goal (goal may then be left out); without plan it carries the unfinished steps." },
-      plan: { list: { minItems: 1, maxItems: 120 }, describe: "Named steps for judgment work. Nest a step under the one above it by indenting its text two spaces (at most three levels), only when a step cannot be finished in one go." },
+      plan: { list: { minItems: 1, maxItems: FACTS.work.planMaxSteps }, describe: "Named steps for judgment work. Nest a step under the one above it by indenting its text two spaces (at most three levels), only when a step cannot be finished in one go." },
       progress: { describe: "Counted job: \"3/10\"." },
       new: { describe: "Park the open work and start this as a separate one." },
       from: { describe: "A waiting handoff's handle (rh_…): take over the work another session handed off, instead of starting one (goal may then be left out)." },

@@ -1,7 +1,6 @@
 # ADR 0012: The working layer: rounds, plan trees, continuity and efficiency
 
-Status: accepted, 16 October 2026; implemented in phases (plan:
-`docs/internal/product/plan/12-working-layer.md`). Amends the lifecycle parts of
+Status: accepted, 16 October 2026; implemented in phases. Amends the lifecycle parts of
 [ADR 0007](0007-presence-messages-work-separation.md) and [ADR 0008](0008-relo-design-framework.md);
 applies [ADR 0009](0009-cli-structure.md) (setup as one plan) and [ADR 0010](0010-shared-server-modules.md)
 (facts, card actor). Changes the hooks values of [ADR 0011](0011-computers.md)'s remote settings allowlist.
@@ -16,14 +15,14 @@ by accident:
   owner of a result, finished work was terminal, the CLI dropped it from the session, and the Stop reminders
   said "finish" whenever a plan's steps were done. So each request ended in a finish and the next began a
   new work.
-- Plans were flat by decision (STATE-SPEC: "a phase is a step"; two-level phases left out).
+- Plans were flat by decision (a phase was a step; two-level phases were left out).
 - Hooks acted only at Stop and on restore. Nothing reached the agent when a new request arrived, which is
   where it decides to continue or start over; static instructions fade over a long session.
 - A refused `finish` (outcome over the cap) left no trace; reminders keyed on freshness alone missed it.
 - Instructions taught card mechanics only: nothing on planning depth, relevance of an open plan, context,
   handoff, or subagent cost. Subagents ran on the main model because nothing set otherwise.
 
-Research (plan 12 §3): hook-injected state at prompt time beats static rules; plans in good systems grow by
+Research: hook-injected state at prompt time beats static rules; plans in good systems grow by
 linking and never delete steps; depth is earned (two to four levels); a readable handoff beats compaction;
 subagent cost is a default; capabilities differ by environment.
 

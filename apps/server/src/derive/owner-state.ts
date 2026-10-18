@@ -89,10 +89,10 @@ type Evaluated = { state: OwnerState; needsYou: NeedsYouReason | null };
 function evaluate(input: OwnerStateInput,evidence: BoundEvidence,now: number): Evaluated {
   const { work,question } = input;
   const open = work.lifecycle === "open";
+  // Only a question still waiting for an answer needs the owner: one that timed out is past acting on,
+  // so the card falls back to the work's own state (and leaves with it).
   const needsYou: NeedsYouReason | null = question?.standing === "pending" ? "question"
-    // A missed question needs the owner until opened or dismissed (their decision it no longer does).
-    : question?.standing === "missed" && question.openedAt === null && !question.dismissedAt ? "missed_question"
-      : open ? evidence.attention(now) : null;
+    : open ? evidence.attention(now) : null;
   if (needsYou) return { state: "needs_you",needsYou };
   const state = (): OwnerState => {
     switch (work.lifecycle) {

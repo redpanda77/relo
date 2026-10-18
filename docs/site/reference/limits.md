@@ -41,6 +41,8 @@ browser that signed in to the account before is not held back. Every request bod
 | Outcome | {{fact work.outcomeMax}} |
 | Waiting reason | {{fact work.waitingMax}} |
 | Step label | {{fact work.stepLabelMax}} |
+| Step detail (`--detail`) | {{fact work.detailMax}} |
+| Round title (`--round`) | 80 characters |
 | Steps in a plan | 30 (at most 20 added at once) |
 | Producer key | 1-100 characters of `A-Z a-z 0-9 . _ : -` |
 | Lease (scripts) | {{fact lease.minSeconds}} to {{fact lease.maxSeconds}}, default {{fact lease.defaultSeconds}} |

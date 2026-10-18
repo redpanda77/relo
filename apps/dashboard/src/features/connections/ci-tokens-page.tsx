@@ -3,7 +3,7 @@ import * as React from "react"
 
 import { AnimatedHeight } from "@/components/atoms/animated-height"
 import { IconTile } from "@/components/atoms/icon-tile"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { Empty, List, Row, Section } from "@/components/list"
 import { ActionButton } from "@/components/molecules/action-button"
 import { DestructiveAction } from "@/components/molecules/confirmation-action"
@@ -53,9 +53,9 @@ function CiTokenRow({
         </>
       }
       status={
-        <StatusChip tone={ends.tone} variant="hairline" icon={null}>
+        <Badge tone={ends.tone} variant="hairline" icon={null}>
           {ends.text}
-        </StatusChip>
+        </Badge>
       }
       actions={
         <DestructiveAction

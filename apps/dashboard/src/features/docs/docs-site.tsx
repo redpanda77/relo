@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowRight, Menu, Pencil, Search } from "lucide-react"
 import * as React from "react"
 
 import { BrandOrb } from "@/components/brand"
+import { Badge } from "@/components/card"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { GITHUB_URL } from "@/features/auth/github"
 import { DocsSearch } from "@/features/docs/docs-search"
@@ -101,8 +102,8 @@ export function DocsSite({ bootstrap }: { bootstrap: DocsSiteBootstrap }) {
               </nav>
               <footer className="docs-page-footer">
                 <a href={page.editUrl} rel="external noopener"><Pencil className="size-3.5" aria-hidden="true" /> Edit this page on GitHub</a>
-                <span className="hairline-chip">CLI {bootstrap.release.cli}</span>
-                <span className="hairline-chip">server {bootstrap.release.server.split("+")[0]}</span>
+                <Badge tone="neutral" variant="hairline" mono icon={null}>CLI {bootstrap.release.cli}</Badge>
+                <Badge tone="neutral" variant="hairline" mono icon={null}>server {bootstrap.release.server.split("+")[0]}</Badge>
               </footer>
             </>
           ) : (

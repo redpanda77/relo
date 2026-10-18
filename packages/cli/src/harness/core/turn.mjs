@@ -74,5 +74,5 @@ export function handoffNudge({ context, threshold, state, bookkeeping }) {
   const key = open ? `${open.id}:${round.state === "closed" ? round.n + 1 : round.n}` : "-";
   if (bookkeeping?.handoffNudgeKey === key) return undefined;
   const reading = known && context.pct >= threshold ? `Context at ${context.pct}%` : "Context is past 200K tokens";
-  return { key, line: `Relo: ${reading}: deliver with \`relo work handoff --next "…"\` and continue in a fresh session.` };
+  return { key, line: `Relo: ${reading}: run \`relo work handoff --next "…"\` (do not deliver first: a delivered round refuses it) and continue in a fresh session.` };
 }

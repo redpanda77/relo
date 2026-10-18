@@ -1,8 +1,8 @@
 /* history: owned by one area (History, its delivery log and the notification detail); imported at
    the end of index.css so it can refine the base rules.
 
-   History mirrors the iPhone: each day is one WorkList of work-card rows (components/organisms/
-   work-card.tsx); only live work (running, needs you) keeps a framed card, in place. */
+   History mirrors the iPhone: each day is one CardList of card rows (components/card/
+   card.tsx); only live work (running, needs you) keeps a framed card, in place. */
 
 /* ---------- Toolbar: search, then one row of filters that scrolls sideways ---------- */
 
@@ -144,7 +144,7 @@
 .history-day-counts > span + span::before { content: "·"; margin-inline: 6px; }
 .history-day-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 /* A live card in the log is as tall as its content (the shared card fills a grid cell on Now). */
-.history-day-body > .work-card { height: auto; }
+.history-day-body > .card { height: auto; }
 
 /* ---------- Under the list: pages and coverage ---------- */
 
@@ -201,32 +201,14 @@
 .detail[data-variant="page"] { container: detail / inline-size; gap: 28px; }
 .detail[data-variant="panel"] { min-height: 100%; }
 
-.detail-header { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* Three rows at most: where it came from (the computer in the corner), the title, how it stands. */
+.detail-header { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .detail[data-variant="panel"] .detail-header {
   padding: 24px 56px 20px 24px;
   border-bottom: 1px solid var(--border);
 }
-/* source · project, then the computer; the session (thread) sits on its own line under it. */
-.detail-origin { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.detail-origin-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--muted-foreground);
-}
-.detail-origin-path { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }
-.detail-origin-path > [data-part="source"] { flex-shrink: 0; }
-.detail-origin-path > [data-part="project"] { flex-shrink: 0; font-weight: 600; }
-.detail-origin-topic { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--foreground); overflow-wrap: anywhere; }
-.detail-origin-computer { display: inline-flex; min-width: 0; align-items: center; gap: 4px; }
-.detail-origin-computer > svg { width: 13px; height: 13px; flex-shrink: 0; }
-.detail-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.detail-timer { font-size: 12px; color: var(--muted-foreground); }
-.detail-status { font-size: 14px; line-height: 20px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.detail-standing { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.detail-status { flex: 1 1 14rem; min-width: 0; font-size: 14px; line-height: 20px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .detail-sealed { font-size: 14px; }
 
 .detail-columns { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
@@ -252,37 +234,22 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-/* The pending question leads, washed in its meaning colour. */
-.detail-question {
-  padding: 16px 18px;
-  border: 1px solid color-mix(in srgb, var(--tone) 26%, var(--hairline));
-  border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--tone) 6%, transparent);
-}
-.detail-question > .micro { color: color-mix(in srgb, var(--tone) 80%, white); }
+/* The pending question leads: the card set's bordered Strip. */
 .detail-prompt { font-size: 15px; line-height: 26px; overflow-wrap: anywhere; }
 
-/* Details: one fact per row, label left, value right (iOS ReloAboutRows). */
+/* Details: label above value, two columns once there is room for them (iOS ReloAboutRows). */
 .detail-facts {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 176px), 1fr));
+  gap: 10px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xl);
   background: rgb(255 255 255 / 0.025);
 }
-.detail-fact {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 40px;
-  padding: 10px 14px;
-  font-size: 13px;
-  line-height: 18px;
-}
-.detail-fact + .detail-fact { border-top: 1px solid var(--divider); }
-.detail-fact > dt { flex-shrink: 0; color: var(--muted-foreground); }
-.detail-fact > dd { min-width: 0; text-align: right; color: var(--foreground); overflow-wrap: anywhere; }
+.detail-fact { min-width: 0; font-size: 13px; line-height: 18px; }
+.detail-fact > dt { font-size: var(--card-meta-size); line-height: var(--card-meta-lh); color: var(--muted-foreground); }
+.detail-fact > dd { color: var(--foreground); overflow-wrap: anywhere; }
 
 .detail-fold {
   border: 1px solid var(--border);
@@ -311,9 +278,6 @@
   position: sticky;
   bottom: 0;
   z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   padding: 14px 0;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--popover, #0b0d13) 86%, transparent);

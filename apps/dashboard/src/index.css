@@ -691,43 +691,29 @@ body::before {
 .tone-red { --tone: var(--neon-red); }
 .tone-neutral { --tone: #8d93a8; }
 
-.hairline-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  min-height: 24px;
-  padding: 0 9px;
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: #cfd3e2;
+/* The card set's tokens (components/card/, styles/card.css). One padding, gap and radius for every
+   card; type roles: eyebrow (mono 11), title (15), status (13), meta (12). Actions are 36px, 44px on
+   a touch screen. */
+:root {
+  --card-pad: 16px;
+  --card-gap: 6px;
+  --card-foot-gap: 10px;
+  --card-section-gap: 12px;
+  --card-radius: var(--radius-card);
+  --card-title-size: 15px;
+  --card-title-lh: 20px;
+  --card-status-size: 13px;
+  --card-status-lh: 18px;
+  --card-meta-size: 12px;
+  --card-meta-lh: 16px;
+  --card-action-h: 36px;
 }
-
-.outcome-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  min-height: 20px;
-  padding: 0 8px 0 7px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--tone) 12%, transparent);
-  color: color-mix(in srgb, var(--tone) 88%, white);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-  white-space: nowrap;
+@media (min-width: 640px) {
+  :root { --card-pad: 18px; }
 }
-.outcome-badge svg { width: 12px; height: 12px; }
-/* StatusChip: one chip for state everywhere. Soft is the tinted fill; hairline is quieter, for
-   chips that sit beside a title in a dense row. */
-.outcome-badge[data-variant="hairline"] {
-  border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent);
-  background: transparent;
+@media (pointer: coarse) {
+  :root { --card-action-h: 44px; }
 }
-:where(.outcome-badge) { --tone: #a4a4b6; }
 
 /* StatusDot: a 7px dot in the meaning colour, its word beside it; live dots breathe. */
 .status-dot {
@@ -1059,6 +1045,7 @@ select.pill option { background: var(--surface); color: var(--foreground); }
 
 @import "./styles/motion.css";
 @import "./styles/nav.css";
+@import "./styles/card.css";
 @import "./styles/now.css";
 @import "./styles/pages.css";
 @import "./styles/history.css";

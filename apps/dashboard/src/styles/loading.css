@@ -144,31 +144,32 @@
 .loading-row-tile { width: 40px; height: 40px; flex: none; border-radius: 12px; }
 /* ---------- Now (dashboard-skeleton.ts `nowPage`): the same rows, cards and rail as React's ---------- */
 
-/* A work row (work-card.tsx, row variant): 12px by 16px around origin, title, summary and standing
-   lines (16, 20, 18 and 16px, 6px apart); 112px, as React's. */
+/* A work row (components/card, row variant): title, status and metadata lines (18, 16 and 16px, 2px
+   apart) in 10px by 16px of padding; 74px. The skeleton's first line (origin) has no place in the
+   row: the origin trails the metadata line. */
 .loading-list-now { border-color: rgb(255 255 255 / 0.08); }
 .loading-work-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 16px;
+  gap: 2px;
+  padding: 10px var(--card-pad);
 }
 .loading-work-row > span { display: flex; align-items: center; height: 16px; }
-.loading-work-row > span:nth-child(2) { height: 20px; }
-.loading-work-row > span:nth-child(3) { height: 18px; }
+.loading-work-row > span:nth-child(1) { display: none; }
+.loading-work-row > span:nth-child(2) { height: 18px; }
 .loading-work-row .loading-line { height: 10px; }
 .loading-work-row > span:nth-child(2) .loading-line { height: 13px; }
-/* A live card's place (work-card.tsx, card variant), as tall as its kind usually is: a question
-   under a needs-you card, a progress line under a running one. */
+/* A live card's place (components/card, live variant), as tall as its kind usually is: a question
+   with its buttons, a status line with its metadata under a running one. */
 .loading-card {
-  height: 138px;
+  height: 126px;
   border: 1px solid var(--hairline);
-  border-radius: 20px;
+  border-radius: var(--card-radius);
 }
-.loading-card[data-card="needsYou"] { height: 142px; }
-.loading-card[data-card="waitingOnYou"] { height: 122px; }
+.loading-card[data-card="needsYou"] { height: 150px; }
+.loading-card[data-card="waitingOnYou"] { height: 126px; }
 /* A session row in the rail. */
-.loading-session-row { display: flex; min-height: 71px; flex-direction: column; justify-content: center; gap: 8px; padding: 12px 16px; }
+.loading-session-row { display: flex; min-height: 56px; flex-direction: column; justify-content: center; gap: 6px; padding: 10px var(--card-pad); }
 /* "Show n more": a phone shows one row of Since you looked, wider pages three (inbox-view.tsx). */
 .split-page-body .loading-more { display: none; }
 .loading-more .loading-line { height: 10px; }

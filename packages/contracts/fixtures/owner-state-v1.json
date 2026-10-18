@@ -633,7 +633,7 @@
       }
     },
     {
-      "name": "missed question stays under Needs you until opened (never ends the card)",
+      "name": "missed question: the work's own state, never Needs you (only a pending question asks)",
       "input": {
         "now": "2026-10-14T10:00:00.000Z",
         "work": {
@@ -648,43 +648,6 @@
           "standing": "missed",
           "askedAt": "2026-10-14T07:00:00.000Z",
           "openedAt": null
-        },
-        "evidence": {
-          "producer": "agent_session",
-          "session": null
-        }
-      },
-      "expected": {
-        "state": "needs_you",
-        "needsYou": "missed_question",
-        "evidenceAt": "2026-10-14T07:00:00.000Z",
-        "evidenceSource": "declared",
-        "staleDate": "2026-10-14T07:20:00.000Z",
-        "lockScreen": "top",
-        "lockScreenUntil": null,
-        "now": "needs_you",
-        "interruptionLevel": "time-sensitive",
-        "relevance": 1,
-        "apnsPriority": 10,
-        "nextChangeAt": null
-      }
-    },
-    {
-      "name": "missed question once opened: the work's own state again",
-      "input": {
-        "now": "2026-10-14T10:00:00.000Z",
-        "work": {
-          "lifecycle": "open",
-          "startedAt": "2026-10-14T00:00:00.000Z",
-          "lastDeclaredAt": "2026-10-14T07:00:00.000Z",
-          "finishedAt": null,
-          "waitingSince": null,
-          "seenAt": null
-        },
-        "question": {
-          "standing": "missed",
-          "askedAt": "2026-10-14T07:00:00.000Z",
-          "openedAt": "2026-10-14T09:59:00.000Z"
         },
         "evidence": {
           "producer": "agent_session",

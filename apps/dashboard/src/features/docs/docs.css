@@ -276,7 +276,6 @@
 }
 .docs-page-footer a { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; min-height: 36px; }
 .docs-page-footer a:hover { color: var(--foreground); }
-.docs-page-footer .hairline-chip { padding: 3px 10px; font-family: var(--font-mono); font-size: 11px; }
 
 /* ---------- On this page ---------- */
 .docs-outline { display: none; }

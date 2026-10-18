@@ -2,7 +2,7 @@ import { useState } from "react"
 import { ShieldCheck, UserPlus } from "lucide-react"
 
 import { IconTile } from "@/components/atoms/icon-tile"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { List, Row } from "@/components/list"
 import { ActionButton } from "@/components/molecules/action-button"
 import { OperationStatus } from "@/components/molecules/operation-status"
@@ -20,10 +20,11 @@ import {
 import {
   Card,
   CardContent,
+  CardFooter,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
+} from "@/components/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
@@ -186,7 +187,7 @@ export function ServerAdminCard({
           <CardTitle className="flex flex-wrap items-center gap-2.5">
             <IconTile icon={ShieldCheck} tone="violet" />
             Server accounts
-            {pending ? <StatusChip tone="yellow">{pending} waiting</StatusChip> : null}
+            {pending ? <Badge tone="yellow">{pending} waiting</Badge> : null}
           </CardTitle>
           <CardDescription>
             You own this server. Decide who can register and who keeps access.
@@ -277,47 +278,56 @@ export function ServerAdminCard({
             title={
               <span className="inline-flex flex-wrap items-center gap-2">
                 {account.name}
-                {account.admin ? <StatusChip tone="neutral" variant="hairline">Admin · you</StatusChip> : null}
-                {account.status === "pending" ? <StatusChip tone="yellow">Waiting for approval</StatusChip> : null}
-                {account.status === "disabled" ? <StatusChip tone="red">Access off</StatusChip> : null}
+                {account.admin ? <Badge tone="neutral" variant="hairline">Admin · you</Badge> : null}
+                {account.status === "pending" ? <Badge tone="yellow">Waiting for approval</Badge> : null}
+                {account.status === "disabled" ? <Badge tone="red">Access off</Badge> : null}
               </span>
             }
-            meta={`${account.email} · joined ${relativeTime(account.createdAt)} · ${account.sessions} session${account.sessions === 1 ? "" : "s"} · ${account.devices} phone${account.devices === 1 ? "" : "s"}`}
           >
-            {account.admin ? null : (
-              <div className="flex flex-wrap gap-2 px-4 pb-3.5">
-                {account.status === "pending" ? (
-                  <ActionButton size="sm" disabled={busy} {...action("approve")} pendingLabel="Approving…" onClick={() => access(account, "approve")}>
-                    Approve
-                  </ActionButton>
-                ) : null}
-                {account.status === "active" ? (
-                  <ActionButton size="sm" variant="outline" disabled={busy || account.sessions === 0} {...action("sign-out")} pendingLabel="Signing out…" onClick={() => access(account, "sign-out")}>
-                    Sign out
-                  </ActionButton>
-                ) : null}
-                {account.status === "disabled" ? (
-                  <ActionButton size="sm" variant="outline" disabled={busy} {...action("enable")} pendingLabel="Restoring…" onClick={() => access(account, "enable")}>
-                    Restore access
-                  </ActionButton>
-                ) : (
-                  <ActionButton size="sm" variant="outline" disabled={busy} {...action("disable")} pendingLabel="Revoking…" onClick={() => access(account, "disable")}>
-                    {account.status === "pending" ? "Decline" : "Revoke access"}
-                  </ActionButton>
-                )}
-                <ActionButton size="sm" variant="destructive" disabled={busy} {...action("delete")} pendingLabel="Deleting…" onClick={() => setDeleting(account)}>
-                  Delete
-                </ActionButton>
-              </div>
-            )}
+            <CardFooter
+              className="px-4 pb-3.5"
+              meta={
+                <p className="text-xs text-muted-foreground">
+                  {`${account.email} · joined ${relativeTime(account.createdAt)} · ${account.sessions} session${account.sessions === 1 ? "" : "s"} · ${account.devices} phone${account.devices === 1 ? "" : "s"}`}
+                </p>
+              }
+              actions={
+                account.admin ? null : (
+                  <>
+                    {account.status === "pending" ? (
+                      <ActionButton disabled={busy} {...action("approve")} pendingLabel="Approving…" onClick={() => access(account, "approve")}>
+                        Approve
+                      </ActionButton>
+                    ) : null}
+                    {account.status === "active" ? (
+                      <ActionButton variant="outline" disabled={busy || account.sessions === 0} {...action("sign-out")} pendingLabel="Signing out…" onClick={() => access(account, "sign-out")}>
+                        Sign out
+                      </ActionButton>
+                    ) : null}
+                    {account.status === "disabled" ? (
+                      <ActionButton variant="outline" disabled={busy} {...action("enable")} pendingLabel="Restoring…" onClick={() => access(account, "enable")}>
+                        Restore access
+                      </ActionButton>
+                    ) : (
+                      <ActionButton variant="outline" disabled={busy} {...action("disable")} pendingLabel="Revoking…" onClick={() => access(account, "disable")}>
+                        {account.status === "pending" ? "Decline" : "Revoke access"}
+                      </ActionButton>
+                    )}
+                    <ActionButton variant="destructive" disabled={busy} {...action("delete")} pendingLabel="Deleting…" onClick={() => setDeleting(account)}>
+                      Delete
+                    </ActionButton>
+                  </>
+                )
+              }
+            />
           </Row>
           )
         }}
       </List>
 
-      <Card size="sm">
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2.5 text-[15px]">
+          <CardTitle className="flex items-center gap-2.5">
             <IconTile icon={UserPlus} />
             Add an account
           </CardTitle>
@@ -336,11 +346,14 @@ export function ServerAdminCard({
               <Label htmlFor="serverAccountPassword">Temporary password</Label>
               <Input id="serverAccountPassword" name="serverAccountPassword" type="password" minLength={8} maxLength={128} required autoComplete="new-password" />
             </div>
-            <div className="flex items-end">
-              <ActionButton type="submit" disabled={busy} pending={working === "create"} failed={failed} pendingLabel="Creating…" successLabel="Created">
-                Create account
-              </ActionButton>
-            </div>
+            <CardFooter
+              className="sm:col-span-2"
+              actions={
+                <ActionButton type="submit" disabled={busy} pending={working === "create"} failed={failed} pendingLabel="Creating…" successLabel="Created">
+                  Create account
+                </ActionButton>
+              }
+            />
           </form>
         </CardContent>
       </Card>

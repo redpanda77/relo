@@ -51,7 +51,7 @@ delivered one can be removed from the phone with `relo notify withdraw`.
 | A work fails | alert |
 | A work finishes | quiet notification |
 | `relo notify` with no work open | ordinary notification |
-| A work starts | the card appears on the Lock Screen |
+| A work starts | the card appears on the Lock Screen, with one alert the first time |
 | Updates, steps, counts, waiting, pausing | silent: the card changes in place |
 | A card goes stale or leaves the Lock Screen | silent |
 

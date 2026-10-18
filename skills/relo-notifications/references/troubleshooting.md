@@ -50,7 +50,7 @@ wrk_… --dropped --outcome "…"` ends a hanging one (paused, or quiet <!--f:ca
 `WORK_RUNNING`), and `relo admin sessions` / `relo admin activity …` run the owner's views. Never use
 `relo admin` unless the owner asked.
 
-## No session id (Gemini CLI, Cursor, OpenCode)
+## No session id (Gemini CLI, Cursor, Copilot, Amp)
 
 `Refused: this shell has no session id (…), so Relo cannot tell which work is yours.` Pass the handle
 that `relo work start` printed (`--work wrk_….<token>`) to every later command. `no work matches that

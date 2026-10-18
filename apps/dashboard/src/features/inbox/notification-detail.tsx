@@ -4,7 +4,7 @@ import type * as React from "react"
 
 import { EncryptedText } from "@/components/atoms/encrypted-text"
 import { ProgressBar } from "@/components/atoms/progress-bar"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge, Card, CardActions, CardCorner, CardFooter, CardHit, CardList, CardListItem, CardMeta, CardHeader, Countdown, Origin, RunningFor, Strip } from "@/components/card"
 import { ActionButton, type ActionPhase } from "@/components/molecules/action-button"
 import { AnswerControls } from "@/components/molecules/answer-controls"
 import { CopyButton } from "@/components/molecules/copy-button"
@@ -15,12 +15,11 @@ import {
 } from "@/components/molecules/delivery-chain"
 import { Button } from "@/components/ui/button"
 import { ConfirmationAction } from "@/components/molecules/confirmation-action"
-import { OutcomeBadge } from "@/features/inbox/activity-card"
+import { OUTCOME_ICON } from "@/features/inbox/outcome-icons"
 import { planEntries, type PlanStanding } from "@/features/inbox/plan-outline"
 import { PlanTree } from "@/features/inbox/plan-tree"
 import {
   activityOutcome,
-  clockLabel,
   elapsedLabel,
   knownName,
   originLabel,
@@ -34,7 +33,6 @@ import { formatDashboardDate } from "@/features/inbox/utils"
 import { displayName } from "@/lib/encrypted"
 import { relativeTime } from "@/lib/format"
 import { isOpenQuestion, useAnswerableQuestion } from "@/hooks/use-answerable-question"
-import { useTicker } from "@/lib/ticker"
 import { semanticStatusTone } from "@/lib/status-tone"
 import { cn } from "@/lib/utils"
 import type { InboxService } from "@/services/inbox-service"
@@ -180,53 +178,6 @@ function durationSeconds(from: string | null, to: string | null) {
   return Number.isFinite(value) && value >= 0 ? value : null
 }
 
-/** "running 12:40", ticking off the page's one clock while the work is live. Display only. */
-function RunningFor({ since }: { since: string }) {
-  const now = useTicker(true)
-  const started = new Date(since).valueOf()
-  if (!Number.isFinite(started)) return null
-  const seconds = Math.max(0, ((now || started) - started) / 1000)
-  return (
-    <time className="detail-timer tabular-nums" dateTime={since}>
-      running {clockLabel(seconds)}
-    </time>
-  )
-}
-
-/** source · project, the computer, then the session on its own line: unknown (sealed, unlearned) parts are left out. */
-function OriginLine({ source, project, topic, computer }: {
-  source: string
-  project: DetailOrigin["project"]
-  topic: string | null
-  computer: string | null
-}) {
-  const spoken = [source, project?.name, topic].filter(Boolean).join(", ")
-  return (
-    <div className="detail-origin" data-identity-chips>
-      <p className="detail-origin-line">
-        <span className="detail-origin-path" aria-label={spoken}>
-          <span data-part="source">{source}</span>
-          {project ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span data-part="project" style={{ color: projectColor(project.slot ?? hashSlot(project.name)) }}>
-                {project.name}
-              </span>
-            </>
-          ) : null}
-        </span>
-        {computer ? (
-          <span className="detail-origin-computer" title="Computer and agent account" data-part="origin">
-            <Laptop aria-hidden="true" />
-            {computer}
-          </span>
-        ) : null}
-      </p>
-      {topic ? <p className="detail-origin-topic" data-part="topic">{topic}</p> : null}
-    </div>
-  )
-}
-
 /**
  * The pending question's answer from this browser (AnswerControls), once the question's signing
  * facts load; until then, or when it cannot be answered here, the line pointing to the iPhone. Answered
@@ -236,7 +187,7 @@ function BrowserAnswer({ interactionId, fallback }: { interactionId: string; fal
   const question = useAnswerableQuestion(interactionId)
   // Answered on the phone or the notch (or no longer asked) while this page is open: no buttons left.
   if (question && !isOpenQuestion(question)) return <p className="text-sm text-muted-foreground" data-answered-elsewhere>No longer waiting for an answer.</p>
-  return question ? <AnswerControls question={question} showPrompt={false} /> : <>{fallback}</>
+  return question ? <AnswerControls question={question} showPrompt={false} countdown={false} /> : <>{fallback}</>
 }
 
 /** One label and its value, a row of the Details list (iOS ReloAboutRows). */
@@ -331,28 +282,47 @@ export function NotificationDetailBody({
     </p>
   ) : null
 
+  const CardOutcomeIcon = cardOutcome ? OUTCOME_ICON[cardOutcome.kind] : null
+  // Three rows at most: where it came from (the computer in the corner), the title, how it stands.
   const header = (
     <header className="detail-header">
-      <OriginLine source={source} project={project} topic={topic} computer={computer} />
+      <CardHeader
+        origin={<Origin source={source} project={project?.name} projectColor={project ? projectColor(project.slot ?? hashSlot(project.name)) : null} topic={topic} />}
+        trailing={
+          computer ? (
+            <CardCorner title="Computer and agent account" data-part="origin">
+              <Laptop aria-hidden="true" />
+              {computer}
+            </CardCorner>
+          ) : null
+        }
+      />
       {panel && heading ? heading(titleNode) : null}
       {!panel && encrypted ? <p className="detail-sealed"><EncryptedText className="text-muted-foreground" /></p> : null}
-      <div className="detail-badges">
+      <div className="detail-standing">
         <span data-detail-status className="inline-flex">
-          {cardOutcome ? <OutcomeBadge outcome={cardOutcome} /> : <StatusChip tone={toneChip[status.tone]}>{status.text}</StatusChip>}
+          {cardOutcome && CardOutcomeIcon ? (
+            <Badge tone={cardOutcome.tone} icon={<CardOutcomeIcon aria-hidden="true" />}>{cardOutcome.label}</Badge>
+          ) : (
+            <Badge tone={toneChip[status.tone]}>{status.text}</Badge>
+          )}
         </span>
-        {running && activity?.createdAt ? <RunningFor since={activity.createdAt} /> : null}
+        {running && activity?.createdAt ? <span className="card-corner"><RunningFor since={activity.createdAt} /></span> : null}
+        {activity?.status && !encrypted ? <p className="detail-status">{activity.status}</p> : null}
       </div>
-      {activity?.status && !encrypted ? <p className="detail-status">{activity.status}</p> : null}
     </header>
   )
 
   const question = pendingAnswer && interaction ? (
-    <section aria-labelledby="question-heading" className="detail-section detail-question tone-orange">
-      <h3 id="question-heading" className="micro">
-        {kindLabel === "Approval" ? "Asks for your approval" : "Asks you"}
-      </h3>
+    <Strip
+      role="region"
+      aria-labelledby="question-heading"
+      variant="bordered"
+      tone="orange"
+      label={<span id="question-heading">{kindLabel === "Approval" ? "Asks for your approval" : "Asks you"}</span>}
+    >
       {prompt}
-    </section>
+    </Strip>
   ) : null
 
   const plan = activity && planSteps.length ? (
@@ -437,33 +407,41 @@ export function NotificationDetailBody({
     <div className="space-y-3">
       <CopyButton value={activity?.id ?? event.id} label="Copy ID" size="sm" className="text-xs" />
       {detail.deliveries.length ? (
-        <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border" aria-label="Delivery per device">
+        <CardList label="Delivery per device">
           {detail.deliveries.map((delivery) => (
-            <li key={delivery.id} className="px-3 py-2.5 text-xs">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">{delivery.deviceName}</span>
-                <span className="capitalize text-muted-foreground">{words(delivery.state)}</span>
-              </div>
-              <p className="mt-1 text-muted-foreground">
-                {delivery.attemptCount} attempt{delivery.attemptCount === 1 ? "" : "s"}
-                {delivery.error ? ` · ${delivery.error.code}` : ""}
-              </p>
-              {delivery.reconciliation.required && service.reconcileDelivery ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {delivery.reconciliation.allowedActions.map((action) => (
-                    <Button key={action} size="sm" variant="secondary" disabled={reconciling === delivery.id}
-                      onClick={async () => {
-                        setReconciling(delivery.id)
-                        try { await service.reconcileDelivery!(delivery.id, action) } finally { setReconciling(null) }
-                      }}>
-                      {action === "mark_accepted" ? "Mark accepted" : action === "retry" ? "Retry" : "Cancel"}
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
-            </li>
+            <CardListItem key={delivery.id}>
+              <Card variant="row">
+                <CardHit>
+                  <div className="card-row-text">
+                    <div className="card-row-top">
+                      <span className="card-row-title">{delivery.deviceName}</span>
+                      <span className="capitalize card-corner">{words(delivery.state)}</span>
+                    </div>
+                    <CardMeta
+                      parts={[
+                        `${delivery.attemptCount} attempt${delivery.attemptCount === 1 ? "" : "s"}`,
+                        delivery.error ? delivery.error.code : null,
+                      ]}
+                    />
+                    {delivery.reconciliation.required && service.reconcileDelivery ? (
+                      <CardActions className="justify-start">
+                        {delivery.reconciliation.allowedActions.map((action) => (
+                          <Button key={action} size="sm" variant="secondary" disabled={reconciling === delivery.id}
+                            onClick={async () => {
+                              setReconciling(delivery.id)
+                              try { await service.reconcileDelivery!(delivery.id, action) } finally { setReconciling(null) }
+                            }}>
+                            {action === "mark_accepted" ? "Mark accepted" : action === "retry" ? "Retry" : "Cancel"}
+                          </Button>
+                        ))}
+                      </CardActions>
+                    ) : null}
+                  </div>
+                </CardHit>
+              </Card>
+            </CardListItem>
           ))}
-        </ul>
+        </CardList>
       ) : null}
     </div>
   )
@@ -493,23 +471,7 @@ export function NotificationDetailBody({
   const onIphone = interaction ? (
     <p className="flex items-start gap-2.5 text-sm text-muted-foreground">
       <Smartphone className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      <span>
-        Answer from the notification on your iPhone
-        {interaction.expiresAt ? (
-          <>
-            {" "}before{" "}
-            <time
-              dateTime={interaction.expiresAt}
-              title={formatDashboardDate(interaction.expiresAt)}
-              className="text-foreground"
-            >
-              {clock(interaction.expiresAt)}
-            </time>{" "}
-            ({relativeTime(interaction.expiresAt)})
-          </>
-        ) : null}
-        .
-      </span>
+      <span>Answer from the notification on your iPhone.</span>
     </p>
   ) : null
   const answerSlot = pendingAnswer && interaction ? (
@@ -518,31 +480,36 @@ export function NotificationDetailBody({
     </div>
   ) : null
 
+  // One row while it fits: the time left and Withdraw leading, the answer and the actions trailing.
   const footer = answerSlot || hasActions ? (
     <footer className="detail-footer">
-      {answerSlot}
-      {hasActions ? (
-        <div className="flex flex-wrap items-center gap-2">
-          {canWithdraw ? (
-            <ConfirmationAction
-              label="Withdraw"
-              title="Withdraw this notification?"
-              description="It’s removed from your iPhone and marked withdrawn here. You can’t undo this."
-              pending={withdrawal === "pending"}
-              failed={withdrawal === "failed"}
-              pendingLabel="Withdrawing…"
-              onConfirm={async () => {
-                setWithdrawal("pending")
-                try { await service.withdrawNotification!(event.id); setWithdrawal("done") }
-                catch { setWithdrawal("failed") }
-              }}
-            />
-          ) : null}
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+      <CardFooter
+        meta={
+          <div className="flex flex-wrap items-center gap-3">
+            {pendingAnswer && interaction?.expiresAt ? <Countdown deadline={interaction.expiresAt} /> : null}
+            {canWithdraw ? (
+              <ConfirmationAction
+                label="Withdraw"
+                title="Withdraw this notification?"
+                description="It’s removed from your iPhone and marked withdrawn here. You can’t undo this."
+                pending={withdrawal === "pending"}
+                failed={withdrawal === "failed"}
+                pendingLabel="Withdrawing…"
+                onConfirm={async () => {
+                  setWithdrawal("pending")
+                  try { await service.withdrawNotification!(event.id); setWithdrawal("done") }
+                  catch { setWithdrawal("failed") }
+                }}
+              />
+            ) : null}
+          </div>
+        }
+        actions={
+          <>
+            {answerSlot}
             {showReactivate ? (
               <ActionButton
                 variant="outline"
-                className="min-h-11"
                 phase={phaseOf[reactivation]}
                 pendingLabel="Showing on iPhone…"
                 successLabel="Shown"
@@ -556,15 +523,15 @@ export function NotificationDetailBody({
               </ActionButton>
             ) : null}
             {event.destination.state === "safe" ? (
-              <Button asChild className="min-h-11">
+              <Button asChild>
                 <a href={event.destination.href} target="_blank" rel="noopener noreferrer">
                   Open link <ArrowUpRight aria-hidden="true" />
                 </a>
               </Button>
             ) : null}
-          </div>
-        </div>
-      ) : null}
+          </>
+        }
+      />
     </footer>
   ) : null
 

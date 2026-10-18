@@ -176,10 +176,11 @@ export function Row({
   leading?: React.ReactNode
   title: React.ReactNode
   meta?: React.ReactNode
-  /** A state line right under the title (a StatusDot, readiness). */
+  /** A state right before the meta on the line under the title (a StatusDot, readiness). */
   status?: React.ReactNode
   /** Prose under the title that wraps instead of truncating. */
   description?: React.ReactNode
+  /** The row's corner: a time, a count, chips. */
   trailing?: React.ReactNode
   /** Buttons beside the row, outside its link; a row with actions has no chevron. */
   actions?: React.ReactNode
@@ -201,10 +202,10 @@ export function Row({
         <span className={cn("block text-sm font-medium text-foreground", lineClass)}>
           {title}
         </span>
-        {status ? <span className="mt-0.5 block text-xs">{status}</span> : null}
-        {meta ? (
-          <span className={cn("mt-0.5 block text-xs text-muted-foreground", lineClass)}>
-            {meta}
+        {status || meta ? (
+          <span className="mt-0.5 flex min-w-0 items-baseline gap-x-2 text-xs">
+            {status ? <span className="shrink-0">{status}</span> : null}
+            {meta ? <span className={cn("min-w-0 text-muted-foreground", lineClass)}>{meta}</span> : null}
           </span>
         ) : null}
         {description ? (
@@ -214,7 +215,7 @@ export function Row({
         ) : null}
       </span>
       {trailing ? (
-        <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+        <span className="flex max-w-[45%] shrink-0 flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
           {trailing}
         </span>
       ) : null}
@@ -284,21 +285,21 @@ export function Empty({
   action?: React.ReactNode
 }) {
   return (
-    <div className="glass flex flex-col items-center rounded-card px-6 py-12 text-center">
+    <div className="glass flex flex-col items-center rounded-card px-5 py-8 text-center sm:px-6 sm:py-12">
       {icon ? (
-        <span aria-hidden="true" className="mb-4 text-muted-foreground [&_svg]:size-6">
+        <span aria-hidden="true" className="mb-3 text-muted-foreground sm:mb-4 [&_svg]:size-6">
           {icon}
         </span>
       ) : (
-        <span aria-hidden="true" className="brand-orb mb-4 size-10 opacity-80" />
+        <span aria-hidden="true" className="brand-orb mb-3 size-8 opacity-80 sm:mb-4 sm:size-10" />
       )}
-      <p className="text-base font-semibold">{title}</p>
+      <p className="text-[15px] font-semibold">{title}</p>
       {description ? (
         <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
           {description}
         </p>
       ) : null}
-      {action ? <div className="mt-5 flex flex-wrap justify-center gap-2">{action}</div> : null}
+      {action ? <div className="mt-4 flex flex-wrap justify-center gap-2 sm:mt-5">{action}</div> : null}
     </div>
   )
 }

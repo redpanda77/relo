@@ -1,7 +1,7 @@
 import { LockOpen, ShieldCheck } from "lucide-react"
 import * as React from "react"
 
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { ActionButton } from "@/components/molecules/action-button"
 import { OperationStatus } from "@/components/molecules/operation-status"
 import {
@@ -37,14 +37,14 @@ const SERVICE_SCOPE_COPY: Record<
 /** The row's quiet chip for a service allowed to send readable content on an encrypted account. */
 export function ReadableChip() {
   return (
-    <StatusChip
+    <Badge
       tone="yellow"
       variant="hairline"
       icon={<LockOpen className="size-3" aria-hidden="true" />}
       label="Readable: may send readable content when encryption is required"
     >
       Readable
-    </StatusChip>
+    </Badge>
   )
 }
 

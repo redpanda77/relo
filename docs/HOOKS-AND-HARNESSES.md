@@ -1,6 +1,6 @@
 # Hooks and harnesses
 
-A harness is the program an agent runs in: Claude Code or Gemini CLI today. Hooks are the commands a
+A harness is the program an agent runs in: Claude Code, Gemini CLI or OpenCode today. Hooks are the commands a
 harness runs on its own events (a prompt submitted, a tool finished, a turn stopped). Relo can use
 them, but they are optional, off by default, and installed by the `guide` and `optimize` depths of
 `relo setup --level`. Everything works without them.
@@ -53,8 +53,7 @@ relo outbox status   # what is queued locally and not yet sent
 
 In Claude Code the `presence` set installs a `relo hook restore` on SessionStart, `turn` on
 UserPromptSubmit, `remind` on Stop and `release` on SessionEnd, plus `guard` before Relo's own
-tool calls and `await` after `relo ask`. `guard`, `await` and `release` are accepted but do nothing
-yet. The `restore` role adds the session's open work as
+tool calls and `await` after `relo ask`. Only `await` does nothing yet. `guard` refuses a Relo command whose reply the agent would never read, and `release` hands the open work off when a session is cleared. The `restore` role adds the session's open work as
 context after a start, resume or compaction. The `remind` role adds one soft note, once per change,
 when the work looks forgotten (every step done but still open, a count that reached its total, or no
 update for a while); it is context for the agent, never a decision, and never blocks the turn.

@@ -71,5 +71,5 @@ Every five minutes the worker deletes notifications, their sealed bodies, questi
 delivery records and ended cards older than the window. A question still waiting for an answer, an
 active card and the current item for a topic are kept until they settle. Ten hours matches the
 rotation of your phone's encryption keys. Leave it empty to keep content until you delete it
-yourself. Deleted notifications also leave the History your iPhone loads, so a short window means a
+yourself with the retention tool in the self-hosting guide. Deleted notifications also leave the History your iPhone loads, so a short window means a
 short History.

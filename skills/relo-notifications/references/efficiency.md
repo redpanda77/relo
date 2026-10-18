@@ -19,6 +19,6 @@ The owner turns it on with `relo setup --level optimize`.
 ## Context
 
 - Past about 60% of your context (a prompt-time line tells you when the owner's status line shows it),
-  do not compact. Run `relo work deliver` with a handoff note
-  (`relo work handoff --next "…"`) and continue in a fresh session with `relo work start --from <handle>`.
+  do not compact. Run `relo work handoff --next "…"`
+  (it is refused on a delivered round, so do not deliver first) and continue in a fresh session with `relo work start --from <handle>`.
 - The open work, its round and the next step live in Relo. `relo state` brings them back at any time.

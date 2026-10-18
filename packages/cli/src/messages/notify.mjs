@@ -383,14 +383,25 @@ function interactionResult(payload) {
   });
 }
 
+/** Cloudflare cuts a request at about 100 s (HTTP 524), so a long wait is a loop of slices under it. */
+export const WAIT_SLICE_SECONDS = 90;
+const EDGE_TIMEOUT_STATUSES = new Set([502, 504, 524]);
+
 export async function waitForInteraction(client, id, timeoutSeconds, dependencies, expected = {}) {
   const deadline = dependencies.now() + timeoutSeconds * 1_000;
   let latest = { interaction: { id, state: "pending" } };
   while (dependencies.now() < deadline) {
     const startedAt = dependencies.now();
     const remainingSeconds = Math.max(1, Math.ceil((deadline - startedAt) / 1_000));
-    const pollSeconds = Math.min(300, remainingSeconds);
-    latest = await client.waitForInteraction(id, pollSeconds);
+    const pollSeconds = Math.min(WAIT_SLICE_SECONDS, remainingSeconds);
+    try {
+      latest = await client.waitForInteraction(id, pollSeconds);
+    } catch (error) {
+      // The edge cut this slice: the question is still open, so the next slice picks up where it ended.
+      if (!(error instanceof ApiError && EDGE_TIMEOUT_STATUSES.has(error.status))) throw error;
+      await dependencies.sleep(Math.min(1_000, Math.max(0, deadline - dependencies.now())));
+      continue;
+    }
     // A positive answer is acted on only when a phone this computer verified signed it (E4.2).
     if (interactionState(latest) !== "pending") {
       return verifyAnswer(interactionResult(latest), client, dependencies, { interactionId: id, ...expected });

@@ -43,7 +43,8 @@ Every flag: [questions reference](/docs/reference/cli/questions). How questions 
 
 ## Wait for the answer
 
-By default `relo ask` blocks and exits with the answer:
+By default `relo ask` blocks and exits with the answer. Long waits are not one long request: the CLI asks the server in
+slices of at most 90 seconds, because the public edge cuts a single request at about 100 seconds.
 
 ```sh
 if relo ask "Restore last night's backup over production?" --approval \

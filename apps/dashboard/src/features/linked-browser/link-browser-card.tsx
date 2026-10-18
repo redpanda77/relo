@@ -6,7 +6,7 @@ import { CrossfadeText } from "@/components/atoms/animated-height"
 import { CheckDraw } from "@/components/atoms/check-draw"
 import { IconTile } from "@/components/atoms/icon-tile"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, Strip } from "@/components/card"
 import { linkCode, type BrowserLink, type BrowserLinkState, type LinkRequestError } from "@/lib/e2ee/browser-link"
 import { useBrowserLink } from "@/features/linked-browser/use-browser-link"
 import { LINK_STEPS, LINK_TITLE, linkPayload } from "@/features/linked-browser/link-text"
@@ -173,7 +173,7 @@ function LinkFlow({
 
   if (linked && flow.mode !== "qr") {
     return (
-      <div className="link-flow">
+      <div className="grid gap-3">
         <p className="link-status" role="status" data-done="true">
           <span className="link-status-check" aria-hidden="true">
             <LazyMotion features={loadMotionFeatures} strict><CheckDraw className="size-4" /></LazyMotion>
@@ -186,15 +186,17 @@ function LinkFlow({
 
   if (flow.mode === "qr") {
     return (
-      <div className="link-flow">
-        {flow.note ? <p className="link-note" role="status">{flow.note}</p> : null}
+      <div className="grid gap-3">
+        {flow.note ? <Strip role="status">{flow.note}</Strip> : null}
         <LinkQr state={state} linked={linked} />
         {linked ? null : (
-          <div className="link-actions">
-            <Button size="sm" variant="ghost" onClick={() => setFlow({ mode: "idle" })}>
-              <Smartphone aria-hidden="true" /> Send to my iPhone instead
-            </Button>
-          </div>
+          <CardFooter
+            actions={
+              <Button variant="ghost" onClick={() => setFlow({ mode: "idle" })}>
+                <Smartphone aria-hidden="true" /> Send to my iPhone instead
+              </Button>
+            }
+          />
         )}
       </div>
     )
@@ -202,7 +204,7 @@ function LinkFlow({
 
   if (flow.mode === "waiting") {
     return (
-      <div className="link-flow">
+      <div className="grid gap-3">
         <div className="link-code-panel">
           <p className="link-code-label">Link code</p>
           <p className="link-code" aria-label={code ? `Link code ${code}` : "Link code loading"}>
@@ -213,52 +215,44 @@ function LinkFlow({
             code.
           </p>
         </div>
-        {problem ? <p className="link-note" role="status">{problem}</p> : null}
-        <div className="link-footer">
-          <p className="link-status" role="status">
-            <span className="waiting-dot" aria-hidden="true" />
-            Waiting for your iPhone…
-          </p>
-          <div className="link-actions">
-            <Button size="sm" variant="ghost" disabled={resendIn !== null} onClick={() => void send()}>
-              {resendIn !== null ? `Send again in ${resendIn}s` : "Send again"}
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setFlow({ mode: "qr" })}>
-              <QrIcon aria-hidden="true" /> Scan a code instead
-            </Button>
-          </div>
-        </div>
+        {problem ? <Strip tone="yellow" role="status">{problem}</Strip> : null}
+        <CardFooter
+          meta={
+            <p className="link-status" role="status">
+              <span className="waiting-dot" aria-hidden="true" />
+              Waiting for your iPhone…
+            </p>
+          }
+          actions={
+            <>
+              <Button variant="ghost" disabled={resendIn !== null} onClick={() => void send()}>
+                {resendIn !== null ? `Send again in ${resendIn}s` : "Send again"}
+              </Button>
+              <Button variant="ghost" onClick={() => setFlow({ mode: "qr" })}>
+                <QrIcon aria-hidden="true" /> Scan a code instead
+              </Button>
+            </>
+          }
+        />
       </div>
     )
   }
 
   return (
-    <div className="link-flow">
-      {problem ? <p className="link-note" role="alert">{problem}</p> : null}
-      <div className="link-actions">
-        <Button size="sm" disabled={!link || flow.mode === "sending"} onClick={() => void send()}>
-          <Smartphone aria-hidden="true" /> {flow.mode === "sending" ? "Sending…" : "Send to my iPhone"}
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => setFlow({ mode: "qr" })}>
-          <QrIcon aria-hidden="true" /> Scan a QR code
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** The card's head: the lock mark, a quiet label, the title and why it matters. */
-function LinkHead({ titleAs: Title = "h2" }: { titleAs?: "h2" | "h3" }) {
-  return (
-    <div className="link-head">
-      <span className="link-mark" aria-hidden="true"><Lock /></span>
-      <div className="link-titles">
-        <p className="link-eyebrow">End-to-end encrypted</p>
-        <Title className="link-title">{LINK_TITLE}</Title>
-      </div>
-      <p className="link-lede">
-        Your agents seal some cards so only your devices can read them. Approve this browser from your iPhone to open them here.
-      </p>
+    <div className="grid gap-3">
+      {problem ? <Strip tone="red" role="alert">{problem}</Strip> : null}
+      <CardFooter
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setFlow({ mode: "qr" })}>
+              <QrIcon aria-hidden="true" /> Scan a QR code
+            </Button>
+            <Button disabled={!link || flow.mode === "sending"} onClick={() => void send()}>
+              <Smartphone aria-hidden="true" /> {flow.mode === "sending" ? "Sending…" : "Send to my iPhone"}
+            </Button>
+          </>
+        }
+      />
     </div>
   )
 }
@@ -280,10 +274,15 @@ export function LinkBrowserBanner({
   const shown = state.status === "unlinked" ? state : moment.qr
   if (!shown) return null
   return (
-    <section className="link-card" aria-label={LINK_TITLE}>
-      <LinkHead />
+    <Card variant="plain" tone="violet" tint role="region" aria-label={LINK_TITLE}>
+      <CardHeader eyebrow={<><Lock className="mr-1 inline size-3 align-[-1px]" aria-hidden="true" />End-to-end encrypted</>}>
+        <CardTitle as="h2">{LINK_TITLE}</CardTitle>
+        <CardDescription>
+          Your agents seal some cards so only your devices can read them. Approve this browser from your iPhone to open them here.
+        </CardDescription>
+      </CardHeader>
       <LinkFlow link={resolved} state={shown} linked={state.status === "linked"} onActive={setActive} />
-    </section>
+    </Card>
   )
 }
 

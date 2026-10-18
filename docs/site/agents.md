@@ -12,7 +12,9 @@ relo work start --goal "Fix the login crash" --plan "Reproduce the crash,Find th
 relo work update --status "Reproduced on iOS 17" --next-step
 relo work update --add "Patch token refresh,Run the tests"
 relo ask "Deploy 0.7.57 to production?" --approval
-relo work finish --outcome "Login fixed: token refresh patched and tested"
+relo work deliver --outcome "Login fixed: token refresh patched and tested"   # this request is done
+relo work start --round "Add a regression test"                                 # the owner's next request
+relo work finish --outcome "Login fix shipped"                                  # the goal is done
 relo state
 ```
 
@@ -27,7 +29,7 @@ relo state
   work; it does not make a second card.
 - A different goal: `relo work start --new --goal "…"`. The old one is parked; `relo work resume`
   brings it back.
-- No session id in your harness (Gemini CLI, Cursor)? Pass the handle `start` prints as
+- No session id in your harness (Gemini CLI, Cursor, Copilot, Amp)? Pass the handle `start` prints as
   `--work` on later commands.
 
 ## Plan honestly
@@ -40,7 +42,7 @@ relo state
   the owner reads the card, not your chat, so a step you report in chat but not on the card leaves it
   a step behind.
 - Run each `relo` command alone and read all of its output, never through `>/dev/null`, `tail`, `head`
-  or `grep`: `Owner sees:` confirms what reached the phone.
+  or `grep`, and never with `;` or `&&` and other commands: `Owner sees:` confirms what reached the phone.
 - Parallel work (several jobs, subagents) is one step with a count: `--progress 2/6`. A counted job
   without a plan: `--progress 3/10`. Never guess progress from time.
 - Ending your turn while CI, a review or a background job (a deploy, a long test run) runs:
@@ -73,9 +75,11 @@ Exit 0 alone is not enough: a yes also exits 0.
 - Exit 4 means the question is still open: run `relo interaction wait ID` (it waits up to {{fact question.agentWaitSeconds}}
   per command). Exit 8 means it closed unanswered: do not act.
 
-## Finish once
+## Deliver a request, finish the goal
 
-- `relo work finish --outcome "…"` says what happened, honestly. The outcome is the owner's
+- `relo work deliver --outcome "…"` ends the current request (a round) and tells the owner it is their turn.
+  A follow-up on the same goal opens with `relo work start --round "<the request>"`.
+- `relo work finish --outcome "…"` ends the goal once, and says what happened, honestly. The outcome is the owner's
   notification.
 - Add `--failed` when it did not succeed, `--dropped` when you abandoned it.
 - `relo notify "…"` only when no work is open and an outcome is worth a buzz. Never for progress or

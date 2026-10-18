@@ -122,7 +122,7 @@ The `.p8` key lives only on the server. Do not copy it into the Xcode project or
 
 ## Check it
 
-In the Dashboard, your iPhone appears under **Phones**, and the app's **Now** tab loads without a
+In the Dashboard, your iPhone appears under **Connections → Phones**, and the app's **Now** tab loads without a
 notice asking you to allow notifications. On the server, `docker compose ps` keeps showing the worker
 as running.
 

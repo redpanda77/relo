@@ -1,6 +1,6 @@
 # Live Activity verification
 
-This protocol closes layout gates; previews and unsigned build success alone do not prove system clipping is fixed. The user builds and installs iOS applications; agents do not sign, install (including in a simulator), distribute, or deploy them. Fresh system captures require a user-installed build.
+This protocol closes layout gates; previews and unsigned build success alone do not prove system clipping is fixed. Build and install the app yourself, on a device you control; fresh system captures require an installed build.
 
 Open gates are tracked with the rest of the project's current work, not in this file. Package tests and unsigned builds do not replace the native matrix below.
 

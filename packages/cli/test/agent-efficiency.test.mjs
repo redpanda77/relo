@@ -5,7 +5,7 @@ import { parseArgs } from "../src/args.mjs";
 import { progressFraction, shortenText } from "../src/shared/validate.mjs";
 import { execute, run } from "../src/cli.mjs";
 import { VERSION } from "../src/version.mjs";
-import { EXIT, NetworkError } from "../src/shared/errors.mjs";
+import { ApiError, EXIT, NetworkError } from "../src/shared/errors.mjs";
 import { closest, editDistance } from "../src/suggest.mjs";
 import { cardDependencies, fakeCards, fakeHome } from "./fake-cards.mjs";
 
@@ -37,7 +37,7 @@ test("ask waits 100s inside an agent session and says how to keep waiting", asyn
   const { polls, deps } = pendingQuestion();
   const out = await cli(["ask", "Ship?", "--approval", ...topic], deps(session));
   assert.equal(out.exitCode, EXIT.TERMINAL);
-  assert.equal(polls[0], 100);
+  assert.deepEqual(polls, [90, 10]);
   const { error } = out.line;
   assert.equal(error.code, "INTERACTION_TERMINAL");
   assert.equal(error.message, "No answer yet; the question is still open.");
@@ -49,13 +49,13 @@ test("ask waits 100s inside an agent session and says how to keep waiting", asyn
 test("ask keeps its 5 minute wait outside agent sessions, and --timeout always wins", async () => {
   const outside = pendingQuestion();
   await cli(["ask", "Ship?", "--approval", ...topic], outside.deps({}));
-  assert.equal(outside.polls[0], 300);
+  assert.deepEqual(outside.polls, [90, 90, 90, 30]);
   const explicit = pendingQuestion();
   await cli(["ask", "Ship?", "--approval", "--timeout", "30s", ...topic], explicit.deps(session));
   assert.equal(explicit.polls[0], 30);
   const longer = pendingQuestion();
   await cli(["ask", "Ship?", "--approval", "--timeout", "4m", ...topic], longer.deps(session));
-  assert.equal(longer.polls[0], 240);
+  assert.deepEqual(longer.polls, [90, 90, 60]);
 });
 
 test("a closed question stays distinct from one that is still open", async () => {
@@ -75,7 +75,19 @@ test("interaction wait defaults to 100s in an agent session and 60s elsewhere", 
   await cli(["interaction", "wait", "int_1"], cardDependencies(client, { env: session }));
   await cli(["interaction", "wait", "int_1"], cardDependencies(client));
   await cli(["interaction", "wait", "int_1", "--timeout", "20s"], cardDependencies(client, { env: session }));
-  assert.deepEqual(waits, [100, 60, 20]);
+  assert.deepEqual(waits, [90, 60, 20]);
+});
+
+test("a wait is sliced under the edge's 100s cut, and a 524 on a slice retries the next one", async () => {
+  const waits = [];
+  const client = { waitForInteraction: async (id, seconds) => {
+    waits.push(seconds);
+    if (waits.length === 1) throw new ApiError("timeout", { status: 524, code: "API_ERROR", details: {} });
+    return waits.length < 3 ? { interaction: { id, state: "pending" } } : { interaction: { id, state: "approved" } };
+  } };
+  const out = await cli(["interaction", "wait", "int_1", "--timeout", "250s"], cardDependencies(client));
+  assert.deepEqual(waits.slice(0, 2), [90, 90]);
+  assert.equal(out.exitCode, EXIT.OK);
 });
 
 test("--progress takes 3/5 and 40% as well as 0..1, and rejects the ambiguous", () => {

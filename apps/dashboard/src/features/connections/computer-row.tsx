@@ -4,9 +4,8 @@ import { COMPUTER_ICON_META } from "@/components/atoms/computer-icon-meta"
 import { IconTile } from "@/components/atoms/icon-tile"
 import { sourceLogo, toolLabel } from "@/components/atoms/source-logo"
 import { SourceMark } from "@/components/atoms/source-mark"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { Row } from "@/components/list"
-import { Badge } from "@/components/ui/badge"
 import { SheetTrigger } from "@/components/ui/sheet"
 import { rowChips } from "@/features/connections/computer-health"
 import type { ConnectionComputer } from "@/features/connections/types"
@@ -57,18 +56,16 @@ export function ComputerRow({ computer, children }: { computer: ConnectionComput
           {part}
         </React.Fragment>
       ))}
-      description={
-        chips.length ? (
-          <span className="flex flex-wrap items-center gap-1.5 text-xs leading-5">
-            {chips.map((chip) =>
+      trailing={
+        chips.length
+          ? chips.map((chip) =>
               chip.kind === "override" ? (
-                <Badge key={chip.id} variant="outline">{chip.label}</Badge>
+                <Badge key={chip.id} tone="neutral" variant="hairline" icon={null}>{chip.label}</Badge>
               ) : (
-                <StatusChip key={chip.id} tone="yellow" variant="hairline">{chip.label}</StatusChip>
+                <Badge key={chip.id} tone="yellow" variant="hairline">{chip.label}</Badge>
               )
-            )}
-          </span>
-        ) : undefined
+            )
+          : undefined
       }
       wrap
       onClick={() => undefined}

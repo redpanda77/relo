@@ -5,7 +5,7 @@ import { IconTile } from "@/components/atoms/icon-tile"
 import { ActionButton } from "@/components/molecules/action-button"
 import { OperationStatus } from "@/components/molecules/operation-status"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { QrCode } from "@/features/linked-browser/qr-code"
@@ -93,38 +93,37 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2.5"><IconTile icon={KeyRound} tone="violet" />Two-step sign-in</CardTitle>
+        {step.kind === "off" ? (
+          <CardAction>
+            <Button onClick={() => setStep({ kind: "password", action: "enable" })}>Turn on</Button>
+          </CardAction>
+        ) : null}
         <CardDescription>
           {step.kind === "on"
             ? "On: signing in here needs your password and a code from your authenticator app."
             : "Ask for a code from an authenticator app after your password, so a leaked password is not enough. Recommended when this server is reachable from the internet."}
         </CardDescription>
       </CardHeader>
+      {step.kind !== "off" || error ? (
       <CardContent className="grid gap-4">
-        {step.kind === "off" ? (
-          <Button className="w-fit" onClick={() => setStep({ kind: "password", action: "enable" })}>Turn on</Button>
-        ) : null}
-        {step.kind === "on" ? (
-          <>
-            {step.backupCodes ? <BackupCodes codes={step.backupCodes} /> : null}
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => setStep({ kind: "password", action: "codes" })}>New backup codes</Button>
-              <Button variant="outline" onClick={() => setStep({ kind: "password", action: "disable" })}>Turn off</Button>
-            </div>
-          </>
-        ) : null}
+        {step.kind === "on" && step.backupCodes ? <BackupCodes codes={step.backupCodes} /> : null}
         {step.kind === "password" ? (
           <form ref={form} className="grid gap-3" onSubmit={submitPassword}>
             <div className="grid gap-2">
               <Label htmlFor="two-factor-password">Your password</Label>
               <Input ref={field} id="two-factor-password" name="password" type="password" autoComplete="current-password" required autoFocus />
             </div>
-            <div className="flex flex-wrap gap-2">
-              <ActionButton type="submit" pending={busy} failed={Boolean(error)} successLabel={null} pendingLabel="Checking…" variant={step.action === "disable" ? "destructive" : "default"}>
-                {step.action === "enable" ? "Continue" : step.action === "disable" ? "Turn off two-step sign-in" : "Show new codes"}
-              </ActionButton>
-              <Button type="button" variant="ghost" disabled={busy}
-                onClick={() => setStep({ kind: step.action === "enable" ? "off" : "on" })}>Cancel</Button>
-            </div>
+            <CardFooter
+              actions={
+                <>
+                  <Button type="button" variant="ghost" disabled={busy}
+                    onClick={() => setStep({ kind: step.action === "enable" ? "off" : "on" })}>Cancel</Button>
+                  <ActionButton type="submit" pending={busy} failed={Boolean(error)} successLabel={null} pendingLabel="Checking…" variant={step.action === "disable" ? "destructive" : "default"}>
+                    {step.action === "enable" ? "Continue" : step.action === "disable" ? "Turn off two-step sign-in" : "Show new codes"}
+                  </ActionButton>
+                </>
+              }
+            />
           </form>
         ) : null}
         {step.kind === "scan" ? (
@@ -140,14 +139,29 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
               <Label htmlFor="two-factor-code">Code from the app</Label>
               <Input ref={field} id="two-factor-code" name="code" inputMode="numeric" autoComplete="one-time-code" required />
             </div>
-            <div className="flex flex-wrap gap-2">
-              <ActionButton type="submit" pending={busy} failed={Boolean(error)} successLabel={null} pendingLabel="Checking…">Turn on</ActionButton>
-              <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep({ kind: "off" })}>Cancel</Button>
-            </div>
+            <CardFooter
+              actions={
+                <>
+                  <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep({ kind: "off" })}>Cancel</Button>
+                  <ActionButton type="submit" pending={busy} failed={Boolean(error)} successLabel={null} pendingLabel="Checking…">Turn on</ActionButton>
+                </>
+              }
+            />
           </form>
         ) : null}
         <OperationStatus error={error || null} />
       </CardContent>
+      ) : null}
+      {step.kind === "on" ? (
+        <CardFooter
+          actions={
+            <>
+              <Button variant="outline" onClick={() => setStep({ kind: "password", action: "codes" })}>New backup codes</Button>
+              <Button variant="outline" onClick={() => setStep({ kind: "password", action: "disable" })}>Turn off</Button>
+            </>
+          }
+        />
+      ) : null}
     </Card>
   )
 }

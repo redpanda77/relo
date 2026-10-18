@@ -124,31 +124,25 @@ struct DeviceAccessNeedsYouRow: View {
     var body: some View {
         let requests = model.devices.waitingRequests
         if let first = requests.first {
-            Button {
-                if requests.count == 1 { model.openAccessRequest(id: first.id) } else { model.openSecuritySettings() }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: first.symbol)
-                        .font(.title3).foregroundStyle(Color.reloAttention).frame(width: 28)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        ReloMonoLabel("Needs you", color: .reloAttention)
-                        Text(requests.count == 1 ? "\(first.name) \(first.ask)" : "\(requests.count) devices want access")
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                            .multilineTextAlignment(.leading)
-                        Text(requests.count == 1 ? first.signedInLine : "Review them in Devices")
-                            .font(.footnote).foregroundStyle(Color.reloSecondaryText)
-                    }
-                    Spacer(minLength: 0)
-                    Text("Review").reloCapsule(tint: .reloAttention.opacity(0.85))
+            ReloCard(tint: .reloAttention) {
+                HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
+                    Image(systemName: first.symbol).foregroundStyle(Color.reloAttention).accessibilityHidden(true)
+                    CardTitle(requests.count == 1 ? "\(first.name) \(first.ask)" : "\(requests.count) devices want access")
                 }
-                .padding(14)
-                .reloCard(tint: .reloAttention)
-                .contentShape(Rectangle())
+                CardFooter(meta: Text(requests.count == 1 ? first.signedInLine : "Review them in Devices")) {
+                    CardAction("Review", kind: .primary, action: review)
+                }
             }
-            .buttonStyle(ReloPressStyle())
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("needs-you-device-access")
         }
+    }
+
+    private func review() {
+        let requests = model.devices.waitingRequests
+        guard let first = requests.first else { return }
+        if requests.count == 1 { model.openAccessRequest(id: first.id) } else { model.openSecuritySettings() }
     }
 }
 

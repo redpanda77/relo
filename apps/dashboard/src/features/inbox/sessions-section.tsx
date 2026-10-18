@@ -3,7 +3,7 @@ import { AudioWaveform, CircleDashed, Hand, MessageCircleQuestion, Moon, Square,
 import type { NowSummary } from "@relo/notification-contracts"
 
 import { ComputerIcon } from "@/components/atoms/computer-icon"
-import { SourceMark } from "@/components/atoms/source-mark"
+import { Card, CardHit, Origin } from "@/components/card"
 import { Fold } from "@/components/molecules/fold"
 import { PresenceList } from "@/components/molecules/presence-list"
 import { NowSection, NowTimeText } from "@/features/inbox/now-all-clear"
@@ -33,55 +33,42 @@ const STANDING_ICON: Record<SessionIcon, LucideIcon> = {
 }
 
 /**
- * A session reads like a work card, one kind of fact per line (iOS sessionRow): where it runs, the
- * tool as its logo then the project, then the session's own name after "›"; the work it holds
- * (opens it); then how it stands, with its mark (a hand on your turn), and when it was last seen.
- * With neither a name nor work the where-it-runs line leads. The computer is the group's caption.
+ * A session is the card set's row, two lines at most (iOS sessionRow): where it runs, the tool as
+ * its logo then the project, then the session's own name after "›", with how it stands trailing
+ * (its mark, a hand on your turn, and when it was last seen); the work it holds (opens it) under.
+ * The computer is the group's caption.
  */
 function SessionRowBody({ row, link }: { row: SessionRow; link?: SessionWorkLink }) {
   const view = sessionRowView(row, markTime)
   const seen = view.lastSeenAt ? clockFormat.format(new Date(view.lastSeenAt)) : null
   const Icon = STANDING_ICON[view.standing.icon]
-  const lead = !view.name && !link
   return (
-    <div className="now-session-row">
-      <p className="now-session-title" data-lead={lead || undefined}>
-        <span className="now-session-tool">
-          <SourceMark name={view.tool} />
-        </span>
-        {view.project ? (
-          <>
-            <span className="work-sep" aria-hidden="true">·</span>
-            <span className="now-session-context" style={view.projectColor ? { color: view.projectColor } : undefined}>
-              {view.project}
-            </span>
-          </>
-        ) : null}
-        {view.name ? (
-          <>
-            <span className="work-sep" aria-hidden="true">›</span>
-            <span className="now-session-name">{view.name}</span>
-          </>
-        ) : null}
-      </p>
-      {link ? (
-        <button type="button" onClick={link.open} aria-label={`Open ${link.title}`} className="now-session-work">
-          {link.title}
-        </button>
-      ) : null}
-      <p className={cn("now-session-standing", toneClass(view.standing.tone))} data-session-standing>
-        <span className="now-session-state">
-          <Icon className="now-session-icon" aria-hidden="true" />
-          <NowTimeText text={view.standing.label} />
-        </span>
-        {seen ? (
-          <>
-            <span className="work-sep" aria-hidden="true"> · </span>
-            <time className="tabular-nums" dateTime={view.lastSeenAt ?? undefined}>{seen}</time>
-          </>
-        ) : null}
-      </p>
-    </div>
+    <Card variant="row">
+      <CardHit>
+        <div className="card-row-text">
+          <div className="card-row-top">
+            <Origin source={view.tool} project={view.project} projectColor={view.projectColor} topic={view.name} />
+            <p className={cn("card-session-standing", toneClass(view.standing.tone))} data-session-standing>
+              <span className="card-session-state">
+                <Icon className="card-session-icon" aria-hidden="true" />
+                <NowTimeText text={view.standing.label} />
+              </span>
+              {seen ? (
+                <>
+                  <span className="card-sep" aria-hidden="true"> · </span>
+                  <time className="tabular-nums" dateTime={view.lastSeenAt ?? undefined}>{seen}</time>
+                </>
+              ) : null}
+            </p>
+          </div>
+          {link ? (
+            <button type="button" onClick={link.open} aria-label={`Open ${link.title}`} className="card-row-link">
+              {link.title}
+            </button>
+          ) : null}
+        </div>
+      </CardHit>
+    </Card>
   )
 }
 
@@ -104,7 +91,7 @@ function Rows({
       itemAttributes={rowAttributes}
       animateFirst={ready}
       enterDelay={ready ? 0.06 : 0}
-      className="now-session-list"
+      className="card-list"
     >
       {(row) => <SessionRowBody row={row} link={row.workId ? works.get(row.workId) : undefined} />}
     </PresenceList>
@@ -153,7 +140,7 @@ export function SessionsSection({
                 <span className="truncate">{group.label}</span>
               </p>
             )}
-            <div className="now-session-card glass">
+            <div className="card-frame glass">
               {group.rows.length ? <Rows rows={group.rows} works={works} label={`Sessions on ${group.label}`} /> : null}
               {group.idle.length ? (
                 <Fold name="idle" label="Idle" count={group.idle.length} className="now-fold now-fold-inline">

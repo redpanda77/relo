@@ -11,7 +11,7 @@ This is the native SwiftUI client for Relo. The committed `Relo.xcodeproj` opens
 - **Sessions** are grouped by computer. A row shows the session's name (sealed by the CLI's Claude Code
   hook; otherwise source and project), its work and its phase: working, needs your input or your turn
   (`waitingFor`), idle, ended, or "last seen" from `lastSeenAt`. Idle sessions fold.
-- Plans read "Step N · K to go · <step>" (plus "d of t" for a counted step) on the Live Activity and
+- Plans read "Step N of M · <step>" (plus "d of t" for a counted step) on the Live Activity and
   on the detail timeline while the work runs.
 - A missed question in Needs you offers **Answer late** (never permission; the session must ask again)
   and **Dismiss**. A refused Dismiss means the row was already stale: it stays gone and Now refetches.
@@ -87,7 +87,7 @@ Apple's [Communication Notifications guidance](https://developer.apple.com/docum
 4. Press **Run**.
 5. On the iPhone, open Relo, enter your server's address and tap **Sign in**. Approve in the browser, and you're back in the app.
 6. Allow notifications and Live Activities when prompted. The app registers immediately and refreshes the same device automatically when Apple supplies or rotates the APNs token.
-7. Confirm the Dashboard lists this iPhone under Connections, then run `relo test` from a signed-in computer.
+7. Confirm the Dashboard lists this iPhone under Connections → Phones, then run `relo test` from a signed-in computer.
 
 The app is ready only after account authentication, device registration, notification authorization, and a successful sync. APNs acceptance is displayed as **Accepted by Apple**, not as proof iOS presented the notification. Without the server's Apple `.p8` credentials the app cannot be woken remotely; it still syncs while open.
 

@@ -1,6 +1,7 @@
 import { ArrowRight, MessageSquareText, X } from "lucide-react"
 
 import { EncryptedText } from "@/components/atoms/encrypted-text"
+import { Strip } from "@/components/card"
 import { WorkCard } from "@/components/organisms/work-card"
 import {
   elapsedLabel,
@@ -9,24 +10,10 @@ import {
   projectColor,
   timeOfDay,
   type ActivityCard,
-  type Outcome,
   type Tone,
 } from "@/features/inbox/activity-model"
 import { OUTCOME_ICON, TYPE_ICON } from "@/features/inbox/outcome-icons"
 import { stepsCaption, type WorkTone } from "@/lib/work-outcome"
-import { cn } from "@/lib/utils"
-
-/** Outcome as an icon, a word and a tone: colour is never the only cue. */
-export function OutcomeBadge({ outcome, declined = false, className }: { outcome: Outcome; declined?: boolean; className?: string }) {
-  if (!outcome.label) return null
-  const Icon = declined ? X : OUTCOME_ICON[outcome.kind]
-  return (
-    <span className={cn("outcome-badge", `tone-${outcome.tone}`, className)} data-outcome={outcome.kind}>
-      <Icon aria-hidden="true" />
-      {outcome.label}
-    </span>
-  )
-}
 
 /** A question asked on a card, and what became of it (iOS HistoryRowView.decisionStrip). */
 export function DecisionStrip({ card }: { card: ActivityCard }) {
@@ -34,24 +21,18 @@ export function DecisionStrip({ card }: { card: ActivityCard }) {
   if (!decision) return null
   const tone = decision.pending ? "orange" : decision.declined ? "yellow" : "mint"
   return (
-    <div
-      className={cn(
-        "tone-" + tone,
-        "flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[9px] px-2.5 py-[7px] text-xs",
-        "bg-white/[0.06]"
-      )}
-    >
+    <Strip tone={tone}>
       {decision.encrypted ? (
         <EncryptedText className="text-foreground/90" />
       ) : (
-        <span className="min-w-0 text-foreground/90 [overflow-wrap:anywhere]">{decision.prompt}</span>
-      )}
-      <ArrowRight className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span className="shrink-0 font-semibold" style={{ color: "color-mix(in srgb, var(--tone) 80%, white)" }}>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{decision.prompt}</span>
+      )}{" "}
+      <ArrowRight className="inline size-3 shrink-0 text-muted-foreground" aria-hidden="true" />{" "}
+      <span className="font-semibold" style={{ color: "color-mix(in srgb, var(--tone) 80%, white)" }}>
         {decision.answer}
         {decision.at ? <span className="font-normal text-muted-foreground tabular-nums"> · {timeOfDay(decision.at)}</span> : null}
       </span>
-    </div>
+    </Strip>
   )
 }
 
@@ -77,7 +58,7 @@ function tookLabel(seconds: number | null): string | null {
 
 /**
  * One History item as the shared work card (iOS HistoryRowView): live work (running, needs you) is a
- * framed `live` card; everything settled is a `row` inside its day's WorkList. Its origin omits what
+ * framed `live` card; everything settled is a `row` inside its day's CardList. Its origin omits what
  * a filter already pins (`showSource`, `showProject`), as the iPhone does.
  */
 export function HistoryWorkCard({

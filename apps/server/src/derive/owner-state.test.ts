@@ -24,24 +24,22 @@ describe("Sessions view rows over the shared fixtures",() => {
 
 describe("derive() invariants",() => {
   const base = fixture.derive[0].input as OwnerStateInput;
-  test("an unanswered question never ends a work: any lifecycle with a pending or unopened missed question is Needs you",() => {
+  test("a pending question never ends a work: any lifecycle with one is Needs you",() => {
     for (const lifecycle of ["open","paused","finished","failed","dropped"] as const) {
-      for (const standing of ["pending","missed"] as const) {
-        const result = deriveOwnerState({ ...base,work: { ...base.work,lifecycle,finishedAt: lifecycle === "open" || lifecycle === "paused" ? null : base.work.lastDeclaredAt },
-          question: { standing,askedAt: base.work.lastDeclaredAt,openedAt: null } });
-        expect(result.state).toBe("needs_you");
-      }
+      const result = deriveOwnerState({ ...base,work: { ...base.work,lifecycle,finishedAt: lifecycle === "open" || lifecycle === "paused" ? null : base.work.lastDeclaredAt },
+        question: { standing: "pending",askedAt: base.work.lastDeclaredAt,openedAt: null } });
+      expect(result.state).toBe("needs_you");
     }
   });
 
-  test("a dismissed missed question leaves Needs you; a dismissal never touches a pending one",() => {
+  test("a missed question never needs the owner: the work's own state, opened or not",() => {
     const at = base.work.lastDeclaredAt;
     const finished = { ...base,work: { ...base.work,lifecycle: "finished" as const,finishedAt: at } };
-    const missed = deriveOwnerState({ ...finished,question: { standing: "missed",askedAt: at,openedAt: null,dismissedAt: at } });
-    expect(missed.needsYou).toBeNull();
-    expect(missed.state).toBe("done");
-    const pending = deriveOwnerState({ ...finished,question: { standing: "pending",askedAt: at,openedAt: null,dismissedAt: at } });
-    expect(pending.needsYou).toBe("question");
+    for (const openedAt of [null,at]) {
+      const missed = deriveOwnerState({ ...finished,question: { standing: "missed",askedAt: at,openedAt } });
+      expect(missed.needsYou).toBeNull();
+      expect(missed.state).toBe("done");
+    }
   });
 
   test("another producer type's evidence never yields observed states",() => {

@@ -22,7 +22,8 @@ import { AnimatedNumber } from "@/components/atoms/animated-number"
 import { FoldOpenContext } from "@/components/molecules/fold-context"
 import { PresenceList } from "@/components/molecules/presence-list"
 import { sessionTitle } from "@/lib/encrypted"
-import { WorkCard, WorkList, WorkListItem, WorkRow } from "@/components/organisms/work-card"
+import { CardList, CardListItem } from "@/components/card"
+import { WorkCard, WorkRow } from "@/components/organisms/work-card"
 import { AnswerControls } from "@/components/molecules/answer-controls"
 import { isOpenQuestion, useAnswerableQuestion } from "@/hooks/use-answerable-question"
 
@@ -116,10 +117,10 @@ function useToneHandoff(id: string, tone: WorkTone): WorkTone {
   return shown
 }
 
-/** The leading glyph of a needs-you card: its reason's icon at 40px. */
+/** The leading glyph of a needs-you card: its reason's icon. */
 function NeedsGlyph({ item }: { item: NowItem }) {
   const outcome = workOutcome({ state: item.owner.state, needsYou: item.owner.needsYou })
-  return <SignalGlyph icon={outcome?.icon} color="var(--tone)" className="now-needs-glyph" />
+  return <SignalGlyph icon={outcome?.icon} color="var(--tone)" />
 }
 
 /**
@@ -145,9 +146,11 @@ const NowCard = React.memo(function NowCard({
   const view = nowCardView(item, markTime, session ? sessionTitle(session.id) : null, session?.computer ?? null)
   const tone = useToneHandoff(listed.id, view.tone)
   const needsYou = item.owner.state === "needs_you" && variant === "live"
-  // A pending question is answered right on its card, as on the iPhone (missed questions and
-  // permission prompts are not answerable here).
-  const answerable = needsYou && item.owner.needsYou !== "missed_question" && item.owner.needsYou !== "permission" ? item.question?.id ?? null : null
+  // A pending question is answered right on its card, as on the iPhone (permission prompts are not
+  // answerable here).
+  const answerable = needsYou && item.owner.needsYou !== "permission" ? item.question?.id ?? null : null
+  const question = useAnswerableQuestion(answerable)
+  const asking = question && isOpenQuestion(question) ? question : null
   // Offline, moving work is only last known: say so instead of claiming it still runs (iPhone parity).
   const unconfirmed = stage.offline && (item.owner.state === "moving" || item.owner.state === "working_quietly")
   const time = (text: string) => <NowTimeText text={text} />
@@ -160,8 +163,8 @@ const NowCard = React.memo(function NowCard({
       origin={view.origin}
       summary={view.summary}
       summaryLines={needsYou ? 4 : 2}
-      chip={needsYou ? view.chip : null}
-      extra={view.note && needsYou ? <p className="work-note">{view.note}</p> : null}
+      eyebrow={needsYou ? view.chip : null}
+      note={needsYou ? view.note : null}
       // Needs you: the steps stay in words on the standing line; the bar would only add a row.
       meter={needsYou ? null : view.meter}
       state={unconfirmed ? { label: "Unconfirmed" } : view.state ?? (variant === "row" && view.chip ? { label: view.chip.charAt(0) + view.chip.slice(1).toLowerCase() } : null)}
@@ -171,7 +174,8 @@ const NowCard = React.memo(function NowCard({
       computer={view.computer}
       computerIcon={view.computerIcon}
       glyph={needsYou ? <NeedsGlyph item={item} /> : undefined}
-      actions={answerable ? <NowAnswer questionId={answerable} /> : undefined}
+      deadline={asking?.expiresAt ?? null}
+      actions={asking ? <AnswerControls question={asking} showPrompt={false} countdown={false} /> : undefined}
       tint={needsYou}
       live={view.live && variant === "live" && !unconfirmed}
       onOpen={() => onOpen(listed)}
@@ -185,12 +189,6 @@ const NowCard = React.memo(function NowCard({
     />
   )
 })
-
-/** The pending question's buttons on its Now card, loaded by id; nothing until it loads. */
-function NowAnswer({ questionId }: { questionId: string }) {
-  const question = useAnswerableQuestion(questionId)
-  return question && isOpenQuestion(question) ? <AnswerControls question={question} showPrompt={false} /> : null
-}
 
 /**
  * One Now list: cards styled by the server's owner state, never by a client clock. Live work is a
@@ -218,7 +216,7 @@ export function NowItemList({
   const itemAttributes = (item: NowItem) => ({ "data-announce": stage.announce.has(item.id) ? "true" : undefined })
   if (variant === "rows") {
     return (
-      <WorkList
+      <CardList
         label={label}
         items={items}
         getKey={itemKey}
@@ -228,7 +226,7 @@ export function NowItemList({
         className={className}
       >
         {(item, { entering }) => <NowCard item={item} onOpen={onOpen} variant="row" arrived={entering && stage.ready} />}
-      </WorkList>
+      </CardList>
     )
   }
   const exitFor = (item: NowItem): TargetAndTransition | undefined => {
@@ -392,9 +390,9 @@ function logDetail(card: ActivityCard): string {
 
 export function TodayLog({ rows, onOpen }: { rows: ActivityCard[]; onOpen: (id: string) => void }) {
   return (
-    <WorkList label="Today's log">
+    <CardList label="Today's log">
       {rows.map((card) => (
-        <WorkListItem key={card.id}>
+        <CardListItem key={card.id}>
           <WorkRow
             glyph={glyph(card, signalOf(card))}
             title={card.title}
@@ -404,9 +402,9 @@ export function TodayLog({ rows, onOpen }: { rows: ActivityCard[]; onOpen: (id: 
             onOpen={() => onOpen(card.id)}
             label={openLabel(card)}
           />
-        </WorkListItem>
+        </CardListItem>
       ))}
-    </WorkList>
+    </CardList>
   )
 }
 

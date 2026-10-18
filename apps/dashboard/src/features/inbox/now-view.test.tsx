@@ -83,12 +83,13 @@ describe("Now from a NowSummary fixture", () => {
     render(<InboxView overview={overview} service={service} />)
     const running = within(screen.getByRole("list", { name: "Running" }))
     const item = summary.running[0]!
-    const card = running.getByRole("button", { name: `Open ${item.title}` })
+    // The footer (state, steps, computer) sits beside the open target, so the whole card is the unit.
+    const card = running.getByRole("button", { name: `Open ${item.title}` }).closest<HTMLElement>(".card")!
     expect(card.querySelector("[data-part='project']")?.textContent).toBe(item.project)
     expect(card.querySelector("[data-part='state']")?.textContent).toBe("Running")
     expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", String(item.steps!.done))
-    expect(card.textContent).toContain(`${item.steps!.done} of ${item.steps!.total} · ${item.steps!.current}`)
-    const waiting = within(screen.getByRole("list", { name: "Waiting on you" })).getByRole("button", { name: `Open ${summary.waitingOnYou[0]!.title}` })
+    expect(card.textContent).toContain(`Step ${item.steps!.done + 1} of ${item.steps!.total} · ${item.steps!.current}`)
+    const waiting = within(screen.getByRole("list", { name: "Waiting on you" })).getByRole("button", { name: `Open ${summary.waitingOnYou[0]!.title}` }).closest<HTMLElement>(".card")!
     expect(waiting.querySelector("[data-part='state']")?.textContent).toBe("Your turn")
     // No uppercase chip text anywhere outside a needs-you card.
     const since = within(screen.getByRole("list", { name: "Since you looked" }))

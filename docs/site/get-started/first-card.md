@@ -16,7 +16,7 @@ and one notification with the outcome.
 relo test
 ```
 
-A short card appears on your Lock Screen and asks whether you can see it Tap **Yes**.
+A short card appears on your Lock Screen and asks whether you can see it. Tap **Yes**.
 The phone is recorded as verified, and `relo test` is never needed again on this account (use
 `relo test --again` to repeat it). If nothing appears within a minute, see
 [Troubleshooting](/docs/troubleshooting).

@@ -108,26 +108,21 @@ private struct ReloAttentionBanner: View {
     var body: some View {
         if let problem {
             let color = problem == .unreachable ? Color.reloWarning : Color.reloAttention
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: problem == .unreachable ? "wifi.exclamationmark" : "bell.slash.fill")
-                    .font(.title3).foregroundStyle(color).frame(width: 28)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(problem == .unreachable ? "Can't reach your Relo server" : "Notifications are off")
-                        .font(.subheadline.weight(.semibold))
-                    Text(problem == .unreachable
-                         ? "Check your connection and the server address; if your server is on a private network or VPN, make sure it is connected."
-                         : "Relo can't alert you or show Live Activities, so requests from your agents will be missed.")
-                        .font(.footnote).foregroundStyle(Color.reloSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+            ReloCard(tint: color) {
+                HStack(alignment: .top, spacing: ReloLayout.itemSpacing) {
+                    Image(systemName: problem == .unreachable ? "wifi.exclamationmark" : "bell.slash.fill")
+                        .font(.title3).foregroundStyle(color).frame(width: 28)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
+                        CardTitle(problem == .unreachable ? "Can't reach your Relo server" : "Notifications are off")
+                        CardStatusLine(problem == .unreachable
+                                       ? "Check your connection and the server address; if your server is on a private network or VPN, make sure it is connected."
+                                       : "Relo can't alert you or show Live Activities, so requests from your agents will be missed.", lines: 4)
+                    }
+                    CardAction(problem == .unreachable ? "Retry" : "Turn on", kind: .primary) { act(problem) }
                 }
-                Spacer(minLength: 0)
-                Button(problem == .unreachable ? "Retry" : "Turn on") { act(problem) }
-                    .buttonStyle(.reloCapsule(tint: color.opacity(0.85)))
             }
-            .padding(14)
-            .reloCard(tint: color)
-            .padding(.horizontal, ReloLayout.screenInset).padding(.bottom, 8)
+            .padding(.horizontal, ReloLayout.screenInset).padding(.bottom, ReloLayout.inlineGap)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .accessibilityElement(children: .combine)
         }

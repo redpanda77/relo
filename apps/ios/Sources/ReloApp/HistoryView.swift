@@ -230,7 +230,7 @@ struct HistoryView: View {
             HistoryRowView(row: row, showsSource: sourceID == nil, showsProject: projectID == nil,
                            responseStatus: model.responseFeedback(for: row.id)?.status,
                            serverOutcome: model.nowSummary?.allItems.first { $0.notificationId == row.id }
-                               .flatMap(HistoryServerOutcome.init(item:)),
+                               .flatMap(ReloStateStyle.init(item:)),
                            computerIcon: model.computerIcon(forOrigin: row.origin))
         }.buttonStyle(.plain)
     }

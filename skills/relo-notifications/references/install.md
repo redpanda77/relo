@@ -105,7 +105,7 @@ keep the skill's `package.json` version and its `@relo/cli` pin equal to the CLI
 ## MCP server (harnesses without a shell): `relo setup --mcp`
 
 `relo mcp` is a stdio MCP server inside the CLI (same credentials, no extra install) for Claude desktop, Cursor chat
-and other clients that cannot run a shell command. Tools: `relo_work_start`, `relo_work_update`, `relo_work_finish`,
+and other clients that cannot run a shell command. Tools: `relo_work_start`, `relo_work_update`, `relo_work_deliver`, `relo_work_handoff`, `relo_work_finish`,
 `relo_work_state`, `relo_ask` (waits up to <!--f:question.defaultSeconds-->5 minutes<!--/f-->, sending MCP progress notifications), `relo_interaction_wait`,
 `relo_notify`, `relo_doctor`. The tool descriptions carry the plan and approval rules. One work per MCP connection.
 

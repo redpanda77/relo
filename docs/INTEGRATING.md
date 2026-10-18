@@ -138,8 +138,8 @@ Pick by how your app runs. All four see the same answer; mixing them is fine.
 
 | Your app | Use | How |
 | --- | --- | --- |
-| A script that can wait | **Block** | `relo ask …` waits (`--timeout`, default up to 5 minutes; 100s inside an agent session) and exits with the answer |
-| A script that resumes later | **Wait by id** | `relo ask … --no-wait` prints the id; later `relo interaction wait ID --timeout 10m` |
+| A script that can wait | **Block** | `relo ask …` waits (`--timeout`, default up to 5 minutes; 100s inside an agent session; the CLI asks in slices of at most 90 seconds) and exits with the answer |
+| A script that resumes later | **Wait by id** | `relo ask … --no-wait` prints the id; later `relo interaction wait ID --timeout 10m` (also sliced) |
 | A service with a public HTTPS endpoint | **Callback** | `relo ask … --no-wait --callback-url https://… --callback-token-file PATH`; Relo POSTs the answer |
 | A service behind NAT, or many questions | **Listen** | `relo listen` streams one JSON line per answer over one outgoing connection |
 

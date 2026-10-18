@@ -1,7 +1,7 @@
 import { ArrowUpRight, Send } from "lucide-react"
 import * as React from "react"
 
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { StatusDot } from "@/components/atoms/status-dot"
 import { ActionButton, type ActionPhase } from "@/components/molecules/action-button"
 import { ConfirmationAction } from "@/components/molecules/confirmation-action"
@@ -163,9 +163,9 @@ export function RunDetailsSheet({
     >
       <SheetHeader className="gap-2 border-b border-border px-6 py-5 pr-16">
         {headline ? (
-          <StatusChip tone={neonTone(headline.tone)} className="w-fit">
+          <Badge tone={neonTone(headline.tone)} className="w-fit">
             {headline.text}
-          </StatusChip>
+          </Badge>
         ) : null}
         <SheetTitle className="text-xl">{run?.title ?? "Test not found"}</SheetTitle>
         <SheetDescription id="run-detail-description">

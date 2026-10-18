@@ -6,31 +6,40 @@ import type { NeonTone } from "@/lib/status-tone"
 import { cn } from "@/lib/utils"
 
 /**
- * The one chip for state ("Waiting for approval", "This browser", "Live on iPhone"): the outcome
- * badge's metrics in a meaning colour. Soft is the tinted fill; hairline is the quieter outline.
- * Badge is for counts and labels, never for state.
+ * The one badge, for state ("Waiting for approval", "This browser", "Live on iPhone") and plain
+ * labels alike: a meaning colour, an optional icon, 20px high. Soft is the tinted fill; hairline is
+ * the quieter outline; `mono` sets a tool or version label in the mono face. Inline in a card's
+ * header or footer, never a row of its own.
  *
  * A change of words crossfades (the old ones leave up 3 px, the new rise 3 px, 180 ms) while the
  * chip's width follows on the snappy spring; a change of tone crossfades through `--tone`.
  */
-export function StatusChip({
+/** The meaning palette, plus the two accent tones a History card can carry. */
+export type BadgeTone = NeonTone | "magenta" | "coral"
+
+export function Badge({
   tone,
   icon,
   children,
   value,
   variant = "soft",
+  mono = false,
   label,
+  title,
   className,
 }: {
-  tone: NeonTone
+  tone: BadgeTone
   /** Leads the words; the meaning dot by default, `null` for none. */
   icon?: React.ReactNode
   children: React.ReactNode
   /** What identifies the words when they are not plain text; a change crossfades them. */
   value?: React.Key
   variant?: "soft" | "hairline"
+  mono?: boolean
   /** An accessible name for the chip when its words need context ("Status: retry"). */
   label?: string
+  /** A tooltip. */
+  title?: string
   className?: string
 }) {
   const reduced = usePrefersReducedMotion()
@@ -42,10 +51,12 @@ export function StatusChip({
         layout={!reduced}
         transition={{ layout: SPRING }}
         style={{ borderRadius: 999 }}
-        data-slot="status-chip"
+        data-slot="badge"
         data-variant={variant}
+        data-mono={mono || undefined}
         aria-label={label}
-        className={cn("outcome-badge", `tone-${tone}`, className)}
+        title={title}
+        className={cn("badge", `tone-${tone}`, className)}
       >
         {icon === undefined ? (
           <m.span layout={!reduced ? "position" : false} className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" />

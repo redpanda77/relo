@@ -14,7 +14,7 @@ import { EncryptedText } from "@/components/atoms/encrypted-text"
 import { SignalGlyph } from "@/components/atoms/signal-glyph"
 import { useState } from "react"
 
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { Row } from "@/components/list"
 import { ActionButton } from "@/components/molecules/action-button"
 import {
@@ -73,9 +73,9 @@ const TONE_CSS: Record<DeliveryTone, string> = {
 export function StateBadge({ value, reconcile = false }: { value: string; reconcile?: boolean }) {
   const label = value.replaceAll("_", " ")
   return (
-    <StatusChip tone={deliveryTone(value, reconcile)} icon={null} label={`Status: ${label}`} className="capitalize">
+    <Badge tone={deliveryTone(value, reconcile)} icon={null} label={`Status: ${label}`} className="capitalize">
       {label}
-    </StatusChip>
+    </Badge>
   )
 }
 

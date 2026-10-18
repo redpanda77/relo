@@ -96,7 +96,7 @@ the exact activity target and sequence before mutation.
 
 `POST /api/interactions` with either supported presentation accepts the same
 `relevance` envelope with `policy.kind=decision`. The action duration comes from
-`expiresInSeconds` (default 900); if the policy repeats `actionSeconds`, the two
+`expiresInSeconds` (default 300); if the policy repeats `actionSeconds`, the two
 values must agree. An optional shorter `deliverySeconds` controls alerts without
 shortening the action. An already-past original action deadline creates an expired
 receipt and event, with no delivery job. A settled/expired decision cannot reopen
@@ -159,7 +159,7 @@ An explicit supersession survives even when the pointer is unavailable.
 | Purpose | Default relevance/action | Default delivery | Exception |
 | --- | --- | --- | --- |
 | Notice/completion | 900 seconds | 60 seconds, bounded by relevance | Explicit finite durations |
-| Decision | 900 seconds | Until its original action deadline | Explicit shorter delivery window |
+| Decision | 300 seconds | Until its original action deadline | Explicit shorter delivery window |
 | Routine progress | No invented idle expiry | 15 seconds, silent | Declared heartbeat becomes stale after 3 intervals |
 | Incident | Explicit until-resolved or absolute lease | 60 seconds, bounded by lease | Exact identity resolves/renews it |
 | Internal terminal cleanup | Separate 3,600-second window | Silent cleanup only | Targets the old native activity, never a new action |

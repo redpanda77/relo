@@ -788,13 +788,15 @@ describe("Inbox feature contracts", () => {
     render(<InboxFeature bootstrap={historyOf([running, settled])} service={service()} />)
     const activity = screen.getByRole("list", { name: "Activity" })
     const card = within(activity).getByRole("button", { name: "Open Correct activity lifecycle history" })
-    expect(card.closest(".work-card")).toHaveAttribute("data-variant", "live")
-    expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1")
+    const live = card.closest<HTMLElement>(".card")!
+    expect(live).toHaveAttribute("data-variant", "live")
+    // The meter docks on the card's edge, outside the open target.
+    expect(within(live).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1")
     // A work card needs no "Live Activity" label.
-    expect(within(card).queryByText(/live activity/i)).toBeNull()
+    expect(within(live).queryByText(/live activity/i)).toBeNull()
     const row = within(activity).getByRole("button", { name: "Open Nightly backup finished" })
-    expect(row.closest(".work-card")).toHaveAttribute("data-variant", "row")
-    expect(row.closest("ul")).toHaveClass("work-list")
+    expect(row.closest(".card")).toHaveAttribute("data-variant", "row")
+    expect(row.closest("ul")).toHaveClass("card-list")
     // A message has no outcome: its type stands in the state's place.
     expect(within(row).getByText("Message").closest("[data-part='state']")).not.toBeNull()
   })
@@ -866,7 +868,7 @@ describe("Inbox feature contracts", () => {
     render(<InboxFeature bootstrap={history} service={service()} />)
     const list = screen.getByRole("list", { name: "Delivery attempts" })
     expect(within(list).getByRole("link", { name: "Open delivery for Build progress, accepted" })).toBeVisible()
-    expect(within(list).getByLabelText("Status: accepted")).toHaveClass("outcome-badge", "tone-mint")
+    expect(within(list).getByLabelText("Status: accepted")).toHaveClass("badge", "tone-mint")
     expect(document.querySelector(".status-card")).toBeNull()
   })
 

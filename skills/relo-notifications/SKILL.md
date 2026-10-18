@@ -24,10 +24,10 @@ closes the request you just did (the owner's turn, one quiet notification, the w
 refused while top-level steps are open (an owner check mid-plan is `ask` or `--waiting`). A new request is
 `start --round "<the request>"` and carries unfinished steps; an answer or "go on" continues the plan.
 Scripts: `--producer KEY` or `RELO_SESSION=<id>`.
-No session id (Gemini CLI, Cursor): pass `start`'s handle as `--work <handle>`. The deliver or
+No session id (Gemini, Cursor, Amp): pass `start`'s handle as `--work <handle>`. The deliver or
 finish outcome is the buzz. `relo notify "…"` is a rare buzz outside work. Never a question, never progress.
 
-**Isolation**: the CLI takes your session from the harness; you see only your own work. **Subagents run no relo commands**: count them in one step. **Queued**: an unsent change goes out first with your next command; `relo state` lists it.
+**Isolation**: the CLI takes your session from the harness; you see only your own work. **Subagents run no relo commands**: count them in one step. **Queued**: an unsent change goes out with your next command; `relo state` lists it.
 
 ## Keep the work honest
 Every command prints the plan (`[x]` done, `[>]` current, `[ ]` open, `[-]` skipped), `Owner sees: …`, `Next: …`; after compaction: `relo state`.
@@ -42,8 +42,8 @@ Every command prints the plan (`[x]` done, `[>]` current, `[ ]` open, `[-]` skip
 4. A job outlives your turn: `--waiting "the deploy"`. Away: `relo work pause --status "…"`, `resume`.
 5. `deliver --outcome` when a request is done (`--drop-rest` skips open steps); `finish --outcome` once, when the
    goal is done (`--failed` or `--dropped` if not). A refusal repeats on every echo.
-   Run each relo command alone and read it whole: never `>/dev/null`, `tail`, `head` or `grep`.
-6. Context past half or before `/clear`: `handoff --next "…"`, then `start --from <handle>` in a fresh
+   Run each relo command alone and read it whole: never `>/dev/null`, `tail`, `head` or `grep`, nor chain it.
+6. Context past 60% or before `/clear`: `handoff --next "…"`, then `start --from <handle>` in a fresh
    session.
 7. Ask only when the work depends on it: one line ≤120 chars; why in `--detail`.
 

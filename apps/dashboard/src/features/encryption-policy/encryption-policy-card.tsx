@@ -14,7 +14,7 @@ import {
 import { IconTile } from "@/components/atoms/icon-tile"
 import { CrossfadeText } from "@/components/atoms/animated-height"
 import { OperationStatus } from "@/components/molecules/operation-status"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/card"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
   createHttpEncryptionPolicyService,
@@ -78,13 +78,8 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2.5"><IconTile icon={Lock} tone="violet" />End-to-end encryption</CardTitle>
-        <CardDescription>
-          Require computers to seal notices, questions and cards so the Relo server cannot read them.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <label htmlFor={selectId} className="text-sm font-medium">Require encryption</label>
+        <CardAction>
+          <label htmlFor={selectId} className="sr-only">Require encryption</label>
           <NativeSelect
             id={selectId}
             value={policy?.mode ?? "auto"}
@@ -99,7 +94,13 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
               <NativeSelectOption key={mode} value={mode}>{labels[mode]}</NativeSelectOption>
             ))}
           </NativeSelect>
-        </div>
+        </CardAction>
+        <CardDescription>
+          Require computers to seal notices, questions and cards so the Relo server cannot read them.
+        </CardDescription>
+      </CardHeader>
+      {policy || error ? (
+      <CardContent className="grid gap-3">
         {policy ? (
           <p className="text-sm text-muted-foreground" role="status">
             <CrossfadeText>{summary(policy)}</CrossfadeText>
@@ -107,6 +108,7 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
         ) : null}
         <OperationStatus error={error || null} />
       </CardContent>
+      ) : null}
       <AlertDialog open={confirmOff} onOpenChange={setConfirmOff}>
         <AlertDialogContent>
           <AlertDialogHeader>

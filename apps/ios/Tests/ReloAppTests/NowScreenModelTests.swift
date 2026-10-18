@@ -143,7 +143,7 @@ final class NowScreenModelTests: XCTestCase {
         XCTAssertEqual(row.card?.badge, "Paused")
         XCTAssertEqual(row.card?.ownerState, .paused)
         XCTAssertEqual(row.card?.status, "Waiting for the review")
-        XCTAssertEqual(row.card?.caption, "2 of 12 · Inspect the push payload")
+        XCTAssertEqual(row.card?.caption, "Paused at 2 of 12")
         XCTAssertEqual(row.card?.at, paused.evidenceAt)
         XCTAssertEqual(row.steps, paused.steps)
         XCTAssertEqual(NowScreenModel.quietRow(item("q", .stale), now: serverTime, locale: locale).card?.badge, "Quiet")
@@ -151,11 +151,15 @@ final class NowScreenModelTests: XCTestCase {
         XCTAssertEqual(NowScreenModel.recentRow(item("l", .leftUnfinished), locale: locale).card?.badge, "Left unfinished")
     }
 
-    func testMissedQuestionCarriesLateAnswerFootnote() {
+    func testMissedQuestionLeavesTheLateAnswerNoteToTheAnswerPage() {
         let missed = NowScreenModel.needsRow(item("n1", .needsYou, reason: .missedQuestion), locale: locale)
         XCTAssertTrue(missed.chip?.hasPrefix("MISSED") == true)
         XCTAssertEqual(missed.reason, .missedQuestion)
-        XCTAssertEqual(missed.footnote,
+        // The card carries the facts (when it was due, where it ran); the explanation is said once, on the page
+        // where the late answer is given.
+        XCTAssertNil(missed.footnote)
+        XCTAssertEqual(missed.card?.badge, "Missed")
+        XCTAssertEqual(NowScreenModel.lateAnswerNote,
                        "Late answers reach the session marked late. An approval here is not permission: the session must ask again.")
         let permission = NowScreenModel.needsRow(item("n2", .needsYou, reason: .permission), locale: locale)
         XCTAssertEqual(permission.chip, "PERMISSION")

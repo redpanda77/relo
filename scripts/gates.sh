@@ -146,7 +146,9 @@ if wants repo; then
     scripts/select-gates.test.mjs scripts/release/build-cli-release.test.mjs
 else skip "repository scripts"; fi
 start_gate "public:check" npm run --silent public:check
-start_gate "release state" bash -c 'node --test docs/internal/operations/release/validate-release-state.test.mjs && node docs/internal/operations/release/validate-release-state.mjs ${RELO_RELEASING:+--releasing}'
+if [[ -f docs/internal/operations/release/validate-release-state.mjs ]]; then
+  start_gate "release state" bash -c 'node --test docs/internal/operations/release/validate-release-state.test.mjs && node docs/internal/operations/release/validate-release-state.mjs ${RELO_RELEASING:+--releasing}'
+else skip "release state"; fi
 if [[ "$WITH_DB" == 1 ]]; then
   if wants server; then start_gate "server DB suite (throwaway Postgres)" db_suite; else skip "server DB suite"; fi
 fi

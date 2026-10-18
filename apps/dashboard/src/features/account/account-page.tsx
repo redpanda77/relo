@@ -2,7 +2,7 @@ import { useRef, useState } from "react"
 import { Info, LogOut, Terminal } from "lucide-react"
 
 import { IconTile } from "@/components/atoms/icon-tile"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { List, Row, Section } from "@/components/list"
 import { ActionButton } from "@/components/molecules/action-button"
 import { CopyButton } from "@/components/molecules/copy-button"
@@ -28,9 +28,10 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card"
+} from "@/components/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
@@ -241,10 +242,9 @@ export function AccountPage({
           <p className="truncate text-sm text-muted-foreground">{initial.account.email}</p>
         </div>
         {host ? (
-          <span className="hairline-chip" title="This server">
-            <span className="ink-dot tone-mint" aria-hidden="true" />
+          <Badge tone="mint" variant="hairline" mono title="This server">
             {host}
-          </span>
+          </Badge>
         ) : null}
       </section>
 
@@ -331,8 +331,8 @@ export function AccountPage({
                     title={
                       <span className="inline-flex flex-wrap items-center gap-2">
                         {user.name}
-                        <StatusChip tone="neutral" variant="hairline">{user.role}</StatusChip>
-                        {user.disabled ? <StatusChip tone="red">Disabled</StatusChip> : null}
+                        <Badge tone="neutral" variant="hairline">{user.role}</Badge>
+                        {user.disabled ? <Badge tone="red">Disabled</Badge> : null}
                       </span>
                     }
                     meta={`${user.email} · ${user.sessions} session${user.sessions === 1 ? "" : "s"} · ${user.devices} phone${user.devices === 1 ? "" : "s"}`}
@@ -431,16 +431,19 @@ export function AccountPage({
                     />
                     <span>Sign out other sessions</span>
                   </Label>
-                  <ActionButton
-                    type="submit"
-                    className="w-full sm:w-fit"
-                    phase={passwordState.status}
-                    pendingLabel="Changing password…"
-                    successLabel="Changed"
-                  >
-                    Change password
-                  </ActionButton>
-                  <OperationStatus state={passwordState} pendingLabel="" />
+                  <CardFooter
+                    meta={<OperationStatus state={passwordState} pendingLabel="" />}
+                    actions={
+                      <ActionButton
+                        type="submit"
+                        phase={passwordState.status}
+                        pendingLabel="Changing password…"
+                        successLabel="Changed"
+                      >
+                        Change password
+                      </ActionButton>
+                    }
+                  />
                 </form>
                 <Notice variant="quiet" tone="neutral" icon={<Info />}>
                   Email reset is intentionally unavailable. A protected Relo server
@@ -487,17 +490,20 @@ export function AccountPage({
                   pattern="DELETE"
                   required
                 />
-                <ActionButton
-                  type="submit"
-                  variant="destructive"
-                  className="w-full sm:w-fit"
-                  phase={deletionState.status}
-                  pendingLabel="Deleting account…"
-                  successLabel={null}
-                >
-                  Delete account
-                </ActionButton>
-                <OperationStatus state={deletionState} pendingLabel="" />
+                <CardFooter
+                  meta={<OperationStatus state={deletionState} pendingLabel="" />}
+                  actions={
+                    <ActionButton
+                      type="submit"
+                      variant="destructive"
+                      phase={deletionState.status}
+                      pendingLabel="Deleting account…"
+                      successLabel={null}
+                    >
+                      Delete account
+                    </ActionButton>
+                  }
+                />
               </form>
             </CardContent>
           </Card>

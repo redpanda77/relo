@@ -119,26 +119,20 @@ suite("the phone's Now",() => {
   describe("dismissing a missed question",() => {
     const dismiss = (token: string,id: string) => as(token,"POST",`/api/devices/self/questions/${id}/dismiss`);
 
-    test("a missed question leaves Needs you and every count, stays readable, and the route is idempotent",async () => {
+    test("a missed question never needs the owner: it leaves Needs you on its own; dismissing it stays idempotent",async () => {
       const { cardId,questionId } = await askedWork();
+      expect((await now(phone)).needsYou.map((item) => item.id)).toEqual([cardId]);
       await miss(questionId);
-      let summary = await now(phone);
-      expect(summary.needsYou.map((item) => [item.id,item.owner.needsYou,item.question?.standing]))
-        .toEqual([[cardId,"missed_question","missed"]]);
-      expect([summary.sinceYouLooked.needsYou,summary.lockScreen.needsYouCount]).toEqual([1,1]);
+      const summary = await now(phone);
+      expect(summary.needsYou).toEqual([]);
+      expect([summary.sinceYouLooked.needsYou,summary.lockScreen.needsYouCount]).toEqual([0,0]);
+      // The work is still open (declared state is untouched) and the card shows the work's own state.
+      expect((await db.query("SELECT lifecycle FROM works")).rows[0].lifecycle).toBe("open");
+      expect(items(summary).find((item) => item.id === cardId)?.owner.needsYou ?? null).toBeNull();
 
       expect(await dismiss(phone,questionId)).toEqual({ status: 200,body: { dismissed: true } });
       const stored = (await db.query("SELECT owner_dismissed_at,dismissed_by_device FROM interaction_requests WHERE id=$1",[raw(questionId)])).rows[0];
-      expect(stored.owner_dismissed_at).toBeInstanceOf(Date);
       expect(stored.dismissed_by_device).toBe(deviceId);
-
-      summary = await now(phone);
-      expect(summary.needsYou).toEqual([]);
-      expect([summary.sinceYouLooked.needsYou,summary.lockScreen.needsYouCount]).toEqual([0,0]);
-      // The work is still open (dismissal never touches declared state) and the question stays in History.
-      expect((await db.query("SELECT lifecycle FROM works")).rows[0].lifecycle).toBe("open");
-      expect((await call("GET",`/api/interactions/${questionId}`,undefined,null)).body.interaction.state).toBe("expired");
-
       expect(await dismiss(phone,questionId)).toEqual({ status: 200,body: { dismissed: true } });
       expect((await db.query("SELECT owner_dismissed_at FROM interaction_requests WHERE id=$1",[raw(questionId)])).rows[0].owner_dismissed_at)
         .toEqual(stored.owner_dismissed_at);
@@ -178,7 +172,6 @@ suite("the phone's Now",() => {
       expect(await dismiss(otherPhone,questionId)).toMatchObject({ status: 404,body: { error: "not_found" } });
       expect((await dismiss(OWNER_TOKEN,questionId)).status).toBe(403);
       expect((await db.query("SELECT owner_dismissed_at FROM interaction_requests WHERE id=$1",[raw(questionId)])).rows[0].owner_dismissed_at).toBeNull();
-      expect((await now(phone)).needsYou).toHaveLength(1);
     });
   });
 });

@@ -26,7 +26,7 @@ pnpm build
 
 ## Local gates
 
-Verification runs on your own machine, not in a hosted pipeline. `scripts/gates.sh` runs every gate
+The maintainer verifies on their own machine, not in a hosted pipeline; for contributors, `.github/workflows/ci.yml` is the gate on a pull request. `scripts/gates.sh` runs every gate
 and reports all of them at the end (it exits non-zero when any failed):
 
 ```sh

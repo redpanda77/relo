@@ -7,7 +7,7 @@ import { normalize } from "./events.mjs";
 import { remind } from "./remind.mjs";
 import { restore } from "./restore.mjs";
 
-/** Roles handled locally rather than by the observed state machine. `guard` and `await` are accepted no-ops for now. */
+/** Roles handled locally rather than by the observed state machine. `await` is an accepted no-op for now. */
 export const HARNESS_ROLES = Object.freeze(["remind", "restore", "turn", "guard", "await", "release", "permission"]);
 // The canonical event each role is installed on, for harnesses that do not name the event on stdin.
 const ROLE_EVENTS = { remind: "stop", restore: "start", turn: "prompt", guard: "tool_start", await: "tool_end", release: "end" };

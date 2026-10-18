@@ -5,7 +5,7 @@ roadmap describes the current product contract and the next adopter-facing outco
 release evidence and environment-specific operations are intentionally not part of this document.
 
 <!-- current-truth:start -->
-Current baseline: server, worker, and Dashboard `0.18.79`, CLI/notifier/skill `0.17.49`, and iOS
+Current baseline: server, worker, and Dashboard `0.18.81`, CLI/notifier/skill `0.17.50`, and iOS
 `0.10.29` build `92` source-only.
 <!-- current-truth:end -->
 
@@ -30,7 +30,7 @@ send durable notifications, decisions, and Live Activity progress to that phone.
 - Browser-link-first CLI authorization with page-and-code fallback.
 - Notifications, approval, yes/no and option decisions, and Live Activities.
 - Work reporting for agent sessions, scripts and services (`relo work`, a versioned plan with stable steps), the Now view and the Sessions view.
-- Optional hooks for Claude Code and Gemini CLI (reminders and presence), with a separate harness credential.
+- Optional hooks for Claude Code, Gemini CLI and OpenCode (reminders and presence), with a separate harness credential.
 - End-to-end encrypted cards, notices and questions sealed on the computer and opened on the phone.
 - Delivery diagnosis across server, worker, APNs, and exact phone receipt boundaries.
 - Dashboard history, device/client/service administration, and connection guidance.

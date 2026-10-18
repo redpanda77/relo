@@ -5,7 +5,7 @@ import { result } from "../shared/outcome.mjs";
 const LIVE_PHASES = ["working", "waiting"];
 
 /**
- * `relo sessions [--live]`: the sessions the server knows (hooks report them; see `relo setup --hooks`).
+ * `relo sessions [--live]`: the sessions the server knows (hooks report them; see `relo setup --level guide`).
  * --live lists only working and waiting sessions; the counts always cover every phase.
  */
 export async function runSessionsCommand(command) {

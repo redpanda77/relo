@@ -232,82 +232,6 @@
 
 /* ---------- Linking this browser (linked-browser/link-browser-card.tsx) ---------- */
 
-/* Now's card: the sheet with a violet glow rising from the lock, never a plain strip. */
-.link-card {
-  --tone: var(--neon-violet);
-  position: relative;
-  display: grid;
-  gap: 18px;
-  overflow: hidden;
-  padding: 20px;
-  border: 1px solid color-mix(in srgb, var(--tone) 26%, var(--hairline));
-  border-radius: var(--radius-card);
-  background:
-    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--tone) 16%, transparent) 0%, transparent 55%),
-    color-mix(in srgb, var(--tone) 4%, var(--sheet-fill));
-  box-shadow: var(--glass-highlight);
-}
-@media (min-width: 640px) {
-  .link-card { padding: 22px 24px; }
-}
-/* The lock beside the label and title; the lede and the actions share the title's left edge. On a phone the lede
-   and actions run the card's full width instead, all from the lock's edge, so nothing sits half indented. */
-.link-head {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-areas: "mark titles" ". lede";
-  column-gap: 14px;
-  align-items: center;
-}
-.link-mark { grid-area: mark; }
-.link-titles { grid-area: titles; min-width: 0; }
-.link-lede { grid-area: lede; }
-.link-mark {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--tone) 16%, transparent);
-  box-shadow: 0 0 24px -6px var(--tone), inset 0 1px 0 rgb(255 255 255 / 0.12);
-  color: var(--tone);
-}
-.link-mark svg { width: 19px; height: 19px; }
-.link-eyebrow {
-  color: color-mix(in srgb, var(--tone) 80%, white);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-.link-title {
-  margin-top: 2px;
-  color: var(--foreground);
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
-}
-.link-lede {
-  max-width: 60ch;
-  margin-top: 6px;
-  color: var(--muted-foreground);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.link-flow { display: grid; gap: 14px; }
-.link-card .link-flow { padding-left: 54px; }
-@media (max-width: 479px) {
-  .link-head { grid-template-areas: "mark titles" "lede lede"; }
-  .link-lede { margin-top: 12px; }
-  .link-card .link-flow { padding-left: 0; }
-  /* Equal, full-width buttons under the text (the primary first). */
-  .link-card .link-flow > .link-actions > * { flex: 1 1 0; min-width: max-content; }
-}
-.link-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.link-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .link-status {
   display: flex;
   align-items: center;
@@ -317,11 +241,6 @@
 }
 .link-status[data-done="true"] { color: var(--neon-mint); }
 .link-status-check { display: grid; place-items: center; }
-.link-note {
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1.5;
-}
 /* The link code: the one thing to compare, set like a security code (tabular mono, tracked groups). */
 .link-code-panel {
   display: grid;
@@ -360,5 +279,3 @@
   line-height: 1.5;
 }
 .link-code-hint strong { color: var(--foreground); font-weight: 600; }
-/* A lone text button under the code lines up its words with the text above, not its hover pad. */
-.link-flow > .link-actions:has(> [data-variant="ghost"]:only-child) { margin-left: -10px; }

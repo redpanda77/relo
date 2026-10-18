@@ -62,9 +62,11 @@ const OUTCOMES: Record<OwnerState, WorkOutcome> = {
 /** Why a work needs the owner, as its own word (Now's needs-you cards). */
 const NEEDS_YOU: Record<NeedsYouReason, WorkOutcome> = {
   question: { label: "Question", tone: "orange", icon: MessageCircleQuestion },
-  missed_question: { label: "Missed", tone: "orange", icon: AlarmClockOff },
   permission: { label: "Permission", tone: "orange", icon: ShieldAlert },
 }
+
+/** A question that timed out unanswered, as History tells it. */
+const MISSED: WorkOutcome = { label: "Missed", tone: "orange", icon: AlarmClockOff }
 
 /**
  * The server's owner state (and, for a question, its standing) as a label, tone and icon.
@@ -77,7 +79,7 @@ export function workOutcome(input: {
   standing?: "pending" | "missed" | "answered" | "answered_late" | null
   answer?: string | null
 }): WorkOutcome | null {
-  if (input.standing === "missed") return NEEDS_YOU.missed_question
+  if (input.standing === "missed") return MISSED
   if (input.standing === "answered_late") {
     const declined = input.answer != null && ["Declined", "No"].includes(input.answer)
     return {
@@ -102,6 +104,8 @@ export function stepsCaption(
   if (!steps || steps.total <= 0) return null
   if (options.finished || steps.done >= steps.total) return `${steps.total} of ${steps.total} done`
   const current = steps.current?.trim()
-  const lead = steps.currentIndex ? `Step ${steps.currentIndex} of ${steps.total}` : `${steps.done} of ${steps.total}`
-  return current ? `${lead} · ${current}` : steps.currentIndex ? lead : `${lead} steps`
+  // A current step without its index is the one after the done ones: still "Step N of M", never a bare count.
+  const index = steps.currentIndex ?? (current ? Math.min(steps.done + 1, steps.total) : null)
+  const lead = index ? `Step ${index} of ${steps.total}` : `${steps.done} of ${steps.total}`
+  return current ? `${lead} · ${current}` : index ? lead : `${lead} steps`
 }

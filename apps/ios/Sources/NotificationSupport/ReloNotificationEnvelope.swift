@@ -14,6 +14,8 @@ struct ReloNotificationEnvelope: Equatable {
     let receiptScope: ReceiptScope?
     let privacy: ReloNotificationPrivacy
     let sourceName: String?
+    /// The project the notification belongs to, when the push names one (`context.project`).
+    let projectName: String?
     let conversationIdentifier: String?
     let avatarURL: URL?
     let imageURL: URL?
@@ -38,6 +40,7 @@ struct ReloNotificationEnvelope: Equatable {
 
         guard privacy == .standard else {
             sourceName = nil
+            projectName = nil
             conversationIdentifier = nil
             avatarURL = nil
             imageURL = nil
@@ -53,6 +56,7 @@ struct ReloNotificationEnvelope: Equatable {
         }
 
         sourceName = Self.displayName(payload["sourceName"] as? String)
+        projectName = Self.displayName((payload["context"] as? [String: Any])?["project"] as? String)
         let suppliedConversation = Self.identifier(payload["conversationId"] as? String)
             ?? Self.identifier(payload["serviceId"] as? String)
         conversationIdentifier = suppliedConversation

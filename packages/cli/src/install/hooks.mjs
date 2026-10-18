@@ -1,7 +1,7 @@
 // Relo's session hooks in a harness's settings file. Each harness adapter's `install` block says where its
 // settings live and which entries each level wants; entries are recognized by their exact command prefix
-// `relo hook `, so running setup again is a no-op and --hooks off deletes only Relo's entries (everyone
-// else's hooks, keys and order stay). Only relo setup --hooks and relo uninstall write these files.
+// `relo hook `, so running setup again is a no-op and a lower --level (or uninstall) deletes only Relo's entries (everyone
+// else's hooks, keys and order stay). Only relo setup (--level guide|optimize) and relo uninstall write these files.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";

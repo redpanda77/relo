@@ -5,7 +5,7 @@ import { useEffect, useId, useState } from "react"
 import { SelectionIndicator } from "@/components/atoms/selection-indicator"
 import { Empty } from "@/components/list"
 import { Page } from "@/components/page"
-import { WorkList, WorkListItem } from "@/components/organisms/work-card"
+import { CardList, CardListItem } from "@/components/card"
 import { HistoryWorkCard } from "@/features/inbox/activity-card"
 import {
   cardFor,
@@ -354,9 +354,9 @@ export function HistoryView({
                                 showProject={!f.project}
                               />
                             ) : (
-                              <WorkList key={segment.cards[0]!.id} label={group.label}>
+                              <CardList key={segment.cards[0]!.id} label={group.label}>
                                 {segment.cards.map((card) => (
-                                  <WorkListItem key={card.id}>
+                                  <CardListItem key={card.id}>
                                     <HistoryWorkCard
                                       card={card}
                                       onOpen={() => openCard(card)}
@@ -364,9 +364,9 @@ export function HistoryView({
                                       showSource={!f.source}
                                       showProject={!f.project}
                                     />
-                                  </WorkListItem>
+                                  </CardListItem>
                                 ))}
-                              </WorkList>
+                              </CardList>
                             )
                           )}
                         </div>

@@ -96,9 +96,9 @@ export type NowCardView = {
   summary: string | null
   tone: WorkTone
   state: WorkOutcome | null
-  /** A needs-you card's mono chip ("QUESTION", "MISSED 18:40", "PERMISSION"); nothing else has one. */
+  /** A needs-you card's mono chip ("QUESTION", "PERMISSION"); nothing else has one. */
   chip: string | null
-  /** A needs-you card's note under its summary (what a late answer means, where to answer). */
+  /** A needs-you card's footnote under its summary (what a late answer means). */
   note: string | null
   facts: string[]
   /** Moving work: a live "running 12:40" from the server's start instant. */
@@ -162,13 +162,10 @@ export function nowCardView(item: NowItem, relative: (iso: string) => string, to
     case "needs_you": {
       const reason = item.owner.needsYou
       view.at = item.question?.askedAt ?? item.declaredAt
-      if (reason === "missed_question") {
-        view.chip = `MISSED ${clock(item.question?.askedAt ?? item.declaredAt)}`.trim()
-        view.note = "Late answers reach the session marked late. An approval here is not permission: the session must ask again."
-      } else if (reason === "permission") {
+      if (reason === "permission") {
         view.chip = "PERMISSION"
-        // One line: what it waits on and where to answer it.
-        view.summary = "Permission prompt open · answer it on your computer"
+        // The hint rides the footer's metadata: where to answer it.
+        view.facts.push("Answer it on your computer")
       } else {
         view.chip = "QUESTION"
       }

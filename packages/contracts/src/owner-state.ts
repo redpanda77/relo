@@ -80,7 +80,7 @@ export const interruptionLevelSchema = z.enum(INTERRUPTION_LEVELS);
 export type InterruptionLevel = z.infer<typeof interruptionLevelSchema>;
 
 /** Why a work needs the owner. */
-export const NEEDS_YOU_REASONS = ["question", "missed_question", "permission"] as const;
+export const NEEDS_YOU_REASONS = ["question", "permission"] as const;
 export const needsYouReasonSchema = z.enum(NEEDS_YOU_REASONS);
 export type NeedsYouReason = z.infer<typeof needsYouReasonSchema>;
 
@@ -150,7 +150,7 @@ export const WORK_LIFECYCLES = ["open", "paused", "finished", "failed", "dropped
 export const workLifecycleSchema = z.enum(WORK_LIFECYCLES);
 export type WorkLifecycle = z.infer<typeof workLifecycleSchema>;
 
-/** A question referencing the work. "missed": unanswered in time, stays under Needs you until opened. */
+/** A question referencing the work. "missed": unanswered in time; it never needs the owner (History tells it). */
 export const QUESTION_STANDINGS = ["pending", "missed", "answered", "answered_late"] as const;
 export const questionStandingSchema = z.enum(QUESTION_STANDINGS);
 
@@ -222,11 +222,11 @@ export const ownerStateInputSchema = z.object({
   question: z.object({
     standing: questionStandingSchema,
     askedAt: timestamp,
-    /** When the owner opened the question (a missed question leaves Needs you then). */
+    /** When the owner opened the question. */
     openedAt: timestamp.nullable(),
     /**
-     * When the owner dismissed the missed question (an owner decision that it no longer needs them):
-     * it leaves Needs you at once and stays in History. Absent or null while not dismissed.
+     * When the owner dismissed the missed question (it then refuses a late answer). Absent or null
+     * while not dismissed.
      */
     dismissedAt: timestamp.nullable().optional(),
   }).strict().nullable(),

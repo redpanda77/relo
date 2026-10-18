@@ -69,9 +69,11 @@ needed one answer ends with `deliver`, not `finish`.
 A plan is flat by default. When one step turns out to hold several, the producer adds steps under it
 instead of starting a new card.
 
+Sub-steps get ordinary ids, next in line (here `s6` and `s7` in a five-step plan).
+
 ```sh
 relo work update --add "Check the refresh token,Check the cookie" --under s3
-relo work update --step s3.1 --detail "Expires after 5 minutes on iOS"
+relo work update --step s6 --detail "Expires after 5 minutes on iOS"
 ```
 
 `--step` jumps to a step: the steps passed on the way count as done, and jumping back to redo one leaves the step left behind open. Steps nest up to {{fact work.planMaxDepth}} levels below a round. `--detail` adds one line of

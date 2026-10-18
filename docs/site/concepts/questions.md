@@ -81,8 +81,8 @@ One answer decides it, from whichever phone or linked browser answers first.
   long shell commands. If you have not answered yet, it exits `4` and the agent resumes with
   `relo interaction wait`. The question stays open on your phone the whole time.
 - **Expiry.** When the time runs out, the question expires on every phone at once and the producer
-  treats it as no. It stays under Needs you as missed until you open or dismiss it, so you know a
-  decision passed you by. A dismissed question refuses a late answer.
+  treats it as no. A missed question leaves Needs you: there is nothing left to answer in time, so
+  the card goes back to the work's own state and History records it as missed.
 - **Late answers.** An answer that arrives after the producer stopped waiting is recorded and shown
   to it as a fact ("late: not permission"). It is never permission: the producer asks again if it
   still needs to.

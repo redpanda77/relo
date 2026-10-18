@@ -51,7 +51,7 @@ async function executeCommand(parsed, dependencies) {
   }
   if (positionals[0] === "mcp") {
     assertAllowedOptions(options, []);
-    throw new UsageError("Usage: relo mcp", { hint: "A stdio MCP server for a harness to launch, taking no arguments. Add it with: relo setup --mcp --agent <name> --global" });
+    throw new UsageError("Usage: relo mcp", { hint: "A stdio MCP server for a harness to launch, taking no arguments. Add it with: relo setup --mcp --agent <name>" });
   }
   let [group, action, ...rest] = positionals;
   let entry;

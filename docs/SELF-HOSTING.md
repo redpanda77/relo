@@ -57,11 +57,17 @@ window it runs with. Every five minutes it deletes notifications, their
 sealed bodies, questions, replies and delivery records once they are older than the window. A
 question still waiting for an answer, an active Live Activity, and the current item for a topic
 are kept until they settle. `10` matches the window end-to-end encryption assumes
-([encryption](site/concepts/encryption.md)). Leave the variable empty to keep content until you run
-`pnpm notification-retention` yourself.
+([encryption](site/concepts/encryption.md)). Leave the variable empty to keep content until you run the retention tool yourself
+(`preview` shows what it would delete, `execute` deletes it; `--age-days` defaults to 30):
+
+```sh
+docker compose --env-file deploy/.env -f deploy/compose.yaml run --rm \
+  -e RELO_RELEASE_IDENTITY=<RELO_RELEASE_IDENTITY from deploy/.env> \
+  migrate node dist/notification-retention-cli.js preview
+```
 
 Deleted notifications also leave the History that the iPhone loads from the server. Until the
-phone keeps its own history (item E1.4 of the plan), a short window means a short History.
+phone keeps its own history, a short window means a short History.
 
 ## Completion links and artifacts
 
@@ -126,7 +132,7 @@ pages people open in a browser and let the app and CLI traffic through to Relo's
 | Path | Access policy |
 |---|---|
 | `relo.example.com` | Allow the people who use this server |
-| `relo.example.com/api`, `/hooks` | Bypass (iPhone, Lock Screen answers, CLI, webhooks) |
+| `relo.example.com/api`, `/hooks`, `/install.sh`, `/cli/relo-cli.tgz`, `/cli/version` | Bypass (iPhone, Lock Screen answers, CLI, webhooks, the install script and CLI download) |
 | `relo.example.com/api/dashboard` | Allow |
 | `relo.example.com/api/auth/sign-in`, `/api/auth/sign-up` | Allow |
 

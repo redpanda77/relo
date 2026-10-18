@@ -16,7 +16,7 @@ its agents. It opens right after you create your account, and again whenever you
 <ol class="docs-steps">
 <li>
 
-**Open the wizard on a device you trust.** In the Dashboard: **Settings → Computers → Add a
+**Open the wizard on a device you trust.** In the Dashboard: **Account → Computers → Add a
 computer**. On your iPhone: **Settings → Devices → Add a computer**. **Now** also offers it while no computer is
 connected. Choose how deep Relo goes on the new computer (`notify`, `track`, `guide` or `optimize`,
 default `track`).

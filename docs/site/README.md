@@ -1,6 +1,6 @@
 # docs/site: the Relo docs
 
-These files are the public docs every Relo server serves at `/docs` (plan 08). They are built, with facts from the
+These files are the public docs every Relo server serves at `/docs`. They are built, with facts from the
 code, into `apps/server/src/web/docs/site.generated.ts`:
 
 ```sh
@@ -33,7 +33,7 @@ summary: Your jobs report progress and ask before risky steps, from any script o
 
 ## Voice
 
-Relo's voice (CLAUDE.md, `docs/VALUE-PROPOSITION.md`):
+Relo's voice (`docs/VALUE-PROPOSITION.md`):
 
 - **Why before how.** Open each page with what the owner gets, in one or two sentences, then the steps.
 - **Short sentences, real words, real commands.** No marketing, no filler ("simply", "just", "powerful", "seamless").

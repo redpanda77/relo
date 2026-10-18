@@ -68,7 +68,7 @@ authentication. Access matches the most specific path:
 | Path | Access policy |
 | --- | --- |
 | `relo.example.com` | Allow the people who use this server |
-| `relo.example.com/api`, `/hooks` | Bypass (iPhone, Lock Screen answers, CLI, webhooks) |
+| `relo.example.com/api`, `/hooks`, `/install.sh`, `/cli/relo-cli.tgz`, `/cli/version` | Bypass (iPhone, Lock Screen answers, CLI, webhooks, the install script and CLI download) |
 | `relo.example.com/api/dashboard` | Allow |
 | `relo.example.com/api/auth/sign-in`, `/api/auth/sign-up` | Allow |
 

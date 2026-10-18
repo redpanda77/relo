@@ -111,8 +111,8 @@ function questionOf(row: Row): LoadedWork["question"] {
 }
 
 /**
- * Loads the account's visible works (active, terminal within T_history, or carrying a pending or
- * unopened missed question), or the given card ids, as derive() inputs at `now`.
+ * Loads the account's visible works (active, terminal within T_history, or carrying a pending
+ * question), or the given card ids, as derive() inputs at `now`.
  */
 export async function loadOwnerStateInputs(
   db: Pick<Database,"query">,
@@ -171,9 +171,7 @@ export async function loadOwnerStateInputs(
            AND newer.work_id=a.work_id AND (newer.created_at,newer.id)>(a.created_at,a.id))) AND (
          a.state='active' OR a.state='expired' AND a.declared_at>$3::timestamptz-make_interval(secs=>$5::double precision)
          OR COALESCE(a.terminal_transition_at,a.ended_at)>$3::timestamptz-make_interval(secs=>$5::double precision)
-         OR q.state='pending'
-         OR q.state='expired' AND q.late_responded_at IS NULL AND q.owner_dismissed_at IS NULL AND NOT EXISTS (
-           SELECT 1 FROM interactions i WHERE i.interaction_request_id=q.id AND i.kind='opened'))) END)
+         OR q.state='pending')) END)
      ORDER BY a.declared_at DESC,a.id DESC LIMIT ${VISIBLE_LIMIT}`,
     // Expired rows are open works for derive(); they stay visible until left unfinished leaves Now (2 × T_history).
     [principalId,ids,now,reader.deviceId ?? null,OWNER_STATE_TIMING.historySeconds * 2,visibilityDeviceId(reader) ?? null,

@@ -1,6 +1,6 @@
 import { sourceLogo, toolLabel } from "@/components/atoms/source-logo"
 import { SourceMark } from "@/components/atoms/source-mark"
-import { StatusChip } from "@/components/atoms/status-chip"
+import { Badge } from "@/components/card"
 import { CopyButton } from "@/components/molecules/copy-button"
 import { agentsNotSetUp, doctorLine, setupPills, visibleHarnesses, type PillState } from "@/features/connections/computer-health"
 import { NoReport, ReportAge } from "@/features/connections/computer-panel/report"
@@ -44,9 +44,9 @@ export function Setup({ computer }: { computer: ConnectionComputer }) {
                 <ul className="flex flex-wrap gap-1.5" aria-label={`${toolLabel(harness.id)} setup`}>
                   {setupPills(harness).map((pill) => (
                     <li key={pill.id}>
-                      <StatusChip tone={PILL_TONE[pill.state]} variant="hairline" label={`${pill.label}: ${pill.detail}`}>
+                      <Badge tone={PILL_TONE[pill.state]} variant="hairline" label={`${pill.label}: ${pill.detail}`}>
                         {pill.label} · {pill.detail}
-                      </StatusChip>
+                      </Badge>
                     </li>
                   ))}
                 </ul>

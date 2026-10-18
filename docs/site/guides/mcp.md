@@ -57,6 +57,8 @@ permission), so the model reads them where it decides.
 | --- | --- | --- |
 | `relo_work_start` | declare the session's work: goal, plan or count | `relo work start` |
 | `relo_work_update` | status, next step, plan changes, progress, a declared wait | `relo work update` |
+| `relo_work_deliver` | end the current request with an outcome; the work stays open for the next | `relo work deliver` |
+| `relo_work_handoff` | leave a note for a fresh session before the context fills | `relo work handoff` |
 | `relo_work_finish` | finish once with an outcome, failed or dropped | `relo work finish` |
 | `relo_work_state` | what this session has open and parked | `relo state` |
 | `relo_ask` | an approval or yes/no question, waiting up to {{fact question.defaultSeconds}} | `relo ask` |

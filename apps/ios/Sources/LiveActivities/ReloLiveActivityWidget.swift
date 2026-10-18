@@ -132,18 +132,9 @@ struct PresentationPlanMeter: View {
     var body: some View {
         let segments = plan.bar.segments
         Group {
-            if segments.count <= 12 {
-                HStack(spacing: 3) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        Capsule().fill(track(segment.state)).frame(height: 4).frame(maxWidth: .infinity)
-                            .overlay(alignment: .leading) {
-                                GeometryReader { proxy in
-                                    Capsule().fill(palette.state).frame(width: proxy.size.width * segment.fill)
-                                }
-                            }
-                            .clipShape(Capsule())
-                    }
-                }
+            if segments.count <= CardProgressBar<EmptyView>.segmentLimit {
+                CardProgressBar(shape: .segments(segments), color: palette.state,
+                                track: palette.primaryText.opacity(0.12), currentTrack: palette.primaryText.opacity(0.2))
             } else {
                 let whole = segments.reduce(0.0) { $0 + $1.fill }
                 PresentationNeonBar(value: whole / Double(segments.count), palette: palette)
@@ -151,10 +142,6 @@ struct PresentationPlanMeter: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(plan.caption)
-    }
-
-    private func track(_ state: LiveActivityPlanDisplay.StepState) -> Color {
-        palette.primaryText.opacity(state == .current ? 0.2 : 0.12)
     }
 }
 
@@ -188,7 +175,7 @@ struct PresentationCardView: View {
     var body: some View {
         // Select within the surface budget, then report the selected content's height.
         // A flexible max-height frame here would inflate even the smallest fallback.
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
             if presentation.privacy != .private {
                 header
             }
@@ -209,7 +196,7 @@ struct PresentationCardView: View {
 
     /// Source on the leading edge; in the island, the state glyph or fact on the trailing edge.
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
             PresentationSourceMark(presentation: presentation, palette: palette)
             if let chip = projection.chip {
                 OwnerChipView(chip: chip, owner: context.state.owner)
@@ -296,9 +283,9 @@ struct PresentationCardView: View {
     }
 
     private func card(showComponents: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
             Text(presentation.title)
-                .font(.subheadline.weight(.semibold))
+                .font(ReloLayout.cardTitle)
                 .foregroundStyle(palette.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
@@ -333,25 +320,34 @@ struct PresentationCardView: View {
                               standing: presentation.planStanding)
     }
 
+    /// Work with a plan, as its card in Relo: title, then the status with the plan line trailing it on the same
+    /// row, and the plan's segments. The bar is the app's (`CardProgressBar`).
     private func workCard(_ plan: LockScreenPlan, titleLines: Int, statusLines: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
             Text(presentation.title)
-                .font(.subheadline.weight(.semibold))
+                .font(ReloLayout.cardTitle)
                 .foregroundStyle(palette.primaryText)
                 .lineLimit(titleLines)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            if statusLines > 0, !presentation.status.isEmpty {
-                Text(presentation.status)
-                    .font(.caption).foregroundStyle(palette.secondaryText)
-                    .lineLimit(statusLines)
-                    .fixedSize(horizontal: false, vertical: true)
+            let showsStatus = statusLines > 0 && !presentation.status.isEmpty
+            if showsStatus || plan.parts != nil {
+                HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
+                    if showsStatus {
+                        Text(presentation.status)
+                            .font(ReloLayout.cardMeta).foregroundStyle(palette.secondaryText)
+                            .lineLimit(statusLines)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(-1)
+                    }
+                    Spacer(minLength: 0)
+                    if let parts = plan.parts {
+                        PresentationPlanLine(parts: parts, color: palette.secondaryText, font: ReloLayout.cardMeta)
+                    }
+                }
             }
             PresentationPlanMeter(plan: plan, palette: palette)
                 .padding(.top, 2)
-            if let parts = plan.parts {
-                PresentationPlanLine(parts: parts, color: palette.secondaryText, font: .caption)
-            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -365,10 +361,10 @@ struct PresentationCardView: View {
 
     /// A question with its answer buttons. Every variant keeps the buttons.
     private func questionCard(showsTitle: Bool, questionLines: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
             if showsTitle {
                 Text(presentation.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(ReloLayout.cardTitle)
                     .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
@@ -394,9 +390,9 @@ struct PresentationCardView: View {
 
     /// Work that does not fit in full: the title and one line of status.
     private var compactCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
             Text(presentation.title)
-                .font(.subheadline.weight(.semibold))
+                .font(ReloLayout.cardTitle)
                 .foregroundStyle(palette.primaryText)
                 .lineLimit(surface == .lockScreen ? 2 : 1)
             conciseFact.font(.caption).foregroundStyle(palette.secondaryText).lineLimit(1)
@@ -406,7 +402,7 @@ struct PresentationCardView: View {
     @ViewBuilder private var conciseFact: some View {
         switch projection.fact {
         case .percentage(let value, let role):
-            HStack(spacing: 6) {
+            HStack(spacing: ReloLayout.cardGap) {
                 Text(value, format: .percent.precision(.fractionLength(0)))
                     .fontWeight(.semibold).monospacedDigit()
                     .foregroundStyle(palette.state)
@@ -438,7 +434,7 @@ struct PresentationComponentStack: View {
                 case .steps(_, _, let items, let window) = step,
                 components.contains(where: { if case .progressBar = $0 { true } else { false } })
             {
-                // Progress belongs to the current step: "Step 2 · 1 to go · <step> · n of m" (2.15).
+                // Progress belongs to the current step: "Step N of M · <step>" (2.15).
                 let count = components.lazy.compactMap { component -> (Int, Int)? in
                     if case .progressBar(_, _, _, let label) = component { LiveActivitySurfaceProjection.stepCount(label) } else { nil }
                 }.first

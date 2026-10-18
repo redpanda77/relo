@@ -48,6 +48,14 @@ final class NotificationService: UNNotificationServiceExtension {
             content.title = opened.title
             content.body = opened.body
         }
+        let envelope = ReloNotificationEnvelope(
+            userInfo: request.content.userInfo,
+            requestIdentifier: request.identifier
+        )
+        // Where it came from, as the system's subtitle: "source · project". Only what the push already carries
+        // (a private notification carries no names), and never over a subtitle the sender set.
+        let origin = [envelope?.sourceName, envelope?.projectName].compactMap { $0 }.joined(separator: " · ")
+        if content.subtitle.isEmpty, !origin.isEmpty { content.subtitle = origin }
         let metadata = ReloNotificationPresentationMetadata(
             categoryIdentifier: content.categoryIdentifier,
             threadIdentifier: content.threadIdentifier,
@@ -62,10 +70,6 @@ final class NotificationService: UNNotificationServiceExtension {
         )
         self.orchestrator = orchestrator
 
-        let envelope = ReloNotificationEnvelope(
-            userInfo: request.content.userInfo,
-            requestIdentifier: request.identifier
-        )
         let context = ReloNotificationOrchestrationContext(
             hasEnvelope: envelope != nil,
             isPrivate: envelope?.privacy == .private,
