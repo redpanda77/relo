@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in the server, CLI, Dashboard or iPhone app does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A suspected vulnerability goes through **Security → Report a vulnerability**, never a public issue (see SECURITY.md).
+        Leave out credentials, APNs keys, device tokens, webhook URLs and notification content.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      options: [Server or worker, CLI or skill, Dashboard, iPhone app or Live Activity, Docs, Other]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`relo --version`, the server's release identity (`relo doctor` shows it) and the iPhone app version."
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Commands, harness (Claude Code, Codex, a script…) and setup level (`relo setup --level …`).
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: "`relo doctor` and the failing command's output, with secrets removed."
+      render: text

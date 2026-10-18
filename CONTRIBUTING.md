@@ -1,5 +1,8 @@
 # Contributing to Relo
 
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md). Report bugs and ideas
+through the issue forms; report a vulnerability privately as [SECURITY.md](SECURITY.md) describes.
+
 Start with [`ROADMAP.md`](ROADMAP.md), then read the closest maintained guide in [`docs/`](docs/).
 Historical plans and private operator material are not part of the public project requirements.
 Machine-local agent configuration belongs outside Git. The repository ignores `.claude/`, `.codex/`,

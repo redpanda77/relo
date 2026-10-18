@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability
+    url: https://github.com/redpanda77/relo/security/advisories/new
+    about: Privately, never in a public issue (SECURITY.md).
+  - name: Documentation
+    url: https://github.com/redpanda77/relo/tree/main/docs/site
+    about: Setup, guides and the CLI reference.
