@@ -6,6 +6,7 @@ struct CardDecisionLine: View {
     let answer: String
     let tint: Color
     var at: Date? = nil
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         let answerText = HStack(spacing: 4) {
@@ -14,13 +15,13 @@ struct CardDecisionLine: View {
                 Text("· \(at.formatted(date: .omitted, time: .shortened))").foregroundStyle(Color.reloSecondaryText).monospacedDigit()
             }
         }
-        let promptText = Label(prompt, systemImage: "questionmark.bubble").foregroundStyle(.primary)
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: ReloLayout.inlineGap) { promptText.fixedSize(); Spacer(minLength: ReloLayout.inlineGap); answerText.fixedSize() }
-            VStack(alignment: .leading, spacing: 3) {
-                promptText.fixedSize(horizontal: false, vertical: true)
-                answerText.fixedSize(horizontal: false, vertical: true)
-            }
+        // One row: the prompt wraps to two lines and the answer keeps its width. No ViewThatFits: in a List cell
+        // it measured the unwrapped prompt and reserved the stacked layout's height around the one-line one.
+        HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
+            Label(prompt, systemImage: "questionmark.bubble").foregroundStyle(.primary)
+                .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            answerText.lineLimit(1).fixedSize()
         }
         .font(ReloLayout.cardMeta)
         .frame(maxWidth: .infinity, alignment: .leading)

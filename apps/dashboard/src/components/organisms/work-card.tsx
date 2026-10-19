@@ -14,24 +14,34 @@
  *   summary="…"  summaryLines={2|4}  // status in the producer's words (needs you: 4 lines)
  *   note="…"                          // a footnote under the status (what a late answer means)
  *   extra={node}                      // a Strip under the status: the answered-question strip
- *   meter={{ steps: {done,total,current}, progress, live, finished }}   // StepTrack docked on the bottom edge (live only)
- *   state={{ label, icon }}           // "Running", "Your turn", "Done" in the tone, 12px icon
- *   facts={[node, …]}                 // muted parts: "2 of 6 · Run migrations", "33m", "updated 3m ago"
- *   runningSince="ISO"                // "running 12:40", ticking (display only); else
- *   at="ISO"                          // a clock time ("12:40")
+ *   meter={{ steps: {done,total,current}, progress, live, finished }}   // StepTrack in the progress row, with the step caption
+ *   state={{ label, icon }}           // "Running", "Your turn", "Done" in the tone, 12px icon: the header's trailing badge
+ *   facts={[node, …]}                 // muted parts: "33m", "updated 3m ago"
+ *   runningSince="ISO"                // footer trailing: "running 12:40", ticking (display only); else
+ *   at="ISO"                          // footer trailing: a clock time ("12:40")
  *   computer="Studio Mac"             // its icon (computerIcon, laptop when unknown) + name
  *   glyph={node}                      // leading 28px glyph (hidden on a narrow card)
  *   tint  live                        // needs you washes the glass; moving work shimmers its state
- *   deadline="ISO"                    // the countdown, in the header's corner (needs you)
- *   actions={node}                    // buttons in the footer, beside the metadata, outside the open target
+ *   deadline="ISO"                    // the countdown, in the header's trailing slot (replaces the state badge)
+ *   actions={node}                    // buttons in the footer, trailing, outside the open target
  *   onOpen={() => …}  openLabel="Open …"   // the card (minus the footer) opens the detail
  *   attrs  open  className
  * />
  *
- * Where a field goes (never a row of its own): eyebrow and origin share the header line; the
- * header's one corner is the countdown, else "running 12:40", else the clock time; the state, the
- * facts and the computer share the footer line with the buttons. When that is all one short field
- * and there are no buttons, it joins the header's corner and the footer is not drawn.
+ * ## The standard: Header / Content / Footer, a plain top-to-bottom stack
+ *
+ *   HEADER  one small line. Leading: eyebrow (needs-you only) + origin. Trailing: ONE thing, the
+ *           countdown (a pending question) else the state badge. Never the clock, never the computer.
+ *   CONTENT title, status, the progress bar across the full width with the step line under it, then
+ *           extra and note.
+ *   FOOTER  one small line, omitted when empty. Leading: facts and the computer joined by " · "
+ *           (they truncate). Trailing: the actions, else the running timer or the clock time.
+ *
+ * No side columns, no measuring, no field moves between slots, the same layout at every width (a
+ * wider card has longer lines; only the buttons drop under the facts on a narrow card).
+ *
+ * The row variant keeps the same slots, compact: header = origin + state, content = title (+ status),
+ * footer = facts + time.
  *
  * <WorkRow glyph={{ icon, color, mark }} title="…" encrypted detail="Done · 33m" at="ISO" onOpen label arrived />
  *   The compact log row: the same row as WorkCard's row variant. Inside a CardList.
@@ -55,7 +65,7 @@ import {
   CardMain,
   CardMeta,
   CardNote,
-  CardProgress,
+  CardProgressRow,
   CardState,
   CardStatus,
   CardTitle,
@@ -65,7 +75,7 @@ import {
   type DataAttributes,
   type OriginParts,
 } from "@/components/card"
-import { type WorkTone } from "@/lib/work-outcome"
+import { stepsCaption, type WorkTone } from "@/lib/work-outcome"
 
 export type { WorkTone }
 export type WorkOrigin = OriginParts
@@ -78,6 +88,8 @@ export type WorkMeter = {
   live?: boolean
   /** Finished work fills every step. */
   finished?: boolean
+  /** The progress row's words; defaults to the steps caption ("Step 3 of 5 · Run local gates"). */
+  caption?: string | null
 }
 
 export type WorkState = { label: string; icon?: LucideIcon | null }
@@ -125,38 +137,43 @@ function ClockTime({ at }: { at: string }) {
   return <time className="tabular-nums" dateTime={at}>{clockTime(at)}</time>
 }
 
-/** The row's words: title and its time on the first line, an optional status, then metadata with the origin trailing. */
+/** The row's words, same slots as the card: header (origin, state), title and status, footer (facts, time). */
 function RowText({
   title,
   encrypted,
-  corner,
+  origin,
+  trailing,
   status,
   meta,
-  origin,
+  time,
   extra,
 }: {
   title: string
   encrypted: boolean
-  corner?: React.ReactNode
+  origin?: React.ReactNode
+  trailing?: React.ReactNode
   status?: string | null
   meta?: React.ReactNode
-  origin?: React.ReactNode
+  time?: React.ReactNode
   extra?: React.ReactNode
 }) {
   return (
     <div className="card-row-text">
-      <div className="card-row-top">
-        {encrypted ? <EncryptedText className="card-row-title text-muted-foreground" /> : <h3 className="card-row-title">{title}</h3>}
-        {corner}
-      </div>
-      {status ? <p className="card-row-status">{status}</p> : null}
-      {meta || origin ? (
-        <div className="card-row-sub">
-          {meta}
+      {origin || trailing ? (
+        <div className="card-row-top">
           {origin}
+          {trailing}
         </div>
       ) : null}
+      {encrypted ? <EncryptedText className="card-row-title text-muted-foreground" /> : <h3 className="card-row-title">{title}</h3>}
+      {status ? <p className="card-row-status">{status}</p> : null}
       {extra}
+      {meta || time ? (
+        <div className="card-row-sub">
+          {meta}
+          {time ? <span className="card-row-time">{time}</span> : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -203,7 +220,12 @@ export const WorkCard = React.memo(function WorkCard({
     </span>
   ) : null
   const stateNode = state ? <CardState label={state.label} icon={state.icon} /> : null
-  const parts: React.ReactNode[] = [stateNode, ...(facts ?? []).filter((fact) => fact != null && fact !== ""), computerNode]
+  const caption = meter ? (meter.caption ?? stepsCaption(steps, { finished: meter.finished })) : null
+  const facing = (facts ?? []).filter((fact) => fact != null && fact !== "")
+  const parts: React.ReactNode[] = [...(variant === "row" ? [caption] : []), ...facing, computerNode]
+  const meta = parts.some((part) => part != null && part !== "") ? <CardMeta parts={parts} /> : null
+  // The header's one trailing thing: the countdown, else the state badge.
+  const trailing = deadline ? <Countdown deadline={deadline} /> : stateNode ? <CardCorner>{stateNode}</CardCorner> : null
 
   if (variant === "row") {
     return (
@@ -213,61 +235,47 @@ export const WorkCard = React.memo(function WorkCard({
           <RowText
             title={title}
             encrypted={encrypted}
-            corner={time ? <CardCorner>{time}</CardCorner> : null}
-            status={shownSummary}
-            meta={<CardMeta parts={parts} />}
             origin={originNode}
+            trailing={trailing}
+            status={shownSummary}
             extra={extra}
+            meta={meta}
+            time={time}
           />
         </CardHit>
       </Card>
     )
   }
 
-  // The header's one corner: the countdown, else the running time, else the clock time.
-  const when = deadline ? <Countdown deadline={deadline} /> : time ? <CardCorner>{time}</CardCorner> : null
-  let corner: React.ReactNode = when
-  let footParts = parts.filter((part) => part != null && part !== false)
-  // No buttons and one short field: it joins the corner, so the footer is not drawn.
-  if (!actions && footParts.length <= 1 && (originNode || eyebrow)) {
-    if (footParts.length === 1) {
-      corner = (
-        <>
-          <CardCorner>{footParts[0]}</CardCorner>
-          {when}
-        </>
-      )
-    }
-    footParts = []
-  }
-  const hasHeader = Boolean(eyebrow || originNode || corner)
+  const hasHeader = Boolean(eyebrow || originNode || trailing)
+  const progressRow = meter && (steps || meter.progress != null) ? (
+    <CardProgressRow caption={caption}>
+      <StepTrack
+        done={steps?.done}
+        total={steps?.total}
+        current={encrypted ? null : steps?.current}
+        currentIndex={steps?.currentIndex}
+        fill={steps?.fill}
+        progress={steps ? null : meter.progress}
+        live={meter.live}
+        finished={meter.finished}
+      />
+    </CardProgressRow>
+  ) : null
   return (
     <Card variant="live" tone={tone} tint={tint} live={live} open={open} className={className}>
       <CardHit onOpen={onOpen} label={label} attrs={attrs}>
         {glyph ? <CardLead>{glyph}</CardLead> : null}
         <CardMain>
-          {hasHeader ? <CardHeader eyebrow={eyebrow} origin={originNode} trailing={corner} /> : null}
+          {hasHeader ? <CardHeader eyebrow={eyebrow} origin={originNode} trailing={trailing} /> : null}
           <CardTitle encrypted={encrypted}>{title}</CardTitle>
           {shownSummary ? <CardStatus lines={summaryLines}>{shownSummary}</CardStatus> : null}
+          {progressRow}
           {extra}
           {note ? <CardNote>{note}</CardNote> : null}
         </CardMain>
       </CardHit>
-      <CardFooter meta={footParts.length ? <CardMeta parts={footParts} /> : null} actions={actions} onOpenMeta={onOpen} />
-      {meter && (steps || meter.progress != null) ? (
-        <CardProgress>
-          <StepTrack
-            done={steps?.done}
-            total={steps?.total}
-            current={encrypted ? null : steps?.current}
-            currentIndex={steps?.currentIndex}
-            fill={steps?.fill}
-            progress={steps ? null : meter.progress}
-            live={meter.live}
-            finished={meter.finished}
-          />
-        </CardProgress>
-      ) : null}
+      <CardFooter meta={meta} actions={actions} time={time} onOpenMeta={onOpen} />
     </Card>
   )
 })
@@ -312,8 +320,8 @@ export function WorkRow({
         <RowText
           title={title}
           encrypted={encrypted}
-          corner={at && clockTime(at) ? <CardCorner><ClockTime at={at} /></CardCorner> : null}
           meta={detail ? <CardMeta parts={[detail]} /> : null}
+          time={at && clockTime(at) ? <ClockTime at={at} /> : null}
         />
       </CardHit>
     </Card>

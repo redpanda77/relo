@@ -142,7 +142,9 @@ describe("Now from a NowSummary fixture", () => {
       summary.sessions.sessions.filter((row) => row.fold !== "idle").map((row) => row.phase ?? "unobserved").sort()
     )
     const waitingRow = section.querySelector("li[data-session-phase='waiting'] [data-session-standing]")
-    expect(waitingRow?.textContent).toMatch(/^(Needs your input|Your turn) · /)
+    expect(waitingRow?.textContent).toMatch(/^(Needs your input|Your turn)/)
+    // The last-seen clock sits in the row's footer, not beside the state.
+    expect(waitingRow?.closest(".card-row-text")?.querySelector(".card-row-sub .card-row-time time")).not.toBeNull()
     // Its linked work opens from the row.
     expect(within(section).getByRole("button", { name: `Open ${summary.waitingOnYou[0]!.title}` })).toBeTruthy()
     // An unobserved session (hooks off) says when it was last seen, never a phase.

@@ -73,21 +73,30 @@ struct ReloSwipeToEnd: ViewModifier {
         if enabled {
             content
                 .offset(x: offset)
-                .background(alignment: .trailing) {
-                    Button { close(); action() } label: {
-                        VStack(spacing: 4) {
-                            Image(systemName: "stop.circle").font(.title3)
-                            Text("End").font(.caption.weight(.semibold))
+                // Above the card, not behind it: behind, the card's own button still took the tap and
+                // opened the work. While revealed, a tap on the rest of the card closes the swipe.
+                .overlay(alignment: .trailing) {
+                    if offset < 0 {
+                        HStack(spacing: 0) {
+                            Color.clear.contentShape(Rectangle()).onTapGesture { close() }
+                            Button { close(); action() } label: {
+                                VStack(spacing: 4) {
+                                    Image(systemName: "stop.circle").font(.title3)
+                                    Text("End").font(.caption.weight(.semibold))
+                                }
+                                .foregroundStyle(.white)
+                                .frame(width: -offset, alignment: .center)
+                                .frame(maxHeight: .infinity)
+                                .clipped()
+                                .background(Color.reloDestructive.opacity(0.9),
+                                            in: RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .opacity(offset < -8 ? 1 : 0)
                         }
-                        .foregroundStyle(.white)
-                        .frame(width: max(0, -offset), alignment: .center)
-                        .frame(maxHeight: .infinity)
-                        .clipped()
+                        .accessibilityHidden(true)
                     }
-                    .buttonStyle(.plain)
-                    .background(Color.reloDestructive.opacity(0.9), in: RoundedRectangle(cornerRadius: ReloLayout.cardRadius, style: .continuous))
-                    .opacity(offset < -8 ? 1 : 0)
-                    .accessibilityHidden(true)
                 }
                 .simultaneousGesture(
                     DragGesture(minimumDistance: 24)

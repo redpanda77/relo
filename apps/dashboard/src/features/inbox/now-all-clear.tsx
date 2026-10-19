@@ -168,7 +168,8 @@ const NowCard = React.memo(function NowCard({
       // Needs you: the steps stay in words on the standing line; the bar would only add a row.
       meter={needsYou ? null : view.meter}
       state={unconfirmed ? { label: "Unconfirmed" } : view.state ?? (variant === "row" && view.chip ? { label: view.chip.charAt(0) + view.chip.slice(1).toLowerCase() } : null)}
-      facts={view.facts.map(time)}
+      // A needs-you card draws no progress row, so its step words stay in the footer.
+      facts={(needsYou && view.caption ? [view.caption, ...view.facts] : view.facts).map(time)}
       runningSince={unconfirmed ? null : view.runningSince}
       at={view.at}
       computer={view.computer}

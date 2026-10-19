@@ -35,7 +35,8 @@ const STANDING_ICON: Record<SessionIcon, LucideIcon> = {
 /**
  * A session is the card set's row, two lines at most (iOS sessionRow): where it runs, the tool as
  * its logo then the project, then the session's own name after "›", with how it stands trailing
- * (its mark, a hand on your turn, and when it was last seen); the work it holds (opens it) under.
+ * (its mark, a hand on your turn); the work it holds (opens it) under, then when it was last seen
+ * in the footer slot.
  * The computer is the group's caption.
  */
 function SessionRowBody({ row, link }: { row: SessionRow; link?: SessionWorkLink }) {
@@ -53,18 +54,19 @@ function SessionRowBody({ row, link }: { row: SessionRow; link?: SessionWorkLink
                 <Icon className="card-session-icon" aria-hidden="true" />
                 <NowTimeText text={view.standing.label} />
               </span>
-              {seen ? (
-                <>
-                  <span className="card-sep" aria-hidden="true"> · </span>
-                  <time className="tabular-nums" dateTime={view.lastSeenAt ?? undefined}>{seen}</time>
-                </>
-              ) : null}
             </p>
           </div>
           {link ? (
             <button type="button" onClick={link.open} aria-label={`Open ${link.title}`} className="card-row-link">
               {link.title}
             </button>
+          ) : null}
+          {seen ? (
+            <div className="card-row-sub">
+              <span className="card-row-time">
+                <time className="tabular-nums" dateTime={view.lastSeenAt ?? undefined}>{seen}</time>
+              </span>
+            </div>
           ) : null}
         </div>
       </CardHit>

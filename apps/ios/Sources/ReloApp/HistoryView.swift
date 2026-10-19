@@ -64,6 +64,8 @@ struct HistoryView: View {
                     Section {
                         ForEach(day.rows) { row in
                             self.row(row).listRowBackground(ReloListRowBackground())
+                                // The card's own inset is the row's only vertical space; the List adds its side inset alone.
+                                .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
                         }
                     } header: {
                         ViewThatFits(in: .horizontal) {

@@ -144,7 +144,10 @@ public struct PlanProgress: Codable, Equatable, Hashable, Sendable {
             if delivered { return LineParts(lead: "Round \(round) delivered", label: nil, trail: nil) }
             guard total > 0 else { return nil }
             if done >= total, currentId == nil { return LineParts(lead: "\(done) of \(total) done", label: nil, trail: nil) }
-            return LineParts(lead: current.map { "Step \($0) of \(total)" } ?? "\(done) of \(total)", label: PlanProgress.clean(label),
+            // A current step without its position is the one after the done ones: still "Step N of M", never a bare count.
+            let clean = PlanProgress.clean(label)
+            let position = current ?? (clean == nil ? nil : min(done + 1, total))
+            return LineParts(lead: position.map { "Step \($0) of \(total)" } ?? "\(done) of \(total)", label: clean,
                              trail: sub.map { "\($0.done)/\($0.total)" })
         case .paused: return total > 0 ? LineParts(lead: "Paused at \(done) of \(total)", label: nil, trail: nil) : nil
         case .done: return total > 0 ? LineParts(lead: "\(done) of \(total) done", label: nil, trail: nil) : nil

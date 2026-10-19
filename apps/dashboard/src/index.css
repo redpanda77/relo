@@ -782,6 +782,8 @@ body::before {
   height: 4px;
   margin-block: 3px;
 }
+/* Many steps keep their divisions with a thinner gap. */
+.step-bar[data-many] { gap: 1.5px; }
 .step-bar > span[data-step],
 .step-bar > span:not(.step-sweep) {
   flex: 1 1 0;

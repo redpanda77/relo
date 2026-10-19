@@ -1,7 +1,7 @@
 {
   "name": "@relo/dashboard",
   "private": true,
-  "version": "0.18.81",
+  "version": "0.18.86",
   "type": "module",
   "scripts": {
     "dev": "vite",

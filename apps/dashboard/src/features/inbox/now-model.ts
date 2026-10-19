@@ -101,6 +101,8 @@ export type NowCardView = {
   /** A needs-you card's footnote under its summary (what a late answer means). */
   note: string | null
   facts: string[]
+  /** The progress row's step caption ("Step 3 of 5 · Run local gates"); not a footer fact. */
+  caption: string | null
   /** Moving work: a live "running 12:40" from the server's start instant. */
   runningSince: string | null
   /** Otherwise the clock time that matters for the state (since your turn, finished, last seen). */
@@ -142,6 +144,7 @@ export function nowCardView(item: NowItem, relative: (iso: string) => string, to
     chip: null,
     note: null,
     facts: [],
+    caption: stepsCaption(steps, { finished }),
     runningSince: null,
     at: evidence(item),
     meter: steps ? { steps, live: false, finished } : null,
@@ -156,8 +159,6 @@ export function nowCardView(item: NowItem, relative: (iso: string) => string, to
       topic: topic && topic !== item.title ? topic : null,
     },
   }
-  const caption = stepsCaption(steps, { finished })
-  if (caption) view.facts.push(caption)
   switch (item.owner.state) {
     case "needs_you": {
       const reason = item.owner.needsYou

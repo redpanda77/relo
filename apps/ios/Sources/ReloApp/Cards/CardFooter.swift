@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// A card's last row: metadata leading (parts joined by " · "), the actions trailing on the same row. When
-/// both do not fit beside each other, or at accessibility sizes, the actions drop under the metadata.
+/// A card's last row: metadata leading (parts joined by " · "), the actions trailing on the same row. A fixed
+/// rule, never a measured choice: with metadata the actions keep their size and the metadata truncates; with
+/// none they sit trailing (an equal-split action fills the row); at accessibility sizes the actions go under the metadata.
 struct CardFooter<Actions: View>: View {
     var meta: Text?
     /// A short trailing fact (the time) on a footer without actions.
@@ -18,15 +19,13 @@ struct CardFooter<Actions: View>: View {
         if hasActions {
             if typeSize.isAccessibilitySize {
                 stacked
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .center, spacing: ReloLayout.footerGap) {
-                        metaView(lines: 1)
-                        Spacer(minLength: 0)
-                        HStack(spacing: ReloLayout.inlineGap) { actions }.fixedSize()
-                    }
-                    stacked
+            } else if meta != nil {
+                HStack(alignment: .center, spacing: ReloLayout.footerGap) {
+                    metaView(lines: 1)
+                    HStack(spacing: ReloLayout.inlineGap) { actions }.fixedSize()
                 }
+            } else {
+                HStack(spacing: ReloLayout.inlineGap) { actions }.frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else if meta != nil || trailing != nil {
             HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
@@ -51,7 +50,7 @@ struct CardFooter<Actions: View>: View {
     @ViewBuilder private func metaView(lines: Int?) -> some View {
         if let meta {
             meta.font(ReloLayout.cardMeta).lineLimit(lines).fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: lines == 1 ? nil : .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

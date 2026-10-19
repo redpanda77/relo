@@ -58,13 +58,11 @@ struct ReloDeckField: View {
     }
 }
 
-/// The deck's footer: where the data stands, then today's proportions edge to edge. It names
-/// what the colors mean without repeating the corner counts.
+/// The deck's footer: where the data stands, and today's session time.
 struct ReloDeckFooter: View {
     enum Sync: Equatable { case live(Date), syncing, offline(Date?) }
     let sync: Sync
     let pendingResponses: Int
-    let mix: NowMix
     var agentTime: String? = nil
     var trouble: String? = nil
     var showConnection: () -> Void = {}
@@ -72,26 +70,23 @@ struct ReloDeckFooter: View {
     @State private var breathing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Where the data stands, and the way into connection details and recovery.
-            Button(action: showConnection) {
-                HStack(spacing: 6) {
-                    status
-                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Color.reloSecondaryText)
-                    Spacer(minLength: 8)
-                    if let agentTime {
-                        Text("\(agentTime) session time")
-                            .font(.system(.caption2, design: .monospaced)).foregroundStyle(Color.reloSecondaryText)
-                            .lineLimit(1).minimumScaleFactor(0.8)
-                    }
+        // Where the data stands, and the way into connection details and recovery.
+        Button(action: showConnection) {
+            HStack(spacing: 6) {
+                status
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Color.reloSecondaryText)
+                Spacer(minLength: 8)
+                if let agentTime {
+                    Text("\(agentTime) session time")
+                        .font(.system(.caption2, design: .monospaced)).foregroundStyle(Color.reloSecondaryText)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
-                .frame(minHeight: 32).contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Shows connection details and recovery options")
-            if !mix.isEmpty { ReloSpectrumBar(mix: mix) }
+            .frame(minHeight: 32).contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows connection details and recovery options")
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 

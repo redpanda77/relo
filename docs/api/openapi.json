@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Relo integration API",
-    "version": "0.18.81",
+    "version": "0.18.86",
     "description": "Questions, work, cards and notifications for an app signed in with `relo auth login`; the session, harness-credential and owner routes the CLI uses; webhook services (`/hooks…`, a service secret in a header); and the device authorization flow any client signs in with. Every other route is private to the Dashboard and the iPhone app (INTERNAL_ROUTES in apps/server/src/openapi.ts). See docs/INTEGRATING.md."
   },
   "security": [

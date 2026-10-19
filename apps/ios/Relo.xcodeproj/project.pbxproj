@@ -474,6 +474,7 @@
 		FB95F289761AA466AD85C008 /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
 		FC1FEFEC3B3B0171167210EA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD94BD6BD69EDE7119A88A55 /* SettingsView.swift */; };
 		FC3F8F2BF4B4669E98C6EB45 /* ReloTrustedClients.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F26CF58ED7A97F8A3B5439 /* ReloTrustedClients.swift */; };
+		FD15EFDD491970F8362E8AF8 /* CardLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81A306EF36A69B2C7405529 /* CardLayoutTests.swift */; };
 		FE53CFA19F0F3ABCD93A5F7C /* ReloRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 035B11249E9CE59AFC0B2512 /* ReloRootView.swift */; };
 /* End PBXBuildFile section */
 
@@ -1129,6 +1130,7 @@
 		B5E25CBA4C73F96499D35D86 /* ReloE2EE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloE2EE.swift; sourceTree = "<group>"; };
 		B6345909A599F465A4D68173 /* OriginAndAgentTimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OriginAndAgentTimeTests.swift; sourceTree = "<group>"; };
 		B694D289881A623C82DD4192 /* StoragePreflightSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoragePreflightSafetyTests.swift; sourceTree = "<group>"; };
+		B81A306EF36A69B2C7405529 /* CardLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardLayoutTests.swift; sourceTree = "<group>"; };
 		B8F5DBAF6CDED1C149AECDA6 /* E2EEKeyMaintenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EEKeyMaintenance.swift; sourceTree = "<group>"; };
 		BA0A16F4BCAF223B4EF33465 /* DeviceRegistrationFailureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceRegistrationFailureTests.swift; sourceTree = "<group>"; };
 		BA2B734AD4AFEFEE40D533D3 /* ResponseLatencyBaselineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseLatencyBaselineTests.swift; sourceTree = "<group>"; };
@@ -1936,6 +1938,7 @@
 			isa = PBXGroup;
 			children = (
 				3E6AD2B0F44A6C8AD2C8511F /* AppStartupTests.swift */,
+				B81A306EF36A69B2C7405529 /* CardLayoutTests.swift */,
 				F2906B40737B4C25BEF59C53 /* DeviceAccessModelTests.swift */,
 				62E785604027750938C84755 /* ImmediateDecisionTests.swift */,
 				676F2A441CDBD7860F276A51 /* InboxSnapshotFixture.swift */,
@@ -2867,6 +2870,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				46389ADAF27525801AFC6A6A /* AppStartupTests.swift in Sources */,
+				FD15EFDD491970F8362E8AF8 /* CardLayoutTests.swift in Sources */,
 				BB127E239BE8A84523BA1D53 /* DeviceAccessModelTests.swift in Sources */,
 				BDB719AFB643BBF0DFC9C155 /* ImmediateDecisionTests.swift in Sources */,
 				9A8A16C2CDF1FCC010C0F0FD /* InboxSnapshotFixture.swift in Sources */,
@@ -3488,7 +3492,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 96;
+				CURRENT_PROJECT_VERSION = 103;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3502,7 +3506,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.10.33;
+				MARKETING_VERSION = 0.10.40;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3661,7 +3665,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 96;
+				CURRENT_PROJECT_VERSION = 103;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -3681,7 +3685,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.10.33;
+				MARKETING_VERSION = 0.10.40;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

@@ -24,8 +24,9 @@ describe("plan 14 workstream 7: progress counts top-level steps", () => {
     const view = nowCardView(item, () => "now")
     expect(view.meter?.steps).toMatchObject({ done: 0, total: 4, currentIndex: 1 })
     expect(view.meter?.steps?.fill).toBeCloseTo(2 / 3)
-    expect(view.facts.join(" ")).toContain(card.expected.caption)
-    expect(view.facts.join(" ")).not.toMatch(/of 7|75%/)
+    expect(view.caption).toContain(card.expected.caption)
+    expect(view.caption).not.toMatch(/of 7|75%/)
+    expect(view.facts.join(" ")).not.toContain(card.expected.caption)
   })
 
   it("draws one segment per top-level step and fills the current one", () => {

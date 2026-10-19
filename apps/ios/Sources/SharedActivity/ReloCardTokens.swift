@@ -27,7 +27,6 @@ enum ReloLayout {
     static let actionHeight: CGFloat = 40
     static let actionRadius: CGFloat = 12
     /// The progress bar along a card's bottom edge, which costs no row.
-    static let edgeProgressHeight: CGFloat = 3
     static let barHeight: CGFloat = 4
     static let barGap: CGFloat = 3
 

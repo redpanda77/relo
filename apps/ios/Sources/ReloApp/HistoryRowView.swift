@@ -22,6 +22,8 @@ struct HistoryRowView: View {
             steps: row.steps.map { NowItem.Steps(done: HistorySteps.done($0, outcome: row.outcome), total: $0.total,
                                                  current: $0.current, currentIndex: $0.currentIndex, fill: $0.fill) },
             progress: row.steps == nil ? row.progress : nil,
+            progressCaption: row.steps.map { HistorySteps.caption($0, outcome: row.outcome) }
+                ?? row.progress.map { $0.formatted(.percent.precision(.fractionLength(0))) },
             color: color, state: state, facts: facts, computer: row.origin, computerIcon: computerIcon,
             surface: .listCell
         ) {
@@ -52,8 +54,6 @@ struct HistoryRowView: View {
     private var facts: [String] {
         var parts: [String] = []
         if let absence = serverOutcome?.absence, let why = AbsenceWording.line(absence, computer: row.origin) { parts.append(why) }
-        if let steps = row.steps { parts.append(HistorySteps.caption(steps, outcome: row.outcome)) }
-        else if let progress = row.progress { parts.append(progress.formatted(.percent.precision(.fractionLength(0)))) }
         if let duration = row.duration { parts.append(ReloDuration.format(duration)) }
         let hasOutcome = responseStatus != nil || serverOutcome != nil || row.outcome.label != nil
         if hasOutcome && row.item.kind != .liveActivity { parts.append(row.type) }

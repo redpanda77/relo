@@ -719,7 +719,7 @@ struct CurrentAttentionView: View {
     }
 
     /// A missed question (late answers allowed, never permission) or a permission prompt: header (where it
-    /// ran, "Missed 14:02"), the question, what it said, and one footer row carrying the actions.
+    /// ran · "Missed"), the question and what it said, footer ("Asked 14:02" · the actions).
     private func needsCard(_ row: NowRowModel) -> some View {
         let style: ReloStateStyle = switch row.reason {
         case .missedQuestion?: .missed
@@ -727,12 +727,11 @@ struct CurrentAttentionView: View {
         default: .needsYou
         }
         return ReloCard(tint: style.color) {
-            CardHeader(origin: origin(of: row.card),
-                       corner: row.reason == .missedQuestion ? row.card.map { .badgeAt(style, $0.at) } ?? .badge(style) : .badge(style))
+            CardHeader(origin: origin(of: row.card), corner: .badge(style))
             CardTitle(row.title, style: .hero)
             ForEach(row.lines, id: \.self) { line in CardStatusLine(line, lines: 4) }
             if row.reason == .missedQuestion {
-                CardFooter(meta: nil) {
+                CardFooter(meta: row.card.map { Text("Asked ") + Text($0.at, style: .time) }) {
                     if let questionID = row.questionID {
                         // Dismisses here; it never opens the notification.
                         CardAction("Dismiss", kind: .quiet) { Task { await model.dismissMissedQuestion(questionID: questionID) } }
@@ -845,8 +844,8 @@ struct CurrentAttentionView: View {
             origin: card.map { ReloCardOrigin(source: $0.origin.first ?? "", project: $0.origin.dropFirst().first,
                                               projectColor: ReloStateStyle.running.color, topic: topic) },
             at: card?.at, title: row.title, summary: outcome != nil ? card?.status : card?.status ?? row.lines.first,
-            steps: row.steps, progress: row.progress, color: color, shimmer: row.shimmer,
-            state: state, facts: [card?.note, card?.caption].compactMap { $0 },
+            steps: row.steps, progress: row.progress, progressCaption: card?.caption, color: color, shimmer: row.shimmer,
+            state: state, facts: [card?.note].compactMap { $0 },
             runningSince: card?.badge == nil && outcome == nil ? row.startedAt : nil, computer: card?.computer,
             computerIcon: card?.computerIcon, surface: surface)
 
@@ -894,20 +893,20 @@ struct CurrentAttentionView: View {
         }
     }
 
-    /// A session in two rows: where it runs (tool as its logo, project, its name) with how it stands and when
-    /// it was last seen in the corner ("● Working 11:42 PM"), then the work it holds and, if the owner opted in,
-    /// its usage. The computer is the group's heading.
+    /// A session in two rows: header (tool as its logo, project, its name · "● Working"), then a footer line
+    /// (the work it holds and, if the owner opted in, its usage · when it was last seen). The computer is the
+    /// group's heading.
     @ViewBuilder
     private func sessionRow(_ row: NowSessionRowModel, divider: Bool) -> some View {
         let standing = ReloStateStyle(label: row.chip, color: row.tone.color, symbol: "circle.fill")
-        let corner: CardCorner = row.lastSeenAt.map { .badgeAt(standing, $0) } ?? .badge(standing)
+        let corner: CardCorner = .badge(standing)
         let usage = showsUsage ? row.usage : nil
         let content = HStack(alignment: .center, spacing: ReloLayout.itemSpacing) {
             VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
                 if let context = row.context {
                     CardHeader(origin: sessionOrigin(context, name: row.title), corner: corner)
-                    if row.workTitle != nil || usage != nil {
-                        sessionLine(title: row.workTitle, usage: usage, heavy: row.heavyContext)
+                    if row.workTitle != nil || usage != nil || row.lastSeenAt != nil {
+                        sessionLine(title: row.workTitle, usage: usage, heavy: row.heavyContext, seen: row.lastSeenAt)
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
@@ -916,8 +915,9 @@ struct CurrentAttentionView: View {
                         CardHeader(origin: nil, corner: corner)
                             .fixedSize()
                     }
-                    if row.workTitle.map({ $0 != row.title }) == true || usage != nil {
-                        sessionLine(title: row.workTitle.flatMap { $0 == row.title ? nil : $0 }, usage: usage, heavy: row.heavyContext)
+                    if row.workTitle.map({ $0 != row.title }) == true || usage != nil || row.lastSeenAt != nil {
+                        sessionLine(title: row.workTitle.flatMap { $0 == row.title ? nil : $0 }, usage: usage,
+                                    heavy: row.heavyContext, seen: row.lastSeenAt)
                     }
                 }
             }
@@ -939,13 +939,17 @@ struct CurrentAttentionView: View {
     }
 
     /// The work a session holds, its usage trailing on the same line.
-    private func sessionLine(title: String?, usage: String?, heavy: Bool) -> some View {
+    private func sessionLine(title: String?, usage: String?, heavy: Bool, seen: Date?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
             if let title { Text(title).font(ReloLayout.cardTitle).foregroundStyle(.primary).lineLimit(2) }
             Spacer(minLength: 0)
             if let usage {
                 Text(usage).font(ReloLayout.cardMeta).monospacedDigit()
                     .foregroundStyle(heavy ? NowTone.attention.color : Color.reloSecondaryText).lineLimit(1).fixedSize()
+            }
+            if let seen {
+                Text(seen, style: .time).font(ReloLayout.cardMeta).monospacedDigit()
+                    .foregroundStyle(Color.reloSecondaryText).lineLimit(1).fixedSize()
             }
         }
     }

@@ -12,16 +12,15 @@ struct ReloCardOrigin: Equatable {
     var showsSource = true
 }
 
-/// The header's trailing corner: how the work stands and when, in one short run of text.
+/// The header's trailing corner: how the work stands (a badge), or a question's countdown or send phase. The
+/// time is the footer's, never the header's (the detail page's running timer is the one exception).
 enum CardCorner: Equatable {
     case none
     /// "● Missed"
     case badge(ReloStateStyle)
-    /// "● Missed 14:02"
-    case badgeAt(ReloStateStyle, Date)
     /// "● Running 3:12", the system ticks it.
     case badgeTimer(ReloStateStyle, since: Date)
-    case time(Date)
+    /// A page header's running timer (the detail page; cards carry their time in the footer).
     case timer(since: Date)
     /// "0:42" counting down to the answer deadline.
     case countdown(Date)
@@ -34,9 +33,6 @@ enum CardCorner: Equatable {
                 .foregroundColor(style.color).fontWeight(.semibold)
         }
         func gap() -> Text { Text(" · ").foregroundColor(Color.reloSecondaryText) }
-        func time(_ date: Date) -> Text {
-            Text(date, style: .time).foregroundColor(Color.reloSecondaryText).monospacedDigit()
-        }
         func timer(_ since: Date) -> Text {
             Text(timerInterval: since...Date.distantFuture, countsDown: false)
                 .foregroundColor(Color.reloSecondaryText).monospacedDigit()
@@ -44,9 +40,7 @@ enum CardCorner: Equatable {
         switch self {
         case .none: return nil
         case let .badge(style): return badge(style)
-        case let .badgeAt(style, date): return badge(style) + gap() + time(date)
         case let .badgeTimer(style, since): return badge(style) + gap() + timer(since)
-        case let .time(date): return time(date)
         case let .timer(since): return timer(since)
         case let .countdown(deadline):
             guard deadline > .now else { return nil }
@@ -61,7 +55,7 @@ enum CardCorner: Equatable {
 
     var spoken: String? {
         switch self {
-        case let .badge(style), let .badgeAt(style, _), let .badgeTimer(style, _): style.label
+        case let .badge(style), let .badgeTimer(style, _): style.label
         case let .phase(words, _, _): words
         default: nil
         }

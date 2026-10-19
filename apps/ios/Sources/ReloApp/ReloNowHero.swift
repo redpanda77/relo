@@ -1,10 +1,8 @@
 import ReloCore
 import SwiftUI
 
-/// The Now deck, edge to edge: a dust field across the full width, the particle sphere in the
-/// middle colored by what today's work meant, an instrument ring with each running task's
-/// progress, four corner readouts, one sentence, and a footer that says where the data stands
-/// and what the colors mean. Touching the sphere sends a ripple through all of it.
+/// The Now deck, edge to edge: the particle sphere in the middle colored by what today's work meant, an instrument ring with each running task's
+/// progress, four corner readouts, one sentence, and a footer that says where the data stands. Touching the sphere sends a ripple through all of it.
 /// Its height never changes with the numbers it shows.
 struct ReloNowHero: View {
     let summary: InboxTodaySummary
@@ -19,8 +17,6 @@ struct ReloNowHero: View {
     var waitingOnYou = 0
     /// Today's work by meaning (colors the sphere, the dust and the legend).
     var mix = NowMix(counts: [:])
-    /// Requests waiting for the owner, orbiting as satellites toward their deadlines.
-    var satellites: [ReloOrbitSatellite] = []
     /// "4h 12m" of agent work today, shown at the footer's trailing edge.
     var agentTime: String? = nil
     var sync: ReloDeckFooter.Sync = .syncing
@@ -28,10 +24,6 @@ struct ReloNowHero: View {
     var connectionTrouble: String? = nil
     /// Space for the status bar: the deck runs to the top of the screen.
     var topInset: CGFloat = 0
-    /// How far the ambient layers (orbit plane, dust) run past the deck on each side. Zero when
-    /// the deck spans the screen; in landscape it reaches under the Dynamic Island and beyond the
-    /// deck's column, so the orbit never stops at a column edge.
-    var bleed: CGFloat = 0
     var showConnection: () -> Void = {}
     /// Owns the deck's phase, the boot's reveal and the effect bus (see `ReloDeckDirector`).
     var director: ReloDeckDirector? = nil
@@ -44,7 +36,6 @@ struct ReloNowHero: View {
     private var armed: Bool { director?.armed ?? true }
     @State private var waves: [ReloOrbWave] = []
     @State private var width: CGFloat = 393
-    @State private var deckHeight: CGFloat = 460
     @State private var taps = 0
     /// While a ripple or a state change is moving, effects draw at 60 fps so motion stays smooth;
     /// at rest they drop to 30 (slow drift reads the same, at half the work).
@@ -99,13 +90,6 @@ struct ReloNowHero: View {
                 .padding(.top, topInset + 4)
                 .accessibilityLabel("Now").accessibilityAddTraits(.isHeader)
             ZStack {
-                // Far half of the orbital plane, then the plasma core and its particle shell,
-                // then the near half crossing in front: the orb sits inside the plane.
-                ReloOrbitPlane(half: .far, state: state, mix: mix, satellites: satellites, framesPerSecond: fps,
-                               waves: waves, center: CGPoint(x: stageCenter.x + bleed, y: stageCenter.y),
-                               deckOffset: CGPoint(x: -bleed, y: stageTop))
-                    // Drawn wider than the deck, laid out at the deck's width: only the drawing bleeds.
-                    .frame(width: width + bleed * 2).frame(width: max(width, 1))
                 ReloPullStretch(pull: pull) {
                     ReloPlasmaOrb(state: state, mix: mix, wave: waves.last,
                                   waveOffset: CGPoint(x: width / 2 - 150, y: stageTop + stageHeight / 2 - 150),
@@ -117,11 +101,6 @@ struct ReloNowHero: View {
                         .frame(width: 330, height: 330)
                         .opacity(0.75)
                 }
-                ReloOrbitPlane(half: .near, state: state, mix: mix, satellites: satellites, framesPerSecond: fps,
-                               waves: waves, center: CGPoint(x: stageCenter.x + bleed, y: stageCenter.y),
-                               deckOffset: CGPoint(x: -bleed, y: stageTop))
-                    // Drawn wider than the deck, laid out at the deck's width: only the drawing bleeds.
-                    .frame(width: width + bleed * 2).frame(width: max(width, 1))
                 ReloHoloRing(state: state, tasks: ringTasks, pulse: summary.total, finished: summary.finished, framesPerSecond: fps)
                     .frame(width: 286, height: 286)
                     // Booting, the ring draws itself around the sphere over a faint outline of itself.
@@ -141,18 +120,17 @@ struct ReloNowHero: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: stageHeight)
-            ReloDeckFooter(sync: sync, pendingResponses: pendingResponses, mix: mix, agentTime: agentTime,
+            ReloDeckFooter(sync: sync, pendingResponses: pendingResponses, agentTime: agentTime,
                            trouble: connectionTrouble, showConnection: showConnection)
                 .padding(.horizontal, ReloLayout.screenInset)
                 .padding(.top, 8)
-                .padding(.bottom, 18)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
         .background(alignment: .top) { deckBackground }
         .background { GeometryReader { proxy in Color.clear
-            .onAppear { width = proxy.size.width; deckHeight = proxy.size.height }
-            .onChange(of: proxy.size) { _, new in width = new.width; deckHeight = new.height } } }
+            .onAppear { width = proxy.size.width }
+            .onChange(of: proxy.size.width) { _, new in width = new } } }
         .coordinateSpace(name: "deck")
         .contentShape(Rectangle())
         // Tap the deck and a ripple runs through the sphere and the dust. Taps only: any drag
@@ -205,26 +183,19 @@ struct ReloNowHero: View {
         waves = waves.filter { now.timeIntervalSince($0.at) < 2.6 }.suffix(7) + [ReloOrbWave(origin: point, at: now, strength: strength)]
     }
 
-    /// Full-width light behind the sphere in the state's color, falling to ink at the edges, with
-    /// the dust field over it. It fades out at the bottom into the page.
+    /// Full-width light behind the sphere in the state's color, falling to ink at the edges.
     private var deckBackground: some View {
-        // Neither layer stops at the deck's edges, so the deck never shows where it ends: the glow
-        // is a circle centred on the sphere that fades to nothing above (under a pull) and below,
-        // and the dust runs past the deck's bottom, fading out over the page. No mask over the
-        // animated layer: masking it forced the whole deck to re-rasterize every frame.
-        ZStack(alignment: .top) {
-            RadialGradient(colors: [ReloHoloTheme.accent(for: state).opacity(0.16),
-                                    ReloHoloTheme.accent(for: state).opacity(0.05), .clear],
-                           center: .center, startRadius: 40, endRadius: 360)
-                // The whole circle, never cut to the deck's width: in landscape the deck is half
-                // the screen, and a width-clipped glow showed as a lit box around it.
-                .frame(width: max(width, 760), height: 760)
-                .offset(y: orbCenter.y - 380)
-                .animation(reduceMotion ? nil : .smooth(duration: 0.9), value: state)
-            ReloDeckField(state: state, mix: mix, waves: waves, deckOffsetX: -bleed)
-                .frame(width: max(width + bleed * 2, 1), height: deckHeight + 220)
-        }
-        .allowsHitTesting(false)
+        // The glow is a circle centred on the sphere that fades to nothing above (under a pull)
+        // and below, so the deck never shows where it ends.
+        RadialGradient(colors: [ReloHoloTheme.accent(for: state).opacity(0.16),
+                                ReloHoloTheme.accent(for: state).opacity(0.05), .clear],
+                       center: .center, startRadius: 40, endRadius: 360)
+            // The whole circle, never cut to the deck's width: in landscape the deck is half
+            // the screen, and a width-clipped glow showed as a lit box around it.
+            .frame(width: max(width, 760), height: 760)
+            .offset(y: orbCenter.y - 380)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.9), value: state)
+            .allowsHitTesting(false)
     }
 
     /// Four fixed corner readouts, so a number never moves; the one the centre shows lights up.

@@ -17,8 +17,8 @@ struct CardProgressBar<Sweep: View>: View {
     var height: CGFloat = ReloLayout.barHeight
     @ViewBuilder var sweep: Sweep
 
-    /// A plan longer than this reads as one bar.
-    static var segmentLimit: Int { 12 }
+    /// Steps always read as divided segments (a round holds at most 30); only a plan past this is one bar.
+    static var segmentLimit: Int { 40 }
 
     var body: some View {
         switch shape {
@@ -35,7 +35,8 @@ struct CardProgressBar<Sweep: View>: View {
     }
 
     private func segmentRow(_ segments: [PlanBar.Segment], mask: Bool = false) -> some View {
-        HStack(spacing: ReloLayout.barGap) {
+        // Many steps keep their divisions with a thinner gap.
+        HStack(spacing: segments.count > 16 ? ReloLayout.barGap / 2 : ReloLayout.barGap) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 Group {
                     if mask {

@@ -71,7 +71,7 @@ struct NowView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     /// The deck as data from the director: it shows only what the director presents.
-    private func hero(_ derived: Derived, topInset: CGFloat, bleed: CGFloat = 0) -> ReloNowHero {
+    private func hero(_ derived: Derived, topInset: CGFloat) -> ReloNowHero {
         let shown = model.deckDirector.shown ?? rawSnapshot(derived)
         return ReloNowHero(
             summary: shown.summary,
@@ -80,11 +80,10 @@ struct NowView: View {
             sessionsWorking: shown.sessionsWorking,
             waitingOnYou: shown.waitingOnYou,
             mix: shown.mix,
-            satellites: shown.satellites,
             agentTime: agentTimeToday(derived),
             // While an answer is in flight its card says "Sending…"; the deck counts only answers left waiting.
             sync: deckSync, pendingResponses: model.respondingNotificationID == nil ? model.pendingResponseCount : 0,
-            connectionTrouble: connectionTrouble, topInset: topInset, bleed: bleed,
+            connectionTrouble: connectionTrouble, topInset: topInset,
             showConnection: { sheet = .connection },
             director: model.deckDirector,
             pull: pull, refreshing: refreshing)
@@ -135,12 +134,12 @@ struct NowView: View {
         HStack(spacing: 0) {
             // Scrolls only when the deck is taller than the screen, so nothing is ever cut off.
             ScrollView {
-                hero(derived, topInset: 8, bleed: sideInset + 40)
+                hero(derived, topInset: 8)
                     .environment(\.reloMotionPaused, tab != .now || scenePhase != .active)
             }
             .scrollBounceBehavior(.basedOnSize)
             .scrollIndicators(.hidden)
-            // The deck's glow and dust fade out past its column instead of stopping at a box edge.
+            // The deck's glow fades out past its column instead of stopping at a box edge.
             .scrollClipDisabled()
             .containerRelativeFrame(.horizontal) { width, _ in width * 0.5 }
             ScrollView {
@@ -155,17 +154,12 @@ struct NowView: View {
             .refreshable { _ = await model.refresh() }
         }
         .onAppear { deckVisible = true }
-        .background { GeometryReader { proxy in Color.clear
-            .onAppear { sideInset = max(proxy.safeAreaInsets.leading, proxy.safeAreaInsets.trailing) }
-            .onChange(of: proxy.safeAreaInsets) { _, new in sideInset = max(new.leading, new.trailing) } } }
     }
-
-    /// The Dynamic Island side's inset in landscape, which the deck's orbit runs under.
-    @State private var sideInset: CGFloat = 0
 
     private func portrait(_ derived: Derived) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 32) {
+            // The first section sits close under the deck's sync line; sections keep their own spacing.
+            VStack(alignment: .leading, spacing: 12) {
                 hero(derived, topInset: topInset)
                     .padding(.horizontal, -ReloLayout.screenInset)
                     // Scrolled out of view, the deck stops drawing (battery); it resumes on return.
@@ -185,9 +179,11 @@ struct NowView: View {
                         trackPull(top)
                     }
                     .environment(\.reloMotionPaused, !deckVisible)
-                DeviceAccessNeedsYouRow(model: model)
-                CurrentAttentionView(model: model, input: derived.now, offline: isOffline,
-                                     viewHistory: { tab = .history })
+                VStack(alignment: .leading, spacing: 32) {
+                    DeviceAccessNeedsYouRow(model: model)
+                    CurrentAttentionView(model: model, input: derived.now, offline: isOffline,
+                                         viewHistory: { tab = .history })
+                }
             }
             .padding(.horizontal, ReloLayout.screenInset)
             .padding(.bottom, 24)
@@ -198,7 +194,8 @@ struct NowView: View {
         .background { GeometryReader { proxy in Color.clear
             .onAppear { topInset = proxy.safeAreaInsets.top }
             .onChange(of: proxy.safeAreaInsets.top) { _, new in topInset = new } } }
-        .scrollBounceBehavior(.always)
+        // Vertical only: the default covers both axes and let the page rubber-band sideways.
+        .scrollBounceBehavior(.always, axes: .vertical)
     }
 
     private static var readsScrollGeometry: Bool {
@@ -229,12 +226,7 @@ struct NowView: View {
             sessionsWorking: derived.now.sessions.filter { $0.phase == .working }
                 .map { ReloHoloTask(id: "session-\($0.id)", progress: nil) },
             waitingOnYou: derived.now.waitingOnYou.count,
-            mix: todayMix(derived, needsYou: screen.actionableCount ?? screen.needsMe.count),
-            satellites: screen.needsMe.map { request in
-                let window = request.interaction.expiresAt.timeIntervalSince(request.createdAt)
-                let left = request.interaction.expiresAt.timeIntervalSince(model.attentionDate)
-                return ReloOrbitSatellite(id: request.id, remaining: window > 0 ? left / window : 0)
-            })
+            mix: todayMix(derived, needsYou: screen.actionableCount ?? screen.needsMe.count))
     }
 
     private func deckInput(_ derived: Derived) -> ReloDeckDirector.Input {
@@ -377,7 +369,7 @@ private struct ReloDeckBottomKey: PreferenceKey {
 /// Owns what the Now deck presents, outside every view, so a rebuilt view never replays anything.
 /// The source state (connection, registration, counts) changes fast and in bursts; the director
 /// turns it into calm presented state with a few rules:
-/// - One snapshot: the counts, tasks, colours and satellites update together, only from trusted
+/// - One snapshot: the counts, tasks and colours update together, only from trusted
 ///   state, coalesced (latest wins); untrusted moments (reconnecting, counts unknown,
 ///   registering) hold the last good snapshot instead of dipping and rebounding.
 /// - The first observation is never news: after the deck appears, wakes or reconnects, the first
@@ -412,7 +404,6 @@ private struct ReloDeckBottomKey: PreferenceKey {
         /// Work waiting on the owner (the Waiting on you fold).
         var waitingOnYou = 0
         var mix: NowMix
-        var satellites: [ReloOrbitSatellite]
     }
 
     struct Input: Equatable {

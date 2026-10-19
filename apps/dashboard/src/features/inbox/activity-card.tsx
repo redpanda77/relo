@@ -84,11 +84,6 @@ export function HistoryWorkCard({
   // What it amounted to; the type closes it only when the state already said how it ended.
   const facts = [
     card.absenceLine,
-    card.steps
-      ? stepsCaption(card.steps, { finished })
-      : card.progress != null
-        ? `${Math.round(card.progress * 100)}%`
-        : null,
     tookLabel(card.duration),
     card.outcome.label && card.type !== "Live Activity" ? card.type : null,
   ].filter((fact): fact is string => Boolean(fact))
@@ -108,7 +103,17 @@ export function HistoryWorkCard({
       }}
       summary={card.summary}
       extra={card.decision ? <DecisionStrip card={card} /> : null}
-      meter={card.steps || card.progress != null ? { steps: card.steps, progress: card.progress, live: running, finished } : null}
+      meter={
+        card.steps || card.progress != null
+          ? {
+              steps: card.steps,
+              progress: card.progress,
+              live: running,
+              finished,
+              caption: card.steps ? stepsCaption(card.steps, { finished }) : card.progress != null ? `${Math.round(card.progress * 100)}%` : null,
+            }
+          : null
+      }
       state={state}
       facts={facts}
       runningSince={running ? card.startedAt : null}

@@ -320,8 +320,8 @@ struct PresentationCardView: View {
                               standing: presentation.planStanding)
     }
 
-    /// Work with a plan, as its card in Relo: title, then the status with the plan line trailing it on the same
-    /// row, and the plan's segments. The bar is the app's (`CardProgressBar`).
+    /// Work with a plan, as its card in Relo: title, status, the plan's segments across the card and the plan
+    /// line under them. The bar is the app's (`CardProgressBar`).
     private func workCard(_ plan: LockScreenPlan, titleLines: Int, statusLines: Int) -> some View {
         VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
             Text(presentation.title)
@@ -330,24 +330,18 @@ struct PresentationCardView: View {
                 .lineLimit(titleLines)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            let showsStatus = statusLines > 0 && !presentation.status.isEmpty
-            if showsStatus || plan.parts != nil {
-                HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
-                    if showsStatus {
-                        Text(presentation.status)
-                            .font(ReloLayout.cardMeta).foregroundStyle(palette.secondaryText)
-                            .lineLimit(statusLines)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .layoutPriority(-1)
-                    }
-                    Spacer(minLength: 0)
-                    if let parts = plan.parts {
-                        PresentationPlanLine(parts: parts, color: palette.secondaryText, font: ReloLayout.cardMeta)
-                    }
-                }
+            if statusLines > 0 && !presentation.status.isEmpty {
+                Text(presentation.status)
+                    .font(ReloLayout.cardMeta).foregroundStyle(palette.secondaryText)
+                    .lineLimit(statusLines)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            // The one progress layout (every card, every surface): the bar across the card, the step line under it.
             PresentationPlanMeter(plan: plan, palette: palette)
                 .padding(.top, 2)
+            if let parts = plan.parts {
+                PresentationPlanLine(parts: parts, color: palette.secondaryText, font: ReloLayout.cardMeta)
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }

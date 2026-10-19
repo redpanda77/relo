@@ -2,17 +2,17 @@ import type * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-/** Up to this many steps draw one segment each; more draw one bar (as on the iPhone). */
-export const STEP_SEGMENTS_MAX = 12
+/** Steps always draw as divided segments (a round holds at most 30); only a plan past this is one bar (as on the iPhone). */
+export const STEP_SEGMENTS_MAX = 40
 
 /**
  * The work meter, as the iPhone's `LiveStepsBar` / `LiveProgressBar` (ReloWorkCard.swift): 4px high,
  * capsule ends, in the card's tone (`--tone`).
  *
- * - Steps (up to 12): one segment per TOP-LEVEL step, 3px apart (substeps never add segments). Done steps in
+ * - Steps (up to 40): one segment per TOP-LEVEL step, 3px apart (1.5px past 16) (substeps never add segments). Done steps in
  *   the tone, the current step white at 28% and filled to the server's `fill` (its substeps, or its own
  *   progress), pending ones white at 10%. A finished work fills them all.
- * - More than 12 steps, or a plain `progress` (0...1): one bar filled to the fraction.
+ * - More than 40 steps, or a plain `progress` (0...1): one bar filled to the fraction.
  * - `live`: a sweep of light runs through the filled part only (masked by it), never the track.
  *
  * No caption: the card's standing line says "2 of 6 · Run migrations".
@@ -57,6 +57,7 @@ export function StepTrack({
         aria-valuemax={total}
         aria-valuenow={filled}
         data-live={(live && filled > 0) || undefined}
+        data-many={total > 16 || undefined}
         style={{ ["--steps" as string]: total, ["--done" as string]: filled } as React.CSSProperties}
       >
         {Array.from({ length: total }, (_, index) => (

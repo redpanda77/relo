@@ -13,7 +13,7 @@ export {
   CardMain,
   CardMeta,
   CardNote,
-  CardProgress,
+  CardProgressRow,
   CardState,
   CardStatus,
   CardTitle,

@@ -23,9 +23,9 @@ import Testing
         let steps = [S(label: "Patch token refresh", state: .current, id: "s2"), S(label: "Inner", state: .open, id: "s3")]
         let progress = PlanProgress(done: 1, total: 4, currentId: "s2", sub: .init(done: 1, total: 3))
         let window = LiveActivityDisplayPresentation.StepWindow(progress: progress)
-        #expect(LiveActivityPlanDisplay.line(steps, window: window) == "1 of 4 · Patch token refresh · 1/3")
+        #expect(LiveActivityPlanDisplay.line(steps, window: window) == "Step 2 of 4 · Patch token refresh · 1/3")
         let parts = LiveActivityPlanDisplay.lineParts(steps, window: window)
-        #expect(parts?.lead == "1 of 4" && parts?.trail == "1/3" && parts?.label == "Patch token refresh")
+        #expect(parts?.lead == "Step 2 of 4" && parts?.trail == "1/3" && parts?.label == "Patch token refresh")
         #expect(progress.compact == "1/4")
         // The server's `progress` rides on the steps component and survives a round trip.
         let component = LiveActivityPresentation.Component.steps(

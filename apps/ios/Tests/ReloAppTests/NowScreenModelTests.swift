@@ -84,7 +84,7 @@ final class NowScreenModelTests: XCTestCase {
         XCTAssertEqual(card.status, "Left on for debugging")
         XCTAssertEqual(card.origin, ["Claude Code", "relo", "App architecture audit"])
         XCTAssertEqual(card.computer, "Studio")
-        XCTAssertEqual(card.caption, "0 of 10 · Reproduce the issue", "the time is the header's, never repeated")
+        XCTAssertEqual(card.caption, "Step 1 of 10 · Reproduce the issue", "the time is the header's, never repeated")
         XCTAssertEqual(rows.first?.steps?.total, 10)
     }
 

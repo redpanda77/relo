@@ -1,24 +1,25 @@
 /**
  * The card set: the one card every surface builds on (styles/card.css, tokens in index.css).
  *
- * Anatomy, top to bottom, and where each field goes:
+ * The standard: Header / Content / Footer, a plain top-to-bottom stack with the same spacing everywhere.
  *
  *   <Card variant="live" | "row" | "plain" tone tint live open>
  *     <CardHit onOpen label>                       the open target (everything but the footer)
  *       <CardLead>glyph</CardLead>                 28px; a live card hides it under ~420px of its own width
  *       <CardMain>
- *         <CardHeader eyebrow origin trailing/>    ONE row: eyebrow · origin, a single corner (time | state | countdown)
- *         <CardTitle/>  <CardStatus/>  <CardNote/>
+ *         <CardHeader eyebrow origin trailing/>    ONE small line: eyebrow · origin leading; ONE trailing thing
+ *                                                  (the countdown, else the state badge). Never the clock or the computer.
+ *         <CardTitle/>  <CardStatus/>  <CardProgressRow/>  extra  <CardNote/>
+ *                                                  content; progress = the bar across the full width, the step line under it
  *       </CardMain>
  *     </CardHit>
- *     <CardFooter meta actions/>                   metadata leading, buttons trailing, one row while they fit
- *     <CardProgress/>                              the meter, docked on the bottom edge (no row)
+ *     <CardFooter meta time actions/>              ONE small line, omitted when empty: facts leading (truncate),
+ *                                                  trailing the actions, else the time
  *   </Card>
  *
- * Rules the set keeps so call sites cannot break them: a field never gets a row of its own (a lone
- * short field rides the header's corner, several share the footer); badges sit inline; phones get
- * the same rows, narrower (the card is a size container, so its glyph and its buttons answer to its
- * own width). The row variant (`CardRow`) is the one compact design for every list item.
+ * No absolute positioning for content, no side columns, no measuring, no field moving between slots,
+ * the same layout at every width (a wider card has longer lines; only the glyph and, under ~480px,
+ * the buttons answer to the card's width). The row variant is the same three slots, compact.
  */
 import { ChevronRight } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
@@ -123,13 +124,13 @@ export function CardAction({ className, ...props }: React.ComponentProps<"div">)
   return <div data-slot="card-action" className={cn("card-action", className)} {...props} />
 }
 
-/** A short word in the header's corner: a time, a state, a computer. */
+/** The header's trailing slot content: the state badge. */
 export function CardCorner({ className, ...props }: React.ComponentProps<"span">) {
   return <span className={cn("card-corner", className)} {...props} />
 }
 
 /**
- * ONE row: the eyebrow and the origin share a line, the corner sits on the right. A plain card's
+ * ONE small line: the eyebrow and the origin share it, the one trailing thing sits on the right. A plain card's
  * header stacks its title and description in the left column, with `CardAction` in the corner.
  */
 export function CardHeader({
@@ -234,21 +235,25 @@ export function CardActions({ className, ...props }: React.ComponentProps<"div">
 }
 
 /**
- * Metadata leading, actions trailing, on one row while they fit. Outside the open target, so a
- * button never sits inside one; the metadata still opens the card with a click (`onOpenMeta`).
+ * Facts leading (one line, truncates), trailing the actions, else the time. Outside the open target,
+ * so a button never sits inside one; the facts still open the card with a click (`onOpenMeta`).
  */
 export function CardFooter({
   meta,
   actions,
+  time,
   onOpenMeta,
   className,
 }: {
   meta?: React.ReactNode
   actions?: React.ReactNode
+  /** The clock time or the running timer; shown only when there are no actions. */
+  time?: React.ReactNode
   onOpenMeta?: () => void
   className?: string
 }) {
-  if (!meta && !actions) return null
+  const trailingTime = actions ? null : time
+  if (!meta && !actions && !trailingTime) return null
   return (
     <div data-slot="card-footer" className={cn("card-foot", className)}>
       {meta ? (
@@ -257,11 +262,20 @@ export function CardFooter({
         </div>
       ) : null}
       {actions ? <CardActions>{actions}</CardActions> : null}
+      {trailingTime ? <span className="card-foot-time">{trailingTime}</span> : null}
     </div>
   )
 }
 
-/** The meter, docked on the card's bottom edge: it costs no row. */
-export function CardProgress({ children }: { children: React.ReactNode }) {
-  return <div className="card-progress">{children}</div>
+/**
+ * The progress row, in the card's flow: the meter across the full width, the step caption (one line,
+ * truncates) on its own line under it. The Lock Screen's layout, on every surface.
+ */
+export function CardProgressRow({ caption, children }: { caption?: string | null; children: React.ReactNode }) {
+  return (
+    <div className="card-progress">
+      <div className="card-progress-bar">{children}</div>
+      {caption ? <span className="card-progress-caption">{caption}</span> : null}
+    </div>
+  )
 }

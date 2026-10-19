@@ -1,7 +1,7 @@
 import ReloCore
 import SwiftUI
 
-/// Which corner of the deck a module sits in; it decides the bracket, alignment and leader.
+/// Which corner of the deck a module sits in; it decides the alignment and leader.
 enum ReloHUDCorner {
     case topLeading, topTrailing, bottomLeading, bottomTrailing
 
@@ -19,10 +19,9 @@ enum ReloHUDCorner {
 }
 
 /// A corner readout built as part of the instrument: an index, a caption, the number, and a
-/// small gauge that says what the number is made of. A hairline bracket closes the deck's
-/// corner. Live modules glow in their meaning's color. A value that changes while you watch is
+/// small gauge that says what the number is made of. Live modules glow in their meaning's color. A value that changes while you watch is
 /// acquired like a target: a scan line passes through the module, a reticle closes in on it and
-/// the number glows once. A focused live module (requests waiting) keeps a slow bracket glow.
+/// the number glows once.
 struct ReloHUDModule: View {
     enum Gauge {
         /// Today's mix, as one thin spectrum.
@@ -47,7 +46,6 @@ struct ReloHUDModule: View {
     @State private var acquire = 0.0
     /// The scan line's travel down the module, 0 to 1; 1 means no scan showing.
     @State private var scan: CGFloat = 1
-    @State private var breathing = false
 
     private var alignment: HorizontalAlignment { corner.leading ? .leading : .trailing }
 
@@ -77,10 +75,6 @@ struct ReloHUDModule: View {
             withAnimation(.easeInOut(duration: 0.8)) { scan = 1 }
             withAnimation(.easeOut(duration: 1.3).delay(0.15)) { acquire = 0 }
         }
-        .task(id: focused && lit && armed && !reduceMotion) {
-            guard focused && lit && armed && !reduceMotion else { breathing = false; return }
-            withAnimation(.easeInOut(duration: 1.8).repeatForever()) { breathing = true }
-        }
         // Run the frame clock only while this module is building.
         .task(id: buildStart) {
             let left = buildStart.map { Self.buildDuration - Date.now.timeIntervalSince($0) } ?? 0
@@ -96,7 +90,7 @@ struct ReloHUDModule: View {
         .accessibilityValue(value)
     }
 
-    /// The module at a point in its build, atom by atom: the bracket draws, the index tag's outline
+    /// The module at a point in its build, atom by atom: the index tag's outline
     /// appears and its number flickers in, the label types out, a placeholder holds while the
     /// number cycles slowly and locks, the gauge's empty cells appear one by one and then light
     /// one by one, and only then does the whole module ease up to full strength.
@@ -131,10 +125,6 @@ struct ReloHUDModule: View {
         }
         .padding(corner.leading ? .leading : .trailing, 10)
         .padding(corner.top ? .top : .bottom, 8)
-        .overlay(alignment: corner.top ? (corner.leading ? .topLeading : .topTrailing)
-                                       : (corner.leading ? .bottomLeading : .bottomTrailing)) {
-            bracket(trace: Self.window(p, 0, 0.14))
-        }
         // Building runs dim; finished, it eases up to full strength.
         .opacity(done ? 1 : strength)
     }
@@ -187,21 +177,6 @@ struct ReloHUDModule: View {
             .foregroundStyle(Color.reloSecondaryText.opacity(0.7))
             .padding(.horizontal, 3).padding(.vertical, 1)
             .overlay { RoundedRectangle(cornerRadius: 2).strokeBorder(Color.reloSecondaryText.opacity(0.35), lineWidth: 0.5) }
-    }
-
-    /// An L-shaped hairline that closes the deck's outer corner; booting, it draws from its tip.
-    private func bracket(trace: Double) -> some View {
-        Path { path in
-            let arm: CGFloat = 12
-            path.move(to: CGPoint(x: 0, y: arm)); path.addLine(to: .zero); path.addLine(to: CGPoint(x: arm, y: 0))
-        }
-        .trim(from: 0, to: trace)
-        .stroke(lit ? color.opacity(0.75) : Color.white.opacity(0.28), lineWidth: 1)
-        .shadow(color: color.opacity(breathing ? 0.9 : 0), radius: 4)
-        .shadow(color: color.opacity(0.8 * acquire), radius: 6)
-        .frame(width: 12, height: 12)
-        .scaleEffect(x: corner.leading ? 1 : -1, y: corner.top ? 1 : -1)
-        .accessibilityHidden(true)
     }
 
     /// The scan line and the reticle that close in on a module whose value just changed.

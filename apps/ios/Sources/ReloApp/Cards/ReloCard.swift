@@ -34,17 +34,13 @@ struct CardProgressSpec: Equatable {
     }
 }
 
-/// A card's progress, merged: segments for a plan, one bar for a fraction or a long plan, the sweep of light
-/// running through what is filled. `.edge` lays it along the card's bottom edge, which costs no row.
+/// A card's progress bar, merged: segments for a plan, one bar for a fraction or a long plan, the sweep of
+/// light running through what is filled.
 struct CardProgress: View {
-    enum Placement { case inline, edge }
-
     var spec: CardProgressSpec
-    var placement: Placement = .inline
 
     var body: some View {
-        CardProgressBar<LiveSweep>(shape: spec.shape, color: spec.color,
-                                   height: placement == .edge ? ReloLayout.edgeProgressHeight : ReloLayout.barHeight,
+        CardProgressBar<LiveSweep>(shape: spec.shape, color: spec.color, height: ReloLayout.barHeight,
                                    sweep: { LiveSweep(active: spec.shimmer) })
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spec.spoken)
@@ -57,11 +53,28 @@ struct CardProgress: View {
 /// carries the row background and its own horizontal inset.
 enum ReloCardPlacement { case card, row, listCell }
 
-/// The one card container: the glass surface, the standard inset and line gap, and an optional progress
-/// bar along its bottom edge. Every card in the app is this around header, title, status and footer.
+/// The one progress layout, the Lock Screen's: the bar across the card and the step line under it
+/// ("Step 3 of 5 · Run the tests", one line). Progress is content: it sits under the status it measures,
+/// never on the card's edge or in the footer.
+struct CardProgressRow: View {
+    var caption: String?
+    var spec: CardProgressSpec
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
+            CardProgress(spec: spec).padding(.top, 2)
+            if let caption {
+                Text(caption).font(ReloLayout.cardMeta).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// The one card container: the glass surface, the standard inset and the line gap. Every card in the app is
+/// this around header, title, status, progress and footer, all in plain layout flow.
 struct ReloCard<Content: View>: View {
     var tint: Color? = nil
-    var progress: CardProgressSpec? = nil
     var surface: ReloCardPlacement = .card
     @ViewBuilder var content: Content
 
@@ -71,11 +84,6 @@ struct ReloCard<Content: View>: View {
         let inner = VStack(alignment: .leading, spacing: ReloLayout.cardGap) { content }
             .padding(.horizontal, sideInset).padding(.vertical, vertical)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .bottom) {
-                if let progress {
-                    CardProgress(spec: progress, placement: .edge).padding(.horizontal, sideInset)
-                }
-            }
         if surface == .card { inner.reloCard(tint: tint) } else { inner }
     }
 }

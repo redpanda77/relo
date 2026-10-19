@@ -1,9 +1,11 @@
 /* ==========================================================================
    The card set (components/card/): the one card every surface builds on.
 
-   Anatomy, top to bottom: header (eyebrow · origin, one trailing corner), title, status, note,
-   footer (metadata leading, actions trailing). A field never gets a row of its own: a lone short
-   field rides the header's corner, several share the footer. Tokens live in index.css (--card-*).
+   The standard: Header / Content / Footer, a plain top-to-bottom stack, the same spacing tokens
+   everywhere. Header: one small line (eyebrow · origin; ONE trailing thing: countdown or state).
+   Content: title, status, progress (bar full width, step line under), extra, note. Footer: one small
+   line, omitted when empty (facts leading and truncating; actions or time trailing). No side
+   columns, no measuring: a wider card has longer lines. Tokens live in index.css (--card-*).
    Phones are not a second layout: the same rows, narrower; the card is a size container, and the
    glyph, the footer and the buttons answer to the card's width, not the window's.
    ========================================================================== */
@@ -110,7 +112,7 @@
   min-width: 0;
 }
 
-/* ---------- Header: eyebrow · origin on the left, one corner on the right ---------- */
+/* ---------- Header: eyebrow · origin on the left, ONE trailing thing (countdown | state) ---------- */
 
 .card-header {
   display: grid;
@@ -143,7 +145,7 @@
   text-transform: uppercase;
   color: var(--tone, var(--muted-foreground));
 }
-/* The header's right corner: a time, a state, a countdown, a computer. */
+/* The header's trailing slot: the countdown, else the state badge. */
 .card-action { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .card-corner {
   flex-shrink: 0;
@@ -197,7 +199,7 @@
   font-weight: 600;
   color: var(--foreground);
   overflow-wrap: anywhere;
-  text-wrap: pretty;
+  text-wrap: wrap;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   line-clamp: 3;
@@ -224,7 +226,7 @@
   line-height: var(--card-status-lh);
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
-  text-wrap: pretty;
+  text-wrap: wrap;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -236,7 +238,7 @@
   font-size: var(--card-meta-size);
   line-height: var(--card-meta-lh);
   color: var(--muted-foreground);
-  text-wrap: pretty;
+  text-wrap: wrap;
 }
 
 /* ---------- Meta: the state in its tone, then muted facts, joined by dots ---------- */
@@ -283,7 +285,7 @@
   .card[data-live] .card-state-label { background: none; color: var(--tone); }
 }
 
-/* ---------- Footer: metadata leading, actions trailing, one row while they fit ---------- */
+/* ---------- Footer: facts leading (truncate), actions or time trailing ---------- */
 
 .card-foot {
   display: flex;
@@ -296,6 +298,15 @@
 .card[data-variant="live"] > .card-foot { padding: 0 var(--card-pad) var(--card-pad); }
 .card-foot-meta { flex: 1 1 auto; min-width: 0; }
 .card-foot-meta[data-open] { cursor: pointer; }
+.card-foot-meta .card-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-foot-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
 .card-actions {
   display: flex;
   flex-wrap: wrap;
@@ -343,10 +354,27 @@
   min-height: var(--card-action-h);
 }
 
-/* The meter docks on the card's bottom edge: it costs no row. */
-.card-progress { position: absolute; inset: auto 0 0; pointer-events: none; }
+/* The progress row, the one layout on every surface (the Lock Screen's): the segmented bar across
+   the full width, the step line under it (one line, muted, truncates). */
+.card-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--card-gap);
+  min-width: 0;
+  margin-top: 6px;
+}
+.card-progress-caption {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+}
+.card-progress-bar { min-width: 0; }
 .card-progress .step-bar,
-.card-progress .step-meter { margin: 0; border-radius: 0; }
+.card-progress .step-meter { margin-block: 0; }
 
 .card-chevron {
   flex-shrink: 0;
@@ -372,7 +400,7 @@
   font-weight: 500;
   color: var(--foreground);
 }
-.card-row-top > .card-corner { align-self: center; }
+.card-row-top { align-items: center; }
 .card-row-top > .card-origin { flex: 1 1 auto; }
 .card-row-status {
   overflow: hidden;
@@ -390,7 +418,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.card-row-sub > .card-origin { flex: 1 1 0; justify-content: flex-end; }
+.card-row-time {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--card-meta-size);
+  line-height: var(--card-meta-lh);
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
 .card-row-link {
   display: block;
   max-width: 100%;

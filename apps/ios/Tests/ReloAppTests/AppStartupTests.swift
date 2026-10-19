@@ -823,7 +823,7 @@ final class ReloDeckDirectorTests: XCTestCase {
         .init(summary: InboxTodaySummary(notifications: total, liveActivities: 0, active: 0, finished: 0),
               needsYou: needsYou,
               tasks: (0..<running).map { ReloHoloTask(id: "task-\($0)", progress: nil) },
-              mix: NowMix(counts: [:]), satellites: [])
+              mix: NowMix(counts: [:]))
     }
 
     private func input(_ snapshot: ReloDeckDirector.Snapshot, trusted: Bool = true, reachable: Bool = true,
