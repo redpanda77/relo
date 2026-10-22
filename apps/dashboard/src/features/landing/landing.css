@@ -1753,3 +1753,7 @@
   .cp-layer, .cp-live, .cp-outcomes > *, .control-chapter-text, .control-chapter-text > span { transition: none !important; }
   .cp-island-alert i { animation: none; }
 }
+
+/* ---------- The film: a framed screen right under the hero (the player: components/film-player.css) ---------- */
+.landing-film { position: relative; padding-block: clamp(24px, 4vw, 56px) clamp(48px, 6vw, 96px); }
+.landing-film .film-frame { max-width: 1200px; }

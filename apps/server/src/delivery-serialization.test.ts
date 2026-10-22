@@ -254,6 +254,47 @@ describe("current delivery serialization", () => {
       .toMatchObject({ interruptionLevel: "active" });
   });
 
+  test("an alert push names Relo's cue for its moment in aps.sound (ADR 0013)", () => {
+    const sound = (overrides: Partial<ApnsRuntimeJob>) => {
+      const projection = deliveryProjection(job(overrides));
+      if (projection.kind !== "alert") throw new Error("Expected ordinary projection");
+      return projection.sound;
+    };
+    const outcome = (result: string) => ({ privacy: "standard",interruptionLevel: "passive",
+      workOutcome: { workId: "wrk_1",round: 1,result } });
+    expect(sound({ interactionKind: "approval",interactionId: "int_22222222-2222-4222-8222-222222222222" })).toBe("needs-you.caf");
+    expect(sound({ payload: { privacy: "standard",answerInApp: true } })).toBe("needs-you.caf");
+    expect(sound({ payload: { privacy: "standard",questionFallback: { activityId: "act_1" } } })).toBe("needs-you.caf");
+    expect(sound({ payload: { privacy: "standard",browserLink: { browserId: "brw_1" } } })).toBe("needs-you.caf");
+    expect(sound({ payload: { privacy: "standard",computerApproval: { clientId: "key_1" } } })).toBe("needs-you.caf");
+    expect(sound({ payload: outcome("failed") })).toBe("failed.caf");
+    expect(sound({ payload: outcome("finished") })).toBe("done.caf");
+    expect(sound({ payload: outcome("delivered") })).toBe("done.caf");
+    expect(sound({})).toBe("default");
+  });
+
+  test("a done outcome stays passive while it carries the done cue", () => {
+    expect(deliveryProjection(job({ payload: { privacy: "standard",interruptionLevel: "passive",
+      workOutcome: { workId: "wrk_1",round: 1,result: "finished" } } })))
+      .toMatchObject({ sound: "done.caf",interruptionLevel: "passive" });
+  });
+
+  test("a Live Activity alert carries the card's cue in aps.alert.sound; silent states and progress carry none", () => {
+    const alerted = (state: string) => deliveryProjection(card({ state,needsYou: null,staleDate: null },{ alertOwner: "apns" }));
+    expect(alerted("needs_you")).toMatchObject({ alert: { sound: "needs-you.caf" } });
+    expect(alerted("failed")).toMatchObject({ alert: { sound: "failed.caf" } });
+    expect(alerted("done")).toMatchObject({ alert: { sound: "done.caf" } });
+    expect(alerted("waiting_on_you")).toMatchObject({ alert: { sound: "your-turn.caf" } });
+    expect(JSON.stringify((alerted("moving") as { alert: unknown }).alert)).not.toContain("sound");
+    expect(deliveryProjection(card({ state: "needs_you",needsYou: null,staleDate: null }))).not.toHaveProperty("alert");
+    const start = deliveryProjection(job({
+      transport: "live_activity_start",
+      activityCommand: { activityId: "act_1",generation: 1,sequence: 0,providerTimestamp: 1_786_579_200,privacy: "standard",
+        headline: "Build",status: "Starting",owner: { state: "moving",needsYou: null,staleDate: null } },
+    } as never));
+    expect(JSON.stringify((start as { alert: unknown }).alert)).not.toContain("sound");
+  });
+
   test("accepts exactly 4096 UTF-8 bytes and rejects the next byte", () => {
     const input = {
       title: "Budget",body: "",sourceName: "Relo",conversationId: "budget",

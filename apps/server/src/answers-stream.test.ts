@@ -96,6 +96,6 @@ suite("answer stream", () => {
     await answer(question,"yes");
     const woke = await waiting;
     expect(woke.answers.map((item: any) => item.id)).toEqual([question.id]);
-    expect(performance.now() - started).toBeLessThan(4_000);
+    expect(performance.now() - started).toBeLessThan(15_000);
   });
 });

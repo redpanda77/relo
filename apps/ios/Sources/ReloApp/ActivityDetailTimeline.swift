@@ -17,19 +17,14 @@ struct ReloIdentityHeader: View {
     let now: Date
 
     private var row: HistoryRow { HistoryRowProjection.row(item, now: now) }
-    /// The badge tells the truth (U4): a work that declared it waits is Waiting, never Running.
-    private var waiting: Bool {
-        item.isDeclaredWaiting && (serverOutcome.map { $0.label == "Running" || $0.label == "Waiting" } ?? (row.outcome == .running))
-    }
     private var badge: ReloStateStyle {
-        if waiting { return .waiting }
         if let serverOutcome { return serverOutcome }
         return ReloStateStyle(label: item.kind == .liveActivity ? (row.outcome.label ?? kind.label) : kind.label,
                               color: kind.color, symbol: kind.symbol)
     }
-    /// Running work shows its live timer next to the badge; the system ticks it. Waiting work does not run.
+    /// Running work (waiting on its own job included) shows its live timer next to the badge; the system ticks it.
     private var runningSince: Date? {
-        guard !waiting, row.outcome == .running, serverOutcome == nil || serverOutcome?.label == "Running",
+        guard row.outcome == .running, serverOutcome == nil || serverOutcome?.label == "Running",
               let started = row.startedAt, started <= now else { return nil }
         return started
     }
@@ -86,8 +81,6 @@ struct ReloMissionTimeline: View {
     let now: Date
     /// How the work stands, from the server (the same as the badge): a paused work's plan stops at its step.
     var serverOutcome: ReloStateStyle? = nil
-    /// The work declared it waits on something: its current step shows a pause (U4).
-    var waiting = false
     /// The work's card updates sent while a step was current (4.6), newest first.
     var updates: (String) -> [PlanStepUpdate] = { _ in [] }
 
@@ -175,7 +168,7 @@ struct ReloMissionTimeline: View {
         case .pending: return .open
         case .current:
             switch outcome {
-            case .running, .waitingForYou: return waiting && !paused ? .waiting : (paused ? .paused : .current)
+            case .running, .waitingForYou: return paused ? .paused : .current
             case .stopped: return .stopped
             default: return paused ? .paused : .open
             }

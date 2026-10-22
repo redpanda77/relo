@@ -36,6 +36,20 @@ describe("landing page", () => {
     expect(screen.queryByText(/install\.md/)).not.toBeInTheDocument()
   })
 
+  test("the launch film sits right under the hero only when the server sets one", async () => {
+    const { unmount } = render(<DashboardApp bootstrap={{ ...bootstrap, view: "landing", film: { base: "https://media.example.test/film" } }} />)
+    const film = await screen.findByRole("region", { name: "Relo in 40 seconds" }, { timeout: 5000 })
+    expect(film.previousElementSibling).toHaveAttribute("data-landing-hero")
+    const sources = [...film.querySelectorAll("source")].map((source) => source.getAttribute("src"))
+    expect(sources[0]).toBe("https://media.example.test/film/relo-launch-av1.mp4")
+    expect(sources).toContain("https://media.example.test/film/relo-launch-h264.mp4")
+    expect(screen.getByRole("button", { name: "Turn the sound on" })).toBeInTheDocument()
+    unmount()
+    render(<DashboardApp bootstrap={{ ...bootstrap, view: "landing" }} />)
+    await screen.findByRole("heading", { level: 1, name: /Every agent\.\s*One place\./ }, { timeout: 5000 })
+    expect(screen.queryByRole("region", { name: "Relo in 40 seconds" })).not.toBeInTheDocument()
+  })
+
   test("the form view goes straight to sign-in, links to the source, and shows no server row", () => {
     render(<DashboardApp bootstrap={{ ...bootstrap, view: "form" }} />)
     expect(screen.getByLabelText("Password")).toBeInTheDocument()

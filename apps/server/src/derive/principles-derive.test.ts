@@ -57,25 +57,24 @@ describe("working layer: a delivered work (open, last round closed)",() => {
   const run = (minutes: number,evidence: OwnerStateInput["evidence"] = { producer: "agent_session",session: null }) =>
     deriveOwnerState({ ...delivered,evidence,now: at(minutes) });
 
-  test("it is the owner's turn: attention-free, not moving, not stale, on the Lock Screen as your turn",() => {
+  test("it is an outcome, like a finished work: Done, the final card on the Lock Screen and Since you looked",() => {
     const result = run(1);
-    expect(result).toMatchObject({ state: "waiting_on_you",needsYou: null,lockScreen: "your_turn",now: "waiting_on_you" });
+    expect(result).toMatchObject({ state: "done",needsYou: null,lockScreen: "final",now: "since_you_looked" });
     expect(result.nextChangeAt).not.toBeNull();
-    // The Lock Screen line lasts T_fresh; Now keeps "your turn" until the window ends.
-    expect(run(25)).toMatchObject({ state: "waiting_on_you",lockScreen: "none",now: "waiting_on_you" });
+    // The final card lasts T_done; Since you looked keeps it until seen or T_history.
+    expect(run(16)).toMatchObject({ state: "done",lockScreen: "none",now: "since_you_looked" });
   });
 
-  test("it never reads as moving or stale, for every producer type, the whole window",() => {
+  test("it is never your turn, moving or stale, for every producer type",() => {
     for (const evidence of evidences) {
-      for (let minutes = 0; minutes < 60; minutes += 5) expect(run(minutes,evidence).state).toBe("waiting_on_you");
+      for (let minutes = 0; minutes < 9 * 60; minutes += 15) expect(run(minutes,evidence).state).toBe("done");
     }
   });
 
-  test("it is your turn for 1 hour, then History as delivered, off Lock Screen and Now, and stays retired",() => {
-    expect(run(59)).toMatchObject({ state: "waiting_on_you",now: "waiting_on_you" });
-    for (const minutes of [60,61,8 * 60,12 * 60,24 * 60]) {
-      expect(run(minutes)).toMatchObject({ state: "done",lockScreen: "none",now: null });
-    }
+  test("seen, or past T_history, it is History only",() => {
+    const seen = deriveOwnerState({ ...delivered,work: { ...delivered.work,seenAt: at(2) },now: at(3) });
+    expect(seen).toMatchObject({ state: "done",now: null });
+    expect(run(8 * 60 + 1)).toMatchObject({ state: "done",lockScreen: "none",now: null });
   });
 
   test("a pending question still needs the owner; a write into a new round (round open again) moves it back",() => {
@@ -102,18 +101,11 @@ describe("retiring and left open (12b-plan-ux 4.11)",() => {
   const run = (input: OwnerStateInput,minutes: number,evidence?: OwnerStateInput["evidence"]) =>
     deriveOwnerState({ ...input,...(evidence ? { evidence } : {}),now: at(minutes) });
 
-  test("delivered: your turn at 59 minutes, History as delivered at 60",() => {
-    expect(run(delivered,59)).toMatchObject({ state: "waiting_on_you",now: "waiting_on_you" });
-    expect(run(delivered,60)).toMatchObject({ state: "done",now: null,lockScreen: "none" });
-  });
-
-  test("delivered with the session ended: the final card only, not in Now, then History",() => {
-    const ended = session("ended",1);
-    expect(run(delivered,5,ended)).toMatchObject({ state: "waiting_on_you",lockScreen: "your_turn",now: null });
-    // Like a finished item: the final card for T_done (15 minutes), then History.
-    expect(run(delivered,14,ended)).toMatchObject({ state: "waiting_on_you",lockScreen: "your_turn",now: null });
-    expect(run(delivered,16,ended)).toMatchObject({ state: "done",lockScreen: "none",now: null });
-    expect(run(delivered,21,ended)).toMatchObject({ state: "done",lockScreen: "none",now: null });
+  test("delivered, with the session live or ended: the final card for T_done, then Since you looked",() => {
+    for (const evidence of [undefined,session("ended",1)]) {
+      expect(run(delivered,14,evidence)).toMatchObject({ state: "done",lockScreen: "final",now: "since_you_looked" });
+      expect(run(delivered,16,evidence)).toMatchObject({ state: "done",lockScreen: "none",now: "since_you_looked" });
+    }
   });
 
   test("left open: the turn ended 4 minutes ago is still your turn, 6 minutes ago it is Quiet and dimmed (session idle)",() => {

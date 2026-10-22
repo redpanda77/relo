@@ -332,3 +332,6 @@
 
 /* The search and menu overlays sit above the article: dim it properly (docs pages only). */
 body:has(.docs) [data-slot="dialog-overlay"], body:has(.docs) [data-slot="sheet-overlay"] { background: rgb(4 4 8 / 0.62); }
+
+/* The onboarding film above Get started (the server's RELO_ONBOARDING_FILM_URL). */
+.docs-film { margin: 28px 0 36px; }

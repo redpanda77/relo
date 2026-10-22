@@ -15,8 +15,10 @@ export const SETTINGS = Object.freeze([
   { key: "profile", env: "RELO_PROFILE", config: "activeProfile", name: false },
   { key: "computer", env: "RELO_COMPUTER", config: "computerName", name: true, detect: "computerName" },
   { key: "account", env: "RELO_ACCOUNT", config: "accounts", name: true },
-  { key: "project", env: "RELO_PROJECT", config: null, name: true, detect: "gitRepository" },
+  { key: "project", env: "RELO_PROJECT", config: "projects", name: true, detect: "gitRepository" },
   { key: "topic", env: "RELO_TOPIC", config: null, name: true },
+  // ADR 0015: how much Relo for Mac may say of work started here (off|brief|full|verbose; default verbose).
+  { key: "voice", env: "RELO_VOICE", config: "voices", name: false },
   { key: "source", env: "RELO_SOURCE", config: null, name: true, detect: "harness" },
   { key: "updateCheck", env: "RELO_NO_UPDATE_CHECK", config: null, name: false, derived: true },
   { key: "stateDir", env: "RELO_STATE_DIR", config: null, name: false, path: true },

@@ -58,8 +58,8 @@ The first non-empty value wins:
   2. --stdin JSON: context.providerName, project, threadName, computer, account
   3. Environment: RELO_SOURCE, RELO_PROJECT, RELO_TOPIC, RELO_COMPUTER, RELO_ACCOUNT
   4. Detection: source from the calling agent (${DETECTED}; any other
-     harness sets RELO_SOURCE); project from the git
-     repository; computer from the Mac's name (scutil) or the hostname; account from "relo account NAME",
+     harness sets RELO_SOURCE); project from the nearest folder named with
+     "relo project NAME" or git repository, else the signed-in integration, else the folder's own name; computer from the Mac's name (scutil) or the hostname; account from "relo account NAME",
      else the name of a custom ${CONFIG_FOLDERS} folder (~/.claude-work -> "work").
      Nothing in an agent's config folder is ever read, only its name.
 
@@ -80,7 +80,7 @@ const SECTIONS = [
   ["Questions, on this session's open work", ["ask", "interaction", "listen"]],
   ["Notifications: sparingly, for finished outcomes", ["notify"]],
   ["Live Activity cards: the owner's terminal (relo admin offers them across sessions)", ["activity"]],
-  ["Sign-in, phones and checks", ["auth", "test", "doctor", "devices", "account", "services"]],
+  ["Sign-in, phones and checks", ["auth", "test", "doctor", "devices", "account", "project", "voice", "services"]],
   ["This computer: the owner's commands (an agent runs them only when asked)", ["setup", "uninstall", "update", "config", "mcp", "hook", "statusline"]],
   ["End-to-end encryption keys", ["keys"]],
   ["Owner administration: across sessions (an agent only when the owner asks)", ["admin", "sessions"]],

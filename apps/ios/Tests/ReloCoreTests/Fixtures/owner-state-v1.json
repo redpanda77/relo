@@ -5,8 +5,7 @@
     "retireSeconds": 3600,
     "doneSeconds": 900,
     "historySeconds": 28800,
-    "yourTurnSeconds": 300,
-    "deliveredYourTurnSeconds": 3600
+    "yourTurnSeconds": 300
   },
   "quietSeconds": 600,
   "lockScreenMaxCards": 3,

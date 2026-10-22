@@ -31,9 +31,12 @@ async function computerFor(dependencies, config) {
  */
 export async function observedLabels({ cwd, harnessEnv, config, dependencies }) {
   // Loaded only when a snapshot is due (most hook events send nothing), so the hook's startup stays small.
-  const { detectAccount, integrationProject, projectLabel } = await import("../../shared/identity.mjs");
+  const { detectAccount, fallbackProject, projectLabel } = await import("../../shared/identity.mjs");
   // The same project rule as a card's (shared/identity.mjs), so a session row and its card agree.
-  const project = projectLabel(dependencies.env, cwd ?? undefined) ?? label(integrationProject(config, dependencies), 120);
+  let projects;
+  try { projects = dependencies.loadProjects?.() ?? {}; } catch { projects = {}; }
+  const project = projectLabel(dependencies.env, cwd ?? undefined, undefined, projects)
+    ?? fallbackProject(config, { ...dependencies, ...(cwd ? { cwd } : {}) });
   const plain = {
     project,
     computer: await computerFor(dependencies, config),

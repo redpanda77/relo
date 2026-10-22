@@ -333,3 +333,35 @@ public extension PlanOutline.Node {
         return doneAt.timeIntervalSince(startedAt)
     }
 }
+
+public extension PlanOutline {
+    /// A Now item's plan as rounds and nested steps (Relo for Mac): states and structure from the server's `plan`
+    /// and `rounds`; labels, details, round titles and outcomes from the server for a readable work, else from the
+    /// card's sealed text opened on this device (by step id; a v1 text by the placeholder's number). Nil without steps.
+    static func make(plan: [InboxCardDigest.PlanStep]?, rounds: [InboxCardDigest.PlanRound]?,
+                     text: ReloSealedCardText?) -> PlanOutline? {
+        guard let plan, !plan.isEmpty else { return nil }
+        let labels = text?.labelsByStepID ?? [:]
+        let details = text?.detailsByStepID ?? [:]
+        let entries = plan.enumerated().map { index, step -> Entry in
+            let opened = ReloWork.text(step.label).flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
+                ?? labels[step.id] ?? text?.legacyLabel(forPlaceholder: "Step \(index + 1)")
+            let state: State = switch step.state {
+            case "done", "complete": .complete
+            case "current": .current
+            case "skipped": .skipped
+            default: .pending
+            }
+            return Entry(id: step.id, label: opened ?? "Step \(index + 1)", state: state, detail: step.detail ?? details[step.id],
+                         parent: step.parent, round: step.round ?? 1, readable: opened != nil,
+                         startedAt: step.startedAt, doneAt: step.doneAt, carriedFrom: step.carriedFrom)
+        }
+        var titles: [Int: String] = [:], outcomes: [Int: String] = [:]
+        for phase in text?.phases ?? [] {
+            guard phase.id.hasPrefix("r"), let n = Int(phase.id.dropFirst()) else { continue }
+            if let title = ReloWork.text(phase.title) { titles[n] = title }
+            if let outcome = ReloWork.text(phase.outcome) { outcomes[n] = outcome }
+        }
+        return make(entries: entries, rounds: rounds, titles: titles, outcomes: outcomes)
+    }
+}

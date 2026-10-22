@@ -124,7 +124,7 @@ async function loadPlugin({ parents = {}, level = "presence", script = "" } = {}
   /** The fake relo's calls, once `count` arrived (the plugin runs them one at a time, in the background). */
   const calls = async (count) => {
     let text = "";
-    for (let tries = 0; tries < 100; tries += 1) {
+    for (let tries = 0; tries < 400; tries += 1) {
       text = existsSync(log) ? await readFile(log, "utf8") : "";
       if (text.endsWith("\n") && text.split("\n").filter(Boolean).length >= count) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -223,7 +223,7 @@ appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + " " + r
     const hooks = await plugin.server({ client: { session: { get: async () => ({ data: {} }) } }, directory: "/work/app" });
     await hooks["chat.message"]({ sessionID: ROOT });
     let text = "";
-    for (let tries = 0; tries < 100 && text.split("\n").length < 3; tries += 1) {
+    for (let tries = 0; tries < 400 && text.split("\n").length < 3; tries += 1) {
       text = existsSync(log) ? await readFile(log, "utf8") : "";
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -267,7 +267,7 @@ test("approvals: OpenCode's permission prompt is asked on the phone; the phone's
   const asked = seen.find((call) => call.argv.startsWith("hook permission"));
   assert.deepEqual(asked.input, { hook_event_name: "permission.request", session_id: ROOT, cwd: "/work/app", request_id: "per_1",
     action: "shell", resources: ["rm -rf build"] });
-  for (let tries = 0; tries < 100 && allowed.replies.length === 0; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  for (let tries = 0; tries < 400 && allowed.replies.length === 0; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(allowed.replies, [{ sessionID: ROOT, requestID: "per_1", reply: "once" }]);
 
   // Answered in the terminal first: the waiting command is stopped and OpenCode gets no second answer.

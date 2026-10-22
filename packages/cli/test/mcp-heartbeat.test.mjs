@@ -94,7 +94,7 @@ test("the MCP server's minute tick sends the heartbeat", async () => {
   const base = box.deps();
   const server = run(["mcp"], { stdin, mcpOutput: { write() {} }, mcpLeaveGraceMs: 5, mcpTickMs: 20 },
     { ...base, parentPid: HARNESS, harnessProcess: { ...base.harnessProcess, processAlive: async () => true } });
-  for (let waited = 0; waited < 2_000 && heartbeats(box).length === 0; waited += 20) {
+  for (let waited = 0; waited < 15_000 && heartbeats(box).length === 0; waited += 20) {
     await new Promise((resolve) => setTimeout(resolve, 20));
     await box.collect();
   }

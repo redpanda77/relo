@@ -35,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { AccountDashboardBootstrap } from "@/features/account/types"
+import { SoundCard } from "@/features/account/sound-card"
 import { ServerAdminCard } from "@/features/account/server-admin"
 import { EncryptionPolicyCard } from "@/features/encryption-policy/encryption-policy-card"
 import { TwoFactorCard } from "@/features/two-factor/two-factor-card"
@@ -366,24 +367,27 @@ export function AccountPage({
         ) : null}
 
         <Section id="preferences" title="Preferences">
-          <Card>
-            <CardHeader>
-              <CardTitle>Card appearance</CardTitle>
-              <CardDescription>
-                Computers and webhooks use these unless you change them.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ColorAppearance
-                inheritLabel="Use the Relo default"
-                initialPolicy={initial.account.liveActivityPolicy}
-                initialSource={initial.account.liveActivityPolicySource}
-                canInherit
-                onSave={(policy) => service.saveLiveActivityPolicy(policy)}
-                onReset={() => service.resetLiveActivityPolicy()}
-              />
-            </CardContent>
-          </Card>
+          <div className="grid gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Card appearance</CardTitle>
+                <CardDescription>
+                  Computers and webhooks use these unless you change them.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ColorAppearance
+                  inheritLabel="Use the Relo default"
+                  initialPolicy={initial.account.liveActivityPolicy}
+                  initialSource={initial.account.liveActivityPolicySource}
+                  canInherit
+                  onSave={(policy) => service.saveLiveActivityPolicy(policy)}
+                  onReset={() => service.resetLiveActivityPolicy()}
+                />
+              </CardContent>
+            </Card>
+            <SoundCard />
+          </div>
         </Section>
 
         <Section id="sign-in" title="Sign-in">

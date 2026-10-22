@@ -35,6 +35,7 @@ import { ActionButton, type ActionPhase } from "@/components/molecules/action-bu
 import { Button } from "@/components/ui/button"
 import { currentBrowserLink, type BrowserLink, type BrowserLinkState } from "@/lib/e2ee/browser-link"
 import type { AnswerSignature } from "@/lib/e2ee/answer"
+import { playCue } from "@/lib/sound"
 import { useTicker } from "@/lib/ticker"
 import { timeLeft } from "@/lib/time-left"
 import { cn } from "@/lib/utils"
@@ -153,6 +154,7 @@ export function AnswerControls({
       setPhase({ choice, phase: "success" })
       setConfirming(null)
       setAnswered({ choice, result })
+      playCue("sent")
       onAnswered?.(result)
     } catch (cause) {
       setPhase({ choice, phase: "error" })

@@ -168,7 +168,8 @@ test("a missing topic is a short message and a hint with only the missing flags"
   assert.match(out.line.error.hint, /--topic "<what this work is about>"$/u);
   assert.deepEqual(out.line.error.details.missing, ["topic"]);
   assert.ok(out.stdout[0].length < 330, out.stdout[0]);
-  const empty = cardDependencies(fakeCards().client, { identity: {} });
+  // At the filesystem root no folder names the project, so all three are missing.
+  const empty = { ...cardDependencies(fakeCards().client, { identity: {} }), cwd: "/" };
   const all = await cli(["notify", "Done"], empty);
   assert.equal(all.line.error.message, "Missing --source, --project, --topic: name the work the way the owner would (e.g. \"Release 0.7.57\").");
   assert.match(all.line.error.hint, /^relo notify "Done" --source "<your agent, e\.g\. Claude Code>" --project "<repository or product>" --topic /u);

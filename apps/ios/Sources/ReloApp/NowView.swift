@@ -95,6 +95,10 @@ struct NowView: View {
             if verticalSizeClass == .compact { landscape(derived) } else { portrait(derived) }
         }
         .onChange(of: deckInput(derived), initial: true) { _, input in model.deckDirector.ingest(input) }
+        // The app's foreground presentation of a question push reads this: with Now on screen the in-app cue carries it.
+        .onChange(of: tab == .now && scenePhase == .active, initial: true) { _, onScreen in
+            ReloCuePlayer.shared.nowOnScreen = onScreen
+        }
         // While Now is on screen, time-based states (quiet cards, lost agents, the last hour of
         // ended ones) move on by themselves, and the inbox (agent sessions, History) is re-read.
         .task(id: tab == .now && scenePhase == .active) {
@@ -215,10 +219,12 @@ struct NowView: View {
     private func rawSnapshot(_ derived: Derived) -> ReloDeckDirector.Snapshot {
         let screen = model.currentPresentation
         let live = derived.now.running
+        let found = moments(derived, needsMe: screen.needsMe)
         return .init(
             // A clear resets today's count too: the hero only counts what is still shown.
             summary: InboxTodaySummary.make(items: visibleHistory + model.items, attention: model.attention,
-                                            now: model.attentionDate),
+                                            now: model.attentionDate)
+                .counting(TodayActivity.settled(rows: derived.rows, now: model.attentionDate).rows.count),
             needsYou: screen.actionableCount,
             // RUNNING is the live cards only (the Live now section); the agents running now are
             // their own count (AGENTS, the Agents section), never added to it.
@@ -226,7 +232,32 @@ struct NowView: View {
             sessionsWorking: derived.now.sessions.filter { $0.phase == .working }
                 .map { ReloHoloTask(id: "session-\($0.id)", progress: nil) },
             waitingOnYou: derived.now.waitingOnYou.count,
-            mix: todayMix(derived, needsYou: screen.actionableCount ?? screen.needsMe.count))
+            mix: todayMix(derived, needsYou: screen.actionableCount ?? screen.needsMe.count),
+            moments: found.ids, looking: found.looking)
+    }
+
+    /// The moments the screen shows now (ADR 0013, section 1), keyed so each is its own: a question by its
+    /// interaction, a finish or failure by the work and when it settled, your turn by the work's round.
+    /// Dropped, paused, quiet and left-unfinished work is silent. `looking` holds those whose page is open.
+    private func moments(_ derived: Derived, needsMe: [PendingCurrentDecision])
+        -> (ids: [ReloCue: Set<String>], looking: Set<String>) {
+        var ids: [ReloCue: Set<String>] = [:]
+        var looking = Set<String>()
+        let open = model.selectedNotificationID
+        func add(_ cue: ReloCue, _ id: String, notificationID: String?) {
+            ids[cue, default: []].insert(id)
+            if let open, notificationID == open { looking.insert(id) }
+        }
+        for decision in needsMe { add(.needsYou, decision.id, notificationID: decision.notificationId) }
+        for item in derived.now.recent {
+            let settled = "\(item.id)|\(Int(item.evidenceAt.timeIntervalSince1970))"
+            if item.state == .failed { add(.failed, settled, notificationID: item.notificationID) }
+            else if item.state == .done { add(.done, settled, notificationID: item.notificationID) }
+        }
+        for item in derived.now.waitingOnYou {
+            add(.yourTurn, "\(item.id)|r\(item.roundNumber ?? 0)", notificationID: item.notificationID)
+        }
+        return (ids, looking)
     }
 
     private func deckInput(_ derived: Derived) -> ReloDeckDirector.Input {
@@ -379,7 +410,8 @@ private struct ReloDeckBottomKey: PreferenceKey {
 /// - The sign-in ceremony runs once, on fixed deadlines from its start; interrupted, it jumps
 ///   to its end rather than restarting.
 /// - One effect bus: at most one ripple per change; the loading pulse never stacks on a ripple.
-///   Haptics only for the finished sign-in and a genuinely new request, with a cooldown.
+///   Cues (sound and haptic, ADR 0013) only for moments new by id: a question, a failure, your turn, a finish,
+///   and the sign-in landing on its LINKED plate; one per batch, spaced, never on the first observation.
 @MainActor @Observable final class ReloDeckDirector {
     enum Phase: Equatable { case live, dormant, booting }
 
@@ -404,6 +436,10 @@ private struct ReloDeckBottomKey: PreferenceKey {
         /// Work waiting on the owner (the Waiting on you fold).
         var waitingOnYou = 0
         var mix: NowMix
+        /// The owner-meaningful moments present now, ids by cue (ADR 0013): the cue gate cues each once.
+        var moments: [ReloCue: Set<String>] = [:]
+        /// Ids among `moments` whose page the owner has open: seen, so never cued.
+        var looking: Set<String> = []
     }
 
     struct Input: Equatable {
@@ -437,6 +473,7 @@ private struct ReloDeckBottomKey: PreferenceKey {
         var coalesce: Duration = .milliseconds(300)
         /// Seen and trusted this long before changes count as news.
         var armAfter: Duration = .milliseconds(1200)
+        /// At most one cue this often (seconds).
         var hapticCooldown: TimeInterval = 2
         /// Multiplies the ceremony's timeline (tests run it fast).
         var ceremonyScale: Double = 1
@@ -444,10 +481,14 @@ private struct ReloDeckBottomKey: PreferenceKey {
         var powerOnAfterAway: TimeInterval = 30
         /// The first time the deck is seen in a run, the HUD powers on.
         var powerOnAtLaunch = true
+        /// Now on screen and trusted this long before a new moment is cued (what arrives while waking was
+        /// told by the push or is already on the cards: it is the baseline, not news).
+        var cueSettle: Duration = .seconds(2)
     }
     let timing: Timing
     init(timing: Timing = Timing()) {
         self.timing = timing
+        gate = ReloCueGate(spacing: timing.hapticCooldown)
         // Powering on at launch: start dark, so the full HUD never flashes before it builds.
         if timing.powerOnAtLaunch { revealed = 0; ringTrace = 0 }
     }
@@ -469,8 +510,9 @@ private struct ReloDeckBottomKey: PreferenceKey {
     /// The effect bus: each tick is one ripple through the sphere, of `waveStrength`.
     private(set) var waves = 0
     private(set) var waveStrength = 0.8
-    private(set) var successTicks = 0
-    private(set) var newsTicks = 0
+    /// The cue effect bus: each tick is one moment (sound and haptic) for the view to play; `cue` is which.
+    private(set) var cueTicks = 0
+    private(set) var cue: ReloCue?
     /// Ticks once when a ceremony finishes, so the owner can clear its pending flag.
     private(set) var ceremonyFinishes = 0
 
@@ -488,7 +530,9 @@ private struct ReloDeckBottomKey: PreferenceKey {
     private var badgeCount = 0
     private var hiddenAt: Date?
     private var hasBeenSeen = false
-    private var lastHapticAt = Date.distantPast
+    private var gate = ReloCueGate()
+    /// When cues may start (Now on screen and trusted, plus `cueSettle`); nil while away.
+    private var cueReadyAt: Date?
 
     func ingest(_ next: Input) {
         let previous = input
@@ -510,6 +554,12 @@ private struct ReloDeckBottomKey: PreferenceKey {
             }
         }
         if next.visible { hasBeenSeen = true; hiddenAt = nil }
+        // Cues follow Now being on screen (scrolled or not), not the deck: a question lands whatever is in view.
+        if !onScreen { cueReadyAt = nil }
+        else if next.trusted, cueReadyAt == nil {
+            let settle = timing.cueSettle.components
+            cueReadyAt = Date.now.addingTimeInterval(Double(settle.seconds) + Double(settle.attoseconds) / 1e18)
+        }
 
         // A fresh sign-in: dormant (LINKING) until linked, then the ceremony once, when seen.
         if next.linkPending {
@@ -538,6 +588,7 @@ private struct ReloDeckBottomKey: PreferenceKey {
         // The snapshot: first ever shows at once; later only trusted, coalesced, latest wins.
         if shown == nil {
             shown = next.snapshot
+            observeMoments(next.snapshot)
         } else if next.trusted && next.snapshot != shown {
             scheduleApply()
         }
@@ -563,15 +614,27 @@ private struct ReloDeckBottomKey: PreferenceKey {
     private func apply(_ next: Snapshot) {
         let old = shown
         shown = next
+        observeMoments(next)
         guard armed, phase == .live, let old else { return }
         let newRequest = (next.needsYou ?? 0) > (old.needsYou ?? 0)
         let news = newRequest || next.summary.total > old.summary.total
             || next.summary.finished > old.summary.finished || next.tasks.count != old.tasks.count
             || next.sessionsWorking.count != old.sessionsWorking.count
         if news { emitWave(1.0) }
-        if newRequest, Date.now.timeIntervalSince(lastHapticAt) > timing.hapticCooldown {
-            lastHapticAt = .now; newsTicks += 1
-        }
+    }
+
+    // MARK: Cues
+
+    /// Finds the moments that are new by id and cues the highest one. Until Now has been on screen and trusted
+    /// for `cueSettle`, and whenever the deck is not live, ids are still consumed (the baseline) but make no sound.
+    private func observeMoments(_ snapshot: Snapshot) {
+        let ready = phase == .live && (cueReadyAt.map { Date.now >= $0 } ?? false)
+        if let cue = gate.observe(snapshot.moments, quiet: !ready, looking: snapshot.looking) { emit(cue) }
+    }
+
+    private func emit(_ cue: ReloCue) {
+        self.cue = cue
+        cueTicks += 1
     }
 
     // MARK: Arming
@@ -643,7 +706,6 @@ private struct ReloDeckBottomKey: PreferenceKey {
         phase = .booting
         revealed = 0; ringTrace = 0; greeting = nil
         shown = input?.snapshot ?? shown
-        successTicks += 1
         let reduceMotion = input?.reduceMotion ?? false
         let start = ContinuousClock.now, scale = timing.ceremonyScale
         ceremonyTask = Task { [weak self] in
@@ -654,6 +716,7 @@ private struct ReloDeckBottomKey: PreferenceKey {
             guard let self else { return }
             if reduceMotion {
                 self.revealed = 6; self.ringTrace = 1; self.greeting = "ACCOUNT LINKED"
+                self.emit(.linked)
                 guard await at(2.0) else { return }
                 self.finishCeremony(); return
             }
@@ -661,8 +724,10 @@ private struct ReloDeckBottomKey: PreferenceKey {
             // the four corner modules build their parts together, the leaders tie them in, then
             // the welcome.
             guard await at(0.15) else { return }
+            // The link lands here: the plate, the ripple, Relo's bloom and the success haptic on one beat.
             self.show(("LINKED", "RELO · ACCOUNT", "LINK . OK"), warning: false)
             self.emitWave(0.9)
+            self.emit(.linked)
             guard await at(0.55) else { return }
             withAnimation(.easeInOut(duration: 0.75)) { self.revealed = 1; self.ringTrace = 1 }
             guard await at(1.3) else { return }
@@ -722,13 +787,13 @@ private struct ReloDeckBottomKey: PreferenceKey {
         badgeCount += 1
         let next = Badge(id: badgeCount, word: plate.0, left: plate.1, right: plate.2, warning: warning,
                          start: .now, duration: 2.2 * max(timing.ceremonyScale, 0.05))
-        withAnimation(.easeOut(duration: 0.15)) { badge = next }
+        withAnimation(.easeOut(duration: ReloMotion.fast)) { badge = next }
         badgeTask?.cancel()
         let duration = next.duration
         badgeTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard let self, !Task.isCancelled, self.badge?.id == next.id else { return }
-            withAnimation(.easeOut(duration: 0.2)) { self.badge = nil }
+            withAnimation(.easeOut(duration: ReloMotion.fast)) { self.badge = nil }
         }
     }
 

@@ -1,5 +1,6 @@
 import { createHash,randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync,readFileSync } from "node:fs";
+import { fileURLToPath,pathToFileURL } from "node:url";
 import { z } from "zod";
 import {
   computerInviteStatusSchema,computerReportSchema,LOGIN_SCOPES,loginScopeSchema,type ComputerInviteStatus,
@@ -10,6 +11,7 @@ import { queueInviteActivityPush } from "./computer-invite-activity.js";
 import { credentialMetadata } from "./device-authorization.js";
 import { simulatorSql } from "./device-models.js";
 import { internalId,publicId } from "./ids.js";
+import { issueMobileSignInCode } from "./mobile-sign-in.js";
 
 /**
  * Add a computer (docs/site/guides/servers.md): a trusted device makes a one-time code, and one command pasted on the
@@ -27,6 +29,8 @@ export const createInviteSchema = z.object({
   approvals: z.boolean().default(false).describe("Whether the new computer's agents ask permission on the owner's phone too."),
   agents: z.array(z.string().regex(/^[a-z][a-z0-9-]{1,30}$/)).min(1).max(12).transform((agents) => [...new Set(agents)]).optional()
     .describe("Which agents relo setup sets up there (claude-code, codex, opencode, gemini, cursor, copilot, amp); every agent it finds when omitted."),
+  macApp: z.boolean().default(false)
+    .describe("Whether a Mac also gets Relo for Mac (the notch app), opened already signed in; other systems skip it."),
 }).strict();
 export type CreateInvite = z.infer<typeof createInviteSchema>;
 
@@ -36,6 +40,8 @@ export const redeemInviteSchema = z.object({
   scopes: z.array(loginScopeSchema).min(1).max(LOGIN_SCOPES.length).transform((scopes) => [...new Set(scopes)].sort())
     .describe("What the computer's login may do."),
   expiresInSeconds: z.number().int().min(3_600).max(31_536_000).describe("How long the login works before it must sign in again."),
+  macAppChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional()
+    .describe("A PKCE S256 challenge from the Mac app's installer: a code made with Relo for Mac returns its one-time sign-in code for it."),
 }).strict();
 export type RedeemInvite = z.infer<typeof redeemInviteSchema>;
 
@@ -43,20 +49,22 @@ export type InviteIssuer = { kind: "phone" | "mac" | "browser" | "computer"; nam
 
 const codeHash = (code: string) => createHash("sha256").update(`relo-computer-invite\n${code}`).digest("hex");
 
-/** The command the owner pastes on the new computer. */
-export const inviteCommand = (origin: string,code: string) => `curl -fsSL ${origin}/install.sh | sh -s -- ${code}`;
+/** The command the owner pastes on the new computer; `--mac-app` also installs Relo for Mac there (Macs only). */
+export const inviteCommand = (origin: string,code: string,macApp = false) =>
+  `curl -fsSL ${origin}/install.sh | sh -s -- ${code}${macApp ? " --mac-app" : ""}`;
 
 /** A new one-time code for the account; the owner sees it (and the command) once. */
 export async function createInvite(
   db: Pick<Database,"query">,principalId: string,issuer: InviteIssuer,input: CreateInvite,origin: string,
-): Promise<{ inviteId: string; code: string; command: string; expiresAt: string; level: string; approvals: boolean; agents: string[] | null }> {
+): Promise<{ inviteId: string; code: string; command: string; expiresAt: string; level: string; approvals: boolean; agents: string[] | null;
+  macApp: boolean }> {
   const code = `${CODE_PREFIX}${randomBytes(24).toString("base64url")}`;
   const result = await db.query<{ id: string; expires_at: Date }>(
-    `INSERT INTO computer_invites(principal_id,code_hash,issued_by_kind,issued_by_name,setup_level,setup_approvals,setup_agents,expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,now()+make_interval(mins => $8)) RETURNING id,expires_at`,
-    [principalId,codeHash(code),issuer.kind,issuer.name.slice(0,80),input.level,input.approvals,input.agents ?? null,INVITE_LIFETIME_MINUTES]);
-  return { inviteId: publicId("cin",result.rows[0]!.id),code,command: inviteCommand(origin,code),expiresAt: result.rows[0]!.expires_at.toISOString(),level: input.level,
-    approvals: input.approvals,agents: input.agents ?? null };
+    `INSERT INTO computer_invites(principal_id,code_hash,issued_by_kind,issued_by_name,setup_level,setup_approvals,setup_agents,setup_mac_app,expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now()+make_interval(mins => $9)) RETURNING id,expires_at`,
+    [principalId,codeHash(code),issuer.kind,issuer.name.slice(0,80),input.level,input.approvals,input.agents ?? null,input.macApp,INVITE_LIFETIME_MINUTES]);
+  return { inviteId: publicId("cin",result.rows[0]!.id),code,command: inviteCommand(origin,code,input.macApp),expiresAt: result.rows[0]!.expires_at.toISOString(),level: input.level,
+    approvals: input.approvals,agents: input.agents ?? null,macApp: input.macApp };
 }
 
 /**
@@ -72,16 +80,22 @@ export async function wakeAccountStreams(db: Pick<Database,"query">,principalId:
 
 export type RedeemError = "invalid_code" | "credential_limit_reached" | "client_name_taken";
 
-/** Redeems a code once: the new computer's own login, and how the owner wants it set up. */
+/**
+ * Redeems a code once: the new computer's own login, and how the owner wants it set up. A code made with Relo for Mac,
+ * redeemed with the installer's PKCE challenge, also returns a one-time sign-in code for the Mac app (the iPhone's
+ * browser sign-in code, mobile-sign-in.ts, issued for the account's owner): the app exchanges it with the verifier only
+ * it was handed, so it opens signed in. Its encryption keys still wait for a trusted device's approval.
+ */
 export async function redeemInvite(db: Database,input: RedeemInvite): Promise<
-  { ok: true; accessToken: string; credential: ReturnType<typeof credentialMetadata>; setup: { level: string; approvals: boolean; agents: string[] | null } }
+  { ok: true; accessToken: string; credential: ReturnType<typeof credentialMetadata>;
+    setup: { level: string; approvals: boolean; agents: string[] | null; macApp: boolean }; macAppSignInCode?: string }
   | { ok: false; error: RedeemError }
 > {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
     const found = await client.query<any>(
-      `SELECT id,principal_id,setup_level,setup_approvals,setup_agents FROM computer_invites
+      `SELECT id,principal_id,setup_level,setup_approvals,setup_agents,setup_mac_app FROM computer_invites
        WHERE code_hash=$1 AND redeemed_at IS NULL AND expires_at>now() FOR UPDATE`,[codeHash(input.code)]);
     const invite = found.rows[0];
     if (!invite) {
@@ -95,10 +109,22 @@ export async function redeemInvite(db: Database,input: RedeemInvite): Promise<
       return { ok: false,error: issued === "limit_reached" ? "credential_limit_reached" : "client_name_taken" };
     }
     await client.query("UPDATE computer_invites SET redeemed_at=now(),redeemed_login_id=$2 WHERE id=$1",[invite.id,issued.row.id]);
+    let macAppSignInCode: string | undefined;
+    if (invite.setup_mac_app && input.macAppChallenge) {
+      // The account's owner signs the Mac app in, as when they approve its browser sign-in.
+      const owner = await client.query<{ subject: string }>(
+        `SELECT subject FROM account_identities WHERE principal_id=$1 AND role='owner' AND disabled_at IS NULL AND approved_at IS NOT NULL
+         ORDER BY created_at LIMIT 1`,[invite.principal_id]);
+      if (owner.rows[0]) {
+        macAppSignInCode = await issueMobileSignInCode({ db: client as unknown as Database,principalId: invite.principal_id,
+          subject: owner.rows[0].subject,codeChallenge: input.macAppChallenge });
+      }
+    }
     await client.query("COMMIT");
     await wakeAccountStreams(client,invite.principal_id);
     return { ok: true,accessToken: issued.token,credential: credentialMetadata(issued.row),
-      setup: { level: invite.setup_level,approvals: invite.setup_approvals,agents: invite.setup_agents ?? null } };
+      setup: { level: invite.setup_level,approvals: invite.setup_approvals,agents: invite.setup_agents ?? null,macApp: invite.setup_mac_app },
+      ...(macAppSignInCode ? { macAppSignInCode } : {}) };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -107,35 +133,120 @@ export async function redeemInvite(db: Database,input: RedeemInvite): Promise<
   }
 }
 
-/** The CLI this server hands out (packed into the image at build: cli/manifest.json beside relo-cli.tgz), or null. */
+/**
+ * The CLI this server hands out, or null: the one in RELO_ARTIFACTS_DIR/cli when that holds a valid manifest (the deploy
+ * publishes there, so a release that changes only the CLI needs no new image), else the one packed into the image at build
+ * (cli/manifest.json beside relo-cli.tgz). Read on every call: a manifest replaced at runtime is picked up at once.
+ */
 export type BundledCli = { version: string; sha256: string; file: string };
-export function bundledCli(directory = new URL("../cli/",import.meta.url)): BundledCli | null {
+export function bundledCli(directory?: URL,artifacts = artifactsDirectory()): BundledCli | null {
+  if (!directory) return readCli(artifacts?.cli) ?? readCli(new URL("../cli/",import.meta.url));
+  return readCli(directory);
+}
+/** RELO_ARTIFACTS_DIR (an absolute path) as the `cli/` and `mac/` folders inside it, or null when unset. */
+function artifactsDirectory(): { cli: URL; mac: URL } | null {
+  const root = process.env.RELO_ARTIFACTS_DIR;
+  if (!root || !root.startsWith("/")) return null;
+  const base = pathToFileURL(root.endsWith("/") ? root : `${root}/`);
+  return { cli: new URL("cli/",base),mac: new URL("mac/",base) };
+}
+function readCli(directory: URL | undefined): BundledCli | null {
+  if (!directory) return null;
   try {
     const manifest = JSON.parse(readFileSync(new URL("manifest.json",directory),"utf8"));
     if (typeof manifest?.version !== "string" || !/^[0-9a-f]{64}$/.test(manifest?.sha256 ?? "")) return null;
-    return { version: manifest.version,sha256: manifest.sha256,file: new URL("relo-cli.tgz",directory).pathname };
+    const file = fileURLToPath(new URL("relo-cli.tgz",directory));
+    if (!existsSync(file)) return null;
+    return { version: manifest.version,sha256: manifest.sha256,file };
   } catch {
     return null;
   }
 }
 
 /**
- * The install script `curl -fsSL <origin>/install.sh | sh -s -- <code>` runs: Node 22 or newer (the one on PATH, or
+ * Relo for Mac (the notch app) this server hands out, or null: built, signed and zipped on the owner's Mac at deploy
+ * (scripts/release/build-mac-app.sh) and copied into the image as mac/relo-mac.zip beside its manifest. The app is GPL
+ * and is never part of the public image, so most servers have none and the install script says so.
+ */
+export type BundledMacApp = {
+  version: string; sha256: string; app: string; executable: string; file: string;
+  /** Sparkle's update fields (scripts/release/build-mac-app.sh): without an EdDSA signature there is no update feed. */
+  update?: { shortVersion: string; build: string; edSignature: string; length: number; minimumSystemVersion?: string };
+};
+export function bundledMacApp(directory?: URL,artifacts = artifactsDirectory()): BundledMacApp | null {
+  if (!directory) return readMacApp(artifacts?.mac) ?? readMacApp(new URL("../mac/",import.meta.url));
+  return readMacApp(directory);
+}
+function readMacApp(directory: URL | undefined): BundledMacApp | null {
+  if (!directory) return null;
+  try {
+    const manifest = JSON.parse(readFileSync(new URL("manifest.json",directory),"utf8"));
+    const name = /^[A-Za-z0-9 ._-]{1,60}$/;
+    if (typeof manifest?.version !== "string" || !/^[0-9A-Za-z.+-]{1,40}$/.test(manifest.version) || !/^[0-9a-f]{64}$/.test(manifest?.sha256 ?? "")
+      || !name.test(manifest?.app ?? "") || !String(manifest.app).endsWith(".app") || !name.test(manifest?.executable ?? "")) return null;
+    // A manifest without its zip is no Mac app: the install script then says so instead of a failed download.
+    const file = fileURLToPath(new URL("relo-mac.zip",directory));
+    if (!existsSync(file)) return null;
+    const update = typeof manifest.edSignature === "string" && /^[A-Za-z0-9+/=]{40,200}$/.test(manifest.edSignature)
+      && /^[0-9.]{1,20}$/.test(manifest.shortVersion ?? "") && /^[0-9]{1,9}$/.test(String(manifest.build ?? ""))
+      && Number.isSafeInteger(manifest.length) && manifest.length > 0
+      ? { shortVersion: manifest.shortVersion,build: String(manifest.build),edSignature: manifest.edSignature,length: manifest.length,
+        ...(/^[0-9.]{1,20}$/.test(manifest.minimumSystemVersion ?? "") ? { minimumSystemVersion: manifest.minimumSystemVersion } : {}) }
+      : undefined;
+    return { version: manifest.version,sha256: manifest.sha256,app: manifest.app,executable: manifest.executable,file,...(update ? { update } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Relo for Mac's Sparkle feed (apps/notch ReloUpdater): one item, the build this server hands out, signed with the
+ * deploy's EdDSA key. Installed apps compare its build number with their own and install it, automatically or after
+ * asking, as their owner chose. Null when the build carries no signature.
+ */
+export function macAppcast(origin: string,mac: BundledMacApp | null): string | null {
+  if (!mac?.update) return null;
+  const { shortVersion,build,edSignature,length,minimumSystemVersion } = mac.update;
+  return `<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Relo for Mac</title>
+    <item>
+      <title>Relo for Mac ${shortVersion}</title>
+      <sparkle:version>${build}</sparkle:version>
+      <sparkle:shortVersionString>${shortVersion}</sparkle:shortVersionString>
+${minimumSystemVersion ? `      <sparkle:minimumSystemVersion>${minimumSystemVersion}</sparkle:minimumSystemVersion>\n` : ""}      <enclosure url="${origin}/mac/relo-mac.zip" length="${length}" type="application/octet-stream" sparkle:edSignature="${edSignature}"/>
+    </item>
+  </channel>
+</rss>
+`;
+}
+
+/**
+ * The install script `curl -fsSL <origin>/install.sh | sh -s -- <code> [--mac-app]` runs: Node 22 or newer (the one on PATH, or
  * the official build from nodejs.org, checked against its SHASUMS256), this server's CLI checked against its digest
  * and unpacked under ~/.local/share/relo (the CLI has no dependencies), a `relo` launcher in ~/.local/bin that names
  * both by absolute path (services and hooks often run without the shell's PATH), then `relo auth join` with the code,
- * which signs in and runs relo setup as the code says. POSIX sh; nothing runs as root.
+ * which signs in and runs relo setup as the code says. With --mac-app on a Mac it also puts Relo for Mac in
+ * ~/Applications (checked against its digest) and has `relo auth join` open it signed in. POSIX sh; nothing runs as root.
  */
-export function installScript(origin: string,cli: BundledCli): string {
+export function installScript(origin: string,cli: BundledCli,mac: BundledMacApp | null = null): string {
   // Without a code (`curl -fsSL <origin>/install.sh | sh`) it installs the CLI only; relo auth login signs in.
   return `#!/bin/sh
 # Relo: add this computer to your account (generated by ${origin}).
 set -eu
+# Everything runs inside main, called on the last line: a download cut short never runs half the script.
+main() {
 ORIGIN='${origin}'
 VERSION='${cli.version}'
 CLI_SHA256='${cli.sha256}'
 NODE_MAJOR=22
-CODE="\${1:-}"
+MAC_VERSION='${mac?.version ?? ""}'
+MAC_SHA256='${mac?.sha256 ?? ""}'
+MAC_APP_NAME='${mac?.app ?? ""}'
+MAC_EXECUTABLE='${mac?.executable ?? ""}'
+CODE=""
+WANT_MAC=""
 HOME_DIR="\${HOME:?}"
 DATA="$HOME_DIR/.local/share/relo"
 BIN="$HOME_DIR/.local/bin"
@@ -144,6 +255,14 @@ say() { printf 'relo: %s\\n' "$*" >&2; }
 fail() { say "$*"; exit 1; }
 fetch() { if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; else wget -qO "$2" "$1"; fi; }
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+
+for ARG in "$@"; do
+  case "$ARG" in
+    --mac-app) WANT_MAC=1 ;;
+    -*) fail "unknown option $ARG" ;;
+    *) [ -z "$CODE" ] && CODE="$ARG" ;;
+  esac
+done
 
 mkdir -p "$DATA" "$BIN"
 WORK=$(mktemp -d)
@@ -186,21 +305,62 @@ chmod 755 "$BIN/relo"
 RELO=relo
 case ":$PATH:" in *":$BIN:"*) ;; *)
   RELO="$BIN/relo"
+  # Every startup file that exists gets the line; a new account has none, so the one for its shell is made.
+  FOUND=""
   for RC in "$HOME_DIR/.profile" "$HOME_DIR/.bashrc" "$HOME_DIR/.zshrc"; do
-    [ -f "$RC" ] && ! grep -q '.local/bin' "$RC" && printf '\\nexport PATH="$HOME/.local/bin:$PATH"\\n' >> "$RC"
+    [ -f "$RC" ] || continue
+    FOUND=1
+    grep -q '.local/bin' "$RC" || printf '\\nexport PATH="$HOME/.local/bin:$PATH"\\n' >> "$RC"
   done
+  if [ -z "$FOUND" ]; then
+    case "\${SHELL:-}" in */zsh) RC="$HOME_DIR/.zshrc" ;; */bash) RC="$HOME_DIR/.bashrc" ;; *) RC="$HOME_DIR/.profile" ;; esac
+    printf 'export PATH="$HOME/.local/bin:$PATH"\\n' >> "$RC"
+  fi
   say "added ~/.local/bin to PATH for new shells" ;;
 esac
 
+# Relo for Mac (--mac-app): the notch app, from this server, replacing an earlier copy (quit first).
+APP=""
+if [ -n "$WANT_MAC" ]; then
+  if [ "$(uname -s)" != Darwin ]; then
+    say "Relo for Mac runs on Macs; skipped here"
+  elif [ -z "$MAC_SHA256" ]; then
+    say "this server has no Relo for Mac to install; skipped"
+  else
+    say "installing Relo for Mac $MAC_VERSION from $ORIGIN"
+    fetch "$ORIGIN/mac/relo-mac.zip" "$WORK/relo-mac.zip"
+    [ "$(sha256 "$WORK/relo-mac.zip")" = "$MAC_SHA256" ] || fail "the Relo for Mac download did not match its checksum"
+    mkdir -p "$WORK/mac" && ditto -x -k "$WORK/relo-mac.zip" "$WORK/mac"
+    [ -d "$WORK/mac/$MAC_APP_NAME" ] || fail "the Relo for Mac download holds no $MAC_APP_NAME"
+    pkill -x "$MAC_EXECUTABLE" >/dev/null 2>&1 && sleep 1 || true
+    # Relo for Mac was called Relo Notch until 0.2: its old copy goes, so one Relo is left.
+    if [ "$MAC_APP_NAME" != "Relo Notch.app" ] && [ -d "$HOME_DIR/Applications/Relo Notch.app" ]; then
+      pkill -x "Relo Notch" >/dev/null 2>&1 && sleep 1 || true
+      rm -rf "$HOME_DIR/Applications/Relo Notch.app"
+    fi
+    mkdir -p "$HOME_DIR/Applications"
+    APP="$HOME_DIR/Applications/$MAC_APP_NAME"
+    rm -rf "$APP"
+    mv "$WORK/mac/$MAC_APP_NAME" "$APP"
+  fi
+fi
+
 if [ -z "$CODE" ]; then
+  [ -z "$APP" ] || open "$APP" --args --relo-origin "$ORIGIN"
   # No code: the CLI only. Sign in with the link and QR code relo auth login shows, then set up the agents.
   say "installed. Next: $RELO auth login --api-url $ORIGIN, then $RELO setup"
   exit 0
 fi
 NAME=$(hostname 2>/dev/null || uname -n)
 # Signs in with the code and runs relo setup the way the owner chose when making it.
-"$BIN/relo" auth join "$CODE" --api-url "$ORIGIN" --client-name "$NAME"
+if [ -n "$APP" ]; then
+  "$BIN/relo" auth join "$CODE" --api-url "$ORIGIN" --client-name "$NAME" --mac-app "$APP"
+else
+  "$BIN/relo" auth join "$CODE" --api-url "$ORIGIN" --client-name "$NAME"
+fi
 say "done: this computer reports to Relo. Restart its agents so they load it."
+}
+main "$@"
 `;
 }
 

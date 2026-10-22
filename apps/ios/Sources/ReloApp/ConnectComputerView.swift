@@ -185,6 +185,7 @@ struct ConnectComputerView: View {
     @ViewBuilder private var optionRows: some View {
         @Bindable var setup = setup
         Toggle("Ask permission on my iPhone too", isOn: $setup.approvals)
+        Toggle("On a Mac, also install Relo for Mac", isOn: $setup.macApp)
         Toggle("Every agent it finds", isOn: $setup.allAgents)
         if !setup.allAgents {
             ForEach(ReloComputerSetup.agentIDs, id: \.self) { id in

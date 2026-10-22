@@ -5,7 +5,7 @@ import {
   type DashboardAuthBootstrap,
 } from "./dashboard-auth.js";
 
-function application(options: { claimed?: boolean; authenticated?: boolean } = {}) {
+function application(options: { claimed?: boolean; authenticated?: boolean; landingFilmUrl?: string } = {}) {
   const app = new Hono();
   const handler = createDashboardAuthHandler({
       db: {
@@ -16,6 +16,7 @@ function application(options: { claimed?: boolean; authenticated?: boolean } = {
           };
         },
       } as any,
+      landingFilmUrl: options.landingFilmUrl,
       getAccount: async () => (options.authenticated ? {} : null),
       renderDocument: async (bootstrap) => JSON.stringify(bootstrap),
     });
@@ -35,6 +36,23 @@ describe("React dashboard authentication handler", () => {
     const response = await application().request("/");
     const result = JSON.parse(await response.text()) as DashboardAuthBootstrap;
     expect(result).toMatchObject({ view: "landing", route: { path: "/", nextPath: "/dashboard" } });
+  });
+
+  test("puts the configured launch film on the landing and allows only its origin for media", async () => {
+    const app = application({ landingFilmUrl: "https://media.example.test/relo/film/v3/" });
+    const landing = await app.request("/");
+    expect(JSON.parse(await landing.text())).toMatchObject({ view: "landing", film: { base: "https://media.example.test/relo/film/v3" } });
+    const policy = landing.headers.get("content-security-policy") ?? "";
+    expect(policy).toContain("media-src 'self' https://media.example.test;");
+    expect(policy).toContain("img-src 'self' data: https://media.example.test;");
+    // The sign-in form shows no film and keeps the shared policy.
+    const form = await app.request("/sign-in");
+    expect(JSON.parse(await form.text())).not.toHaveProperty("film");
+    expect(form.headers.get("content-security-policy")).not.toContain("media-src");
+    // Without the setting the landing has no film and no media origin.
+    const plain = await application().request("/");
+    expect(JSON.parse(await plain.text())).not.toHaveProperty("film");
+    expect(plain.headers.get("content-security-policy")).not.toContain("media.example.test");
   });
 
   test("goes straight to the form for a return path or an unclaimed server", async () => {

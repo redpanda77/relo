@@ -1,6 +1,7 @@
 import { choiceOptionSchema } from "./presentation.js";
 import { z } from "zod";
 import { safeContextSchema } from "./context.js";
+import { planDigestRoundSchema,planDigestStepSchema } from "./works.js";
 
 export * from "./presentation.js";
 export * from "./delivery-evidence.js";
@@ -637,20 +638,9 @@ export const inboxHistorySummarySchema = inboxItemSchema.omit({
     startedAt: isoTimestampSchema, endedAt: isoTimestampSchema.nullable(),
     /** The work's whole plan (skipped steps omitted); the card carries only a window of a long one.
      *  Labels are null for sealed or private work (the phone opens them by step id). */
-    plan: z.array(z.object({
-      id: z.string().regex(/^s[1-9][0-9]{0,2}$/), state: z.enum(["open","current","done","skipped"]),
-      label: z.string().refine(value => Array.from(value).length <= 120).nullable(),
-      /** Nested and multi-round plans (the working layer): the parent step, the round (absent means 1), the detail text. */
-      parent: z.string().regex(/^s[1-9][0-9]{0,2}$/).optional(),
-      round: z.number().int().positive().optional(),
-      detail: z.string().max(200).optional(),
-    }).strict()).max(120).nullable().optional(),
+    plan: z.array(planDigestStepSchema).max(120).nullable().optional(),
     /** The plan's rounds (absent without them); title and outcome are absent for sealed or private work. */
-    rounds: z.array(z.object({
-      n: z.number().int().positive(), state: z.enum(["open","closed"]),
-      title: z.string().max(80).optional(), outcome: z.string().max(200).optional(),
-      openedAt: z.string().optional(), closedAt: z.string().optional(),
-    }).strict()).max(60).nullable().optional(),
+    rounds: z.array(planDigestRoundSchema).max(60).nullable().optional(),
     /** The closed last round's outcome of a readable open work (the "Your turn" text). */
     roundOutcome: z.string().max(200).nullable().optional(),
   }).strict().nullable().optional(),

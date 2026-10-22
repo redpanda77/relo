@@ -5,7 +5,7 @@ import { detectHarness } from "../harness/catalog.mjs";
 import { UsageError } from "../shared/errors.mjs";
 import { detectAccount } from "../shared/identity.mjs";
 import { result } from "../shared/outcome.mjs";
-import { repositoryName } from "../shared/repo.mjs";
+import { folderName, namedPlace } from "../shared/repo.mjs";
 import { resolveSettings } from "../shared/settings.mjs";
 import { stateRoot } from "../work/state-file.mjs";
 
@@ -32,11 +32,13 @@ export async function settingInputs(dependencies) {
     ...(stored?.computerName ? { computer: stored.computerName } : {}),
     ...(account?.via === "nickname" && account.account ? { account: account.account } : {}),
   };
+  const place = tried(() => namedPlace(cwd, { names: dependencies.loadProjects?.() ?? {} }));
+  if (place?.via === "config") config.project = place.name;
   const detected = {
     ...(account?.via === "directory" && account.account ? { account: account.account } : {}),
     ...Object.fromEntries(Object.entries({
       computer: tried(() => dependencies.computerName?.()),
-      project: tried(() => repositoryName(cwd)),
+      project: place?.via === "git" ? place.name : tried(() => folderName(cwd, home)),
       source: tried(() => detectHarness(env)?.label),
     }).filter(([, value]) => value !== undefined)),
   };

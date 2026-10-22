@@ -51,7 +51,7 @@ function DashboardRoutes({ bootstrap, service }: DashboardAppProps) {
     return (
       <LandingBoundary>
         <Suspense fallback={<main id="main-content" className="canvas min-h-[100dvh]" aria-busy="true" />}>
-          <LandingPage />
+          <LandingPage filmBase={bootstrap.film?.base} />
         </Suspense>
       </LandingBoundary>
     )

@@ -1,5 +1,6 @@
 import * as React from "react"
 
+import { playCue } from "@/lib/sound"
 import type { InboxService } from "@/services/inbox-service"
 
 export const defaultInboxActionReconciliation = {
@@ -36,6 +37,7 @@ export function useInboxAction(
         await service.decideApproval(code, decision)
         succeeded = true
         reconciliationRequested.current = true
+        playCue("sent")
       } catch (cause) {
         const message =
           cause instanceof Error

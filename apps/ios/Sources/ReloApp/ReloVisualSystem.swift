@@ -92,3 +92,20 @@ extension View {
     /// The one custom surface: frosted glass with a lit edge, optionally washed with a state color.
     func reloCard(tint: Color? = nil) -> some View { modifier(ReloCardSurface(tint: tint)) }
 }
+
+/// Relo's one motion vocabulary (ADR 0013, section 5): the same values as the Dashboard's tokens and Relo for Mac's.
+/// No literal spring or duration outside it, so the same gesture moves the same way everywhere. Reduce Motion
+/// swaps every spring for a short fade at the call site (`reduceMotion ? nil : ReloMotion.snappy`).
+enum ReloMotion {
+    /// Durations, in seconds.
+    static let micro = 0.12, fast = 0.18, base = 0.26, slow = 0.42
+
+    /// Touch release (scale 0.97).
+    static let press = Animation.spring(response: 0.18, dampingFraction: 1.0)
+    /// Things that move: cards, indicators, sheets.
+    static let snappy = Animation.spring(response: 0.28, dampingFraction: 0.86)
+    /// Larger travel and settling away.
+    static let smooth = Animation.spring(response: 0.35, dampingFraction: 1.0)
+    /// Success only (a check, linked), never lists.
+    static let bouncy = Animation.spring(response: 0.42, dampingFraction: 0.72)
+}

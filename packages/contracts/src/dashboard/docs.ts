@@ -36,6 +36,8 @@ export const docsSiteBootstrapSchema = z.object({
   sections: z.array(docsSectionSchema),
   /** Null: no page at this path (the docs 404, with search). */
   page: docsPageSchema.nullable(),
+  /** The onboarding film above Get started: its files' base URL (the server's RELO_ONBOARDING_FILM_URL). */
+  film: z.object({ base: z.url() }).optional(),
 })
 
 export type DocsSiteBootstrap = z.infer<typeof docsSiteBootstrapSchema>

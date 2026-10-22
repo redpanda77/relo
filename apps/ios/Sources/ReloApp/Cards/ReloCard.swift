@@ -38,10 +38,14 @@ struct CardProgressSpec: Equatable {
 /// light running through what is filled.
 struct CardProgress: View {
     var spec: CardProgressSpec
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         CardProgressBar<LiveSweep>(shape: spec.shape, color: spec.color, height: ReloLayout.barHeight,
                                    sweep: { LiveSweep(active: spec.shimmer) })
+        // A step finishing fills its segment and the next one lights, on a spring with no bounce.
+        .animation(reduceMotion ? nil : .smooth(duration: 0.6), value: spec.shape)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: spec.color)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spec.spoken)
         .accessibilityValue(spec.steps == nil
@@ -98,10 +102,12 @@ struct LiveSweep: View {
     var body: some View {
         if active && !reduceMotion {
             // The shared clock: paused off screen, in Low Power Mode and when the device is hot.
-            ReloMotionClock(framesPerSecond: 24, still: 0) { time in
+            ReloMotionClock(framesPerSecond: 30, still: 0) { time in
                 let cycle = 2.8
-                // Travels from just before the left edge to just past the right, then rests.
-                let phase = min(time.truncatingRemainder(dividingBy: cycle) / (cycle * 0.7), 1) * 1.6 - 0.3
+                // Travels from just before the left edge to just past the right, then rests. Eased in and
+                // out (smoothstep), so the light gathers and settles instead of sliding at one speed.
+                let t = min(time.truncatingRemainder(dividingBy: cycle) / (cycle * 0.7), 1)
+                let phase = t * t * (3 - 2 * t) * 1.6 - 0.3
                 LinearGradient(stops: [.init(color: .clear, location: 0),
                                        .init(color: .white.opacity(0.55), location: 0.5),
                                        .init(color: .clear, location: 1)],
@@ -111,6 +117,8 @@ struct LiveSweep: View {
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            // Work that starts or stops moving fades its light in or out, never mid-sweep.
+            .transition(.opacity.animation(.easeInOut(duration: 0.5)))
         }
     }
 }

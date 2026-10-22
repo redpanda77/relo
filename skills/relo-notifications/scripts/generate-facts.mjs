@@ -4,8 +4,8 @@
 // markers `<!--f:ID-->…<!--/f-->` (or `<!--f:ID short-->`) hold one fact; `<!--generated:exit-codes-->` … 
 // `<!--/generated-->` holds the exit table. `node scripts/generate-facts.mjs` rewrites them; `--check` fails when
 // one is stale (validate-skill.mjs runs it).
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { factText } from "../../../packages/cli/src/shared/facts.mjs";
 import { EXIT_CODES } from "../../../packages/cli/src/shared/errors.mjs";
@@ -26,7 +26,7 @@ export function staleFiles() {
   return FILES.filter((file) => { const text = readFileSync(join(SKILL, file), "utf8"); return generated(text) !== text; });
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   if (process.argv.includes("--check")) {
     const stale = staleFiles();
     if (stale.length) { console.error(`Stale generated facts in ${stale.join(", ")}: node scripts/generate-facts.mjs`); process.exit(1); }

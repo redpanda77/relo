@@ -7,6 +7,14 @@ public struct HistoryRow: Equatable, Identifiable, Sendable {
         case waitingForYou, answered(String), unanswered
         case message
 
+        /// Settled: it is over or needs nothing more. Running and waiting-for-you work belongs to Now, never History.
+        public var isSettled: Bool {
+            switch self {
+            case .running, .waitingForYou: false
+            default: true
+            }
+        }
+
         public var label: String? {
             switch self {
             case .running: "Running"

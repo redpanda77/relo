@@ -26,6 +26,8 @@ const requestSchema = z.object({
   code_challenge_method: z.literal("S256"),
   redirect_uri: z.literal(mobileSignInRedirectUri),
   state: stateSchema,
+  /** Which Relo app is asking ("mac" for Relo for Mac); the page names it. Absent from older apps: the iPhone. */
+  device: z.enum(["iphone","mac"]).optional(),
 });
 const tokenSchema = z.object({
   code: z.string().regex(/^relo_signin_[A-Za-z0-9_-]{43}$/),
@@ -47,26 +49,29 @@ function callback(params: Record<string, string>): string {
   return `${mobileSignInRedirectUri}?${new URLSearchParams(params).toString()}`;
 }
 
-function page(title: string, body: string, status = "Sign in", warn = false): string {
+const deviceName = (device: SignInRequest["device"]) => device === "mac" ? "Mac" : "iPhone"
+
+function page(title: string, body: string, status = "Sign in", warn = false, device: SignInRequest["device"] = undefined): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="same-origin"><meta name="theme-color" content="#08080d"><title>${escapeHtml(title)} · Relo</title><style>${publicPageStyle}</style></head>
-<body>${publicPageTopBar}<header class="hero"><span class="orb" aria-hidden="true"></span><span class="mono">Relo · iPhone</span><span class="mono status${warn ? " warn" : ""}">${escapeHtml(status)}</span></header>
+<body>${publicPageTopBar}<header class="hero"><span class="orb" aria-hidden="true"></span><span class="mono">Relo · ${deviceName(device)}</span><span class="mono status${warn ? " warn" : ""}">${escapeHtml(status)}</span></header>
 <main class="card">${body}</main></body></html>`;
 }
 
 function approvalPage(request: SignInRequest, account: { name: string; email: string }, origin: string): string {
-  const hidden = Object.entries(request)
+  const hidden = Object.entries(request).filter((entry): entry is [string, string] => entry[1] !== undefined)
     .map(([name, value]) => `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`).join("");
-  return page("Sign in on your iPhone", `<h1>Sign in to Relo on your iPhone?</h1>
+  const name = deviceName(request.device)
+  return page(`Sign in on your ${name}`, `<h1>Sign in to Relo on your ${name}?</h1>
 <p>The Relo app asked to sign in to this server. Approve only if you just tapped Sign in in the app.</p>
 <dl><div><dt class="mono">Account</dt><dd>${escapeHtml(account.name)} · ${escapeHtml(account.email)}</dd></div><div><dt class="mono">Server</dt><dd>${escapeHtml(origin)}</dd></div></dl>
 <form method="post" action="/mobile/sign-in">${hidden}
 <div class="actions"><button class="deny" name="decision" value="deny" type="submit">Cancel</button>
-<button class="approve" name="decision" value="approve" type="submit">Sign in</button></div></form>`);
+<button class="approve" name="decision" value="approve" type="submit">Sign in</button></div></form>`, "Sign in", false, request.device);
 }
 
 const invalidPage = page("Sign-in link not valid", `<h1>This sign-in link is not valid</h1>
-<p>Return to the Relo app on your iPhone and tap Sign in again.</p>`, "Not valid", true);
+<p>Return to the Relo app and choose Sign in again.</p>`, "Not valid", true);
 
 function securePage(context: any, html: string, status = 200): Response {
   // No script runs on these pages; the form posts only to this server.

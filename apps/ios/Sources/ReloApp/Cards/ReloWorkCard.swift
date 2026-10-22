@@ -23,12 +23,26 @@ struct ReloWorkCard<Extra: View>: View {
     var computerIcon: ComputerIcon? = nil
     var surface: ReloCardPlacement = .card
     @ViewBuilder var extra: () -> Extra
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// What changes when the work moves on: a change to any of it settles the card on one spring, so a new
+    /// status, step or badge never cuts the card's height or text.
+    private struct Motion: Equatable {
+        var title: String
+        var summary: String?
+        var steps: NowItem.Steps?
+        var progress: Double?
+        var caption: String?
+        var state: ReloStateStyle?
+        var running: Bool
+    }
 
     var body: some View {
         ReloCard(tint: nil, surface: surface) {
             // Header: where it runs, how it stands. Content: title, status, progress. Footer: computer and
             // facts, the time. Each field has one place.
-            CardHeader(origin: origin, corner: state.map { .badge($0) } ?? .none)
+            CardHeader(origin: origin, corner: state.map { .badge($0) } ?? .none,
+                       live: shimmer && state?.symbol == ReloStateStyle.running.symbol)
             CardTitle(title)
             if let summary, !summary.isEmpty { CardStatusLine(summary) }
             if let spec = CardProgressSpec(steps: steps, fraction: progress, color: color, shimmer: shimmer) {
@@ -37,6 +51,9 @@ struct ReloWorkCard<Extra: View>: View {
             extra()
             CardFooter(meta: Text.cardMeta(metaParts), trailing: trailing)
         }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.4),
+                   value: Motion(title: title, summary: summary, steps: steps, progress: progress,
+                                 caption: progressCaption, state: state, running: runningSince != nil))
     }
 
     /// The footer's trailing time: the live timer while it runs, else the clock time.

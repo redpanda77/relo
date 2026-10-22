@@ -269,6 +269,8 @@ export function compactData(command, data) {
     case "config":
       return { settings: (Array.isArray(data?.settings) ? data.settings : []).map((row) => present({ key: row.key, value: row.value, source: row.source })) };
     case "account":
+    case "project":
+    case "voice":
       return { ...data };
     case "update":
       return present({ ...data });

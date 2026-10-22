@@ -62,7 +62,7 @@ describe("bounded current change signals",()=>{
     expect(decode.decode((await reader.read()).value)).toContain("event: current");
     const card=`act_${randomUUID()}`;
     hub.receive({processId:0,channel:"x",payload:JSON.stringify({principalId,subjectId:null})});
-    await new Promise(resolve=>setTimeout(resolve,20));
+    // Back to back, not "20 ms apart": a real gap would make this depend on the machine being quicker than the window.
     hub.receive({processId:0,channel:"x",payload:JSON.stringify({principalId,subjectId:card})});
     const frame=decode.decode((await reader.read()).value);
     expect(frame).toContain("event: current");

@@ -12,6 +12,7 @@ import { clearPendingHandoff, readPendingHandoff, sessionHash, writePendingHando
 import { envSetting } from "../shared/settings.mjs";
 import { T_RETIRE_MS } from "../work/state-file.mjs";
 import { SEALED, workCardText, workSealer } from "../crypto/seal-work.mjs";
+import { checkSpoken, outcomeGist, saidGist, spokenLine, spokenName as nameAloud, voiceNote, voiceSetting } from "../work/spoken.mjs";
 import { readable, sealedStart, sealedUpdate } from "../work/sealed-form.mjs";
 import { loadSelfKey, restoredPlan, restoreFromSelfCopy, selfCopyText } from "../crypto/self-copy.mjs";
 import { newIdempotencyKey, splitWorks, WORK_ROUTES, worksClient } from "../work/works-client.mjs";
@@ -112,7 +113,7 @@ export function withLocalLabels(work, local) {
   // The waiting reason is text too: the server holds {reason: null, since} for a sealed work, this computer the words.
   const localReason = local.waiting && typeof local.waiting === "object" ? local.waiting.reason : local.waiting;
   const waiting = work.waiting && typeof work.waiting === "object" && work.waiting.reason == null && localReason ? { ...work.waiting, reason: localReason } : work.waiting;
-  return { ...work, goal: work.goal ?? local.goal, status: work.status ?? local.status ?? null, outcome: work.outcome ?? local.outcome ?? null, waiting, plan: work.plan ? restoredPlan(work.plan, selfCopyText(local)) : work.plan };
+  return { ...work, goal: work.goal ?? local.goal, ...(work.spokenName ?? local.spokenName ? { spokenName: work.spokenName ?? local.spokenName } : {}), status: work.status ?? local.status ?? null, outcome: work.outcome ?? local.outcome ?? null, waiting, plan: work.plan ? restoredPlan(work.plan, selfCopyText(local)) : work.plan };
 }
 
 /**
@@ -223,6 +224,18 @@ export async function runAgentWork(command, verb) {
   const sealer = () => (sealerPromise ??= workSealer({ client, config: command.config, dependencies, notes: sealNotes }));
   /** A sealed work is always sealed, a readable one never; a work not on the server yet seals when it can. */
   const sealMode = (work) => (work?.queued ? "auto" : work?.sealed ? "always" : "never");
+  /** A spoken line rides the sealed card only; a readable work has none, and says so instead of dropping it. */
+  const unsentSpoken = (spoken, work) => (spoken && sealMode(work) === "never" ? ["--say was not sent: this work is readable, and the spoken line travels only inside the end-to-end encrypted card"] : []);
+  /** The whole line Relo for Mac says for this deliver or finish (ADR 0015); a readable work has no sealed gist, so the frame alone. */
+  // ADR 0015 revision 1: how much Relo for Mac may say of this work (RELO_VOICE, this project's setting, relo voice, verbose).
+  const voice = voiceSetting(dependencies);
+  /** The card's sealed text, with the voice level; at off it carries no spoken gist. */
+  const cardText = (work, extra = {}) => workCardText({ ...work, voice: voice.level }, voice.level === "off" ? { ...extra, spoken: undefined } : extra);
+  /** The whole line Relo for Mac says for this deliver or finish; a readable work has no sealed gist, so the frame alone. */
+  const macSays = (kind, work, spoken) => (voice.level === "off" ? "nothing (voice is off here)"
+    : `"${spokenLine(kind, { goal: work.goal, name: work.spokenName, gist: sealMode(work) === "never" || voice.level === "brief" ? null : spoken })}"`);
+  /** A line cut from the outcome: ask for one written for the ear next time. */
+  const sayNudge = (said) => (said === undefined && ["full", "verbose"].includes(voice.level) ? ["the line above was cut from your outcome; write it for the ear next time: --say \"<what happened>\""] : []);
   const dryRun = Boolean(options["dry-run"]);
   if (!VERBS.includes(verb)) {
     if (verb === "heartbeat") guardWorkFlags({ verb, options, positionals: [], argv, caller: dependencies.caller, state: "nothing open" });
@@ -264,7 +277,7 @@ export async function runAgentWork(command, verb) {
     if (ctx.persist) await writeSession(ctx.caller, dependencies, { ...(ctx.file ?? {}), open: ctx.file?.open ?? null, parked: ctx.file?.parked ?? [], pendingStart: { digest, key, at: now.toISOString() } });
     const payload = await lane.write({
       route: WORK_ROUTES.start(), key, seal: sealMode(open), readable: body, sealedForm: sealedStart(body, opened.tree),
-      opaque: body.context, withContext: true, named: body.context, card: workCardText(next), copy: selfCopyText(next),
+      opaque: body.context, withContext: true, named: body.context, card: cardText(next), copy: selfCopyText(next),
     });
     const response = payload ? view(payload, next) : { work: next, parked: existing.parked, disposition: "round_opened" };
     const work = response.work ?? next;
@@ -335,6 +348,7 @@ export async function runAgentWork(command, verb) {
     }
     const goal = followsFinished ? followsFinished : options.goal === undefined && existing?.open ? existing.open.goal : filtered(() => checkText("goal", options.goal, { flag: "--goal" }), localState, 'relo work start --goal "…"');
     const status = options.status === undefined ? undefined : filtered(() => checkText("status", options.status, { goal }), localState, textNext("relo work start", "--status", options.status, FACTS.work.statusMax, `relo work start --goal "${goal}" --status "…"`));
+    const spokenName = options["spoken-name"] === undefined ? undefined : filtered(() => checkSpoken("name", checkText("name", options["spoken-name"], { flag: "--spoken-name" }), "--spoken-name"), localState, `relo work start --goal "${goal}" --spoken-name "Notch redesign"`);
     const entries = options.plan === undefined ? undefined : planEntries(options.plan, localState, `relo work start --goal "${goal}" --plan "…"`);
     const labels = entries ? entryLabels(entries) : undefined;
     const splitNotes = labels ? splitWarnings(labels) : [];
@@ -361,7 +375,7 @@ export async function runAgentWork(command, verb) {
         notes.push(`open work is "${open.goal}". You passed "${goal}". Nothing changed.`);
         notes.push(`same goal → relo work update --goal "${goal}"; new goal → relo work start --new --goal "${goal}"`);
       }
-      for (const flag of ["plan", "progress", "status"]) if (options[flag] !== undefined) notes.push(`--${flag} was ignored on a continuing start; to revise: relo work update --${flag} "…"`);
+      for (const flag of ["plan", "progress", "status", "spoken-name"]) if (options[flag] !== undefined) notes.push(`--${flag} was ignored on a continuing start; to revise: relo work update --${flag} "…"`);
       if (wantsRound) notes.push(`--round was ignored: round ${lastRound(open.plan).n} is still open; deliver it first (relo work deliver --outcome "…"), then start --round`);
       const echo = echoOf({ work: open, parked: existing.parked, disposition: "continuing", notes, now });
       return result(echo, { disposition: "continuing", work: open, parked: existing.parked });
@@ -369,9 +383,11 @@ export async function runAgentWork(command, verb) {
     const { plan, tree } = startPlan(entries, labels ? progress : undefined, localState);
     const body = { goal: readable(goal), ...(status ? { status: readable(status) } : {}), ...(plan ? { plan: { op: "set", steps: wireEntries(tree) } } : {}), ...(progress ? { progress } : {}), ...(options.new ? { new: true } : {}), context: await context(dependencies) };
     const named = body.context.threadName;
-    const notes = [...drainNotes(drained), ...(options.new && !open ? ["--new had nothing to park"] : []), ...(followsFinished ? [`"${goal}" was finished, so this follow-up starts a new card for it`] : wantsRound ? ["--round was ignored: there was no open goal to continue"] : []), ...splitNotes];
+    // ADR 0015: without a spoken name Relo for Mac calls the work by the goal's first words; say which, so the agent can do better.
+    const nameNote = spokenName || voice.level === "off" ? [] : [`Relo for Mac calls this work "${nameAloud(goal)}" aloud; a better name: relo work update --spoken-name "<2 to 4 words>"`];
+    const notes = [...drainNotes(drained), voiceNote(voice), ...nameNote, ...(options.new && !open ? ["--new had nothing to park"] : []), ...(followsFinished ? [`"${goal}" was finished, so this follow-up starts a new card for it`] : wantsRound ? ["--round was ignored: there was no open goal to continue"] : []), ...splitNotes];
     if (dryRun) {
-      const work = { id: "wrk_00000000", goal, status, plan, progress: plan ? undefined : progress, lifecycle: "open" };
+      const work = { id: "wrk_00000000", goal, ...(spokenName ? { spokenName } : {}), status, plan, progress: plan ? undefined : progress, lifecycle: "open" };
       return result(echoOf({ work, disposition: "started", notes, dryRun: true, now }), { disposition: "started", work });
     }
     const digest = createHash("sha256").update(JSON.stringify([goal, labels ?? null, progress ?? null])).digest("hex");
@@ -384,13 +400,13 @@ export async function runAgentWork(command, verb) {
       route: WORK_ROUTES.start(), key, seal: "auto", readable: body,
       sealedForm: sealedStart(body, tree ?? []),
       opaque: body.context, withContext: true, named: body.context,
-      card: workCardText({ goal, status, plan }),
-      copy: selfCopyText({ goal, status, plan }),
+      card: cardText({ goal, spokenName, status, plan }),
+      copy: selfCopyText({ goal, spokenName, status, plan }),
     });
     if (named) ctx.sessionName = named;
     if (!payload) {
       // Queued: the local copy is the working copy until the server has it.
-      const work = { id: QUEUED_ID, queued: true, version: 0, goal, status: status ?? null, plan, progress: plan ? null : progress ?? null, lifecycle: "open" };
+      const work = { id: QUEUED_ID, queued: true, version: 0, goal, ...(spokenName ? { spokenName } : {}), status: status ?? null, plan, progress: plan ? null : progress ?? null, lifecycle: "open" };
       const parked = open ? [{ ...open, lifecycle: "paused", pausedReason: "parked" }, ...existing.parked] : existing.parked;
       if (open) notes.push(`parks ${shortId(open.id)} "${open.goal}" once sent`);
       const disposition = open ? "switched" : "started";
@@ -400,7 +416,7 @@ export async function runAgentWork(command, verb) {
     }
     const response = view(payload, { id: undefined });
     let work = response.work;
-    if (work) work = withLocalLabels(work, { id: work.id, goal, status, plan });
+    if (work) work = withLocalLabels(work, { id: work.id, goal, spokenName, status, plan });
     if (open && response.disposition === "switched") notes.push(`parked ${shortId(open.id)} "${open.goal}"; its card left the Lock Screen.`);
     const handle = handleOf(ctx, work);
     const echo = echoOf({ work, parked: response.parked, disposition: response.disposition ?? "started", notes, handle, now, pendingRefusal: undefined });
@@ -460,6 +476,10 @@ export async function runAgentWork(command, verb) {
     if (options.failed && options.dropped) throw new WorkRefusal("REFUSED_CONTRADICTION", { what: "--failed and --dropped contradict each other", state: sline, next: 'relo work finish --failed --outcome "…"' });
     const command = `relo work finish${options.failed ? " --failed" : options.dropped ? " --dropped" : ""}`;
     const outcome = filtered(() => checkText("outcome", options.outcome, { flag: "--outcome" }), sline, textNext(command, "--outcome", options.outcome, FACTS.work.outcomeMax, 'relo work finish --outcome "0.17 built and tested"'));
+    const urgent = options.failed === true;
+    const said = options.say === undefined ? undefined : filtered(() => checkSpoken("spoken", checkText("spoken", options.say, { flag: "--say" }), "--say", { urgent }), sline, `${command} --outcome "…" --say "…"`);
+    // ADR 0015: the gist Relo for Mac says after "<Kind>: <name>.", the agent's --say or the outcome shortened.
+    const spoken = said === undefined ? outcomeGist(outcome, { urgent }) : saidGist(said);
     const ref = ctx.handle ? undefined : options.work;
     let target = state.open;
     if (ref) {
@@ -481,7 +501,7 @@ export async function runAgentWork(command, verb) {
       payload = await lane.write({
         route: WORK_ROUTES.finish(routeId(target)), key: newIdempotencyKey(), seal: sealMode(target),
         readable: { result: resultKind, outcome: readable(outcome) }, sealedForm: { result: resultKind, outcome: SEALED },
-        named: await workContext(ctx, dependencies), card: workCardText({ ...target, plan }, { status: outcome }),
+        named: await workContext(ctx, dependencies), card: cardText({ ...target, plan }, { status: outcome, spoken }),
         outcomeNotice: { title: target.goal, summary: outcome },
       });
     } catch (error) {
@@ -492,7 +512,8 @@ export async function runAgentWork(command, verb) {
     const work = response.work ? { ...response.work, status: null } : finished;
     const remaining = target === state.open ? null : state.open;
     const parked = response.parked ?? state.parked.filter((p) => p.id !== target.id);
-    const echo = renderEcho({ work: { ...work, result: work.result ?? resultKind, outcome: work.outcome ?? outcome }, parked, notes: drainNotes(drained), queued: !payload, now });
+    const says = resultKind === "dropped" ? undefined : macSays(resultKind, target, spoken);
+    const echo = renderEcho({ work: { ...work, result: work.result ?? resultKind, outcome: work.outcome ?? outcome }, parked, notes: [...drainNotes(drained), ...unsentSpoken(said, target), ...(says ? sayNudge(said) : [])], queued: !payload, now, saysLine: says });
     await save(ctx, dependencies, { open: remaining, parked, echo, pendingRefusal: null, finishedGoal: remaining ? undefined : target.goal ?? undefined });
     return result(echo, { disposition: "finished", work, parked, queued: !payload });
   });
@@ -508,6 +529,8 @@ export async function runAgentWork(command, verb) {
       throw new WorkRefusal("REFUSED_ALREADY_DELIVERED", { what: `round ${round.n} is already delivered${round.outcome ? ` ("${round.outcome}")` : ""}`, state: sline, next: 'relo work start --round "<the request in a few words>" --plan "…"  |  the goal is done: relo work finish --outcome "…"' });
     }
     const outcome = filtered(() => checkText("outcome", options.outcome, { flag: "--outcome" }), sline, textNext("relo work deliver", "--outcome", options.outcome, FACTS.work.outcomeMax, 'relo work deliver --outcome "0.17 built and tested"'));
+    const said = options.say === undefined ? undefined : filtered(() => checkSpoken("spoken", checkText("spoken", options.say, { flag: "--say" }), "--say"), sline, 'relo work deliver --outcome "…" --say "…"');
+    const spoken = said === undefined ? outcomeGist(outcome) : saidGist(said);
     const dropRest = options["drop-rest"] === true;
     const { plan, notes: dropNotes } = deliverPlan(open.plan, outcome, { dropRest, state: sline });
     const delivered = { ...open, plan, status: null, waiting: null };
@@ -515,13 +538,13 @@ export async function runAgentWork(command, verb) {
     const payload = await lane.write({
       route: WORK_ROUTES.deliver(routeId(open)), key: newIdempotencyKey(), seal: sealMode(open),
       readable: { outcome: readable(outcome), ...(dropRest ? { dropRest: true } : {}) }, sealedForm: { outcome: SEALED, ...(dropRest ? { dropRest: true } : {}) },
-      named: await workContext(ctx, dependencies), card: workCardText(delivered, { status: outcome }), copy: selfCopyText(delivered),
+      named: await workContext(ctx, dependencies), card: cardText(delivered, { status: outcome, spoken }), copy: selfCopyText(delivered),
       outcomeNotice: { title: open.goal, summary: outcome },
     });
     const response = payload ? view(payload, delivered) : { work: delivered, parked: state.parked };
     const work = response.work ? { ...response.work, status: null } : delivered;
     const parked = response.parked ?? state.parked;
-    const echo = renderEcho({ work, parked, disposition: "delivered", notes: [...drainNotes(drained), ...dropNotes], handle: handleOf(ctx, work), queued: !payload, now });
+    const echo = renderEcho({ work, parked, disposition: "delivered", notes: [...drainNotes(drained), ...dropNotes, ...unsentSpoken(said, open), ...sayNudge(said)], handle: handleOf(ctx, work), queued: !payload, now, saysLine: macSays("yourTurn", open, spoken) });
     await save(ctx, dependencies, { open: work, parked, echo, pendingRefusal: null });
     return result(echo, { disposition: "delivered", work, parked, queued: !payload });
   });
@@ -551,7 +574,7 @@ export async function runAgentWork(command, verb) {
     try {
       const body = await materialize({
         seal: sealMode(open), readable: { next: readable(note) }, sealedForm: { next: SEALED },
-        named: await workContext(ctx, dependencies), card: workCardText(handed, { status: note }), copy: selfCopyText(handed),
+        named: await workContext(ctx, dependencies), card: cardText(handed, { status: note }), copy: selfCopyText(handed),
       }, sealer);
       payload = await api.send(WORK_ROUTES.handoff(routeId(open)), body, newIdempotencyKey());
     } catch (error) {
@@ -585,7 +608,7 @@ export async function runAgentWork(command, verb) {
     const payload = await lane.write({
       route: WORK_ROUTES.pause(routeId(open)), key: newIdempotencyKey(), seal: sealMode(open),
       readable: { status: readable(status) }, sealedForm: { status: SEALED }, named: await workContext(ctx, dependencies),
-      card: workCardText(open, { status }), copy: selfCopyText(paused),
+      card: cardText(open, { status }), copy: selfCopyText(paused),
     });
     const response = payload ? view(payload, paused) : { work: paused, parked: state.parked };
     const work = response.work ?? paused;
@@ -615,7 +638,8 @@ export async function runAgentWork(command, verb) {
   const goal = options.goal === undefined ? undefined : filtered(() => checkText("goal", options.goal, { flag: "--goal" }), sline, 'relo work update --goal "…"');
   const status = options.status === undefined ? undefined : filtered(() => checkText("status", options.status, { goal: goal ?? open.goal }), sline, textNext("relo work update", "--status", options.status, FACTS.work.statusMax, 'relo work update --status "…"'));
   const waiting = options.waiting === undefined ? undefined : filtered(() => checkText("waiting", options.waiting, { flag: "--waiting" }), sline, 'relo work update --waiting "CI"');
-  if (!Object.keys(change).length && goal === undefined && status === undefined && waiting === undefined && !options["not-waiting"]) {
+  const spokenName = options["spoken-name"] === undefined ? undefined : filtered(() => checkSpoken("name", checkText("name", options["spoken-name"], { flag: "--spoken-name" }), "--spoken-name"), sline, 'relo work update --spoken-name "Notch redesign"');
+  if (!Object.keys(change).length && goal === undefined && status === undefined && waiting === undefined && spokenName === undefined && !options["not-waiting"]) {
     throw new WorkRefusal("REFUSED_NO_CHANGE", { what: "relo work update needs at least one change", state: sline, next: 'relo work update --status "…"  |  relo work update --next-step' });
   }
   const planned = Boolean(open.plan?.steps?.length) || Boolean(change.plan) || Boolean(change.add);
@@ -635,7 +659,7 @@ export async function runAgentWork(command, verb) {
       ...(waiting !== undefined ? { waiting: { reason: readable(waiting) } } : options["not-waiting"] ? { waiting: null } : {}),
     };
     const body = planBodies(commands, { baseVersion: base.version, ...text }, change.progress);
-    const next = { ...base, ...(goal !== undefined ? { goal } : {}), ...(status !== undefined ? { status } : {}), ...(waiting !== undefined ? { waiting } : options["not-waiting"] ? { waiting: null } : {}), plan: outcome.plan, ...(change.progress && !planned ? { progress: change.progress } : {}) };
+    const next = { ...base, ...(goal !== undefined ? { goal } : {}), ...(spokenName !== undefined ? { spokenName } : {}), ...(status !== undefined ? { status } : {}), ...(waiting !== undefined ? { waiting } : options["not-waiting"] ? { waiting: null } : {}), plan: outcome.plan, ...(change.progress && !planned ? { progress: change.progress } : {}) };
     return { body, next, notes, trees: outcome.trees ?? {} };
   };
   if (dryRun) {
@@ -661,7 +685,7 @@ export async function runAgentWork(command, verb) {
       const sent = await lane.write({
         route: WORK_ROUTES.update(routeId(base)), key: newIdempotencyKey(), seal, readable: readableBody, sealedForm: sealedBody,
         ...(name !== undefined ? { opaque: { threadName: name }, withContext: i === 0 } : {}),
-        named, card: workCardText(built.next), copy: selfCopyText(built.next),
+        named, card: cardText(built.next), copy: selfCopyText(built.next),
       });
       if (sent) payload = sent; else queued = true;
     }
@@ -670,7 +694,8 @@ export async function runAgentWork(command, verb) {
   if (name) ctx.sessionName = name;
   const work = response.work ? withLocalLabels(response.work, local) : local;
   const parked = response.parked ?? state.parked;
-  const echo = echoOf({ work, parked, disposition: response.disposition ?? "updated", notes: [...drainNotes(drained), ...notes], handle: handleOf(ctx, work), queued, now });
+  const nameNote = spokenName !== undefined && sealMode(open) === "never" ? ["--spoken-name was not sent: this work is readable, and the spoken name travels only inside the end-to-end encrypted card"] : [];
+  const echo = echoOf({ work, parked, disposition: response.disposition ?? "updated", notes: [...drainNotes(drained), ...notes, ...nameNote], handle: handleOf(ctx, work), queued, now });
   await save(ctx, dependencies, { open: work, parked, echo });
   return result(echo, { disposition: "updated", work, parked, queued });
 }

@@ -1,6 +1,7 @@
 // Plan trees and rounds, locally (ADR 0012): the --plan parser, the CLI's mirror of the contracts' plan rules,
 // the echo of a tree and of folded rounds, and the sealed card text v2.
 import "./hermetic-env.mjs";
+import { selfCopyText } from "../src/crypto/self-copy.mjs";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
@@ -372,4 +373,21 @@ test("--add --under a done step reopens it and says so; --progress says what it 
   assert.equal(reopened.plan.steps[0].state, "open");
   const progress = applyChange(startPlan(["Batch 1", "Batch 2"]).plan, { progress: { done: 3, total: 4 } });
   assert.ok(progress.notes.includes("3/4 fills s1 (Batch 1); it clears when s1 ends."), progress.notes.join("|"));
+});
+
+test("the spoken line rides the sealed card text of a deliver or finish and is left out of the next update's", () => {
+  const work = { goal: "Relo deploy", plan: deliverPlan(startPlan(parsePlan("Build\nShip")).plan, "Shipped", { dropRest: true }).plan };
+  const delivered = workCardText(work, { status: "Shipped server 0.18.99", spoken: "Server 0.18.99 is live." });
+  assert.equal(delivered.spoken, "Server 0.18.99 is live.");
+  assert.equal(delivered.status, "Shipped server 0.18.99", "the written outcome stays for the eye");
+  assert.equal("spoken" in workCardText(work, { status: "Shipped server 0.18.99" }), false, "no --say, no field");
+  assert.equal("spoken" in workCardText({ ...work, status: "Next request" }), false, "a later card is built without it");
+});
+
+test("the spoken name rides every sealed card and the self copy, so a later update and a lost state file keep it (ADR 0015)", () => {
+  const work = { goal: "Redesign the open notch view of Relo for Mac", spokenName: "Notch redesign", plan: startPlan(parsePlan("Build\nShip")).plan };
+  assert.equal(workCardText(work).name, "Notch redesign");
+  assert.equal(workCardText({ ...work, status: "Linking" }, { status: "Linking" }).name, "Notch redesign");
+  assert.equal(selfCopyText(work).name, "Notch redesign");
+  assert.equal("name" in workCardText({ ...work, spokenName: undefined }), false);
 });

@@ -15,7 +15,7 @@ const AAD = Buffer.from(SELF_COPY_VERSION);
 export const selfKey = (identityPrivateKey) => subkey(identityPrivateKey, "work-self");
 const keyIdOf = (key) => b64u(createHash("sha256").update(key).digest().subarray(0, 8));
 
-/** The text a work's self copy holds: goal, status, waiting reason and step labels by id. */
+/** The text a work's self copy holds: goal, spoken name, status, waiting reason and step labels by id. */
 export function selfCopyText(work) {
   const labels = Object.fromEntries((work?.plan?.steps ?? []).filter((step) => step.label != null).map((step) => [step.id, step.label]));
   const details = Object.fromEntries((work?.plan?.steps ?? []).filter((step) => step.detail).map((step) => [step.id, step.detail]));
@@ -23,6 +23,7 @@ export function selfCopyText(work) {
   const waiting = work?.waiting && typeof work.waiting === "object" ? work.waiting.reason : work?.waiting;
   return {
     ...(work?.goal ? { goal: work.goal } : {}),
+    ...(work?.spokenName ? { name: work.spokenName } : {}),
     ...(work?.status ? { status: work.status } : {}),
     ...(waiting ? { waiting } : {}),
     labels,
@@ -88,6 +89,7 @@ export function restoreFromSelfCopy(work, key) {
   return {
     ...work,
     goal: work.goal ?? text.goal ?? null,
+    ...(work.spokenName ?? text.name ? { spokenName: work.spokenName ?? text.name } : {}),
     status: work.status ?? text.status ?? null,
     waiting,
     plan: work.plan ? restoredPlan(work.plan, text) : work.plan,

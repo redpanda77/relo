@@ -13,6 +13,8 @@ import { RouteLoadingIndicator } from "@/app/route-loading-fallback"
 import { classifyPageEnter, markPageEnter } from "@/app/page-enter"
 import { openFirstPageSealed } from "@/app/sealed-bootstrap"
 import { useSealedRetry } from "@/app/use-sealed-retry"
+import { dashboardTitle, dashboardWaiting } from "@/app/dashboard-title"
+import { setFavicon, useLiveNeedsYou } from "@/lib/attention"
 import { setSealedOpening } from "@/lib/sealed-opening"
 import { navigateDashboard } from "@/state/use-dashboard-route"
 
@@ -49,16 +51,6 @@ function clientAnchor(target: EventTarget | null): HTMLAnchorElement | null {
 function dashboardAnchor(target: EventTarget | null): HTMLAnchorElement | null {
   const anchor = clientAnchor(target)
   return anchor && isDashboardPath(new URL(anchor.href, window.location.href).pathname) ? anchor : null
-}
-
-/** The tab's title; a waiting count leads it ("(3) Now · Relo"), as the iPhone badges its icon. */
-function dashboardTitle(bootstrap: DashboardBootstrap) {
-  if (bootstrap.kind === "auth" && bootstrap.view === "landing") return "Relo · Every agent, one place"
-  if (bootstrap.kind === "auth") return `${bootstrap.title} · Relo`
-  if (bootstrap.kind === "docs") return `${bootstrap.page?.title ?? "Page not found"} · Relo docs`
-  const { shell } = bootstrap
-  const waiting = "counts" in shell && shell.counts ? shell.counts.pending : 0
-  return `${waiting > 0 ? `(${waiting > 99 ? "99+" : waiting}) ` : ""}${shell.title} · Relo`
 }
 
 /** Fired by `navigateDashboard` (keyboard jumps, the command menu) after it pushes the new URL. */
@@ -196,10 +188,13 @@ export function DashboardRouter({
     }, [])
   )
 
+  // Now's live count (its summary refreshes without a navigation) leads the bootstrap's.
+  const liveNeedsYou = useLiveNeedsYou()
   React.useEffect(() => {
     bootstrapRef.current = bootstrap
-    document.title = dashboardTitle(bootstrap)
-  }, [bootstrap])
+    document.title = dashboardTitle(bootstrap, liveNeedsYou)
+    setFavicon(dashboardWaiting(bootstrap, liveNeedsYou) > 0)
+  }, [bootstrap, liveNeedsYou])
 
   const load = React.useCallback((url: URL, signal?: AbortSignal) => {
     const key = `${url.origin}${url.pathname}${url.search}`

@@ -12,6 +12,7 @@ import { useBrowserLink } from "@/features/linked-browser/use-browser-link"
 import { LINK_STEPS, LINK_TITLE, linkPayload } from "@/features/linked-browser/link-text"
 import { QrCode } from "@/features/linked-browser/qr-code"
 import { loadMotionFeatures } from "@/lib/motion"
+import { playCue } from "@/lib/sound"
 
 const POLL_MS = 3_000
 /** Polls the server while the QR code is on screen; the link's state then changes in place, with no reload. */
@@ -92,6 +93,10 @@ function useLinkedMoment(state: BrowserLinkState) {
     })
   }
   const holding = moment.linked
+  // The phone linked this browser: the owner's moment, once (the check draws as the cue sounds).
+  useEffect(() => {
+    if (holding) playCue("linked")
+  }, [holding])
   useEffect(() => {
     if (!holding) return
     const timer = window.setTimeout(() => setMoment((current) => ({ ...current, qr: null, linked: false })), LINKED_HOLD_MS)

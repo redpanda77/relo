@@ -8,16 +8,19 @@ summary: Every agent on this computer knows Relo from its first message, keeps i
 
 Your agents report on their own: a card for each session's work, a plan that grows as they learn, a
 question before anything risky, and the outcome when they are done. Two things make an agent use Relo:
-the skill (how) and a short block in its instructions file (when). One command writes both.
+the skill (how) and a short block in its instructions file (when). `relo setup` writes both, and the
+one-line install from [Connect a computer](/docs/get-started/cli) already ran it, at the depth and for
+the agents you chose there.
 
 ## Set it up
 
 <ol class="docs-steps">
 <li>
 
-**Run setup.** For every agent harness found on this computer (Claude Code, Codex, Gemini CLI,
-OpenCode, Cursor, Copilot CLI, Amp), it writes the block and installs the skill at this CLI's version,
-then says what it changed, what it skipped and why.
+**Check what setup wrote.** The wizard's **Your agents** step listed each agent it found. To see the
+plan again, or to set up a computer you connected by hand: for every agent harness found on this
+computer (Claude Code, Codex, Gemini CLI, OpenCode, Cursor, Copilot CLI, Amp), it writes the block and
+installs the skill at this CLI's version, then says what it changed, what it skipped and why.
 
 ```sh
 relo setup --dry-run   # the plan and the exact block, nothing written
@@ -71,7 +74,8 @@ On the phone, the agent's card shows a real goal and a step out of its plan, not
 
 Everything above works on its own. Add these only if you want them:
 
-- **Depth** is how far Relo plugs into your agents. `track` is the default. `guide` adds hooks: Relo
+- **Depth** is how far Relo plugs into your agents: the **How much Relo does there** choice in
+  Connect a computer. `track` is the default. `guide` adds hooks: Relo
   then knows when a session is working, waiting on you or stopped, restores the agent's memory of the
   work after compaction and reminds it of a work it forgot to finish. They never change a work, plan
   or question, and no prompt or tool content leaves the computer.

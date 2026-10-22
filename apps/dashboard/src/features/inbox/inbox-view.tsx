@@ -44,11 +44,13 @@ import {
   type SessionWorkLink,
 } from "@/features/inbox/sessions-section"
 import type { InboxOverview } from "@/features/inbox/types"
+import { useMomentCues } from "@/features/inbox/now-cues"
 import { useNowRefresh } from "@/features/inbox/use-now-refresh"
 import { ConnectEntry } from "@/features/onboarding/connect-entry"
 import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
 import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
 import { DUR, EASE_IN, EASE_OUT, SPRING, loadMotionFeatures } from "@/lib/motion"
+import { setLiveNeedsYou } from "@/lib/attention"
 import { orbMotion } from "@/lib/orb-theme"
 import { displayNameOrNull } from "@/lib/encrypted"
 import { isBrowserLinked, isSealedOpening, subscribeBrowserLinked, subscribeSealedOpening } from "@/lib/sealed-opening"
@@ -65,8 +67,8 @@ const BLOCK_TRANSITION = { layout: SPRING }
 
 type ShownBlock = NowBlock | { kind: "connections" }
 
-/** How long a newly-needs-you card keeps its announce ring (one 700 ms ring, then the attribute goes). */
-const ANNOUNCE_MS = 800
+/** How long a newly-needs-you card keeps its announce ring (one --dur-slow ring, then the attribute goes). */
+const ANNOUNCE_MS = 500
 
 /**
  * Now's layout by the page's own width (the `split-page` container, so the sidebar counts):
@@ -189,6 +191,7 @@ export function InboxView({
   const batch = moments.batch
   // The page-open catch-up (what happened since the owner looked), from the first summary only.
   const [catchUp] = useState(() => catchUpEvents(summary))
+  useMomentCues(batch, catchUp)
   const [announceSpent, setAnnounceSpent] = useState(0)
   useEffect(() => {
     if (!batch.events.some((event) => event.kind === "needsYou")) return
@@ -253,6 +256,11 @@ export function InboxView({
   // The deck's readouts are the server's live counts (plus connection requests, which need you too).
   const counts = summary ? nowCounts(summary) : { needsYou: 0, running: 0, sessionsWorking: 0, waitingOnYou: 0 }
   const needsYou = counts.needsYou + approvals.length
+  // The tab title and icon follow Now's live count (the router reads it), not the page-load bootstrap's.
+  useEffect(() => {
+    setLiveNeedsYou(needsYou)
+    return () => setLiveNeedsYou(null)
+  }, [needsYou])
   // The core's steady motion and arcs: from the server's summary only, never a client clock.
   const motion = useMemo(() => orbMotion(summary, offline, approvals.length), [summary, offline, approvals.length])
   const arcs = useMemo(() => nowArcs(summary), [summary])

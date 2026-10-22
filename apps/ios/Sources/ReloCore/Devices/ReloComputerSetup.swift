@@ -231,9 +231,9 @@ public enum ReloComputerSetup {
     }
 
     /// What the owner hands to their agent: it reads the install page with the full code, never signs in.
-    public static func agentPrompt(origin: URL, fullCode: String, level: String) -> String {
+    public static func agentPrompt(origin: URL, fullCode: String, level: String, macApp: Bool = false) -> String {
         let base = origin.absoluteString.hasSuffix("/") ? String(origin.absoluteString.dropLast()) : origin.absoluteString
-        return "Read \(base)/install.md?code=\(fullCode) and set up Relo on this computer at the \(level) level. "
+        return "Read \(base)/install.md?code=\(fullCode)\(macApp ? "&mac=1" : "") and set up Relo on this computer at the \(level) level. "
             + "It sends me a first notification when it is done."
     }
 

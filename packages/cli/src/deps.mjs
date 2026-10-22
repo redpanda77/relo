@@ -13,7 +13,7 @@ import { detectIdentityDefaults, detectOrigin } from "./shared/identity.mjs";
 export function createDependencies(overrides = {}) {
   const dependencies = hookDependencies(overrides);
   const { env, configPath: configPathOf, accountProbes: probes } = dependencies;
-  const identityDefaults = overrides.identityDefaults ?? (() => detectIdentityDefaults(env, dependencies.cwd));
+  const identityDefaults = overrides.identityDefaults ?? (() => detectIdentityDefaults(env, dependencies.cwd, undefined, dependencies.loadProjects()));
   // Stubbing the identity stubs out the machine too, so tests never depend on the computer they run on.
   const originDefaults = overrides.originDefaults
     ?? (overrides.identityDefaults ? () => ({}) : () => detectOrigin(env, probes, () => dependencies.loadComputerName?.()));
@@ -71,6 +71,7 @@ export function createDependencies(overrides = {}) {
     nodePath: overrides.nodePath ?? process.execPath,
     entrypoint: entrypointOf(overrides),
     openBrowser: overrides.openBrowser ?? (async (...args) => (await import("./owner/auth.mjs")).openBrowser(...args)),
+    openMacApp: overrides.openMacApp ?? (async (...args) => (await import("./owner/auth.mjs")).openMacApp(...args)),
     stderr: overrides.stderr ?? (() => {}),
     stderrIsTTY: overrides.stderrIsTTY ?? false,
     platform: overrides.platform ?? process.platform,

@@ -13,6 +13,8 @@
 !apps/server/tsconfig.json
 !apps/server/fixtures/
 !apps/server/fixtures/**
+!apps/server/mac/
+!apps/server/mac/**
 !apps/server/migrations/
 !apps/server/migrations/**
 !apps/server/src/
@@ -39,6 +41,8 @@
 **/*.tar.gz
 **/*.tgz
 **/*.zip
+# Relo for Mac, as the deploy left it (apps/server/mac/README.md).
+!apps/server/mac/relo-mac.zip
 **/.build
 **/DerivedData
 **/coverage

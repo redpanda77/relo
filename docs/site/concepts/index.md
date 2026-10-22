@@ -11,6 +11,7 @@ works the way it does. The guides and the reference say exactly how.
 <ul class="docs-tiles">
 <li><a href="/docs/concepts/work"><strong>Work, plans and steps</strong>One goal per session or job, a plan that grows as it learns, one honest outcome.</a></li>
 <li><a href="/docs/concepts/cards"><strong>Cards and what you see</strong>The Lock Screen card, Now and History: fresh, relevant and in real words.</a></li>
+<li><a href="/docs/concepts/notch"><strong>Relo for Mac in the notch</strong>Every state of the notch, drawn: running, a step, needs you, your turn, finished, failed and quiet.</a></li>
 <li><a href="/docs/concepts/questions"><strong>Questions and answers</strong>Approve, answer yes or no, or pick an option. No answer means no.</a></li>
 <li><a href="/docs/concepts/notifications"><strong>Notifications</strong>Rare on purpose: the outcome of finished work, and what needs you now.</a></li>
 <li><a href="/docs/concepts/sessions"><strong>Sessions</strong>One agent conversation, its own work, and your view across all of them.</a></li>

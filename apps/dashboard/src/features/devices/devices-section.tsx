@@ -34,6 +34,7 @@ import { useBrowserLink } from "@/features/linked-browser/use-browser-link"
 import type { BrowserLink } from "@/lib/e2ee/browser-link"
 import { relativeTime } from "@/lib/format"
 import type { NeonTone } from "@/lib/status-tone"
+import { playCue } from "@/lib/sound"
 import { useShake } from "@/lib/use-shake"
 
 const httpService = createHttpDevicesService()
@@ -90,6 +91,7 @@ function ApproveDialog({
     setError("")
     try {
       await onApprove(twoFactor ? code : undefined)
+      playCue("linked")
       setOpen(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Approval failed.")

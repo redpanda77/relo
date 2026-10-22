@@ -1,0 +1,186 @@
+{
+  "about": "ADR 0015 golden examples (revision 1: a question or failure at most 12 words of gist, other news at most 20): inputs a producer writes and the line Relo for Mac says. The CLI composes `gist` from `say` or `outcome` (deliver, finish); the Mac takes `gist` as the card's sealed `spoken`, or composes it from `prompt` (questions) or `step` (the play button), and frames the line. Both test suites read this file.",
+  "cases": [
+    {
+      "label": "a deliver read as a version inventory",
+      "kind": "yourTurn",
+      "goal": "Speaking support for Relo for Mac with the Phonon voice",
+      "outcome": "Relo for Mac 0.2.8 is live: cards say their line aloud, the Relo voice downloads itself on Wi-Fi, and agents are told to write for the ear",
+      "gist": "Relo for Mac is live, cards say their line aloud, the Relo voice downloads itself on Wi-Fi.",
+      "line": "Your turn: Speaking support for Relo. Relo for Mac is live, cards say their line aloud, the Relo voice downloads itself on Wi-Fi."
+    },
+    {
+      "label": "versions and a build number in parentheses",
+      "kind": "yourTurn",
+      "goal": "Ship the next batch of session lifecycle fixes",
+      "outcome": "All live and current: server 0.18.74, CLI 0.17.45, iPhone 0.10.29 (92). Nothing uncommitted or unreleased.",
+      "gist": "All live and current.",
+      "line": "Your turn: Ship the next batch. All live and current."
+    },
+    {
+      "label": "a feature list with versions",
+      "kind": "yourTurn",
+      "goal": "Plan 12: Dashboard plan tree and optimize extras",
+      "outcome": "Plan 12 shipped: Dashboard plan tree, optimize extras (status line, subagents, nudges, context and cost). Server 0.18.62, CLI 0.17.34, iOS 0.10.24",
+      "gist": "Plan 12 shipped, Dashboard plan tree, optimize extras.",
+      "line": "Your turn: Plan 12. Plan 12 shipped, Dashboard plan tree, optimize extras."
+    },
+    {
+      "label": "a declared name and --say",
+      "kind": "yourTurn",
+      "goal": "Speaking support for Relo for Mac with the Phonon voice",
+      "name": "Spoken updates",
+      "outcome": "Relo for Mac 0.2.8 is live: cards say their line aloud",
+      "say": "Relo for Mac now reads cards aloud.",
+      "gist": "Relo for Mac now reads cards aloud.",
+      "line": "Your turn: Spoken updates. Relo for Mac now reads cards aloud."
+    },
+    {
+      "label": "a long goal and outcome",
+      "kind": "yourTurn",
+      "goal": "Relo for Mac becomes Relo: signed for an easy install, a Dock app with a main window and a cool onboarding",
+      "name": "Relo for Mac",
+      "outcome": "Relo for Mac is Relo: Developer ID signed, a Dock app with a main window and onboarding, secrets in the modern keychain; polish moves to the shared sound and motion work",
+      "gist": "Relo for Mac is Relo, Developer ID signed, a Dock app with a main window and onboarding.",
+      "line": "Your turn: Relo for Mac. Relo for Mac is Relo, Developer ID signed, a Dock app with a main window and onboarding."
+    },
+    {
+      "label": "an observed turn end says the frame alone",
+      "kind": "yourTurn",
+      "goal": "Propose one consistent structure for Relo for Mac's spoken updates",
+      "name": "Spoken updates",
+      "gist": null,
+      "line": "Your turn: Spoken updates."
+    },
+    {
+      "label": "a finish with a long outcome",
+      "kind": "finished",
+      "goal": "Brainstorm speaking support for the notch with the Phonon voice model",
+      "name": "Voice design",
+      "outcome": "Voice architecture proposed: load on demand and unload after 5 idle minutes, in-process engine behind a swappable interface, full clips cached in memory, shipped in 3 stages",
+      "gist": "Voice architecture proposed, load on demand and unload after 5 idle minutes, in-process engine behind a swappable interface.",
+      "line": "Finished: Voice design. Voice architecture proposed, load on demand and unload after 5 idle minutes, in-process engine behind a swappable interface."
+    },
+    {
+      "label": "a finish whose versions hide in parentheses",
+      "kind": "finished",
+      "goal": "Find why the launch film shows a blank, frozen frame on iPhone Safari and Chrome, and fix it",
+      "name": "Film on phones",
+      "outcome": "Notification taps no longer crash the app (iPhone 0.10.26), and the encrypted-items card lines up. Live in 0.18.68.",
+      "gist": "Notification taps no longer crash the app, and the encrypted-items card lines up.",
+      "line": "Finished: Film on phones. Notification taps no longer crash the app, and the encrypted-items card lines up."
+    },
+    {
+      "label": "an outcome that starts with a version",
+      "kind": "finished",
+      "goal": "Release the iPhone app to TestFlight",
+      "outcome": "0.17 is on TestFlight, build 289",
+      "gist": "The new version is on TestFlight.",
+      "line": "Finished: Release the iPhone app. The new version is on TestFlight."
+    },
+    {
+      "label": "--say replaces the gist, not the frame",
+      "kind": "finished",
+      "goal": "Release the iPhone app to TestFlight",
+      "name": "TestFlight release",
+      "outcome": "0.17 is on TestFlight, build 289",
+      "say": "The iPhone app is on TestFlight.",
+      "gist": "The iPhone app is on TestFlight.",
+      "line": "Finished: TestFlight release. The iPhone app is on TestFlight."
+    },
+    {
+      "label": "a failure says its reason",
+      "kind": "failed",
+      "goal": "Set up Codex on the build server with Relo's instructions",
+      "name": "Codex setup",
+      "outcome": "A live run failed: its configured model gpt-5.6-sol isn't allowed with a ChatGPT login.",
+      "gist": "A live run failed.",
+      "line": "Failed: Codex setup. A live run failed."
+    },
+    {
+      "label": "a count that is the news stays",
+      "kind": "failed",
+      "goal": "Run the release gates",
+      "outcome": "3 suites failed",
+      "gist": "3 suites failed.",
+      "line": "Failed: Run the release gates. 3 suites failed."
+    },
+    {
+      "label": "a question without its reasons or hash",
+      "kind": "question",
+      "goal": "Fix the sign-in approval page on the build server",
+      "name": "Sign-in page",
+      "prompt": "Deploy server fea6d51 to the build server? It only restyles the iPhone sign-in approval page (no migrations); API restarts, rollback tag kept.",
+      "gist": "Deploy server to the build server?",
+      "line": "Needs you: Sign-in page. Deploy server to the build server?"
+    },
+    {
+      "label": "a question without its code",
+      "kind": "question",
+      "goal": "Let opencode on a headless server connect to the project MCP",
+      "prompt": "Approve the build server's Relo sign-in, code HB9H-9HKB?",
+      "gist": "Approve the build server's Relo sign-in?",
+      "line": "Needs you: Let opencode. Approve the build server's Relo sign-in?"
+    },
+    {
+      "label": "a question without its parentheses",
+      "kind": "question",
+      "goal": "End-to-end encryption",
+      "prompt": "Commit the end-to-end encryption work (keys, sealed notices, retention, docs) to main? Not deployed.",
+      "gist": "Commit the end-to-end encryption work to main?",
+      "line": "Needs you: End-to-end encryption. Commit the end-to-end encryption work to main?"
+    },
+    {
+      "label": "a relayed permission says its tool",
+      "kind": "question",
+      "goal": "Redesign the open notch view of Relo for Mac: uniform cards, full-width list, one-line summary, motion",
+      "name": "Notch redesign",
+      "prompt": "Allow Bash: npm run public:check?",
+      "gist": "Allow Bash?",
+      "line": "Needs you: Notch redesign. Allow Bash?"
+    },
+    {
+      "label": "markdown, paths and links are not read",
+      "kind": "finished",
+      "goal": "Fix the **notch** cards",
+      "outcome": "Fixed `apps/notch/ReloCards.swift` · see [the PR](https://github.com/example/relo/pull/9)",
+      "gist": "Fixed, see the PR.",
+      "line": "Finished: Fix the notch cards. Fixed, see the PR."
+    },
+    {
+      "label": "the play button on running work",
+      "kind": "working",
+      "goal": "Redesign the open notch view of Relo for Mac: uniform cards",
+      "name": "Notch redesign",
+      "step": "Build the uniform card",
+      "gist": "Build the uniform card.",
+      "line": "Working: Notch redesign. Build the uniform card."
+    },
+    {
+      "label": "a product named like a file is still said",
+      "kind": "finished",
+      "goal": "Upgrade the server's Node.js for the October security release",
+      "name": "Node security upgrade",
+      "outcome": "Node.js security upgrade is deployed to production; the API restarted for about 20 seconds with no migrations",
+      "gist": "Node.js security upgrade is deployed to production, the API restarted for about 20 seconds with no migrations.",
+      "line": "Finished: Node security upgrade. Node.js security upgrade is deployed to production, the API restarted for about 20 seconds with no migrations."
+    },
+    {
+      "label": "a long failure keeps its reason within twelve words",
+      "kind": "failed",
+      "goal": "Run the full release gates",
+      "name": "Release gates",
+      "outcome": "Release gates failed: the dashboard router and CI tokens tests both timed out and I could not fix them this sitting",
+      "gist": "The dashboard router and CI tokens tests both timed out.",
+      "line": "Failed: Release gates. The dashboard router and CI tokens tests both timed out."
+    },
+    {
+      "label": "paused work says the frame alone",
+      "kind": "paused",
+      "goal": "Clean up the build server's disk",
+      "name": "Disk cleanup",
+      "gist": null,
+      "line": "Paused: Disk cleanup."
+    }
+  ]
+}

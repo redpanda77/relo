@@ -11,9 +11,10 @@ export type ComputerInvite = {
   level: string
   approvals: boolean
   agents?: string[] | null
+  macApp?: boolean
 }
 
-export type InviteOptions = { level: string; approvals?: boolean; agents?: string[] }
+export type InviteOptions = { level: string; approvals?: boolean; agents?: string[]; macApp?: boolean }
 
 /** The harnesses a code can set up, in the order the wizard lists them. */
 export const SETUP_AGENTS = ["claude-code", "codex", "opencode", "gemini", "cursor", "copilot", "amp"] as const
@@ -95,6 +96,7 @@ export type MadeInvite = {
   level: string
   approvals: boolean
   agents: string[] | null
+  macApp?: boolean
 }
 
 let madeInMemory: MadeInvite | null = null
@@ -113,8 +115,8 @@ export const STATUS_POLL_MS = 5_000
 /** An agent that has not used the code by now probably stalled: offer the command. */
 export const AGENT_STALL_MS = 120_000
 
-export function agentPrompt(origin: string, code: string, level: string) {
-  return `Read ${origin}/install.md?code=${code} and set up Relo on this computer at the ${level} level. It sends me a first notification when it is done.`
+export function agentPrompt(origin: string, code: string, level: string, macApp = false) {
+  return `Read ${origin}/install.md?code=${code}${macApp ? "&mac=1" : ""} and set up Relo on this computer at the ${level} level. It sends me a first notification when it is done.`
 }
 
 /** The binding half of a code: 16 random bytes, b64url (22 chars). It lives in the wizard's memory only. */

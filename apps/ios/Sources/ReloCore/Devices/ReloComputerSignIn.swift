@@ -136,5 +136,6 @@ public protocol ComputerSignInApproving: Sendable {
 
 /// Making that command, authenticated as this device.
 public protocol ComputerInviting: Sendable {
-    func inviteComputer(credential: DeviceCredential, level: String, approvals: Bool, agents: [String]) async throws -> ReloComputerInvite
+    /// `macApp`: on a Mac, the command also installs Relo for Mac (the notch) and opens it signed in.
+    func inviteComputer(credential: DeviceCredential, level: String, approvals: Bool, agents: [String], macApp: Bool) async throws -> ReloComputerInvite
 }

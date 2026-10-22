@@ -156,7 +156,7 @@ export function refusedEarlier(refusal, now = new Date()) {
   return `Refused earlier: ${refusal.what} (relo work ${refusal.verb}, ${hhmm(refusal.at, now)}). The card is still open. Next: ${refusal.next ?? `relo work ${refusal.verb} --outcome "…"`}`;
 }
 
-export function renderEcho({ work, parked = [], disposition, notes = [], handle, dryRun = false, queued = false, lane, pendingRefusal, now = new Date(), handoffLine, ownerLine, nextOverride }) {
+export function renderEcho({ work, parked = [], disposition, notes = [], handle, dryRun = false, queued = false, lane, pendingRefusal, now = new Date(), handoffLine, ownerLine, nextOverride, saysLine }) {
   const lines = [];
   if (pendingRefusal) lines.push(refusedEarlier(pendingRefusal, now));
   if (dryRun) lines.push("Dry run: nothing was sent.");
@@ -179,6 +179,8 @@ export function renderEcho({ work, parked = [], disposition, notes = [], handle,
   lines.push(...laneLines(lane, now));
   if (handoffLine) lines.push(handoffLine);
   if (work) lines.push(ownerLine ? ownerLine : dryRun ? "Owner sees: (not computed in a dry run)" : queued ? "Owner sees: the last change Relo received; this one shows once it is sent" : ownerSees(work, now, disposition));
+  // ADR 0015: the line Relo for Mac says for this deliver or finish, so the producer hears what it wrote.
+  if (saysLine) lines.push(`Mac says: ${saysLine}`);
   const question = work ? questionLine(work.question, now) : undefined;
   if (question) lines.push(question);
   for (const p of parked.slice(0, 3)) {

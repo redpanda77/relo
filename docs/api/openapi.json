@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Relo integration API",
-    "version": "0.18.86",
+    "version": "0.18.109",
     "description": "Questions, work, cards and notifications for an app signed in with `relo auth login`; the session, harness-credential and owner routes the CLI uses; webhook services (`/hooks…`, a service secret in a header); and the device authorization flow any client signs in with. Every other route is private to the Dashboard and the iPhone app (INTERNAL_ROUTES in apps/server/src/openapi.ts). See docs/INTEGRATING.md."
   },
   "security": [
@@ -12607,7 +12607,7 @@
       "post": {
         "summary": "Join with a one-time code",
         "security": [],
-        "description": "Add a computer: redeems a code a trusted device made (it works once, for 30 minutes) for the computer's own login, with no browser; returns the access token, its credential and how the owner wants the computer set up (`setup: { level, approvals }`). `relo auth join` and the install script call it.",
+        "description": "Add a computer: redeems a code a trusted device made (it works once, for 30 minutes) for the computer's own login, with no browser; returns the access token, its credential and how the owner wants the computer set up (`setup: { level, approvals, agents, macApp }`). A code made with `macApp`, redeemed with `macAppChallenge`, also returns `macAppSignInCode`: the Mac app exchanges it at /api/mobile/sign-in/token with its verifier. `relo auth join` and the install script call it.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -12662,6 +12662,11 @@
                     "minimum": 3600,
                     "maximum": 31536000,
                     "description": "How long the login works before it must sign in again."
+                  },
+                  "macAppChallenge": {
+                    "description": "A PKCE S256 challenge from the Mac app's installer: a code made with Relo for Mac returns its one-time sign-in code for it.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
                   }
                 },
                 "required": [
@@ -12729,7 +12734,7 @@
     "/api/clients/computer-invites": {
       "post": {
         "summary": "Make a one-time code to add a computer",
-        "description": "A signed-in computer's own login (not a CI token) makes a code for another computer, and the command that installs and signs it in. Returns `{ inviteId, code, command, expiresAt, level, approvals, agents }`; `inviteId` (cin_…) names the code for the Connect a computer wizard. `relo auth invite`. Scope: services:write.",
+        "description": "A signed-in computer's own login (not a CI token) makes a code for another computer, and the command that installs and signs it in. Returns `{ inviteId, code, command, expiresAt, level, approvals, agents, macApp }`; `inviteId` (cin_…) names the code for the Connect a computer wizard. `relo auth invite`. Scope: services:write.",
         "parameters": [
           {
             "name": "Idempotency-Key",
@@ -12774,6 +12779,11 @@
                       "type": "string",
                       "pattern": "^[a-z][a-z0-9-]{1,30}$"
                     }
+                  },
+                  "macApp": {
+                    "default": false,
+                    "description": "Whether a Mac also gets Relo for Mac (the notch app), opened already signed in; other systems skip it.",
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false

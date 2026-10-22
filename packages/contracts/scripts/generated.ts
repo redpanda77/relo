@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import ts from "typescript";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +43,7 @@ export function staleGeneratedFiles(): string[] {
   }).map(([path]) => path);
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   for (const [path, contents] of Object.entries(generatedFiles())) writeFileSync(path, contents);
   console.log("Generated the CLI's facts, scopes, computer icons and plan engine.");
 }

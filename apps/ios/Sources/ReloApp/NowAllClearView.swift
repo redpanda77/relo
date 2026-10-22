@@ -24,32 +24,21 @@ struct NowSectionCaption: View {
     }
 }
 
-/// TODAY: the 24h activity strip with its key, and today's log. Shown whenever today has items,
-/// whatever else is on screen; with nothing today and nothing live, a calm "standing by".
+/// The end of Now, which shows only what is live: with nothing live, a calm "standing by"; always a way to History,
+/// where today's settled work (the hourly strip and its log) lives.
 struct NowAllClearView: View {
-    let activity: TodayActivity
-    /// Nothing needs you and nothing is live: an empty day then shows the standing-by note.
+    /// Nothing needs you and nothing is live.
     let allClear: Bool
-    let openItem: (String) -> Void
     let viewHistory: () -> Void
 
-    private static let logLimit = 5
-
     var body: some View {
-        if activity.isEmpty {
-            if allClear {
-                VStack(alignment: .leading, spacing: 28) {
-                    StandingBy()
-                    HistoryLink(action: viewHistory)
-                }
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 14) {
-                NowSectionCaption(title: "Today", count: activity.rows.count)
-                ActivityStrip(activity: activity)
-                TodayLog(rows: Array(activity.rows.prefix(Self.logLimit)), openItem: openItem)
+        if allClear {
+            VStack(alignment: .leading, spacing: 28) {
+                StandingBy()
                 HistoryLink(action: viewHistory)
             }
+        } else {
+            HistoryLink(action: viewHistory)
         }
     }
 }
@@ -72,79 +61,11 @@ private struct HistoryLink: View {
     }
 }
 
-// MARK: Today's log
-
-private struct TodayLog: View {
-    let rows: [HistoryRow]
-    let openItem: (String) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shown = false
-
-    var body: some View {
-        CardGroup {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                LogRow(row: row, divider: index > 0) { openItem(row.item.id) }
-                    .opacity(shown ? 1 : 0)
-                    .animation(reduceMotion ? nil : .smooth(duration: 0.5).delay(Double(index) * 0.07), value: shown)
-                    .transition(.opacity)
-            }
-        }
-        .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: rows.map(\.id))
-        .onAppear { shown = true }
-    }
-}
-
-/// One line of today's log on the standard surface: the title and when it happened, then how it ended.
-private struct LogRow: View {
-    let row: HistoryRow
-    let divider: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            CardRow(divider: divider) {
-                HStack(spacing: ReloLayout.itemSpacing) {
-                    glyph
-                    VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
-                        HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
-                            Text(row.title).font(ReloLayout.cardTitle).foregroundStyle(.primary).lineLimit(1)
-                            Spacer(minLength: 0)
-                            Text(row.at, style: .time).font(ReloLayout.cardMeta).monospacedDigit()
-                                .foregroundStyle(Color.reloSecondaryText).fixedSize()
-                        }
-                        Text.cardMeta(detail).font(ReloLayout.cardMeta).lineLimit(1)
-                    }
-                }
-            }
-        }
-        .buttonStyle(ReloPressStyle())
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens details")
-    }
-
-    private var glyph: some View {
-        let style = ReloStateStyle.glyph(outcome: row.outcome)
-        return Image(systemName: style.symbol)
-            .font(.system(size: 11, weight: .bold)).foregroundStyle(style.color) // design: a mark sized to the dot it sits in
-            .frame(width: 28, height: 28)
-            .background(Circle().fill(style.color.opacity(0.14)))
-            .accessibilityHidden(true)
-    }
-
-    private var detail: [String] {
-        var parts: [String] = []
-        if let label = row.outcome.label { parts.append(label) } else { parts.append(row.source.name) }
-        if let duration = row.duration { parts.append(ReloDuration.format(duration)) }
-        if let updates = row.updates, updates > 0 { parts.append("\(updates) updates") }
-        return parts
-    }
-}
-
 // MARK: Hourly strip
 
 /// Flat and quiet: each hour is a thin stacked bar whose segments are the meaning colors, on a
 /// faint track. The current hour gets a small tick; a one-line key names only what is present.
-private struct ActivityStrip: View {
+struct ActivityStrip: View {
     let activity: TodayActivity
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var risen = false

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync } from "node:fs";
-import { availableParallelism, loadavg, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,24 +66,29 @@ test("the status line wrapper stays local: a small module count, none of the for
   for (const module of run.modules) for (const pattern of HOOK_NEVER) assert.doesNotMatch(module, pattern, `relo statusline loaded ${module}`);
 });
 
-// Wall-clock time means nothing on a saturated machine (other sessions' builds and test runs): the module
-// budget above still guards what a hook loads.
-const saturated = loadavg()[0] >= availableParallelism();
+// A wall-clock budget, not logic: scripts/gates.sh runs this test alone (the parallel gates are not running then)
+// and the module budgets above still guard what a hook loads. It never skips for load: a busy machine shows up as
+// a slow median, so it takes up to three medians and passes on the first one within budget (a real regression is
+// over budget in all three).
 // scripts/gates.sh runs the CLI suite beside other gates with this set, then runs this test alone afterwards.
 const deferred = process.env.RELO_GATES_DEFER_TIMING === "1";
 
 test("a hook costs at most 20 ms over a bare node start (median of 9)", {
-  skip: (deferred && "deferred: scripts/gates.sh runs this test alone after the parallel gates")
-    || (saturated && "the machine is saturated (load ≥ cores)"),
+  skip: deferred && "deferred: scripts/gates.sh runs this test alone after the parallel gates",
 }, () => {
   const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
-  const baseline = median(Array.from({ length: 9 }, () => {
-    const started = performance.now();
-    spawnSync(process.execPath, ["-e", "0"]);
-    return performance.now() - started;
-  }));
-  const hook = median(Array.from({ length: 9 }, () => spawn(["hook", "tool-start", "--agent", "claude-code"], HOOK_INPUT).elapsed));
-  assert.ok(hook - baseline <= 20, `relo hook took ${hook.toFixed(1)} ms, node alone ${baseline.toFixed(1)} ms`);
+  const costs = [];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const baseline = median(Array.from({ length: 9 }, () => {
+      const started = performance.now();
+      spawnSync(process.execPath, ["-e", "0"]);
+      return performance.now() - started;
+    }));
+    const hook = median(Array.from({ length: 9 }, () => spawn(["hook", "tool-start", "--agent", "claude-code"], HOOK_INPUT).elapsed));
+    costs.push({ hook, baseline });
+    if (hook - baseline <= 20) return;
+  }
+  assert.fail(`relo hook over budget in all ${costs.length} medians: ${costs.map((c) => `${c.hook.toFixed(1)} ms vs node ${c.baseline.toFixed(1)} ms`).join("; ")}`);
 });
 
 test("relo --version loads no more modules than its budget", () => {

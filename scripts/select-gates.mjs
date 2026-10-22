@@ -19,7 +19,7 @@ const ALL = GATES;
 const SERVER = ["contracts", "dashboard", "server"];
 export const RULES = [
   // The gate machinery and the workspace itself: everything.
-  [/^(scripts\/gates\.sh|scripts\/select-gates\.mjs|scripts\/release\/head-gates\.sh|scripts\/check-test-ran\.mjs)$/u, ALL],
+  [/^(scripts\/gates\.sh|scripts\/select-gates\.mjs|scripts\/narrow-tests\.mjs|scripts\/gate-keys\.mjs|scripts\/gates-cache\.sh|scripts\/release\/head-gates\.sh|scripts\/check-test-ran\.mjs)$/u, ALL],
   [/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|\.npmrc|\.gitignore|\.dockerignore)$/u, ALL],
   // Paths no gate reads: an app with its own tests, internal notes, decisions, contributor docs.
   [/^apps\/notch\//u, []],
@@ -32,6 +32,8 @@ export const RULES = [
   [/^\.gitnexusrc$/u, []],
   // Product code.
   [/^(apps\/server|packages\/contracts|deploy|docs\/api)\//u, SERVER],
+  // Sounds, images and fonts: the Dashboard build and its tests read them; no server test does.
+  [/^apps\/dashboard\/(src\/assets|public)\/.*\.(m4a|mp3|wav|png|jpe?g|webp|svg|ico|woff2?)$/u, ["dashboard"]],
   [/^apps\/dashboard\//u, SERVER],
   [/^packages\/cli\//u, [...SERVER, "cli", "skill", "repo"]],
   [/^skills\//u, ["cli", "skill", "repo"]],

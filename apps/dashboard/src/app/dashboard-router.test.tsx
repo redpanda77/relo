@@ -162,7 +162,24 @@ describe("dashboard client navigation", () => {
     expect(window.location.pathname).toBe("/dashboard")
   })
 
-  it("leads the tab title with the needs-you count and glides to the top when the shown page's link is tapped again", () => {
+  it("leads the tab title with the page's needs-you count off Now", () => {
+    window.history.replaceState({}, "", "/dashboard/account")
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)))
+    render(
+      <DashboardRouter
+        bootstrap={
+          {
+            ...(accountBootstrap as object),
+            shell: { title: "Account", active: "account", releaseIdentity: "test-release", account, counts: { pending: 3, notifications: 0, deliveries: 0 } },
+          } as unknown as DashboardBootstrap
+        }
+      />
+    )
+    expect(document.title).toBe("(3) Account · Relo")
+    vi.unstubAllGlobals()
+  })
+
+  it("glides to the top when the shown page's link is tapped again; Now's live count (none here) leads its title", () => {
     window.history.replaceState({}, "", "/dashboard")
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)))
     render(
@@ -170,7 +187,8 @@ describe("dashboard client navigation", () => {
         bootstrap={{ ...inboxBootstrap, shell: { ...inboxBootstrap.shell, counts: { pending: 3, notifications: 0, deliveries: 0 } } }}
       />
     )
-    expect(document.title).toBe("(3) Now · Relo")
+    // Now is open: its own summary (nothing needs you) leads the page-load count of 3.
+    expect(document.title).toBe("Now · Relo")
 
     fireEvent.click(within(screen.getByRole("navigation", { name: "Primary" })).getByRole("link", { name: /^Now/u }))
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" })
@@ -201,7 +219,8 @@ describe("dashboard client navigation", () => {
     expect(window.location.pathname).toBe("/dashboard/account")
 
     window.dispatchEvent(new Event("online"))
-    expect(await screen.findByRole("heading", { name: "Now" })).toBeInTheDocument()
+    // Rendering Now after the retry takes longer than findBy's default second on the capped builder.
+    expect(await screen.findByRole("heading", { name: "Now" }, { timeout: 5000 })).toBeInTheDocument()
     expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(2)
     expect(screen.queryByRole("alert")).not.toBeInTheDocument()
     vi.unstubAllGlobals()

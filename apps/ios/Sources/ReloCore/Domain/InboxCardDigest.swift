@@ -37,7 +37,7 @@ public struct InboxCardDigest: Codable, Equatable, Sendable {
     /// One step of the work's whole plan. The label is nil for sealed or private work (opened by id).
     /// `parent`, `round` and `detail` come with plan trees and rounds (ADR 0012); all are optional and
     /// a value of an unexpected type reads as absent, so an older or newer server never hides the plan.
-    public struct PlanStep: Codable, Equatable, Sendable {
+    public struct PlanStep: Codable, Equatable, Hashable, Sendable {
         public let id: String
         public let state: String
         public let label: String?

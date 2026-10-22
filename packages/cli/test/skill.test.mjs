@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { EXIT } from "../src/shared/errors.mjs";
+import { KEPT_ARCHIVES } from "../src/install/skill.mjs";
 import { run } from "../src/cli.mjs";
 import { VERSION } from "../src/version.mjs";
 import { bundleSkill } from "../scripts/bundle-skill.mjs";
@@ -111,6 +112,18 @@ test("relo setup installs the skill into one harness's folder; unchanged, update
   assert.equal(existsSync(dir), false);
   assert.equal(existsSync(join(b.home, removed.archived.slice(2), SKILL, "SKILL.md")), true);
   assert.notEqual(removed.archived, updated.archived, "each archive is its own folder");
+});
+
+test("skill archives keep only the newest few, never one per update forever", async () => {
+  const b = await box();
+  const archives = join(b.home, ".local", "share", "relo", "skill-archives");
+  for (let n = 0; n < 8; n += 1) await mkdir(join(archives, `2026010${n}T000000Z-0.0.${n}`, SKILL), { recursive: true });
+  await b.run(["setup", "--agent", "claude-code"]);
+  await writeFile(join(b.home, ".claude", "skills", SKILL, "SKILL.md"), "edited\n");
+  assert.equal(skillRow((await b.run(["setup", "--agent", "claude-code"])).line).action, "updated");
+  const left = (await readdir(archives)).sort();
+  assert.equal(left.length, KEPT_ARCHIVES);
+  assert.ok(left.at(-1).startsWith("20261013T"), "the newest archive stays");
 });
 
 test("an older copy is updated and archived under its own version; each harness's folder; CLAUDE_CONFIG_DIR", async () => {

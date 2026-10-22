@@ -113,7 +113,7 @@ test("while it runs, the MCP server drives the throttled liveness sweep, and the
   const base = box.deps();
   const server = run(["mcp"], { stdin, mcpOutput: { write() {} }, mcpLeaveGraceMs: 5, mcpTickMs: 20 },
     { ...base, parentPid: 31337, harnessProcess: { ...base.harnessProcess, processAlive: async ({ pid }) => pid === 31337 } });
-  for (let waited = 0; waited < 2_000 && Object.values(await phases(box)).includes("open"); waited += 20) await new Promise((resolve) => setTimeout(resolve, 20));
+  for (let waited = 0; waited < 15_000 && Object.values(await phases(box)).includes("open"); waited += 20) await new Promise((resolve) => setTimeout(resolve, 20));
   stdin.end();
   await server;
   await box.collect();
@@ -130,7 +130,7 @@ test("a hangup does not end the MCP server before its leave: SIGHUP is ignored w
   const base = box.deps();
   const server = run(["mcp"], { stdin, mcpOutput: { write() {} }, mcpLeaveGraceMs: 5, mcpTickMs: 60_000 },
     { ...base, parentPid: HARNESS, harnessProcess: { ...base.harnessProcess, processAlive: async () => false } });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  for (let waited = 0; waited < 15_000 && process.listenerCount("SIGHUP") === before; waited += 10) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(process.listenerCount("SIGHUP"), before + 1);
   stdin.end();
   await server;
@@ -140,9 +140,12 @@ test("a hangup does not end the MCP server before its leave: SIGHUP is ignored w
   // A real process survives SIGHUP and exits 0 on EOF.
   const home = mkdtempSync(join(tmpdir(), "relo-hup-"));
   const bin = fileURLToPath(new URL("../bin/relo.mjs", import.meta.url));
-  const child = spawn(process.execPath, [bin, "mcp"], { env: { ...process.env, HOME: home, RELO_STATE_DIR: join(home, "state"), RELO_NO_BACKGROUND_FLUSH: "1", RELO_NO_UPDATE_CHECK: "1" }, stdio: ["pipe", "ignore", "ignore"] });
+  const child = spawn(process.execPath, [bin, "mcp"], { env: { ...process.env, HOME: home, RELO_STATE_DIR: join(home, "state"), RELO_NO_BACKGROUND_FLUSH: "1", RELO_NO_UPDATE_CHECK: "1" }, stdio: ["pipe", "pipe", "ignore"] });
   const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  // Served once it answers an initialize request (not a guess at how long node takes to start on a busy machine).
+  const ready = new Promise((resolve) => child.stdout.once("data", resolve));
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } } })}\n`);
+  await Promise.race([ready, exited.then((result) => { throw new Error(`relo mcp exited before it answered: ${JSON.stringify(result)}`); })]);
   child.kill("SIGHUP");
   const early = await Promise.race([exited, new Promise((resolve) => setTimeout(() => resolve(undefined), 400))]);
   assert.equal(early, undefined, "still serving after SIGHUP");

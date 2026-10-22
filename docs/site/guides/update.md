@@ -24,6 +24,30 @@ Your server names the newest CLI it hands out on every reply, so noticing a new 
 
 `RELO_NO_UPDATE_CHECK=1` turns both off.
 
+### Automatic or ask first
+
+Each computer chooses how a newer CLI from your server is installed:
+
+```sh
+relo update --mode ask
+```
+
+- `auto` (the default): it installs by itself, as above.
+- `ask`: your phone asks first ("Update the Relo CLI on build-box to 0.17.52?"). Yes installs it right away;
+  no, or no answer within 8 hours, leaves that version alone until a newer one arrives. `relo update` installs
+  it any time.
+- `off`: never by itself; `relo update` when you want it.
+
+`RELO_UPDATES=auto|ask|off` overrides the stored mode for one shell or service.
+
+## Relo for Mac
+
+Relo for Mac updates itself from the same server: every deploy publishes the build it hands out as a signed
+update feed (`/mac/appcast.xml`), and the app checks it every hour. In its Settings, **Updates** shows the
+version and **Install updates automatically** (on by default: it installs in the background and the new
+version runs from the next launch). Off, it asks before installing. **Check for Updates…** in its menu bar
+menu checks now. Every update is verified against the deploy's signing key before it installs.
+
 ## Check for an update
 
 ```sh

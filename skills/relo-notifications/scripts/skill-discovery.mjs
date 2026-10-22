@@ -1,14 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  chmodSync,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-} from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -159,7 +151,7 @@ async function main(argv) {
   if (!result.ok) process.exitCode = 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).catch((error) => {
     process.stderr.write(`skill-discovery: ${error instanceof Error ? error.message : "failed"}\n`);
     process.exitCode = 1;

@@ -63,6 +63,10 @@ export type AppDependencies = {
   credentialDerivationSecret: string;
   appUrl: string;
   apnsMode: ApnsMode;
+  /** RELO_LANDING_FILM_URL: the landing's launch film folder; unset, the landing has no film. */
+  landingFilmUrl?: string | undefined;
+  /** RELO_ONBOARDING_FILM_URL: the onboarding film folder, shown above Get started; unset, no film. */
+  onboardingFilmUrl?: string | undefined;
 };
 
 export type AppOptions = AppDependencies | Partial<Pick<AppDependencies,"apnsMode" | "credentialDerivationSecret" | "interactionChanges" | "currentChanges">>;
@@ -194,10 +198,13 @@ export function createApp(
     return context.json({ state: result.state,replayed: result.kind === "replayed",respondedAt: result.respondedAt });
   });
 
-  // The newest CLI this server hands out rides on every API reply (x-relo-cli-latest), read once at start: a CLI behind it
-  // updates itself (or tells its agent how) without asking the server anything more.
-  const latestCli = bundledCli()?.version;
-  if (latestCli) app.use("/api/*", async (context,next) => { await next(); context.header("x-relo-cli-latest",latestCli); });
+  // The newest CLI this server hands out rides on every API reply (x-relo-cli-latest), read per reply (the deploy can publish a
+  // new CLI without a new image): a CLI behind it updates itself (or tells its agent how) without asking the server more.
+  app.use("/api/*", async (context,next) => {
+    await next();
+    const latestCli = bundledCli()?.version;
+    if (latestCli) context.header("x-relo-cli-latest",latestCli);
+  });
 
   app.use("/api/*", authenticate(db));
 

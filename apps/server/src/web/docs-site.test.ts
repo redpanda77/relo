@@ -31,11 +31,12 @@ describe("docs site build", () => {
   });
 });
 
-function docsApp(signedIn = false,origin = "https://relo.example.com") {
+function docsApp(signedIn = false,origin = "https://relo.example.com",onboardingFilmUrl?: string) {
   const app = new Hono();
   registerDocsSite(app,{
     releaseIdentity: "0.18.30+abcdef12",
     origin,
+    onboardingFilmUrl,
     signedIn: async () => signedIn,
     renderDocument: async (bootstrap,{ rootHtml }) => `<html><body>${rootHtml}<script id="bootstrap">${JSON.stringify(bootstrap)}</script></body></html>`,
   });
@@ -53,6 +54,22 @@ describe("docs routes", () => {
     expect(html).toContain('href="/sign-in"');
     expect(html).toContain('aria-current="page"');
     expect(html).not.toContain("Open Dashboard");
+  });
+
+  test("Get started opens with the configured onboarding film, and only that page allows its origin", async () => {
+    const app = docsApp(false,"https://relo.example.com","https://media.example.test/relo/onboarding/v2/");
+    const started = await app.request("/docs/get-started");
+    expect(await started.text()).toContain('"film":{"base":"https://media.example.test/relo/onboarding/v2"}');
+    const policy = started.headers.get("content-security-policy") ?? "";
+    expect(policy).toContain("media-src 'self' https://media.example.test;");
+    expect(policy).toContain("img-src 'self' data: https://media.example.test;");
+    const other = await app.request("/docs");
+    expect(await other.text()).not.toContain('"film"');
+    expect(other.headers.get("content-security-policy")).not.toContain("media.example.test");
+    // Without the setting Get started has no film and no media origin.
+    const plain = await docsApp().request("/docs/get-started");
+    expect(await plain.text()).not.toContain('"film"');
+    expect(plain.headers.get("content-security-policy")).not.toContain("media-src");
   });
 
   test("a signed-in owner gets the same page with a way back to the Dashboard", async () => {

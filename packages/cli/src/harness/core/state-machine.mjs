@@ -160,11 +160,21 @@ export function reduce(previous, event, now) {
     return done();
   }
 
-  if (s.phase === "ended" && event.event !== "start") return done();
+  if (s.phase === "ended" && event.event !== "start") {
+    // An end is final unless the session goes on: Claude Code can send SessionEnd and keep the session (on 19 Oct one
+    // ran for hours after it, its card hidden as a finished session's). A prompt starts a turn, so it is never the late
+    // tail of the last one; other activity counts once the reorder grace is over.
+    const goesOn = event.event === "prompt" || (event.event !== "end" && event.event !== "compact" && now - Date.parse(s.phaseSince) >= REORDER_GRACE_MS);
+    if (!goesOn) return done();
+    delete s.endReason;
+    resetTurn();
+    clearSubagents();
+    setPhase("open");
+  }
 
   switch (event.event) {
     case "start":
-      if (event.source === "compact" && previous) break;
+      if (event.source === "compact" && previous && previous.phase !== "ended") break;
       resetTurn();
       clearSubagents();
       setPhase("open");

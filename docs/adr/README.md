@@ -18,5 +18,8 @@ be amended while its decision is being implemented, and says so in its status.
 | [0010](0010-shared-server-modules.md) | Shared server modules: credentials, scopes, webhooks, request policy, card actor, facts, content policy, origin rule | Accepted, implemented; applies 0008 and 0009 |
 | [0011](0011-computers.md) | Computers: one record per login with a display name, an icon, the machine's report and signed setting requests | Accepted, being implemented; applies 0008 and 0010 |
 | [0012](0012-working-layer.md) | Working layer: rounds, plan trees, prompt-time continuity, handoff, lifecycle safety, setup depths | Accepted, being implemented; amends 0007 and 0008 |
+| [0013](0013-sensory-language.md) | One sensory language: moments mapped to sound, haptics and motion on the Mac app, the iPhone app and the Dashboard; one sound set from earshot; one motion vocabulary | Accepted, being implemented |
+| [0014](0014-spoken-line.md) | The line Relo for Mac says aloud: written by the producer (`--say` on deliver and finish), sealed inside the card, no server field | Accepted; amended by 0015 |
+| [0015](0015-spoken-message-frame.md) | One frame for every spoken update: kind, name, gist, with lengths by urgency; the agent writes the line (`--say`), the CLI echoes `Mac says:`; a voice level set per computer or project and capped by the Mac | Accepted, implemented; amends 0013 and 0014 |
 
 Start with 0007 and 0008 to understand how Relo's state is organized.

@@ -69,16 +69,16 @@ export function docsStaticMarkup(bootstrap: DocsSiteBootstrap): string {
 const INSTALL_CODE = /^rci_[A-Za-z0-9_-]{32}(\.[A-Za-z0-9_-]{22})?$/;
 
 /** What an agent reads when the owner's Connect a computer wizard hands it a code: join with it, never sign in. */
-export const installWithCode = (origin: string,code: string) => `# Set up Relo on this computer
+export const installWithCode = (origin: string,code: string,macApp = false) => `# Set up Relo on this computer
 
 You are a coding agent. The owner made a one-time code in Relo's Connect a computer, so there is nothing to sign in to
 and nothing to ask: the code carries the choices the owner made.
 
 1. Run this command. It installs the Relo CLI from ${origin}, signs this computer in with the code and sets up the agents here
-   the way the owner chose. Do not run \`relo auth login\`; the code replaces it.
+   the way the owner chose${macApp ? ", and on a Mac it installs Relo for Mac and opens it signed in" : ""}. Do not run \`relo auth login\`; the code replaces it.
 
 \`\`\`sh
-curl -fsSL ${origin}/install.sh | sh -s -- ${code}
+curl -fsSL ${origin}/install.sh | sh -s -- ${code}${macApp ? " --mac-app" : ""}
 \`\`\`
 
 2. The command sends the owner a first notification itself when it finishes. Do not send another.
@@ -117,8 +117,13 @@ export function registerDocsSite(app: Hono,dependencies: {
   signedIn(headers: Headers): Promise<boolean>;
   renderDocument(bootstrap: DocsSiteBootstrap,options: { rootHtml: string }): Promise<string>;
   site?: DocsSite;
+  /** RELO_ONBOARDING_FILM_URL: the onboarding film shown above Get started; unset, none. */
+  onboardingFilmUrl?: string | undefined;
 }): void {
   const site = dependencies.site ?? DOCS_SITE;
+  const film = dependencies.onboardingFilmUrl
+    ? { base: dependencies.onboardingFilmUrl.replace(/\/+$/,""),origin: new URL(dependencies.onboardingFilmUrl).origin }
+    : null;
   const page = async (context: Context) => {
     const path = new URL(context.req.url).pathname;
     if (path.endsWith(".md")) {
@@ -126,8 +131,11 @@ export function registerDocsSite(app: Hono,dependencies: {
       return found ? markdown(context,found.markdown) : context.notFound();
     }
     const bootstrap = docsBootstrap(site,path,await dependencies.signedIn(context.req.raw.headers),dependencies.releaseIdentity);
+    // Get started opens with the onboarding film when the server has one; only that page allows its origin.
+    const withFilm = film && bootstrap.page?.path === "/docs/get-started";
+    if (withFilm) bootstrap.film = { base: film.base };
     const html = await dependencies.renderDocument(bootstrap,{ rootHtml: docsStaticMarkup(bootstrap) });
-    const response = secureHtml(context,html);
+    const response = secureHtml(context,html,{ mediaOrigin: withFilm ? film.origin : undefined });
     return bootstrap.page ? response : new Response(response.body,{ status: 404,headers: response.headers });
   };
   app.get("/docs",page);
@@ -146,7 +154,7 @@ export function registerDocsSite(app: Hono,dependencies: {
     const code = context.req.query("code") ?? "";
     if (INSTALL_CODE.test(code)) {
       const at = dependencies.origin ?? new URL(context.req.url).origin;
-      return context.body(installWithCode(at,code),200,{
+      return context.body(installWithCode(at,code,context.req.query("mac") === "1"),200,{
         "content-type": "text/markdown; charset=utf-8","cache-control": "no-store","x-content-type-options": "nosniff" });
     }
     const install = docsPageFor(site,"/docs/get-started/with-an-agent");

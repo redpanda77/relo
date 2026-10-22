@@ -78,6 +78,8 @@ function cardSealed(work: WorkRow) {
 /**
  * The card's identity from its work's declared context. The goal is the card's title, so a work without
  * a topic (no session name yet) has none: the card reads "<source> · <project>", never a made-up name.
+ * A work that names no project (an older CLI outside a repository) is filed under its source, never under
+ * a product or repository it does not belong to.
  */
 export function cardContext(work: WorkRow): Record<string,unknown> {
   const context = (work.context ?? {}) as Record<string,unknown>;
@@ -85,7 +87,7 @@ export function cardContext(work: WorkRow): Record<string,unknown> {
   return Object.fromEntries(Object.entries({
     providerName: pick("providerName",80),
     computer: pick("computer",120),
-    project: pick("project",120) ?? "Relo",
+    project: pick("project",120) ?? pick("providerName",80) ?? pick("computer",120),
     threadName: pick("threadName",160),
   }).filter(([,value]) => value !== undefined));
 }

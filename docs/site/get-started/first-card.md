@@ -12,11 +12,14 @@ and one notification with the outcome.
 
 ## The one-time test
 
+On the computer you connected in [step 2](/docs/get-started/cli), with the iPhone from
+[step 3](/docs/get-started/iphone) signed in:
+
 ```sh
 relo test
 ```
 
-A short card appears on your Lock Screen and asks whether you can see it. Tap **Yes**.
+A short card appears on your Lock Screen and asks "Can you see this card on your iPhone?". Tap **Yes**.
 The phone is recorded as verified, and `relo test` is never needed again on this account (use
 `relo test --again` to repeat it). If nothing appears within a minute, see
 [Troubleshooting](/docs/troubleshooting).
@@ -99,4 +102,4 @@ The same work is in the app's **Now** tab while it runs, and in **History** afte
 relo doctor
 ```
 
-`ready` is now `true`. The only warning left may be the skill for your agents, which is the last step.
+`ready` is now `true`. The last step is your agents, which the one-line install already set up.

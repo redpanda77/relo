@@ -60,7 +60,7 @@ describe("Connect a computer wizard", () => {
     expect(screen.getByRole("radio", { name: /I'll run a command/ })).toBeChecked()
     fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
     expect(await screen.findByText(/install\.sh \| sh -s -- rci_abc/)).toBeInTheDocument()
-    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: false })
+    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: false, macApp: true })
     expect(screen.getByRole("button", { name: /Copy command/ })).toBeInTheDocument()
     expect(screen.getByText("Waiting for your computer…")).toBeInTheDocument()
     expect(lastInvite()).toBe(ID)
@@ -72,7 +72,7 @@ describe("Connect a computer wizard", () => {
     fireEvent.change(screen.getByLabelText("How much Relo does there"), { target: { value: "guide" } })
     fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
     await screen.findByText("Waiting for your computer…")
-    expect(service.invite).toHaveBeenCalledWith({ level: "guide", approvals: false })
+    expect(service.invite).toHaveBeenCalledWith({ level: "guide", approvals: false, macApp: true })
 
     set(status("key_published", buildBox()))
     expect(await screen.findByText(/connected · CLI 0\.17\.40/)).toBeInTheDocument()
@@ -91,7 +91,7 @@ describe("Connect a computer wizard", () => {
 
     set(status("tested", buildBox({ ok: true, failing: [] })))
     expect(await screen.findByText(/First notification sent/)).toBeInTheDocument()
-    expect(lastInvite()).toBeNull()
+    await waitFor(() => expect(lastInvite()).toBeNull())
     fireEvent.click(screen.getByRole("button", { name: "Continue" }))
     expect(screen.getByText(/Relo for iPhone/)).toBeInTheDocument()
     expect(screen.getByText(/Relo for Mac/)).toBeInTheDocument()
@@ -124,7 +124,7 @@ describe("Connect a computer wizard", () => {
 
   it("on the agent path shows the prompt, and offers the command after the fallback delay", async () => {
     const { service } = fake()
-    await open(service, { fallbackMs: 300 })
+    await open(service, { fallbackMs: 3_000 })
     fireEvent.click(screen.getByRole("radio", { name: /Let my agent do it/ }))
     fireEvent.click(screen.getByRole("button", { name: "Make the prompt" }))
     const promptText = (await screen.findByText(/install\.md\?code=rci_abc\./)).textContent ?? ""
@@ -135,10 +135,10 @@ describe("Connect a computer wizard", () => {
     expect(screen.getByText(/may ask your permission/)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Run it yourself instead" })).toBeNull()
 
-    fireEvent.click(await screen.findByRole("button", { name: "Run it yourself instead" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Run it yourself instead" }, { timeout: 8_000 }))
     expect(screen.getByText(new RegExp(`install\\.sh \\| sh -s -- rci_abc\\.${bind}`))).toBeInTheDocument()
     expect(screen.queryByText(prompt)).toBeNull()
-  })
+  }, 15_000)
 
   it("does not offer the command while the agent has already connected the computer", async () => {
     const { service, set } = fake()
@@ -315,7 +315,7 @@ describe("Approval, restart hint, options, resume and typed code", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Amp" }))
     fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
     await screen.findByText("Waiting for your computer…")
-    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: true, agents: ["claude-code", "codex", "amp"] })
+    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: true, macApp: true, agents: ["claude-code", "codex", "amp"] })
   })
 
   it("Resume reopens on the same command, still waiting", async () => {

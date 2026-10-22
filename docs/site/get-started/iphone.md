@@ -1,6 +1,6 @@
 ---
-title: Install the iPhone app
-nav: 2. Install the iPhone app
+title: Add your iPhone
+nav: 3. Add your iPhone
 summary: The Relo app on your iPhone, signed in to your server, with notifications and Live Activities on.
 ---
 
@@ -45,16 +45,23 @@ Group or profiles, add your account under **Xcode → Settings → Accounts**.
 </li>
 <li>
 
-**Create your account.** On the iPhone, open Relo, enter your server's address and tap **Create
-account** (or **Sign in** if you already have one). Finish in the browser that opens, and you are back
-in the app. Allow notifications and Live Activities when asked. The phone registers with the server and
-creates its encryption keys.
+**Add your server and sign in.** On the iPhone, open Relo and tap **Add your server**. Enter the
+address you open the Dashboard at (your `RELO_APP_URL`) and tap **Done**. Then tap **Sign in** with the
+owner account you created in [step 1](/docs/get-started/server). Sign-in opens in the browser and comes
+straight back to the app. (**Create account** is for a new account on a server that lets people join.)
 
-The **Connect a computer** wizard opens next. Choose a command or an agent prompt, copy or share it to
-the computer, and watch it connect: a Live Activity shows the wait, and your phone approves the
-computer's key for you. Later, **Settings → Devices → Add a computer** opens it again. To sign in a computer that
-shows a code instead, open **Settings → Devices → Sign in a computer**, scan its QR code or type the code, and
-pick the number the terminal shows. See [Connect a computer](/docs/guides/servers).
+</li>
+<li>
+
+**Allow notifications** when asked, and leave Live Activities on. The phone registers with the server
+and creates its encryption keys.
+
+The computer you connected in [step 2](/docs/get-started/cli) needs nothing from you here: it joined
+before any phone, so it needs no approval. A computer you add from now on does, unless this iPhone made
+its code: tap **Approve** on the request the phone shows. If your account has no computer yet, the app opens **Connect a computer** once,
+with the same one line. Later, **Settings → Devices → Add a computer** opens it again, and **Settings →
+Devices → Sign in a computer** approves a computer that ran `relo auth login` (scan its QR code or type
+the code, and pick the number the terminal shows). See [Connect a computer](/docs/guides/servers).
 
 </li>
 </ol>
@@ -124,6 +131,11 @@ The `.p8` key lives only on the server. Do not copy it into the Xcode project or
 
 In the Dashboard, your iPhone appears under **Connections → Phones**, and the app's **Now** tab loads without a
 notice asking you to allow notifications. On the server, `docker compose ps` keeps showing the worker
-as running.
+as running. On your computer:
 
-The full end-to-end check, a real card on the Lock Screen, comes in step 4, once a computer is connected.
+```sh
+relo doctor
+```
+
+`next.step` is now `test`: the server and your phone are known, and the last check is a real card on
+the phone. That is the next step.

@@ -5,6 +5,7 @@
 import { cp, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(here, "..");
@@ -45,7 +46,7 @@ export async function bundleSkill({ packageRoot = PACKAGE_ROOT, source, out } = 
   return { out: to, reused: false };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   const flag = (name) => { const at = process.argv.indexOf(name); return at === -1 ? undefined : process.argv[at + 1]; };
   try {
     const { out, reused } = await bundleSkill({ source: flag("--source"), out: flag("--out") });

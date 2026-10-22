@@ -20,7 +20,7 @@ page explains behavior. Use the installed `relo`; do not install or upgrade it m
 ## The work verbs
 
 ```bash
-relo work start --goal "Ship the 0.17 release" --plan "Bump versions,Run local gates,Tag and publish"
+relo work start --goal "Ship the 0.17 release" --spoken-name "The 0.17 release" --plan "Bump versions,Run local gates,Tag and publish"
 relo work update --status "Gates running" --next-step
 relo work update --progress 3/5
 relo work update --add "Write release notes"
@@ -33,6 +33,7 @@ relo work update --not-waiting --status "CI green"
 relo work pause --status "Waiting for the owner's design review"
 relo work resume
 relo work deliver --outcome "0.17 is on TestFlight"
+relo work deliver --outcome "0.17 is on TestFlight, build 289" --say "The iPhone app is on TestFlight."   # Relo for Mac says it after "Your turn: <name>."
 relo work start --round "Add the release notes" --plan "Draft them,Review them"
 relo work finish --outcome "0.17 is live"
 relo work finish --outcome "Gates failed on the upload test" --failed
@@ -41,14 +42,14 @@ relo state
 
 | Command | Flags | Notes |
 | --- | --- | --- |
-| `relo work start` | `--goal TEXT` (required, except with `--round`), `--round TEXT`, `--plan "A,B,C"`, `--progress n/m`, `--status TEXT`, `--new`, `--dry-run`, `--json` | when this session has an open work it continues it: goal, plan, progress and status are ignored and the echo says why. After a `deliver`, `--round` opens the next round of that goal; without it the start is refused |
-| `relo work update` | `--status`, `--goal`, `--next-step` or `--step X`, `--plan "…"`, `--add "…"` (with `--under sN` or `--after sN`), `--detail TEXT`, `--progress n/m`, `--waiting TEXT` or `--not-waiting`, `--dry-run`, `--json` | at least one change; none of the plan changes on a delivered round |
-| `relo work deliver` | `--outcome TEXT` (required), `--drop-rest`, `--dry-run`, `--json` | ends this request (refused while top-level steps are open, naming them; `--drop-rest` skips them): the round closes, the owner gets the outcome as one quiet notification and it is their turn; the work stays open for `start --round` |
+| `relo work start` | `--goal TEXT` (required, except with `--round`), `--spoken-name TEXT` (2 to 4 words, how Relo for Mac calls the work aloud), `--round TEXT`, `--plan "A,B,C"`, `--progress n/m`, `--status TEXT`, `--new`, `--dry-run`, `--json` | when this session has an open work it continues it: goal, plan, progress and status are ignored and the echo says why. After a `deliver`, `--round` opens the next round of that goal; without it the start is refused |
+| `relo work update` | `--status`, `--goal`, `--spoken-name`, `--next-step` or `--step X`, `--plan "…"`, `--add "…"` (with `--under sN` or `--after sN`), `--detail TEXT`, `--progress n/m`, `--waiting TEXT` or `--not-waiting`, `--dry-run`, `--json` | at least one change; none of the plan changes on a delivered round |
+| `relo work deliver` | `--outcome TEXT` (required), `--say TEXT`, `--drop-rest`, `--dry-run`, `--json` | ends this request (refused while top-level steps are open, naming them; `--drop-rest` skips them): the round closes, the owner gets the outcome as one quiet notification and it is their turn; the work stays open for `start --round` |
 | `relo work handoff` | `--next TEXT` (required, up to 107 characters), `--dry-run`, `--json` | hands this session's open work to a fresh session on this computer: the card, the plan and the open round stay, the status reads `Handing off: <next>`, nothing is announced. Prints `relo work start --from <handle>` (single use, 24 hours, same computer); this session no longer owns the work. Needs the server (never queued). Refused on a delivered round |
 | `relo work start --from HANDLE` | no other flag | in the fresh session: takes over the handed-off work (the old session loses it, this session's own open work is parked). Refused when the handle is unknown, used, expired or from another computer; the pending copy on this computer is then dropped |
 | `relo work pause` | `--status TEXT` (required: why), `--json` | takes the card off the Lock Screen; Now › Paused |
 | `relo work resume` | `[wrk_…]`, `--json` | default: the most recent paused or parked work of this session |
-| `relo work finish` | `--outcome TEXT` (required), `--failed` or `--dropped`, `--work wrk_…`, `--json` | ends the goal; default: the open work; open steps become skipped |
+| `relo work finish` | `--outcome TEXT` (required), `--say TEXT`, `--failed` or `--dropped`, `--work wrk_…`, `--json` | ends the goal; default: the open work; open steps become skipped |
 | `relo state` | `--sync`, `--json` | this session's open, paused and parked work; local unless `--sync` |
 | scripts only | `--producer KEY`, `--idempotency-key`, `relo work heartbeat --lease 15m` | see [services.md](services.md) |
 

@@ -119,6 +119,14 @@ test("update downloads, verifies the checksum, installs the stored tarball and k
   assert.deepEqual((await b.stored()).sort(), [VERSION, NEWER].sort(), "the installed release is stored too, and no partial folder is left");
 });
 
+test("update keeps only the new release and the one before it (no pile of old tarballs)", async () => {
+  const server = await releaseServer({ releases: [release(VERSION), release(NEWER)] });
+  const b = await box({ server });
+  for (const old of ["0.0.1", "0.0.2", "0.0.3"]) await mkdir(join(b.home, ".local", "share", "relo", "cli-releases", old), { recursive: true });
+  assert.equal((await b.cli(["update"])).exitCode, 0);
+  assert.deepEqual((await b.stored()).sort(), [VERSION, NEWER].sort());
+});
+
 test("rollback reinstalls the previous stored release after re-verifying it", async () => {
   const server = await releaseServer({ releases: [release(VERSION), release(NEWER)] });
   const b = await box({ server });

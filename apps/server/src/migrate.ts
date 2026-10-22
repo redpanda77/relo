@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -41,7 +42,7 @@ export async function migrate(db: Database, directory = migrationsDirectory): Pr
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   const databaseUrl = process.env.MIGRATION_DATABASE_URL;
   if (!databaseUrl) throw new Error("MIGRATION_DATABASE_URL is required for schema-owner migrations");
   const db = createDatabase(databaseUrl);

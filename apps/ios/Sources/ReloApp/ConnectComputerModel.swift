@@ -22,6 +22,8 @@ final class ConnectComputerModel {
     var level = "track"
     /// Options: also ask permission on this iPhone, and which agents relo setup sets up (every one found, or a chosen few).
     var approvals = false
+    /// Relo for Mac (the notch) comes along by default; the install script skips it on anything but a Mac.
+    var macApp = true
     var allAgents = true
     var chosenAgents: Set<String> = []
     /// Approving the waiting computer by hand is running.
@@ -65,7 +67,8 @@ final class ConnectComputerModel {
         guard let pending, let app else { return nil }
         switch pending.mode {
         case .command: return pending.command
-        case .agent: return ReloComputerSetup.agentPrompt(origin: app.serverURL, fullCode: pending.fullCode, level: pending.level)
+        case .agent: return ReloComputerSetup.agentPrompt(origin: app.serverURL, fullCode: pending.fullCode, level: pending.level,
+                                                         macApp: pending.command.hasSuffix(" --mac-app"))
         }
     }
 
@@ -93,7 +96,7 @@ final class ConnectComputerModel {
         making = true
         defer { making = false }
         do {
-            let invite = try await inviter.inviteComputer(credential: credential, level: level, approvals: approvals, agents: agents)
+            let invite = try await inviter.inviteComputer(credential: credential, level: level, approvals: approvals, agents: agents, macApp: macApp)
             let bind = ReloComputerBind.generate()
             let expiresAt = ReloComputerSetup.expiry(invite.expiresAt) ?? Date().addingTimeInterval(30 * 60)
             let record = ReloPendingComputerInvite(

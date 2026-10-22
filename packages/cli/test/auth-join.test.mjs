@@ -242,3 +242,43 @@ test("auth join without a bind half publishes the key with no binding, and a mal
   assert.equal(bad.exitCode, EXIT.USAGE);
   assert.equal(b.state.redeemed.length, 1);
 });
+
+test("auth join --mac-app asks for the Mac app's sign-in code and opens the app with it and the verifier only it gets", async () => {
+  const signInCode = `relo_signin_${"s".repeat(43)}`;
+  const b = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "track", approvals: false, macApp: true },
+    credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_tttt", scopes: body.scopes },
+    ...(body.macAppChallenge ? { macAppSignInCode: signInCode } : {}) }) });
+  const opened = [];
+  const deps = { ...b.deps, platform: "darwin", openMacApp: async (path, args) => { opened.push({ path, args }); } };
+  const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app", "/Users/x/Applications/Relo Notch.app"], deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  const challenge = b.state.redeemed[0].macAppChallenge;
+  assert.match(challenge, /^[A-Za-z0-9_-]{43}$/u);
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].path, "/Users/x/Applications/Relo Notch.app");
+  const args = opened[0].args;
+  const verifier = args[args.indexOf("--relo-code-verifier") + 1];
+  assert.equal(args[args.indexOf("--relo-sign-in-code") + 1], signInCode);
+  assert.equal(args[args.indexOf("--relo-origin") + 1], "https://relo.example");
+  const { createHash } = await import("node:crypto");
+  assert.equal(createHash("sha256").update(verifier).digest("base64url"), challenge, "the verifier matches the challenge sent");
+  assert.equal(out.line.join.macApp, "signed-in");
+  assert.equal(JSON.stringify(out).includes(verifier) || JSON.stringify(out).includes(signInCode), false, "neither is printed");
+});
+
+test("auth join --mac-app off a Mac sends no challenge and opens nothing", async () => {
+  const b = await box();
+  const opened = [];
+  const deps = { ...b.deps, platform: "linux", openMacApp: async (path, args) => { opened.push({ path, args }); } };
+  const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app", "/tmp/Relo Notch.app"], deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  assert.equal(b.state.redeemed[0].macAppChallenge, undefined);
+  assert.equal(opened.length, 0);
+});
+
+test("auth invite --with-mac-app asks for Relo for Mac on the new computer", async () => {
+  const b = await box();
+  const out = await cli(["auth", "invite", "--with-mac-app"], b.deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  assert.deepEqual(b.state.invites, [{ macApp: true }]);
+});

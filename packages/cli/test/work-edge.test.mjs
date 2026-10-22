@@ -554,7 +554,7 @@ test("on an end-to-end account rounds, outcomes and details travel only in the s
   assert.equal(r.code, 0, r.text);
   const start = workWrites(s)[0].body;
   assert.deepEqual(start.plan, { op: "set", steps: [{ id: "s1" }, { id: "s2", children: [{ id: "s3" }, { id: "s4" }] }] }, "predicted ids in pre-order, nested");
-  assert.deepEqual(await cardOf(s, start), { title: "Rotate the signing keys", stepId: "s1", phases: [{ id: "r1", steps: [{ id: "s1", label: "Rotate" }, { id: "s2", label: "Verify" }, { id: "s3", label: "Check staging" }, { id: "s4", label: "Check production" }] }] });
+  assert.deepEqual(await cardOf(s, start), { title: "Rotate the signing keys", voice: "verbose", stepId: "s1", phases: [{ id: "r1", steps: [{ id: "s1", label: "Rotate" }, { id: "s2", label: "Verify" }, { id: "s3", label: "Check staging" }, { id: "s4", label: "Check production" }] }] });
   r = await s.relo("work", "update", "--detail", "Rotating the staging key first");
   assert.equal(r.code, 0, r.text);
   const patch = workWrites(s).at(-1).body;

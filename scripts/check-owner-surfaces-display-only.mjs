@@ -3,7 +3,7 @@
 // re-derive it. Fails when client source names a client-side policy the server owns: quiet/recent
 // windows, session phase derivation, abandonment/idle timers, or a stale time computed on the client.
 // Test, preview and fixture files are skipped (sample data, or naming the banned symbols to assert their absence).
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -54,7 +54,7 @@ export function scan(base = root) {
   return findings;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   const findings = scan(process.argv[2] ? resolve(process.argv[2]) : root);
   if (findings.length) {
     console.error(`Owner surfaces must be display-only (F.1). ${findings.length} client-side policy reference(s):`);

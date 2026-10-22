@@ -170,6 +170,36 @@ enum NowBlock: Equatable, Identifiable, Sendable {
     }
 }
 
+extension NowBlock {
+    /// What the page animates on: the section, then each card in it, so a card that changes section moves.
+    var motionKeys: [String] {
+        let rows: [NowRowModel] = switch self {
+        case let .sinceYouLooked(_, _, recent, _): recent
+        case let .needsYou(rows), let .waitingOnYou(rows), let .running(_, rows), let .fold(_, _, rows, _): rows
+        case .sessions: []
+        }
+        return [id] + rows.map(\.id)
+    }
+}
+
+/// A work card on its own surface keeps its identity across sections: leaving Waiting on you for Running it
+/// glides to its new place instead of fading out in one and in in the other.
+private struct CardTravel: ViewModifier {
+    let id: String?
+    let space: Namespace.ID
+
+    func body(content: Content) -> some View {
+        if let id { content.matchedGeometryEffect(id: id, in: space) } else { content }
+    }
+}
+
+extension AnyTransition {
+    /// A card arriving on Now settles down into place; leaving, it dissolves through a soft blur (`reloSoftSwap`).
+    static var reloCardArrival: AnyTransition {
+        .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)), removal: .reloSoftSwap)
+    }
+}
+
 enum NowScreenModel {
     static let defaultWindow: TimeInterval = 8 * 3_600
 
@@ -365,8 +395,6 @@ enum NowScreenModel {
 
     static func runningRow(_ item: NowItemInput, now: Date, isOffline: Bool) -> NowRowModel {
         let quietly = item.state == .workingQuietly
-        // The badge tells the truth (U4): work that declared it waits on something is Waiting, not Running.
-        let waiting = PlanWaiting.reason(status: item.status) != nil
         var lines = [item.status ?? ""]
         if quietly { lines.append("Working quietly · updated \(relative(item.evidenceAt, now: now))") }
         lines.append(origin(item))
@@ -374,9 +402,10 @@ enum NowScreenModel {
                            chip: isOffline ? "Unconfirmed" : nil, tone: quietly ? .runningQuiet : .running,
                            lines: lines.filter { !$0.isEmpty },
                            meta: "updated \(relative(item.evidenceAt, now: now))",
+                           // Light runs through work that moves (waiting on its own job included: it reads Running).
                            shimmer: item.state == .moving && !isOffline, startedAt: item.startedAt,
                            steps: item.steps, progress: item.progress,
-                           card: card(item, at: item.startedAt ?? item.evidenceAt, badge: isOffline ? "Unconfirmed" : (waiting ? "Waiting" : nil),
+                           card: card(item, at: item.startedAt ?? item.evidenceAt, badge: isOffline ? "Unconfirmed" : nil,
                                       note: quietly ? "Working quietly · updated \(relative(item.evidenceAt, now: now))" : nil,
                                       caption: stepsCaption(item.steps)))
     }
@@ -459,7 +488,7 @@ extension NowScreenInput {
             return NowItemInput(id: item.id, notificationID: item.notificationId, title: item.title, status: item.status,
                                 source: item.sourceName ?? "", project: item.project, computer: session?.computer,
                                 computerIcon: item.computerIcon ?? session?.computerIcon,
-                                topic: session?.title, state: item.owner.state, reason: reason, evidenceAt: item.owner.evidenceAt,
+                                topic: session?.title ?? item.sessionTitle, state: item.owner.state, reason: reason, evidenceAt: item.owner.evidenceAt,
                                 startedAt: item.startedAt, expiresAt: nil, steps: item.planSteps, progress: nil,
                                 questionID: item.question?.id, roundOutcome: item.roundOutcome, roundNumber: item.roundNumber,
                                 quietReason: item.quietWhy, quietSince: item.quietFrom, absence: item.owner.absence)
@@ -534,6 +563,8 @@ struct CurrentAttentionView: View {
     /// Questions just answered from here: the card stays a beat on "Sent" after the feed retires it,
     /// then fades, so the answer is seen to land and the page never jumps under the thumb.
     @State private var settling: [PendingCurrentDecision] = []
+    /// One space for the work cards, so a card that changes section (Waiting on you → Running) travels there.
+    @Namespace private var cardSpace
 
     /// The live questions, then the ones settling, each once.
     private func requests(_ screen: CurrentInboxPresentation) -> [PendingCurrentDecision] {
@@ -552,7 +583,7 @@ struct CurrentAttentionView: View {
         let ids = Set(answered.map(\.id))
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.2))
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { settling.removeAll { ids.contains($0.id) } }
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.45)) { settling.removeAll { ids.contains($0.id) } }
         }
     }
 
@@ -575,7 +606,6 @@ struct CurrentAttentionView: View {
             case .sinceYouLooked, .sessions: false
             }
         }
-        let activity = todayActivity
         // A plain stack: a handful of sections of very different heights. Lazily laid out, the
         // sections below the fold were measured only on arrival and the page jumped as they did.
         VStack(alignment: .leading, spacing: 28) {
@@ -601,9 +631,7 @@ struct CurrentAttentionView: View {
                     sessionsSection(sessions)
                 }
             }
-            NowAllClearView(activity: activity, allClear: allClear,
-                            openItem: { id in Task { await model.openNotification(notificationID: id) } },
-                            viewHistory: viewHistory)
+            NowAllClearView(allClear: allClear, viewHistory: viewHistory)
                 .transition(.opacity)
             if model.currentState?.snapshot.metadata?.hasMore == true {
                 moreButton("Show more current work", busy: model.currentState?.isLoadingCurrentPage == true) {
@@ -611,9 +639,11 @@ struct CurrentAttentionView: View {
                 }
             }
         }
-        // One motion for the page: sections and cards fade in place as the lists change.
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: requests(screen).map(\.id))
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: blocks.map(\.id))
+        // One motion for the page, a spring with no bounce: sections and cards settle in place as the lists
+        // change, and a card that changes section travels to its new place. Keyed on the cards too, not only
+        // the sections: a card moving between two sections that both stay used to cut.
+        .animation(reduceMotion ? nil : .smooth(duration: 0.45), value: requests(screen).map(\.id))
+        .animation(reduceMotion ? nil : .smooth(duration: 0.45), value: blocks.flatMap(\.motionKeys))
         .onChange(of: screen.needsMe) { old, new in settle(from: old, to: new) }
         .endWorkConfirmation($endTarget, model: model)
         .alert("Couldn't end the work", isPresented: Binding(
@@ -635,14 +665,6 @@ struct CurrentAttentionView: View {
                 }
             }
         }
-    }
-
-    private var todayActivity: TodayActivity {
-        let items = InboxHistoryProjection.collapsedActivities(
-            model.historyItems.filter { clearedAt <= 0 || $0.createdAt.timeIntervalSince1970 >= clearedAt })
-        let rows = HistoryRowProjection.rows(items, events: model.historyItems, now: model.attentionDate)
-            .filter { $0.outcome != .running && $0.outcome != .waitingForYou }
-        return .make(rows: rows, now: model.attentionDate)
     }
 
     private var isOffline: Bool { offline || model.currentState?.connection == .offline }
@@ -694,7 +716,7 @@ struct CurrentAttentionView: View {
     private func needsSection(screen: CurrentInboxPresentation, rows: [NowRowModel]) -> some View {
         let count = (screen.actionableCount ?? screen.needsMe.count) + rows.count
         return section("Needs you", count: count > 0 ? count : nil, color: ReloStateStyle.needsYou.color) {
-            ForEach(requests(screen)) { item in requestCard(item).transition(.opacity) }
+            ForEach(requests(screen)) { item in requestCard(item).transition(.reloCardArrival) }
             ForEach(rows) { row in needsCard(row) }
             if let error = model.nowDismissError {
                 Text(error).font(ReloLayout.cardStatus).foregroundStyle(Color.reloErrorText)
@@ -830,7 +852,6 @@ struct CurrentAttentionView: View {
         let state: ReloStateStyle? = outcome ?? card?.badge.map { badge in
             switch badge {
             case "Your turn": ReloStateStyle.yourTurn
-            case "Waiting": ReloStateStyle.waiting
             case "Unconfirmed": ReloStateStyle.unconfirmed
             default: ReloStateStyle.running.labelled(badge)
             }
@@ -848,6 +869,7 @@ struct CurrentAttentionView: View {
             state: state, facts: [card?.note].compactMap { $0 },
             runningSince: card?.badge == nil && outcome == nil ? row.startedAt : nil, computer: card?.computer,
             computerIcon: card?.computerIcon, surface: surface)
+            .modifier(CardTravel(id: surface == .card ? row.id : nil, space: cardSpace))
 
         if let notificationID = row.notificationID {
             Button { Task { await model.openNotification(notificationID: notificationID) } } label: { inner }
@@ -904,7 +926,7 @@ struct CurrentAttentionView: View {
         let content = HStack(alignment: .center, spacing: ReloLayout.itemSpacing) {
             VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
                 if let context = row.context {
-                    CardHeader(origin: sessionOrigin(context, name: row.title), corner: corner)
+                    CardHeader(origin: sessionOrigin(context, name: row.title), corner: corner, live: row.tone == .running)
                     if row.workTitle != nil || usage != nil || row.lastSeenAt != nil {
                         sessionLine(title: row.workTitle, usage: usage, heavy: row.heavyContext, seen: row.lastSeenAt)
                     }
@@ -912,7 +934,7 @@ struct CurrentAttentionView: View {
                     HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
                         Text(row.title).font(ReloLayout.cardTitle).foregroundStyle(.primary).lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        CardHeader(origin: nil, corner: corner)
+                        CardHeader(origin: nil, corner: corner, live: row.tone == .running)
                             .fixedSize()
                     }
                     if row.workTitle.map({ $0 != row.title }) == true || usage != nil || row.lastSeenAt != nil {
@@ -1019,17 +1041,11 @@ private struct CurrentDecisionButtons: View {
     var body: some View {
         ReloDecisionActions(choices: presenter.choices, phase: presenter.phase, style: .card,
                             sent: model.responseFeedback(for: decision.notificationId)?.action,
-                            deadline: decision.interaction.expiresAt) { send($0) }
+                            deadline: decision.interaction.expiresAt, momentID: decision.notificationId) { send($0) }
     }
 
     private func send(_ choice: ReloDecisionActions.Choice) {
         guard let draft = presenter.draft, model.respondingNotificationID == nil else { return }
-        Task {
-            NotificationResponseHaptics.decisionStarted()
-            await model.respond(to: draft.identity, action: choice.action, optionID: choice.optionID)
-            if let feedback = model.responseFeedback(for: decision.notificationId) {
-                NotificationResponseHaptics.responseFinished(feedback.phase)
-            }
-        }
+        Task { await model.respond(to: draft.identity, action: choice.action, optionID: choice.optionID) }
     }
 }

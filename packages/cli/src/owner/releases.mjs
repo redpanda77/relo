@@ -27,6 +27,8 @@ const DOCTOR_TIMEOUT_MS = 2_000;
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/u;
 
 const dataDirectory = (home) => dataRoot(home);
+/** Stored releases kept: the newest and the one --rollback goes back to. */
+export const KEPT_RELEASES = 2;
 const releasesDirectory = (home) => join(dataDirectory(home), "cli-releases");
 const updateCheckPath = (home) => join(dataDirectory(home), "update-check.json");
 
@@ -204,6 +206,10 @@ async function stage({ release, home, fetchImpl, cliVersion, now }) {
   } catch (error) {
     await rm(partial, { recursive: true, force: true });
     throw error;
+  }
+  // The new release and the one before it (relo update --rollback) stay; older ones only took space.
+  for (const version of (await storedVersions(home)).sort((a, b) => compareVersions(b, a)).slice(KEPT_RELEASES)) {
+    if (version !== cliVersion) await rm(join(root, version), { recursive: true, force: true });
   }
   return join(target, tarballName(release.version));
 }

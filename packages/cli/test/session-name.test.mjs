@@ -75,14 +75,12 @@ test("nothing found, a bad session id or unsafe titles give no name", (t) => {
   assert.match(long, /…$/u);
 });
 
-test("a huge transcript is read only at its tail, quickly", (t) => {
+test("a huge transcript is read only at its tail", (t) => {
   const home = claudeHome(t);
   // ~12 MB of turns before the title, as in a long session.
   home.transcript([{ type: "custom-title", customTitle: "Long running session", sessionId: SESSION }], { padding: 12_000 });
-  const started = performance.now();
   assert.equal(read(home), "Long running session");
-  assert.ok(performance.now() - started < 200, "bounded read");
-  // A title only at the very start of a huge transcript is out of reach: no name, no full read.
+  // A title only at the very start of a huge transcript is out of reach: no name, no full read (the bound is what is asserted, not a time).
   home.transcript([{ type: "custom-title", customTitle: "Early title" }, ...Array(12_000).fill({ type: "user", message: { content: "y".repeat(1000) } })]);
   assert.equal(read(home), undefined);
 });

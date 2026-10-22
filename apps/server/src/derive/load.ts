@@ -1,6 +1,8 @@
 import {
   lastRound,OWNER_STATE_TIMING,planProgressWire,
   type ComputerIcon,
+  type PlanDigestRound,
+  type PlanDigestStep,
   type PlanProgressWire,
   type OwnerStateInput,
   type ProducerEvidence,
@@ -42,6 +44,8 @@ export type LoadedWork = {
   steps: { done: number; total: number; current: string | null } | null;
   /** Plan UX U1, U2: top-level count of the round in play, where the work is, and the labels (readable works only). */
   planProgress: PlanProgressWire | null;
+  /** The whole plan with each step's state, parent and round, and the rounds; null without a plan. */
+  planDigest: ReturnType<typeof planDigestOf>;
   question: { id: string; standing: "pending" | "missed" | "answered" | "answered_late"; askedAt: Date; openedAt: Date | null;
     dismissedAt: Date | null } | null;
   /**
@@ -75,6 +79,36 @@ export function planProgressOf(row: Row): PlanProgressWire | null {
     readable: !row.work_sealed_text && row.privacy !== "private",
     stopped: row.work_lifecycle === "failed" || row.work_lifecycle === "dropped",
   });
+}
+
+/**
+ * The whole plan for Now, as the inbox activity carries it (inbox/queries.ts): each step's state, parent and round,
+ * and the rounds. Labels, details, round titles and outcomes only when the server may read them; devices open the
+ * sealed ones by step id. Null without a plan.
+ */
+export function planDigestOf(row: Row): { plan: PlanDigestStep[]; rounds?: PlanDigestRound[] } | null {
+  const steps = row.work_plan?.steps;
+  if (!steps?.length) return null;
+  const readable = !row.work_sealed_text && row.privacy !== "private";
+  const text = (value: unknown,max: number): string | undefined =>
+    readable && typeof value === "string" && value.trim() ? Array.from(value).slice(0,max).join("") : undefined;
+  const plan = steps.filter((step) => ["open","current","done","skipped"].includes(step.state)).slice(0,120)
+    .map((step): PlanDigestStep => {
+      const full = step as WorkPlan["steps"][number];
+      const label = text(full.label,120);
+      const detail = text(full.detail,200);
+      return { id: full.id,state: full.state,label: label ?? null,
+        ...(full.parent ? { parent: full.parent } : {}),...(full.round ? { round: full.round } : {}),
+        ...(detail ? { detail } : {}),...(full.startedAt ? { startedAt: full.startedAt } : {}),
+        ...(full.doneAt ? { doneAt: full.doneAt } : {}),...(full.carriedFrom ? { carriedFrom: full.carriedFrom } : {}) };
+    });
+  const rounds = row.work_plan?.rounds?.slice(0,60).map((round): PlanDigestRound => {
+    const title = text(round.title,80);
+    const outcome = text(round.outcome,200);
+    return { n: round.n,state: round.state,...(title ? { title } : {}),...(outcome ? { outcome } : {}),
+      ...(round.openedAt ? { openedAt: round.openedAt } : {}),...(round.closedAt ? { closedAt: round.closedAt } : {}) };
+  });
+  return { plan,...(rounds?.length ? { rounds } : {}) };
 }
 
 /**
@@ -218,6 +252,7 @@ export async function loadOwnerStateInputs(
       active: row.state === "active",
       steps: stepsOf(row),
       planProgress: planProgressOf(row),
+      planDigest: planDigestOf(row),
       question,
       sealed: reader.deviceId === undefined ? null : { card: privateCard ? null : row.card_sealed,question: row.question_sealed },
       input: {

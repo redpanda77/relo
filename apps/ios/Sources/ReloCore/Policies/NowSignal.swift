@@ -91,3 +91,81 @@ public extension TodayActivity {
         return hours.enumerated().map { NowHourMix(hour: $0.offset, counts: $0.element) }
     }
 }
+
+// MARK: - Relo's cues (ADR 0013, sections 1 and 2)
+
+/// The iPhone's sound set: the owner-meaningful moments that carry a sound. The raw value is the file's name
+/// (`needs-you.caf`), the same name the server puts in a push's `aps.sound`. Onboarding and the notch's
+/// interface sounds belong to the Mac and are not here.
+public enum ReloCue: String, CaseIterable, Sendable {
+    case needsYou = "needs-you", failed, yourTurn = "your-turn", done, sent, linked
+
+    /// The `.caf` the push names and the app plays.
+    public var fileName: String { rawValue + ".caf" }
+
+    /// Highest first when one batch holds several moments: needs you, failed, your turn, done.
+    var rank: Int {
+        switch self {
+        case .needsYou: 0
+        case .failed: 1
+        case .yourTurn: 2
+        case .done: 3
+        case .sent: 4
+        case .linked: 5
+        }
+    }
+}
+
+/// The rules that keep cues from being too much (ADR 0013, section 2), as one value so they are testable:
+/// - the first observation is the baseline: what already waits makes no sound;
+/// - once per moment: an id is cued when it first appears, never again;
+/// - one cue per batch, the highest moment wins, and at most one every `spacing` seconds;
+/// - the owner acting is not news: an id the owner is looking at is consumed without a cue.
+public struct ReloCueGate: Sendable {
+    public var spacing: TimeInterval
+    private var seen: Set<String> = []
+    private var baselined = false
+    private var lastCue = Date.distantPast
+
+    public init(spacing: TimeInterval = 2) { self.spacing = spacing }
+
+    /// Observes the moments present now (ids by cue) and returns the cue to play, if any.
+    /// - Parameters:
+    ///   - quiet: nothing is cued (not yet armed, hidden): the ids are still consumed, so they never cue later.
+    ///   - looking: ids the owner is looking at: consumed without a cue.
+    public mutating func observe(_ present: [ReloCue: Set<String>], at now: Date = .now,
+                                 quiet: Bool = false, looking: Set<String> = []) -> ReloCue? {
+        var fresh: [ReloCue] = []
+        var all: Set<String> = []
+        for (cue, ids) in present {
+            all.formUnion(ids.map { Self.key(cue, $0) })
+            let news = ids.filter { !seen.contains(Self.key(cue, $0)) && !looking.contains($0) }
+            if !news.isEmpty { fresh.append(cue) }
+        }
+        let first = !baselined
+        baselined = true
+        seen.formUnion(all)
+        // Bounded: ids that left the present set are forgotten once the memory grows.
+        if seen.count > 1_000 { seen = all }
+        guard !first, !quiet, let lead = fresh.min(by: { $0.rank < $1.rank }) else { return nil }
+        return admit(lead, at: now)
+    }
+
+    /// One moment of the owner's own (their answer accepted, a link landing): once per id, and spaced.
+    public mutating func admit(_ cue: ReloCue, id: String, at now: Date = .now) -> Bool {
+        if seen.count > 1_000 { seen = [] }
+        guard seen.insert(Self.key(cue, id)).inserted else { return false }
+        return admit(cue, at: now) != nil
+    }
+
+    /// Forgets the baseline (the app returned from the background): the next observation is silent again.
+    public mutating func rebaseline() { baselined = false }
+
+    private mutating func admit(_ cue: ReloCue, at now: Date) -> ReloCue? {
+        guard now.timeIntervalSince(lastCue) >= spacing else { return nil }
+        lastCue = now
+        return cue
+    }
+
+    private static func key(_ cue: ReloCue, _ id: String) -> String { cue.rawValue + "|" + id }
+}

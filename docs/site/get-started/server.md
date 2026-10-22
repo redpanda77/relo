@@ -73,7 +73,7 @@ curl --fail http://127.0.0.1:8180/health/ready
 ```
 
 The first start creates the database, applies migrations, creates a restricted runtime role and starts
-the API and the worker. Push delivery stays off until [step 2](/docs/get-started/iphone). If something
+the API and the worker. Push delivery stays off until [step 3](/docs/get-started/iphone). If something
 fails:
 
 ```sh title="On the server"
@@ -89,7 +89,8 @@ owner account**: enter your name, email (`you@example.com`) and a password of at
 characters. This account owns the server and is its admin. Other people get separate, private
 accounts: [Accounts](/docs/guides/accounts).
 
-After that, the address shows the Relo landing page, and you sign in at `/sign-in`.
+The Dashboard opens right away on **Connect a computer**, the next step. Leave it open. Later, the
+address shows the Relo landing page, and you sign in at `/sign-in`.
 
 </li>
 </ol>
@@ -101,8 +102,8 @@ curl --fail http://127.0.0.1:8180/health/ready
 ```
 
 From your phone's browser, open `RELO_APP_URL`: you should see the Relo page over HTTPS with no
-certificate warning. If the phone cannot reach it, the app will not either. Fix the address before
-you continue.
+certificate warning. If the phone cannot reach it, the app will not either, so fix the address now,
+even though the iPhone comes later.
 
 :::tip Before a public address
 Keep registration **Closed** or **Approval** (Account → Server accounts), and read

@@ -57,8 +57,8 @@ relo work deliver --outcome "Login crash fixed; please try it on your phone"
 relo work start --round "Also cover the sign-up screen"
 ```
 
-`deliver` closes the round: you get the outcome as one quiet notification and it is your turn. The
-work stays open. A deliver is refused while top-level steps are still open (`--drop-rest` skips them):
+`deliver` closes the round: you get the outcome as one quiet notification and the card reads Done,
+like a finished work, until you look or ask for more. The work stays open. A deliver is refused while top-level steps are still open (`--drop-rest` skips them):
 the plan belongs to the goal, and an owner check in the middle of it is a question or a wait, not a
 delivery. `start --round` opens the next round on the same card and carries the unfinished steps;
 `--plan` sets its own steps instead. `finish` is for the goal itself: use it when it is done and nothing is left. A request that only

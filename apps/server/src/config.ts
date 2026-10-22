@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { isPrivateHost } from "@relo/notification-contracts";
 
+/** A film folder: https, no quotes or spaces (it lands in a page's CSP). */
+const FILM_FOLDER = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9._~\/-]*)?$/
+
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
   HOST: z.string().default("127.0.0.1"),
@@ -11,6 +14,10 @@ const schema = z.object({
     "APP_URL must use https:// unless it is a private or local address"),
   /** Header a reverse proxy sets to the real client address, e.g. cf-connecting-ip or x-real-ip. */
   RELO_CLIENT_IP_HEADER: optionalTrimmed(z.string().regex(/^[A-Za-z0-9-]{1,64}$/)),
+  /** Where the landing's launch film lives (an https folder holding its encodes and poster); unset: no film. */
+  RELO_LANDING_FILM_URL: optionalTrimmed(z.string().regex(FILM_FOLDER)),
+  /** Where the onboarding film lives, shown above Get started in the docs; unset: no film. */
+  RELO_ONBOARDING_FILM_URL: optionalTrimmed(z.string().regex(FILM_FOLDER)),
   RELO_RELEASE_IDENTITY: z.string().trim()
     .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/).optional(),
   BETTER_AUTH_SECRET_FILE: z.string().optional(),

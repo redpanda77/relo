@@ -37,6 +37,11 @@ default `track`).
   `relo` launcher in `~/.local/bin` that names both by path, so hooks and services find it whatever
   their `PATH`. Then it signs in with the code and runs `relo setup` as you chose. Nothing runs as root.
 
+  On a Mac, the command ends in `--mac-app` (the wizard's **Options**, on by default): it also puts
+  **Relo for Mac** in `~/Applications` (checked against its digest) and opens it in the notch already
+  signed in, with no browser sign-in. Your iPhone then asks once to approve this Mac's keys, as it
+  does for the computer. A server with no Mac app to hand out (every public image) says so and skips it.
+
 - **Let my agent do it.** Paste a prompt into Claude Code, Codex or another agent on that computer:
 
   ```text

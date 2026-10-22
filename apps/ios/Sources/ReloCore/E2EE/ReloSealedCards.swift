@@ -64,6 +64,13 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
     public var summary: String?
     /// The plan step that was current when this card update was sent (plan 12b 4.6: updates are grouped by step).
     public var stepId: String?
+    /// The line Relo for Mac says aloud for a delivered or finished work (`relo work deliver --say`): sealed with
+    /// the card, never held by the server.
+    public var spoken: String?
+    /// How Relo for Mac calls the work aloud (`relo work start --spoken-name`, ADR 0015): sealed with the card.
+    public var name: String?
+    /// How much Relo for Mac may say of the work (off, brief, full, verbose), from the producer's settings (ADR 0015).
+    public var voice: String?
 
     public init(title: String? = nil, status: String? = nil, detail: String? = nil, steps: [String]? = nil,
                 phases: [Phase]? = nil, progressLabel: String? = nil, summary: String? = nil) {
@@ -76,7 +83,7 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
         self.summary = summary
     }
 
-    private enum CodingKeys: String, CodingKey { case title, status, detail, steps, phases, progressLabel, summary, stepId }
+    private enum CodingKeys: String, CodingKey { case title, status, detail, steps, phases, progressLabel, summary, stepId, spoken, name, voice }
 
     /// A field of an unexpected type is dropped, never the whole text: the rest still opens.
     public init(from decoder: Decoder) throws {
@@ -90,6 +97,9 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
         progressLabel = try? values.decodeIfPresent(String.self, forKey: .progressLabel)
         summary = try? values.decodeIfPresent(String.self, forKey: .summary)
         stepId = (try? values.decodeIfPresent(String.self, forKey: .stepId)) ?? nil
+        spoken = (try? values.decodeIfPresent(String.self, forKey: .spoken)) ?? nil
+        name = (try? values.decodeIfPresent(String.self, forKey: .name)) ?? nil
+        voice = (try? values.decodeIfPresent(String.self, forKey: .voice)) ?? nil
     }
 
     /// v2 labels by step id. Placeholder labels ("Step 3") are never real labels.

@@ -14,6 +14,12 @@ public struct TodayActivity: Equatable, Sendable {
     public var isEmpty: Bool { rows.isEmpty }
     public var maxTotal: Int { totals.max() ?? 0 }
 
+    /// Today's settled work (running and waiting work is counted live, not here): the strip, the log and the hero's
+    /// TODAY number all read this, so they never disagree.
+    public static func settled(rows: [HistoryRow], now: Date, calendar: Calendar = .current) -> TodayActivity {
+        make(rows: rows.filter(\.outcome.isSettled), now: now, calendar: calendar)
+    }
+
     public static func make(rows: [HistoryRow], now: Date, calendar: Calendar = .current) -> TodayActivity {
         let start = calendar.startOfDay(for: now)
         let today = rows.filter { $0.at >= start && $0.at <= now.addingTimeInterval(60) }

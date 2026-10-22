@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { GITHUB_URL } from "@/features/auth/github"
 import { DocsSearch } from "@/features/docs/docs-search"
 import type { DocsSectionView, DocsSiteBootstrap } from "@/features/docs/types"
+import { FilmPlayer } from "@/components/film-player"
 
 /**
  * The public docs layout (plan 08): the site header, a sidebar tree, the article the server rendered at
@@ -84,6 +85,11 @@ export function DocsSite({ bootstrap }: { bootstrap: DocsSiteBootstrap }) {
                 <h1>{page.title}</h1>
                 <p className="docs-lede">{page.summary}</p>
               </header>
+              {bootstrap.film ? (
+                <div className="docs-film">
+                  <FilmPlayer base={bootstrap.film.base} name="onboarding" label="Get started with Relo: run your server, connect this computer, add your iPhone and more computers" />
+                </div>
+              ) : null}
               {page.outline.length > 2 ? <MobileOutline outline={page.outline} /> : null}
               <Article html={page.html} />
               <nav className="docs-pager" aria-label="Previous and next">

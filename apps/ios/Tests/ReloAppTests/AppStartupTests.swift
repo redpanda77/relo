@@ -816,14 +816,18 @@ final class ReloDeckDirectorTests: XCTestCase {
         ReloDeckDirector(timing: .init(offlineHold: .milliseconds(200), returnHold: .milliseconds(100),
                                        coalesce: .milliseconds(40), armAfter: .milliseconds(100),
                                        hapticCooldown: 2, ceremonyScale: 0.05,
-                                       powerOnAfterAway: 0.15, powerOnAtLaunch: false))
+                                       powerOnAfterAway: 0.15, powerOnAtLaunch: false,
+                                       cueSettle: .milliseconds(100)))
     }
 
-    private func snapshot(total: Int = 3, needsYou: Int? = 0, running: Int = 0) -> ReloDeckDirector.Snapshot {
+    /// `moments` are the cue ids present; by default one needs-you question per counted request.
+    private func snapshot(total: Int = 3, needsYou: Int? = 0, running: Int = 0,
+                          moments: [ReloCue: Set<String>]? = nil) -> ReloDeckDirector.Snapshot {
         .init(summary: InboxTodaySummary(notifications: total, liveActivities: 0, active: 0, finished: 0),
               needsYou: needsYou,
               tasks: (0..<running).map { ReloHoloTask(id: "task-\($0)", progress: nil) },
-              mix: NowMix(counts: [:]))
+              mix: NowMix(counts: [:]),
+              moments: moments ?? [.needsYou: Set((0..<(needsYou ?? 0)).map { "q\($0)" })])
     }
 
     private func input(_ snapshot: ReloDeckDirector.Snapshot, trusted: Bool = true, reachable: Bool = true,
@@ -842,22 +846,47 @@ final class ReloDeckDirectorTests: XCTestCase {
         await settle()
         XCTAssertEqual(deck.shown?.summary.total, 5)
         XCTAssertEqual(deck.waves, 0, "data arriving on open is not news")
-        XCTAssertEqual(deck.newsTicks, 0)
+        XCTAssertEqual(deck.cueTicks, 0, "what already waits on open is the baseline, not a cue")
         XCTAssertTrue(deck.armed)
     }
 
-    func testOnlyRealChangesWhileWatchingRipple_andHapticsAreRateLimited() async {
+    func testOnlyRealChangesWhileWatchingRipple_andCuesAreRateLimited() async {
         let deck = director()
         deck.ingest(input(snapshot(needsYou: 0)))
         await settle()
         deck.ingest(input(snapshot(needsYou: 1)))
         await settle(80)
         XCTAssertEqual(deck.waves, 1)
-        XCTAssertEqual(deck.newsTicks, 1)
+        XCTAssertEqual(deck.cueTicks, 1)
+        XCTAssertEqual(deck.cue, .needsYou)
         deck.ingest(input(snapshot(needsYou: 2)))
         await settle(80)
         XCTAssertEqual(deck.waves, 2)
-        XCTAssertEqual(deck.newsTicks, 1, "a second request inside the cooldown does not buzz again")
+        XCTAssertEqual(deck.cueTicks, 1, "a second request inside the spacing does not cue again")
+    }
+
+    func testNewMomentsCueOnceByIdAndTheHighestWins() async {
+        let deck = director()
+        deck.ingest(input(snapshot(moments: [:])))
+        await settle()
+        deck.ingest(input(snapshot(moments: [.done: ["w1"], .failed: ["w2"]])))
+        await settle(80)
+        XCTAssertEqual(deck.cueTicks, 1)
+        XCTAssertEqual(deck.cue, .failed)
+        deck.ingest(input(snapshot(total: 4, moments: [.done: ["w1"], .failed: ["w2"]])))
+        await settle(80)
+        XCTAssertEqual(deck.cueTicks, 1, "a moment already cued never cues again")
+    }
+
+    func testWhatTheOwnerIsLookingAtMakesNoCue() async {
+        let deck = director()
+        deck.ingest(input(snapshot(moments: [:])))
+        await settle()
+        var looked = snapshot(moments: [.done: ["w1"]])
+        looked.looking = ["w1"]
+        deck.ingest(input(looked))
+        await settle(80)
+        XCTAssertEqual(deck.cueTicks, 0)
     }
 
     func testBurstsCoalesceIntoOneChange() async {
@@ -891,7 +920,7 @@ final class ReloDeckDirectorTests: XCTestCase {
         deck.ingest(input(snapshot()))                                     // back within the hold
         await settle(300)
         XCTAssertEqual(deck.phase, .live)
-        XCTAssertEqual(deck.successTicks, 0)
+        XCTAssertEqual(deck.cueTicks, 0)
         XCTAssertEqual(deck.waves, 0)
     }
 
@@ -908,7 +937,7 @@ final class ReloDeckDirectorTests: XCTestCase {
         XCTAssertEqual(deck.phase, .live)
         XCTAssertEqual(deck.shown?.summary.total, 7)
         XCTAssertEqual(deck.badge?.word, "ONLINE")
-        XCTAssertEqual(deck.successTicks, 0, "a reconnect is not a celebration")
+        XCTAssertEqual(deck.cueTicks, 0, "a reconnect is not a celebration")
         await settle(800)
         XCTAssertEqual(deck.revealed, 6)
     }
@@ -920,7 +949,10 @@ final class ReloDeckDirectorTests: XCTestCase {
         XCTAssertTrue(deck.linking)
         deck.ingest(input(snapshot(), linkPending: true))
         XCTAssertEqual(deck.phase, .booting)
-        XCTAssertEqual(deck.successTicks, 1)
+        XCTAssertEqual(deck.cueTicks, 0, "the bloom waits for the LINKED plate")
+        await settle(60)
+        XCTAssertEqual(deck.cueTicks, 1)
+        XCTAssertEqual(deck.cue, .linked)
         deck.ingest(input(snapshot(), linkPending: true, visible: false))  // switched away mid-boot
         XCTAssertEqual(deck.phase, .live)
         XCTAssertEqual(deck.revealed, 6)
@@ -928,7 +960,7 @@ final class ReloDeckDirectorTests: XCTestCase {
         XCTAssertEqual(deck.ceremonyFinishes, 1)
         deck.ingest(input(snapshot(), linkPending: true))                  // back, flag not cleared yet
         await settle(300)
-        XCTAssertEqual(deck.successTicks, 1, "the ceremony never replays")
+        XCTAssertEqual(deck.cueTicks, 1, "the ceremony never replays")
         XCTAssertEqual(deck.phase, .live)
     }
 
@@ -955,7 +987,7 @@ final class ReloDeckDirectorTests: XCTestCase {
         await settle(800)
         XCTAssertEqual(deck.revealed, 6)
         XCTAssertEqual(deck.moduleBuilds.count, 4, "every module built")
-        XCTAssertEqual(deck.successTicks, 0, "no haptic for coming back")
+        XCTAssertEqual(deck.cueTicks, 0, "no cue for coming back")
         XCTAssertEqual(deck.waves, 0)
     }
 

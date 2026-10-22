@@ -27,29 +27,12 @@ enum CardCorner: Equatable {
     /// Free words in a color ("Sending…").
     case phase(String, symbol: String?, color: Color)
 
-    fileprivate var text: Text? {
-        func badge(_ style: ReloStateStyle) -> Text {
-            (Text(Image(systemName: style.symbol)) + Text(" ") + Text(style.label))
-                .foregroundColor(style.color).fontWeight(.semibold)
-        }
-        func gap() -> Text { Text(" · ").foregroundColor(Color.reloSecondaryText) }
-        func timer(_ since: Date) -> Text {
-            Text(timerInterval: since...Date.distantFuture, countsDown: false)
-                .foregroundColor(Color.reloSecondaryText).monospacedDigit()
-        }
+    /// Nothing to show: no corner, or a countdown whose deadline has passed.
+    fileprivate var isEmpty: Bool {
         switch self {
-        case .none: return nil
-        case let .badge(style): return badge(style)
-        case let .badgeTimer(style, since): return badge(style) + gap() + timer(since)
-        case let .timer(since): return timer(since)
-        case let .countdown(deadline):
-            guard deadline > .now else { return nil }
-            return (Text(Image(systemName: "timer")) + Text(" ")
-                + Text(timerInterval: Date.now...deadline, countsDown: true).monospacedDigit())
-                .foregroundColor(Color.reloSecondaryText)
-        case let .phase(words, symbol, color):
-            return ((symbol.map { Text(Image(systemName: $0)) + Text(" ") } ?? Text("")) + Text(words))
-                .foregroundColor(color).fontWeight(.semibold)
+        case .none: true
+        case let .countdown(deadline): deadline <= .now
+        default: false
         }
     }
 
@@ -68,22 +51,75 @@ enum CardCorner: Equatable {
 struct CardHeader: View {
     var origin: ReloCardOrigin?
     var corner: CardCorner = .none
+    /// The work is moving right now: the badge's symbol breathes (Running, Working).
+    var live = false
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if origin != nil || corner.text != nil {
+        if origin != nil || !corner.isEmpty {
             let layout = typeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: ReloLayout.cardGap))
                 : AnyLayout(HStackLayout(alignment: .center, spacing: ReloLayout.inlineGap))
             layout {
                 if let origin { OriginLine(origin: origin) }
-                if let text = corner.text {
+                if !corner.isEmpty {
                     if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-                    text.font(ReloLayout.cardMeta).lineLimit(1).fixedSize()
+                    CornerLabel(corner: corner, live: live)
+                        .font(ReloLayout.cardMeta).lineLimit(1).fixedSize()
+                        .transition(.opacity)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Waiting → Running, Sending → Sent: the symbol morphs, the words cross-fade and the color blends,
+            // in place, never a cut.
+            .animation(reduceMotion ? nil : .smooth(duration: 0.35), value: corner)
         }
+    }
+}
+
+/// The corner, drawn as one symbol and its words so a change of state morphs the symbol (`.replace`) and
+/// interpolates the words and color instead of swapping a flattened Text.
+private struct CornerLabel: View {
+    let corner: CardCorner
+    let live: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reloMotionPaused) private var paused
+
+    var body: some View {
+        switch corner {
+        case .none: EmptyView()
+        case let .badge(style): badge(style.label, symbol: style.symbol, color: style.color)
+        case let .badgeTimer(style, since):
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                badge(style.label, symbol: style.symbol, color: style.color)
+                Text(" · ").foregroundStyle(Color.reloSecondaryText)
+                timer(since)
+            }
+        case let .timer(since): timer(since)
+        case let .countdown(deadline):
+            (Text(Image(systemName: "timer")) + Text(" ")
+                + Text(timerInterval: Date.now...deadline, countsDown: true).monospacedDigit())
+                .foregroundStyle(Color.reloSecondaryText)
+        case let .phase(words, symbol, color): badge(words, symbol: symbol, color: color)
+        }
+    }
+
+    private func badge(_ words: String, symbol: String?, color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace.downUp))
+                    .symbolEffect(.pulse, options: .repeating, isActive: live && !reduceMotion && !paused)
+            }
+            Text(words).contentTransition(.interpolate)
+        }
+        .foregroundStyle(color).fontWeight(.semibold)
+    }
+
+    private func timer(_ since: Date) -> some View {
+        Text(timerInterval: since...Date.distantFuture, countsDown: false)
+            .foregroundStyle(Color.reloSecondaryText).monospacedDigit()
     }
 }
 

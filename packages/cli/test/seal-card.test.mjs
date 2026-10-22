@@ -102,7 +102,7 @@ test("the card text lock serializes read, merge and save across commands, and ou
       await new Promise((resolve) => { release = resolve; });
       order.push("first:save");
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (let waited = 0; waited < 15_000 && order.length === 0; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
     const second = withCardTextLock(directory, cardId, async () => { order.push("second:read"); });
     await new Promise((resolve) => setTimeout(resolve, 60));
     assert.deepEqual(order, ["first:read"], "the second command waits for the first to save");

@@ -3,8 +3,9 @@ import SwiftUI
 
 /// The answer area of every question, on Now and on its detail page: the sender's choices as one row of
 /// equal buttons, and one status line under them (on a card the line moves up: the phase and the countdown
-/// sit in the card's header corner, `Phase.corner`, and only a failure or a closed request adds a note). From the tap to "Sent" nothing moves: the chosen button
-/// spins and then carries a check, the others dim, and only the line's words change. A failure says why
+/// sit in the card's header corner, `Phase.corner`, and only a failure or a closed request adds a note). From the tap to "Sent" nothing reflows: the chosen button
+/// spins in place of its label, then the label returns with a check springing in beside it as one centered
+/// unit, the others dim, and only the line's words change. A failure says why
 /// and leaves the buttons live; a closed request keeps only its line.
 struct ReloDecisionActions: View {
     struct Choice: Identifiable, Equatable {
@@ -45,6 +46,8 @@ struct ReloDecisionActions: View {
     /// The choice the owner sent, when known (the feedback's action); a tap here sets it too.
     var sent: NotificationInteractionAction? = nil
     var deadline: Date? = nil
+    /// The question this answers (its notification id): the `sent` cue plays once per answer.
+    var momentID: String? = nil
     let send: (Choice) -> Void
 
     @State private var tapped: Choice.ID?
@@ -71,9 +74,38 @@ struct ReloDecisionActions: View {
             if case .closed = phase {} else { buttons }
             if style == .page { statusLine } else if let note = phase.note { cardNote(note) }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: phase)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: tapped)
-        .onChange(of: phase) { _, next in if case .failed = next { tapped = nil } }
+        .animation(reduceMotion ? nil : ReloMotion.snappy, value: phase)
+        .animation(reduceMotion ? nil : ReloMotion.snappy, value: tapped)
+        .onChange(of: phase) { old, next in
+            if case .failed = next { tapped = nil }
+            // Sent: the owner's answer was accepted, from this tap or after it waited for the network (ADR 0013).
+            if next == .recorded, Self.wasAnswering(old) {
+                ReloCuePlayer.shared.play(.sent, id: momentID ?? "sent|\(sent?.rawValue ?? "")")
+            }
+        }
+        .sensoryFeedback(trigger: phase) { old, next in Self.feedback(from: old, to: next) }
+    }
+
+    /// The phases an answer passes through on its way to being recorded; any other change is not the owner's tap.
+    private static func wasAnswering(_ phase: Phase) -> Bool {
+        switch phase {
+        case .ready, .sending, .waiting: true
+        default: false
+        }
+    }
+
+    /// The answer flow's haptics, on ADR 0013's scale: the tap lands (medium), accepted is success, an answer saved
+    /// for later is a warning, a refusal is an error. Nothing else moves the hand.
+    static func feedback(from old: Phase, to next: Phase) -> SensoryFeedback? {
+        switch next {
+        case .sending:
+            if case .failed = old { return .impact(weight: .medium, intensity: 0.82) }
+            return old == .ready ? .impact(weight: .medium, intensity: 0.82) : nil
+        case .recorded: return wasAnswering(old) ? .success : nil
+        case .waiting: return old == .ready || old == .sending ? .warning : nil
+        case .failed: return old == .ready || old == .sending ? .error : nil
+        default: return nil
+        }
     }
 
     @ViewBuilder private var buttons: some View {
@@ -102,21 +134,8 @@ struct ReloDecisionActions: View {
                 tapped = choice.id
                 send(choice)
             } label: {
-                ZStack {
-                    // The label keeps the button's size while a spinner or a check stands in.
-                    Text(choice.label).lineLimit(2).multilineTextAlignment(.center)
-                        .opacity(chosen && phase != .recorded ? 0 : 1)
-                    if chosen && phase != .recorded {
-                        ProgressView().controlSize(.small)
-                            .tint(choice.prominent ? Color.reloOnAction : Color.primary)
-                    }
-                }
-                .overlay(alignment: .leading) {
-                    if chosen && phase == .recorded {
-                        Image(systemName: "checkmark").font(.subheadline.weight(.bold))
-                            .padding(.leading, ReloLayout.cardInset - 2).transition(.opacity)
-                    }
-                }
+                ChoiceLabel(label: choice.label, spinning: chosen && phase != .recorded, checked: chosen && phase == .recorded,
+                            spinnerTint: choice.prominent ? Color.reloOnAction : Color.primary)
             }
             .modifier(ChoiceButtonStyle(style: style, prominent: choice.prominent))
             .disabled(!live && !chosen)
@@ -131,7 +150,7 @@ struct ReloDecisionActions: View {
             // One line's height is held from the first frame, so no state grows the card.
             Text("Sending…").hidden().accessibilityHidden(true)
             status
-                .transition(.opacity)
+                .transition(reduceMotion ? .opacity : .reloSoftSwap)
                 .id(statusKey)
         }
         .font(.footnote)
@@ -174,6 +193,38 @@ struct ReloDecisionActions: View {
         case let .closed(text, symbol):
             Label(text, systemImage: symbol).fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// A choice's label through the send. The label always holds the button's size; while sending a spinner
+/// stands in its place, and once recorded the check and the label sit together, centered, the check springing
+/// in (scale from small with a little overshoot) so the answer is seen to land. Never an overlay on the words.
+private struct ChoiceLabel: View {
+    let label: String
+    let spinning: Bool
+    let checked: Bool
+    let spinnerTint: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if checked {
+                Image(systemName: "checkmark")
+                    .font(.subheadline.weight(.bold))
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.2).combined(with: .opacity))
+                    .accessibilityHidden(true)
+            }
+            Text(label).lineLimit(2).multilineTextAlignment(.center)
+                .opacity(spinning ? 0 : 1)
+                .blur(radius: spinning && !reduceMotion ? 3 : 0)
+        }
+        .overlay {
+            if spinning {
+                ProgressView().controlSize(.small).tint(spinnerTint)
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : ReloMotion.bouncy, value: checked)
     }
 }
 
@@ -299,7 +350,7 @@ struct ResponseControls: View {
 
     var body: some View {
         ReloDecisionActions(choices: choices, phase: phase, sent: model.responseFeedback(for: item.id)?.action,
-                            deadline: item.interaction?.expiresAt) { send($0) }
+                            deadline: item.interaction?.expiresAt, momentID: item.id) { send($0) }
             .task(id: item.id) { await verifyIfUnconfirmed() }
     }
 
@@ -315,10 +366,6 @@ struct ResponseControls: View {
 
     private func send(_ choice: ReloDecisionActions.Choice) {
         guard model.respondingNotificationID == nil else { return }
-        Task {
-            NotificationResponseHaptics.decisionStarted()
-            await model.respond(to: item, action: choice.action, optionID: choice.optionID)
-            if let feedback = model.responseFeedback(for: item.id) { NotificationResponseHaptics.responseFinished(feedback.phase) }
-        }
+        Task { await model.respond(to: item, action: choice.action, optionID: choice.optionID) }
     }
 }

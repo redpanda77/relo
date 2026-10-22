@@ -30,7 +30,11 @@ const TABLE = [
   ["a Stop is the owner's turn", [ev("prompt"), ev("tool_start", { toolKey: "t1" }), ev("tool_end", { toolKey: "t1" }), ev("stop")], "stopped"],
   ["the next prompt is working", [ev("prompt"), ev("stop"), ev("prompt")], "working"],
   ["SessionEnd ends it", [ev("prompt"), ev("stop"), ev("end")], "ended"],
-  ["nothing but a start revives an ended session", [ev("end"), ev("prompt"), ev("tool_start", { toolKey: "t9" }), ev("wait"), ev("stop")], "ended"],
+  ["late hooks of the last turn never revive an ended session", [ev("end"), [ev("tool_end", { toolKey: "t9" }), 500], [ev("wait"), 500], [ev("stop"), 500]], "ended"],
+  ["a prompt after SessionEnd revives the session (it goes on)", [ev("end"), ev("prompt")], "working"],
+  ["activity well after SessionEnd revives the session", [ev("end"), [ev("tool_start", { toolKey: "t9" }), REORDER_GRACE_MS]], "working"],
+  ["a turn ending well after SessionEnd is the owner's turn", [ev("end"), [ev("stop"), REORDER_GRACE_MS]], "stopped"],
+  ["a start after compaction reopens an ended session", [ev("end"), ev("start", { source: "compact" })], "open"],
   ["resume after the end is open", [ev("end"), ev("start", { source: "resume" })], "open"],
   // Subagents roll up.
   ["subagents keep a working session working", [ev("prompt"), sub("subagent_start"), sub("tool_start", { toolKey: "x" }), sub("tool_end", { toolKey: "x" }), sub("subagent_stop")], "working"],

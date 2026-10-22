@@ -27,6 +27,8 @@ const server = serve({
     credentialDerivationSecret: accountAuthSecret,
     appUrl: config.APP_URL,
     apnsMode: config.APNS_MODE,
+    landingFilmUrl: config.RELO_LANDING_FILM_URL,
+    onboardingFilmUrl: config.RELO_ONBOARDING_FILM_URL,
   }).fetch,
   hostname: config.HOST,
   port: config.PORT,

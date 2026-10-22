@@ -49,4 +49,16 @@ describe("docs layout", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Page not found" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Search the docs" })).toBeInTheDocument()
   })
+
+  test("Get started shows the onboarding film under the title when the server sets one", () => {
+    const { unmount } = render(<DocsSite bootstrap={{ ...bootstrap, film: { base: "https://media.example.test/onboarding" } }} />)
+    const video = screen.getByLabelText(/^Get started with Relo/)
+    const sources = [...video.querySelectorAll("source")].map((source) => source.getAttribute("src"))
+    expect(sources[0]).toBe("https://media.example.test/onboarding/relo-onboarding-av1.mp4")
+    expect(sources).toContain("https://media.example.test/onboarding/relo-onboarding-h264.mp4")
+    expect(video).toHaveAttribute("poster", "https://media.example.test/onboarding/poster.jpg")
+    unmount()
+    render(<DocsSite bootstrap={bootstrap} />)
+    expect(screen.queryByLabelText(/^Get started with Relo/)).not.toBeInTheDocument()
+  })
 })

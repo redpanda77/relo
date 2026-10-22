@@ -39,7 +39,7 @@ const CARD_TEXT = "Never put secrets, tokens, absolute paths, commands or raw ou
  */
 const identity = {
   topic: { describe: "The work in the owner's words, e.g. \"Release 0.7.57\" (not a step). Optional: inside a session it defaults to the session's name or the work's goal." },
-  project: { describe: "Only if the server is not running inside the project's repository: the project or repository name." },
+  project: { describe: "Only if neither the repository nor the folder the server runs in names the project: the project's name." },
 };
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
@@ -52,6 +52,7 @@ const TOOL_SPECS = [
       + "`progress` as \"3/10\". " + CARD_TEXT,
     args: {
       goal: { describe: "The work in the owner's words, e.g. \"Release 0.7.57\". Required unless you pass round or from." },
+      spoken_name: { describe: "How Relo for Mac calls the work aloud: 2 to 4 words, a noun phrase, e.g. \"Notch redesign\"." },
       status: { describe: "What is happening now, e.g. \"Building the image\"." },
       round: { describe: "A new request on a goal whose last round you delivered: the request in a few words, e.g. \"Add the dark theme\". Opens the next round of the same goal (goal may then be left out); without plan it carries the unfinished steps." },
       plan: { list: { minItems: 1, maxItems: FACTS.work.planMaxSteps }, describe: "Named steps for judgment work. Nest a step under the one above it by indenting its text two spaces (at most three levels), only when a step cannot be finished in one go." },
@@ -65,6 +66,7 @@ const TOOL_SPECS = [
     description: RULES + "Update this session's open work at real milestones, not on every tool call; send only what changed. " + CARD_TEXT,
     args: {
       status: { describe: "What is happening now." },
+      spoken_name: { describe: "Rename how Relo for Mac calls the work aloud: 2 to 4 words." },
       progress: { describe: "Counted progress: \"4/10\"." },
       next_step: { describe: "Mark the current step done and move to the next." },
       step: { describe: "Jump to a step by id (s3) or name." },
@@ -82,6 +84,7 @@ const TOOL_SPECS = [
     description: RULES + "Deliver this request: close the current round with what it delivered; the owner gets one quiet notification and it is their turn, and the work stays open for a follow-up (relo_work_start with round). Deliver means this request is done; it is refused while top-level steps are open (the owner must act mid-plan: use relo_ask or relo_work_update with waiting); when the work is done and nothing is left, use relo_work_finish (a later follow-up starts a fresh card with relo_work_start and round).",
     args: {
       outcome: { required: true, describe: "What this request delivered, e.g. \"Dark theme added and tested\"." },
+      say: { describe: "The line Relo for Mac says aloud after \"<Kind>: <name>.\": what happened and what it means, at most 20 words (a failure: its reason, at most 12), no versions, ids or paths. Without it the CLI cuts your outcome." },
       drop_rest: { describe: "Deliver although top-level steps are still open: they are skipped (a later round without plan carries them)." },
     },
   },
@@ -97,6 +100,7 @@ const TOOL_SPECS = [
     description: RULES + "End this session's goal honestly when the work is done and nothing is left: say what happened; set failed or dropped when it did not succeed. A later follow-up starts a fresh card (relo_work_start with round). When this request is done but more of the goal is to come, use relo_work_deliver instead.",
     args: {
       outcome: { required: true, describe: "What happened, e.g. \"0.7.57 live on production\"." },
+      say: { describe: "The line Relo for Mac says aloud after \"<Kind>: <name>.\": what happened and what it means, at most 20 words (a failure: its reason, at most 12), no versions, ids or paths. Without it the CLI cuts your outcome." },
       failed: { describe: "The work failed." },
       dropped: { describe: "The work was abandoned." },
     },

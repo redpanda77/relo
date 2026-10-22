@@ -200,3 +200,54 @@ test("deliver with open top-level steps is refused before any request; --drop-re
   assert.equal(s.server.calls.at(-1).body.plan, undefined, "no plan is sent: the round carries the unfinished steps");
   assert.deepEqual(s.server.calls.at(-1).body.round, { readable: "Batch 3 and 4" });
 });
+
+test("--say is checked like card text, and a readable work says it was not sent instead of dropping it silently", async (t) => {
+  const s = session({ CLAUDE_CODE_SESSION_ID: "session-say" });
+  t.after(s.done);
+  await s.relo("work", "start", "--goal", "Ship the release");
+  let r = await s.relo("work", "deliver", "--outcome", "Built", "--say", "x".repeat(161));
+  assert.equal(r.code, 2, r.text);
+  assert.match(r.text, /--say is 161 characters; the limit is 160/u);
+  r = await s.relo("work", "deliver", "--outcome", "Built", "--say", "Version 0.17 is live.");
+  assert.equal(r.code, 2, r.text);
+  assert.match(r.text, /--say contains a version number; it is said aloud/u);
+  r = await s.relo("work", "deliver", "--outcome", "Built", "--say", "See /Users/me/repo/file.txt");
+  assert.equal(r.code, 2, r.text);
+  assert.match(r.text, /contains a file path/u);
+  r = await s.relo("work", "deliver", "--outcome", "Built and shipped", "--say", "The release is live.");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /Note: --say was not sent: this work is readable/u);
+  assert.equal(JSON.stringify(s.server.calls.at(-1).body).includes("The release is live"), false, "nothing readable carries it");
+  assert.match(r.text, /^Mac says: "Your turn: Ship the release\."$/mu, "a readable work's line is the frame alone");
+});
+
+test("--spoken-name is checked for the ear, and deliver and finish echo the line Relo for Mac says (ADR 0015)", async (t) => {
+  const s = session({ CLAUDE_CODE_SESSION_ID: "session-name" });
+  t.after(s.done);
+  let r = await s.relo("work", "start", "--goal", "Redesign the open notch view of Relo for Mac", "--spoken-name", "The big open notch redesign");
+  assert.equal(r.code, 2, r.text);
+  assert.match(r.text, /--spoken-name is 5 words; it is said aloud, so at most 4/u);
+  r = await s.relo("work", "start", "--goal", "Redesign the open notch view of Relo for Mac", "--spoken-name", "Notch redesign");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /^Note: voice is verbose here \(the default\): Relo for Mac says "<Kind>: <name>\. <gist>" and each finished step/mu, "the agent learns what to write for the ear");
+  assert.equal(JSON.stringify(s.server.calls.at(-1).body).includes("Notch redesign"), false, "the name never reaches the server readable");
+  r = await s.relo("work", "update", "--spoken-name", "Open notch");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /Note: --spoken-name was not sent: this work is readable/u);
+  r = await s.relo("work", "finish", "--outcome", "Server 0.18.99 is live: cards are uniform (iPhone 0.10.40)", "--failed");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /^Mac says: "Failed: Open notch\."$/mu);
+});
+
+test("RELO_VOICE=off: the start says nothing is said aloud and deliver echoes no line (ADR 0015 revision 1)", async (t) => {
+  const s = session({ CLAUDE_CODE_SESSION_ID: "session-voice-off", RELO_VOICE: "off" });
+  t.after(s.done);
+  let r = await s.relo("work", "start", "--goal", "Rotate the confidential signing keys");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /^Note: voice is off here \(RELO_VOICE\): Relo for Mac says nothing of this work; write no --say$/mu);
+  assert.doesNotMatch(r.text, /calls this work/u, "no name nudge when nothing is said");
+  r = await s.relo("work", "deliver", "--outcome", "Keys rotated");
+  assert.equal(r.code, 0, r.text);
+  assert.match(r.text, /^Mac says: nothing \(voice is off here\)$/mu);
+  assert.doesNotMatch(r.text, /write it for the ear/u);
+});

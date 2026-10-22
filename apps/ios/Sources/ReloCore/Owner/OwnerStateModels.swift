@@ -226,8 +226,16 @@ public struct NowItem: Codable, Equatable, Hashable, Identifiable, Sendable {
     public var steps: Steps?
     /// The plan's count as the server computes it (top-level steps, the current one and its fraction); preferred over `steps`.
     public var progress: PlanProgress?
+    /// The work's whole plan (each step's state, parent and round; labels nil for sealed work, opened by step id)
+    /// and its rounds, so a device draws rounds and nested steps (`PlanOutline.make(plan:rounds:text:)`).
+    public var plan: [InboxCardDigest.PlanStep]?
+    public var rounds: [InboxCardDigest.PlanRound]?
     public var producer: ProducerType
     public var sessionId: String?
+    /// The session's sealed names, carried on the card so it keeps its session's name after the session ends.
+    public var sessionNames: ReloEnvelope?
+    /// The session's name, opened on this device from `sessionNames`; never sent in the clear.
+    public var sessionTitle: String?
     public var notificationId: String?
     public var startedAt: Date
     public var declaredAt: Date
@@ -314,6 +322,24 @@ public extension NowSummary {
             }
             return row
         }
+        // Each card's own copy of its session's names: the name survives the session leaving the Sessions view.
+        func titled(_ items: [NowItem]) -> [NowItem] {
+            items.map { item in
+                var item = item
+                if let names = item.sessionNames, names.kind == "names", let sessionID = item.sessionId,
+                   let plaintext = open(names, sessionID),
+                   let title = ReloNames.carriedTitle(in: plaintext) {
+                    item.sessionTitle = title
+                }
+                return item
+            }
+        }
+        opened.needsYou = titled(needsYou)
+        opened.recent = titled(recent)
+        opened.waitingOnYou = titled(waitingOnYou)
+        opened.running = titled(running)
+        opened.quiet = titled(quiet)
+        opened.paused = titled(paused)
         return opened
     }
 

@@ -18,12 +18,15 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "node --test scripts/public-export.test.mjs scripts/check-test-ran.test.mjs scripts/release/build-cli-release.test.mjs && pnpm -r --if-present test",
+    "test": "node --test scripts/step.test.mjs scripts/load-audit.test.mjs scripts/sim.test.mjs scripts/entrypoints.test.mjs scripts/check-changed.test.mjs scripts/public-export.test.mjs scripts/check-test-ran.test.mjs scripts/release/build-cli-release.test.mjs scripts/release/sparkle-key.test.mjs && pnpm -r --if-present test",
+    "check:changed": "node scripts/check-changed.mjs",
+    "hooks:install": "bash scripts/install-hooks.sh",
     "public:report": "node scripts/public-export.mjs report",
     "public:check": "node scripts/public-export.mjs check",
     "public:stage": "node scripts/public-export.mjs stage",
     "public:export": "node scripts/public-export.mjs write",
     "release:cli": "node scripts/release/build-cli-release.mjs",
-    "deploy:prod": "bash docs/internal/operations/release/deploy.sh"
+    "deploy:prod": "bash docs/internal/operations/release/deploy.sh",
+    "ship": "bash scripts/release/ship.sh"
   }
 }

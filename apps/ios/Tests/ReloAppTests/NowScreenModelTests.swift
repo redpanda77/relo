@@ -167,6 +167,15 @@ final class NowScreenModelTests: XCTestCase {
         XCTAssertEqual(permission.footnote, "Answer it on your computer.")
     }
 
+    func testWorkWaitingOnItsOwnJobReadsRunning() {
+        let waiting = NowScreenModel.runningRow(item("m2", .moving, status: "Waiting on CI"), now: serverTime, isOffline: false)
+        XCTAssertNil(waiting.card?.badge, "no Waiting badge: the work is moving, so it reads Running")
+        XCTAssertTrue(waiting.lines.contains("Waiting on CI"), "the status says what it waits on")
+        XCTAssertTrue(waiting.shimmer)
+        let moving = NowScreenModel.runningRow(item("m3", .moving), now: serverTime, isOffline: false)
+        XCTAssertTrue(moving.shimmer)
+    }
+
     func testOfflineRenamesRunningToLastKnownWithoutShimmer() {
         guard case let .running(title, rows)? = make(busy(), offline: true).first(where: { $0.id == "running" }) else {
             return XCTFail("running block")

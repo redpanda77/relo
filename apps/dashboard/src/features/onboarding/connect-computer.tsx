@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { playCue } from "@/lib/sound"
 import { connectNowLive } from "@/features/inbox/use-now-live"
 import { toolLabel } from "@/components/atoms/source-logo"
 import { currentBrowserLink, type BrowserLink } from "@/lib/e2ee/browser-link"
@@ -150,6 +151,8 @@ function Wizard({
   const [way, setWay] = useState<Way>(resumed?.way ?? "command")
   const [level, setLevel] = useState(resumed?.level ?? "track")
   const [approvals, setApprovals] = useState(resumed?.approvals ?? false)
+  // Relo for Mac (the notch) comes along by default; the install script skips it on anything but a Mac.
+  const [macApp, setMacApp] = useState(resumed?.macApp ?? true)
   const [pickAgents, setPickAgents] = useState(resumed?.agents != null)
   const [picked, setPicked] = useState<string[]>(resumed?.agents ?? [])
   const [typedCode, setTypedCode] = useState("")
@@ -193,6 +196,14 @@ function Wizard({
   }, [inviteId, settled, refetch, pollMs])
 
   useEffect(() => { if (state === "tested") rememberInvite(null) }, [state])
+
+  // The computer reported while the owner watched: it is linked (a resumed wizard that opens already
+  // past that stays quiet).
+  const lastState = useRef<typeof state>(undefined)
+  useEffect(() => {
+    if (state === "reported" && lastState.current && lastState.current !== "reported" && lastState.current !== "tested") playCue("linked")
+    lastState.current = state
+  }, [state])
 
   // The computer's key is approved here only when its binding proves the code's holder published it.
   const clientId = status?.computer?.clientId
@@ -239,13 +250,13 @@ function Wizard({
     try {
       const bind = newBind()
       const agents = pickAgents && picked.length ? SETUP_AGENTS.filter((id) => picked.includes(id)) : undefined
-      const made = withBind(await service.invite({ level, approvals, ...(agents ? { agents } : {}) }), bind)
-      const madePrompt = agentPrompt(window.location.origin, made.code, level)
+      const made = withBind(await service.invite({ level, approvals, macApp, ...(agents ? { agents } : {}) }), bind)
+      const madePrompt = agentPrompt(window.location.origin, made.code, level, made.macApp === true)
       bindRef.current = bind
       checkedKey.current = null
       setKeyCheck(null)
       rememberInvite(made.inviteId)
-      rememberMade({ invite: made, prompt: madePrompt, bind, way: way === "agent" ? "agent" : "command", level, approvals, agents: agents ?? null })
+      rememberMade({ invite: made, prompt: madePrompt, bind, way: way === "agent" ? "agent" : "command", level, approvals, agents: agents ?? null, macApp })
       setInvite(made)
       setPrompt(madePrompt)
       setInviteId(made.inviteId)
@@ -332,6 +343,10 @@ function Wizard({
                       <input type="checkbox" checked={approvals} onChange={(event) => setApprovals(event.target.checked)} />
                       Ask permission on my iPhone too
                     </label>
+                    <label className="flex min-h-11 cursor-pointer items-center gap-3 text-[15px]">
+                      <input type="checkbox" checked={macApp} onChange={(event) => setMacApp(event.target.checked)} />
+                      On a Mac, also install Relo for Mac in the notch
+                    </label>
                     <fieldset className="grid gap-2">
                       <legend className="mb-1 text-sm font-medium">Agents to set up</legend>
                       <label className="flex min-h-11 cursor-pointer items-center gap-3 text-[15px]">
@@ -378,7 +393,7 @@ function Wizard({
                 <p className="text-sm text-muted-foreground">
                   Paste this into your agent on that computer. It may ask your permission to run the command; allow it.
                 </p>
-                <CopyLine text={prompt ?? agentPrompt(window.location.origin, invite.code, level)} label="Copy prompt" />
+                <CopyLine text={prompt ?? agentPrompt(window.location.origin, invite.code, level, invite.macApp === true)} label="Copy prompt" />
               </div>
             ) : null}
             {invite && !expired && way === "agent" && stalled && !showCommand && !computer ? (

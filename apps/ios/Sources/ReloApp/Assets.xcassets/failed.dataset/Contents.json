@@ -1,0 +1,13 @@
+{
+  "data" : [
+    {
+      "filename" : "failed.caf",
+      "idiom" : "universal",
+      "universal-type-identifier" : "com.apple.coreaudio-format"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}

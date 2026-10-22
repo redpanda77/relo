@@ -67,6 +67,7 @@ that only this computer can open it.
 | `skill-archives/` | Skill copies that `relo setup` replaced or `relo uninstall` removed, kept outside every skills folder. |
 | `update-check.json` | The latest release `relo doctor` saw, cached for 24 hours. Off with `RELO_NO_UPDATE_CHECK=1`. |
 | `auto-update.json` | The last automatic update: the version it went for, when, and how it ended. One attempt per version an hour. |
+| `updates.json` | How this computer takes a newer CLI: auto, ask or off (`relo update --mode`). |
 | `auto-update.lock` | Held while an update runs, so only one runs at a time; a lock older than 10 minutes is taken over. |
 
 ## Harness files

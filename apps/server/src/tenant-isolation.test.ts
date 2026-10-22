@@ -43,6 +43,8 @@ const notOwnerScopedById: Record<string, string> = {
   "GET /install.sh": "the public install script of Add a computer; it holds no account data",
   "GET /cli/relo-cli.tgz": "the public CLI download of Add a computer",
   "GET /cli/version": "the public version of that CLI",
+  "GET /mac/relo-mac.zip": "the public Relo for Mac download of Add a computer",
+  "GET /mac/appcast.xml": "the public update feed of that download",
   "POST /api/computer-invites/redeem": "the one-time code is the shared secret of the sign-in",
   "GET /docs": "public docs",
   "GET /docs/*": "public docs",

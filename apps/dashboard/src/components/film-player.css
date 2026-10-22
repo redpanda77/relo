@@ -1,0 +1,24 @@
+/* A Relo film in a framed screen (film-player.tsx). */
+.film-frame {
+  position: relative;
+  margin-inline: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: clamp(16px, 2vw, 28px);
+  overflow: hidden;
+  background: #08080d;
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.08), 0 40px 120px -40px rgb(139 124 255 / 0.45), 0 30px 80px -30px rgb(0 0 0 / 0.8);
+}
+.film-frame video { display: block; width: 100%; height: 100%; object-fit: cover; cursor: pointer; }
+.film-controls { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 8px; }
+.film-button {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; color: #f2f2f7; background: rgb(8 8 13 / 0.62);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.film-button:hover { background: rgb(20 20 30 / 0.8); }
+.film-button:focus-visible { outline: 2px solid #8b7cff; outline-offset: 2px; }
+@media (max-width: 719px) {
+  .film-frame { border-radius: 16px; }
+  .film-button span { display: none; }
+}

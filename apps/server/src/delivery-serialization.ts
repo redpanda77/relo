@@ -1,5 +1,6 @@
 import { sealedAlertDevices,sealedForDevice } from "./sealed-content.js";
 import { createHash } from "node:crypto";
+import { activityAlertSound,noticeSound } from "./notification-sounds.js";
 import { presentationCommandState } from "./presentation-runtime.js";
 import type { ApnsRuntimeJob } from "./apns-runtime.js";
 import {
@@ -15,7 +16,8 @@ import {
 type AlertProjection = {
   kind: "alert";
   alert: { title: string; body: string };
-  sound: "default";
+  /** Relo's cue for the moment (notification-sounds.ts), or the system default for a plain notice. */
+  sound: string;
   badge: number;
   mutableContent: true;
   category?: string;
@@ -32,7 +34,7 @@ type ActivityProjection = {
   contentState: Record<string, unknown>;
   attributesType?: string;
   attributes?: Record<string, unknown>;
-  alert?: { title: string; body: string };
+  alert?: { title: string; body: string; sound?: string };
   dismissalDate?: number;
   staleDate?: number;
   priority: 5 | 10;
@@ -264,6 +266,10 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
   );
   const privacy = command.privacy === "private" || command.privacyMode === "private" ? "private" : "standard";
   const activityGeneration = requiredActivityGeneration(command.generation);
+  // The alert's cue is the card's own moment (a question, a failure, a finish); a card starting is silent.
+  const cue = activityAlertSound(commandOwner(command)?.state);
+  const withCue = <T extends { title: string; body: string }>(alert: T): T & { sound?: string } =>
+    cue ? { ...alert,sound: cue } : alert;
   const common = {
     kind: "activity" as const,
     operation,
@@ -283,12 +289,12 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
         style: privacy === "private" ? "standard" : stringValue(command.style, "standard"),
         accountID: requiredString(job.accountId),
       },
-      alert: privacy === "private"
+      alert: withCue(privacy === "private"
         ? { title: "Agent task started", body: "Open Relo to view progress." }
         : {
           title: stringValue(command.headline, "Relo activity"),
           body: stringValue(command.status, "In progress"),
-        },
+        }),
     };
   }
   if (operation === "end") {
@@ -300,8 +306,8 @@ function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "
   const staleDate = ownerStaleAt(command) ?? undefined;
   // An update alerts only when a question lands on the card; routine progress stays silent.
   const alert = command.alertOwner === "apns" && privacy === "standard"
-    ? { title: stringValue(command.title, stringValue(command.headline, "Relo")),
-      body: stringValue(command.subtitle, stringValue(command.status, "Needs you")) }
+    ? withCue({ title: stringValue(command.title, stringValue(command.headline, "Relo")),
+      body: stringValue(command.subtitle, stringValue(command.status, "Needs you")) })
     : undefined;
   return { ...common, ...(staleDate === undefined ? {} : { staleDate }), ...(alert ? { alert } : {}) };
 }
@@ -329,7 +335,7 @@ function ordinaryDeliveryProjection(input: OrdinaryDeliveryIntent): AlertProject
   return {
     kind: "alert",
     alert: ordinaryAlert(input),
-    sound: "default",
+    sound: noticeSound({ interactionKind: input.interactionKind ?? null,payload: input.payload }),
     badge: input.badge ?? 0,
     mutableContent: true,
     ...(categoryName ? { category: categoryName } : {}),

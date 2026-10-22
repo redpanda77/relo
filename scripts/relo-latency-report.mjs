@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,7 +47,7 @@ export function summarizeSpans(spans) {
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   const lines = readFileSync(process.argv[2] ?? 0, "utf8").split(/\r?\n/).filter(line => line.trim());
   process.stdout.write(`${JSON.stringify(summarizeSpans(lines.map(line => JSON.parse(line))), null, 2)}\n`);
 }

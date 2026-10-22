@@ -39,7 +39,7 @@ struct ReloMessageKind {
             case .expired: (label, symbol, color) = ("Expired", "clock.badge.xmark", ReloStateStyle.quiet.color)
             case .ended: (label, symbol, color) = ("Ended", "stop.circle", ReloStateStyle.ended.color)
             case .running:
-                (label, symbol, color) = stale ? ("Update overdue", "clock.badge.exclamationmark", ReloStateStyle.waiting.color)
+                (label, symbol, color) = stale ? ("Update overdue", "clock.badge.exclamationmark", Color.reloWarning)
                     : ("Live Activity", "waveform.path", ReloStateStyle.running.color)
             }
         case .response: (label, symbol, color) = ("Response", "arrowshape.turn.up.left.fill", ReloStateStyle.message.color)
@@ -194,10 +194,9 @@ private struct ReloWaitingPulse: View {
     var body: some View {
         Circle().stroke(color.opacity(expanded ? 0 : 0.6), lineWidth: 1)
             .scaleEffect(expanded ? 2.2 : 1)
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { expanded = true }
-            }
+            // Scoped to the ring, so the repeat never catches the timeline's own layout changes.
+            .animation(reduceMotion ? nil : .easeOut(duration: 1.6).repeatForever(autoreverses: false), value: expanded)
+            .onAppear { if !reduceMotion { expanded = true } }
     }
 }
 

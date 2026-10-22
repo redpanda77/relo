@@ -157,7 +157,7 @@ suite("Session works: deliver, rounds, nested plans",() => {
     expect(reopen.body.work.plan.rounds.map((round: any) => round.title)).toEqual([undefined,undefined]);
   });
 
-  test("derivation loads a delivered work as the owner's turn, and the next round moves it again",async () => {
+  test("derivation loads a delivered work as an outcome (Done), and the next round moves it again",async () => {
     const principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner'")).rows[0].id;
     await start({ plan: { op: "set",steps: [{ label: "A" }] } });
     await deliver();
@@ -165,7 +165,7 @@ suite("Session works: deliver, rounds, nested plans",() => {
       const [loaded] = await loadOwnerStateInputs(db,principalId,"visible",new Date());
       return deriveOwnerState(loaded!.input);
     };
-    expect(await state()).toMatchObject({ state: "waiting_on_you",needsYou: null,now: "waiting_on_you" });
+    expect(await state()).toMatchObject({ state: "done",needsYou: null,now: "since_you_looked" });
     await start({ round: { readable: "Two" },plan: { op: "set",steps: [{ label: "B" }] } });
     expect((await state()).state).toBe("moving");
   });

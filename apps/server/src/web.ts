@@ -35,6 +35,8 @@ export type WebAuthDependencies = {
   appUrl: string;
   credentialDerivationSecret: string;
   apnsMode: ApnsMode;
+  landingFilmUrl?: string | undefined;
+  onboardingFilmUrl?: string | undefined;
 };
 
 export type { OwnerAccount } from "./web/owner-account.js";
@@ -65,7 +67,7 @@ export function safeDashboardDestination(value: unknown): string | null {
 }
 
 export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: WebAuthDependencies): void {
-  const { accountAuth, bootstrapOwnerHandle, appUrl, apnsMode } = dependencies;
+  const { accountAuth, bootstrapOwnerHandle, appUrl, apnsMode, landingFilmUrl, onboardingFilmUrl } = dependencies;
   const appOrigin = new URL(appUrl).origin;
   const releaseIdentity = dashboardReleaseIdentity(process.env.RELO_RELEASE_IDENTITY);
   const notificationContentCipher = createNotificationContentCipher(
@@ -118,6 +120,7 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
     origin: appOrigin,
     signedIn: async (headers) => Boolean(await getOwnerAccount(db,accountAuth,headers)),
     renderDocument: renderDashboardAppDocument,
+    onboardingFilmUrl,
   });
 
   async function dashboardMutationAccount(context: any): Promise<OwnerAccount | Response> {
@@ -165,6 +168,7 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
   const dashboardAuth = createDashboardAuthHandler({
     db,
     appUrl,
+    landingFilmUrl,
     getAccount: (headers: Headers) => getOwnerAccount(db,accountAuth,headers),
     renderDocument: renderDashboardAppDocument,
   });

@@ -49,7 +49,7 @@ keys every 10 hours, so an old copy can never be opened again. Read [Privacy and
 ## Where to go next
 
 <ul class="docs-tiles">
-<li><a href="/docs/get-started"><strong>Get started</strong>Run your server, install the iPhone app, connect a computer and see your first card.</a></li>
+<li><a href="/docs/get-started"><strong>Get started</strong>Run your server, connect a computer, add your iPhone and see your first card.</a></li>
 <li><a href="/docs/concepts"><strong>Concepts</strong>Work, cards, questions, notifications, sessions and how Relo decides what to show.</a></li>
 <li><a href="/docs/guides"><strong>Guides</strong>Agents, hooks, scripts and CI, apps over HTTP, and running your server well.</a></li>
 <li><a href="/docs/reference"><strong>Reference</strong>Every command, exit code, environment variable and HTTP operation.</a></li>

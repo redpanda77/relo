@@ -11,8 +11,6 @@ export const T = Object.freeze({
   retire: OWNER_STATE_TIMING.retireSeconds * 1000,
   done: OWNER_STATE_TIMING.doneSeconds * 1000,
   history: OWNER_STATE_TIMING.historySeconds * 1000,
-  /** A delivered round (open work, last round closed) is the owner's turn this long, then History as delivered. */
-  deliveredYourTurn: OWNER_STATE_TIMING.deliveredYourTurnSeconds * 1000,
   /** A stopped turn is the owner's turn this long, on the card and in Sessions; after it the session is idle (Quiet). */
   yourTurn: OWNER_STATE_TIMING.yourTurnSeconds * 1000,
 });

@@ -1,17 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { createECDH,randomBytes } from "node:crypto";
+import { createECDH,createHash,randomBytes } from "node:crypto";
 import { LOGIN_SCOPES,computerInviteStatusSchema } from "@relo/notification-contracts";
-import { mkdtempSync,writeFileSync } from "node:fs";
+import { mkdirSync,mkdtempSync,renameSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterAll,beforeAll,beforeEach,describe,expect,test } from "vitest";
+import { afterAll,beforeAll,beforeEach,describe,expect,test,vi } from "vitest";
 import { createAccountAuth } from "./account-auth.js";
 import { createApp } from "./app.js";
 import { resetAuthAttempts } from "./auth-throttle.js";
 import { generateToken,hashToken } from "./auth.js";
 import { bootstrapOwner } from "./bootstrap.js";
-import { installScript } from "./computer-invites.js";
+import { bundledCli,bundledMacApp,installScript,macAppcast } from "./computer-invites.js";
 import { createAuthDatabase,createDatabase,type Database } from "./db.js";
 import { listClientKeys } from "./device-keys.js";
 import { migrate } from "./migrate.js";
@@ -33,6 +33,120 @@ test("the install script is POSIX sh, pins the CLI digest and joins with the cod
   expect(script).not.toMatch(/sudo/);
   expect(script.indexOf('rm -f "$BIN/relo"')).toBeLessThan(script.indexOf('cat > "$BIN/relo"'));
   expect(script).toContain('rm -f "$BIN/relo"');
+  // A cut-off download never runs half the script, and a new account (no startup file) still gets ~/.local/bin on PATH.
+  expect(script.trimEnd().endsWith('main "$@"')).toBe(true);
+  expect(script).toContain('[ -f "$RC" ] || continue');
+  expect(script).toContain('*/zsh) RC="$HOME_DIR/.zshrc"');
+});
+
+test("the server hands out Relo for Mac only with both its manifest and its zip", () => {
+  const dir = mkdtempSync(join(tmpdir(),"relo-mac-"));
+  const url = new URL(`file://${dir}/`);
+  expect(bundledMacApp(url)).toBeNull();
+  writeFileSync(join(dir,"manifest.json"),JSON.stringify({ version: "0.1.0+1",sha256: "c".repeat(64),app: "Relo Notch.app",executable: "Relo Notch" }));
+  expect(bundledMacApp(url)).toBeNull();
+  writeFileSync(join(dir,"relo-mac.zip"),"zip");
+  expect(bundledMacApp(url)).toMatchObject({ version: "0.1.0+1",app: "Relo Notch.app",executable: "Relo Notch" });
+  // No EdDSA signature: no update feed.
+  expect(macAppcast("https://relo.example",bundledMacApp(url))).toBeNull();
+});
+
+describe("RELO_ARTIFACTS_DIR", () => {
+  const cliManifest = (version: string) => JSON.stringify({ version,sha256: "d".repeat(64) });
+  const macManifest = (version: string) => JSON.stringify({ version,sha256: "e".repeat(64),app: "Relo Notch.app",executable: "Relo Notch" });
+  const publish = (dir: string,kind: "cli" | "mac",manifest: string) => {
+    mkdirSync(join(dir,kind),{ recursive: true });
+    writeFileSync(join(dir,kind,kind === "cli" ? "relo-cli.tgz" : "relo-mac.zip"),"x");
+    writeFileSync(join(dir,kind,"manifest.json"),manifest);
+  };
+  const image = (kind: "cli" | "mac",manifest: string) => {
+    const dir = mkdtempSync(join(tmpdir(),"relo-image-"));
+    publish(dir,kind,manifest);
+    return new URL(`file://${dir}/${kind}/`);
+  };
+  const withEnv = (dir: string | undefined,body: () => void) => {
+    const before = process.env.RELO_ARTIFACTS_DIR;
+    if (dir === undefined) delete process.env.RELO_ARTIFACTS_DIR; else process.env.RELO_ARTIFACTS_DIR = dir;
+    try { body(); } finally { if (before === undefined) delete process.env.RELO_ARTIFACTS_DIR; else process.env.RELO_ARTIFACTS_DIR = before; }
+  };
+
+  test("the folder wins over the image when it holds a valid manifest, else the image's is served", () => {
+    const dir = mkdtempSync(join(tmpdir(),"relo-artifacts-"));
+    const bundled = image("cli",cliManifest("1.0.0"));
+    const bundledMac = image("mac",macManifest("1.0.0"));
+    withEnv(dir,() => {
+      publish(dir,"cli",cliManifest("2.0.0"));
+      expect(bundledCli()).toMatchObject({ version: "2.0.0",file: join(dir,"cli","relo-cli.tgz") });
+      publish(dir,"mac",macManifest("2.0.0"));
+      expect(bundledMacApp()).toMatchObject({ version: "2.0.0",file: join(dir,"mac","relo-mac.zip") });
+    });
+    // An explicit directory (the image's) is read as before, whatever the environment says.
+    withEnv(dir,() => {
+      expect(bundledCli(bundled)?.version).toBe("1.0.0");
+      expect(bundledMacApp(bundledMac)?.version).toBe("1.0.0");
+    });
+  });
+
+  test("an invalid, partial or missing folder is ignored, and a later valid file is picked up", () => {
+    const dir = mkdtempSync(join(tmpdir(),"relo-artifacts-"));
+    withEnv(dir,() => {
+      mkdirSync(join(dir,"cli"));
+      writeFileSync(join(dir,"cli","manifest.json"),"{not json");
+      expect(bundledCli()).toBeNull();
+      writeFileSync(join(dir,"cli","manifest.json"),JSON.stringify({ version: "2.0.0",sha256: "short" }));
+      expect(bundledCli()).toBeNull();
+      writeFileSync(join(dir,"cli","manifest.json"),cliManifest("2.0.0")); // a manifest without its tarball is no CLI
+      expect(bundledCli()).toBeNull();
+      writeFileSync(join(dir,"cli","relo-cli.tgz"),"x");
+      expect(bundledCli()?.version).toBe("2.0.0");
+    });
+    withEnv("relative/path",() => expect(bundledCli()).toBeNull());
+    withEnv(join(dir,"missing"),() => expect(bundledMacApp()).toBeNull());
+  });
+
+  test("a manifest replaced in place (atomic rename) is read on the next call", () => {
+    const dir = mkdtempSync(join(tmpdir(),"relo-artifacts-"));
+    withEnv(dir,() => {
+      publish(dir,"cli",cliManifest("2.0.0"));
+      expect(bundledCli()?.version).toBe("2.0.0");
+      writeFileSync(join(dir,"cli","manifest.tmp"),cliManifest("2.0.1"));
+      renameSync(join(dir,"cli","manifest.tmp"),join(dir,"cli","manifest.json"));
+      expect(bundledCli()?.version).toBe("2.0.1");
+      publish(dir,"mac",macManifest("3.0.0"));
+      writeFileSync(join(dir,"mac","manifest.tmp"),macManifest("3.0.1"));
+      renameSync(join(dir,"mac","manifest.tmp"),join(dir,"mac","manifest.json"));
+      expect(bundledMacApp()?.version).toBe("3.0.1");
+    });
+  });
+});
+
+test("Relo for Mac's update feed names the signed build the server hands out", () => {
+  const dir = mkdtempSync(join(tmpdir(),"relo-mac-"));
+  writeFileSync(join(dir,"relo-mac.zip"),"zip");
+  const edSignature = "A".repeat(86) + "==";
+  writeFileSync(join(dir,"manifest.json"),JSON.stringify({ version: "0.1.1+260",shortVersion: "0.1.1",build: "260",sha256: "c".repeat(64),
+    app: "Relo Notch.app",executable: "Relo Notch",edSignature,length: 10287197,minimumSystemVersion: "14.0" }));
+  const feed = macAppcast("https://relo.example",bundledMacApp(new URL(`file://${dir}/`)))!;
+  expect(feed).toContain("<sparkle:version>260</sparkle:version>");
+  expect(feed).toContain("<sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>");
+  expect(feed).toContain(`<enclosure url="https://relo.example/mac/relo-mac.zip" length="10287197" type="application/octet-stream" sparkle:edSignature="${edSignature}"/>`);
+  expect(feed).toContain("<sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>");
+});
+
+test("the install script installs Relo for Mac only on a Mac, when asked and the server has it, and hands it to the join", () => {
+  const cli = { version: "0.17.30",sha256: "a".repeat(64),file: "/nowhere" };
+  const mac = { version: "0.1.0+255",sha256: "b".repeat(64),app: "Relo Notch.app",executable: "Relo Notch",file: "/nowhere" };
+  const script = installScript("https://relo.example",cli,mac);
+  const file = join(mkdtempSync(join(tmpdir(),"relo-install-")),"install.sh");
+  writeFileSync(file,script);
+  execFileSync("sh",["-n",file]);
+  expect(script).toContain("MAC_SHA256='" + "b".repeat(64) + "'");
+  expect(script).toContain('--mac-app) WANT_MAC=1 ;;');
+  expect(script).toContain('[ "$(uname -s)" != Darwin ]');
+  expect(script).toContain('fetch "$ORIGIN/mac/relo-mac.zip" "$WORK/relo-mac.zip"');
+  expect(script).toContain('--mac-app "$APP"');
+  // A server without the app says so instead of failing.
+  expect(installScript("https://relo.example",cli)).toContain("MAC_SHA256=''");
 });
 
 // Add a computer (docs/site/guides/servers.md): a trusted device makes a one-time code; the new computer redeems it once.
@@ -86,11 +200,51 @@ suite("computer invites",() => {
     expect(joined.status).toBe(200);
     expect(joined.body.accessToken).toMatch(/^relo_/);
     expect(joined.body.credential.clientName).toBe("Build box");
-    expect(joined.body.setup).toEqual({ level: "guide",approvals: true,agents: ["claude-code","opencode"] });
+    expect(joined.body.setup).toEqual({ level: "guide",approvals: true,agents: ["claude-code","opencode"],macApp: false });
+    expect(joined.body.macAppSignInCode).toBeUndefined();
     expect((await call(joined.body.accessToken,"GET","/api/clients/self")).status).toBe(200);
     // Once only.
     expect((await redeem(made.body.code,"Other box")).body.error).toBe("invalid_code");
     expect((await db.query("SELECT count(*)::int AS n FROM computer_invites WHERE principal_id=$1 AND redeemed_at IS NOT NULL",[principalId])).rows[0].n).toBe(1);
+  });
+
+  test("a code made with Relo for Mac hands the installer a one-time sign-in code the Mac app exchanges with its verifier",async () => {
+    const subject = `computer-invites-owner-${randomUUID()}`;
+    await db.query("INSERT INTO auth.users(id,name,email) VALUES ($1,'Owner',$2)",[subject,`${subject}@relo.example`]);
+    await db.query(`INSERT INTO account_identities(principal_id,provider,subject,role,approved_at) VALUES ($1,'better-auth',$2,'owner',now())`,
+      [principalId,subject]);
+    const made = await call(await phone(),"POST","/api/devices/self/computer-invites",{ macApp: true });
+    expect(made.status).toBe(201);
+    expect(made.body).toMatchObject({ macApp: true });
+    expect(made.body.command).toBe(`curl -fsSL ${appUrl}/install.sh | sh -s -- ${made.body.code} --mac-app`);
+    const verifier = randomBytes(32).toString("base64url");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const joined = await call(null,"POST","/api/computer-invites/redeem",{ code: made.body.code,clientName: "Mac box",
+      scopes: ["notifications:send"],expiresInSeconds: 86_400,macAppChallenge: challenge });
+    expect(joined.status).toBe(200);
+    expect(joined.body.setup.macApp).toBe(true);
+    expect(joined.body.macAppSignInCode).toMatch(/^relo_signin_[A-Za-z0-9_-]{43}$/);
+    // Only the verifier opens it, once.
+    const exchange = (codeVerifier: string) => call(null,"POST","/api/mobile/sign-in/token",
+      { code: joined.body.macAppSignInCode,codeVerifier,installationId: "mac-installation-1" });
+    expect((await exchange(randomBytes(32).toString("base64url"))).body.error).toBe("invalid_grant");
+    const session = await exchange(verifier);
+    expect(session.status).toBe(200);
+    expect(session.body.user.email).toBe(`${subject}@relo.example`);
+    expect((await exchange(verifier)).body.error).toBe("invalid_grant");
+  });
+
+  test("a code made without Relo for Mac never hands out a sign-in code, whatever the redeem asks",async () => {
+    const subject = `computer-invites-owner-${randomUUID()}`;
+    await db.query("INSERT INTO auth.users(id,name,email) VALUES ($1,'Owner',$2)",[subject,`${subject}@relo.example`]);
+    await db.query(`INSERT INTO account_identities(principal_id,provider,subject,role,approved_at) VALUES ($1,'better-auth',$2,'owner',now())`,
+      [principalId,subject]);
+    const made = await call(owner,"POST","/api/clients/computer-invites",{});
+    const joined = await call(null,"POST","/api/computer-invites/redeem",{ code: made.body.code,clientName: "Plain box",
+      scopes: ["notifications:send"],expiresInSeconds: 86_400,macAppChallenge: "c".repeat(43) });
+    expect(joined.status).toBe(200);
+    expect(joined.body.macAppSignInCode).toBeUndefined();
+    expect((await db.query("SELECT count(*)::int AS n FROM mobile_sign_in_codes WHERE principal_id=$1",[principalId])).rows[0].n).toBe(0);
   });
 
   test("a signed-in computer makes one too; an expired, unknown or malformed code signs nothing in; a phone credential cannot redeem a CLI route",async () => {
@@ -213,16 +367,13 @@ suite("computer invites",() => {
       const made = await call(await phone(),"POST","/api/devices/self/computer-invites",{});
       hints.length = 0;
       const cli = (await redeem(made.body.code,"Build box",joinScopes)).body.accessToken as string;
-      await new Promise((resolve) => setTimeout(resolve,100));
-      expect(hints.some((hint) => hint.includes(principalId))).toBe(true);
+      await vi.waitFor(() => expect(hints.some((hint) => hint.includes(principalId))).toBe(true),{ timeout: 10_000 });
       hints.length = 0;
       await call(cli,"PUT","/api/clients/self/keys",{ identityKey: createECDH("prime256v1").generateKeys().toString("base64url") });
-      await new Promise((resolve) => setTimeout(resolve,100));
-      expect(hints.some((hint) => hint.includes(principalId))).toBe(true);
+      await vi.waitFor(() => expect(hints.some((hint) => hint.includes(principalId))).toBe(true),{ timeout: 10_000 });
       hints.length = 0;
       await call(cli,"PUT","/api/computers/self/report",report);
-      await new Promise((resolve) => setTimeout(resolve,100));
-      expect(hints.some((hint) => hint.includes(principalId))).toBe(true);
+      await vi.waitFor(() => expect(hints.some((hint) => hint.includes(principalId))).toBe(true),{ timeout: 10_000 });
     } finally {
       await listener.query("UNLISTEN relo_current_changes");
       listener.release();

@@ -16,6 +16,12 @@ describe("work card context", () => {
     }
   });
 
+  test("files a work without a project under its source, never a made-up project", () => {
+    expect(cardContext(work({ providerName: "Claude Code",threadName: "Storage cleanup" })).project).toBe("Claude Code");
+    expect(cardContext(work({ computer: "Build Mac" })).project).toBe("Build Mac");
+    expect(cardContext(work(null)).project).toBeUndefined();
+  });
+
   test("carries the session's own name as the topic", () => {
     expect(cardContext(work({ providerName: "Claude Code",project: "relo",threadName: "Release review" })))
       .toEqual({ providerName: "Claude Code",project: "relo",threadName: "Release review" });

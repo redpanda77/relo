@@ -7,6 +7,8 @@ import { FACTS } from "../shared/facts.generated.mjs";
 const LIMITS = {
   goal: FACTS.work.goalMax, label: FACTS.work.stepLabelMax, status: FACTS.work.statusMax,
   outcome: FACTS.work.outcomeMax, waiting: FACTS.work.waitingMax, detail: 240, stepDetail: FACTS.work.detailMax,
+  // What Relo for Mac says aloud (ADR 0015): the gist and the spoken name; spoken.mjs adds the rules for the ear.
+  spoken: 160, name: 32,
 };
 
 const EXAMPLES = '"Run migrations", "Review the diff"';

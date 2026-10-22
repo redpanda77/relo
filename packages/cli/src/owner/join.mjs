@@ -103,6 +103,9 @@ export async function joinSummary({ joined, apiUrl, dependencies, outcome }) {
       ...agents.notSetUp.map((id) => `  relo setup --agent ${id}`)] : []),
     check.ok ? "Self-check: passed" : "Self-check: failed",
     ...check.failing.map((row) => `  ${row.name}: ${row.state}`),
+    ...(joined.mac === "signed-in" ? ["Relo for Mac: opened in the notch, signing itself in. Approve this Mac on your iPhone to read private work there."]
+      : joined.mac === "opened" ? ["Relo for Mac: open in the notch; sign in from its menu bar icon."]
+      : joined.mac === "not-opened" ? ["Relo for Mac: installed in ~/Applications; open it to sign in."] : []),
     ...(notice === "no-phone" ? ["Install the Relo iPhone app to get notifications."] : []),
     ...(report?.reason === "failed" ? ["The report to the server did not go through; it is sent again with the next command."] : []),
   ];
@@ -112,7 +115,7 @@ export async function joinSummary({ joined, apiUrl, dependencies, outcome }) {
     data: {
       computer: joined.clientName, server: apiUrl, level, approvals: joined.setup.approvals,
       ...(joined.left ? { left: joined.left } : {}),
-      agents: { setUp: agents.setUp, notSetUp: agents.notSetUp },
+      agents: { setUp: agents.setUp, notSetUp: agents.notSetUp }, ...(joined.mac ? { macApp: joined.mac } : {}),
       selfCheck: check, notice, reported: report?.sent === true,
     },
   };

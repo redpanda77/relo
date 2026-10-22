@@ -37,7 +37,6 @@ struct ReloStateStyle: Equatable, Sendable {
     // MARK: Named states
 
     static let running = ReloStateStyle(label: "Running", color: .reloSignalIndigo, symbol: "waveform")
-    static let waiting = ReloStateStyle(label: "Waiting", color: .reloWarning, symbol: "hourglass")
     static let done = ReloStateStyle(label: "Done", color: .reloDone, symbol: "checkmark")
     static let failed = ReloStateStyle(label: "Failed", color: .reloErrorText, symbol: "xmark.octagon.fill")
     static let dropped = ReloStateStyle(label: "Dropped", color: .reloWarning, symbol: "stop.fill")
@@ -64,9 +63,9 @@ struct ReloStateStyle: Equatable, Sendable {
     // MARK: From the server's state
 
     /// From the item's owner state and, for a question, its standing.
-    /// The badge tells the truth: Running only while moving; a work that declared it waits reads Waiting; a
-    /// question reads Needs you; a delivered round reads Your turn. The server's state is the input.
-    static func make(state: OwnerState?, standing: QuestionStanding?, answer: String? = nil, waiting: Bool = false) -> ReloStateStyle? {
+    /// The badge tells the truth: Running while moving (a work waiting on its own job included: its status says on
+    /// what); a question reads Needs you; a stopped turn reads Your turn. The server's state is the input.
+    static func make(state: OwnerState?, standing: QuestionStanding?, answer: String? = nil) -> ReloStateStyle? {
         switch standing {
         case .missed?: return .missed
         case .answeredLate?:
@@ -80,7 +79,7 @@ struct ReloStateStyle: Equatable, Sendable {
         case .failed?: return .failed
         case .dropped?: return .dropped
         case .leftUnfinished?: return .leftUnfinished
-        case .moving?, .workingQuietly?: return waiting ? .waiting : .running
+        case .moving?, .workingQuietly?: return .running
         case .needsYou?: return .needsYou
         case .waitingOnYou?: return .yourTurn
         case .stale?: return .quiet
@@ -93,8 +92,7 @@ struct ReloStateStyle: Equatable, Sendable {
 
     /// The outcome of a work the Now summary still lists (recent outcomes, missed questions).
     init?(item: NowItem) {
-        guard let outcome = Self.make(state: item.owner.state, standing: item.question?.standing,
-                                      waiting: PlanWaiting.reason(status: item.status) != nil) else { return nil }
+        guard let outcome = Self.make(state: item.owner.state, standing: item.question?.standing) else { return nil }
         self = outcome
         absence = item.owner.absence
     }

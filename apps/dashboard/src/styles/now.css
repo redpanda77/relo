@@ -403,7 +403,7 @@
   background: var(--tone, var(--neon-cyan));
   transform: scaleX(0);
   transform-origin: left center;
-  transition: transform 420ms var(--ease-out);
+  transition: transform var(--dur-slow) var(--ease-out);
 }
 .step-bar > span[data-step="done"]::after { transform: scaleX(1); }
 /* The sweep: a band of light over the done segments' width, masked to their shapes. */
@@ -448,7 +448,7 @@
   inset: 0;
   border-radius: var(--card-radius);
   pointer-events: none;
-  animation: now-announce 700ms var(--ease-out) 1 both;
+  animation: now-announce var(--dur-slow) var(--ease-out) 1 both;
 }
 @keyframes now-announce {
   from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--neon-orange) 70%, transparent); }
@@ -463,7 +463,7 @@
 
 /* ---------- Folds: the chevron nudges toward a changed count ---------- */
 
-.fold-nudge { animation: now-fold-nudge 420ms var(--ease-out) 1; }
+.fold-nudge { animation: now-fold-nudge var(--dur-slow) var(--ease-out) 1; }
 @keyframes now-fold-nudge {
   0%, 100% { translate: 0 0; }
   40% { translate: 3px 0; }
@@ -478,7 +478,7 @@
   border-radius: 999px;
   border: 1px solid var(--tone);
   pointer-events: none;
-  animation: now-sync-ping 600ms var(--ease-out) 1 both;
+  animation: now-sync-ping var(--dur-slow) var(--ease-out) 1 both;
 }
 @keyframes now-sync-ping {
   from { opacity: 0.6; transform: scale(1); }

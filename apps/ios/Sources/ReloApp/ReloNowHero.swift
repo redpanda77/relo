@@ -428,7 +428,7 @@ private struct ReloPullStretch<Content: View>: View {
     }
 }
 
-/// The director's effects on the deck: its haptics (the finished sign-in, a genuinely new request),
+/// The director's effects on the deck: its cues (a question, a failure, your turn, a finish, the sign-in landing),
 /// one ripple per tick of its effect bus, and whether changes are news for the parts below.
 private struct ReloDeckEffects: ViewModifier {
     let director: ReloDeckDirector?
@@ -437,8 +437,11 @@ private struct ReloDeckEffects: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sensoryFeedback(.success, trigger: director?.successTicks ?? 0)
-            .sensoryFeedback(.impact(weight: .light), trigger: director?.newsTicks ?? 0)
+            // One moment, one cue: the haptic of ADR 0013's table and Relo's sound, together, from the director's bus.
+            .sensoryFeedback(trigger: director?.cueTicks ?? 0) { _, _ in director?.cue?.feedback }
+            .onChange(of: director?.cueTicks ?? 0) { _, _ in
+                if let cue = director?.cue { ReloCuePlayer.shared.play(cue) }
+            }
             .onChange(of: director?.waves ?? 0) { _, _ in ripple(director?.waveStrength ?? 0.8) }
             .environment(\.reloEffectsArmed, armed)
     }

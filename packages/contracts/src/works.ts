@@ -59,6 +59,29 @@ export const planRoundSchema = z.object({
   closedAt: z.string().optional(),
 }).strict();
 
+/** One step of a work's plan as clients read it (inbox activity, Now item). Labels are null for sealed or
+ *  private work (devices open them by step id). Nested and multi-round plans carry the parent, the round
+ *  (absent means 1) and the detail text. */
+export const planDigestStepSchema = z.object({
+  id: z.string().regex(/^s[1-9][0-9]{0,2}$/), state: z.enum(["open","current","done","skipped"]),
+  label: z.string().refine(value => Array.from(value).length <= 120).nullable(),
+  parent: z.string().regex(/^s[1-9][0-9]{0,2}$/).optional(),
+  round: z.number().int().positive().optional(),
+  detail: z.string().max(200).optional(),
+  /** When the step became current and when it was done or skipped; the round a carried step continues. */
+  startedAt: z.string().optional(), doneAt: z.string().optional(),
+  carriedFrom: z.number().int().positive().optional(),
+}).strict();
+export type PlanDigestStep = z.infer<typeof planDigestStepSchema>;
+
+/** One round of a work's plan as clients read it; title and outcome are absent for sealed or private work. */
+export const planDigestRoundSchema = z.object({
+  n: z.number().int().positive(), state: z.enum(["open","closed"]),
+  title: z.string().max(80).optional(), outcome: z.string().max(200).optional(),
+  openedAt: z.string().optional(), closedAt: z.string().optional(),
+}).strict();
+export type PlanDigestRound = z.infer<typeof planDigestRoundSchema>;
+
 export const workPlanSchema = z.object({
   v: z.literal(1),
   next: z.number().int().positive(),

@@ -10,6 +10,8 @@ export const dashboardAuthSchema = z.object({
   registration: z.enum(["closed", "approval", "open"]),
   title: z.string(),
   description: z.string(),
+  /** The launch film under the landing hero: its files' base URL (the server's RELO_LANDING_FILM_URL). */
+  film: z.object({ base: z.url() }).optional(),
 })
 
 export type DashboardAuth = z.infer<typeof dashboardAuthSchema>

@@ -44,12 +44,12 @@ extension HTTPMobileAPIClient: ComputerSignInApproving {
 
 /// Add a computer: a one-time command made as this device (`POST /api/devices/self/computer-invites`).
 extension HTTPMobileAPIClient: ComputerInviting {
-    private struct InviteBody: Encodable { let level: String; let approvals: Bool; let agents: [String]? }
+    private struct InviteBody: Encodable { let level: String; let approvals: Bool; let agents: [String]?; let macApp: Bool }
 
-    public func inviteComputer(credential: DeviceCredential, level: String, approvals: Bool, agents: [String]) async throws -> ReloComputerInvite {
+    public func inviteComputer(credential: DeviceCredential, level: String, approvals: Bool, agents: [String], macApp: Bool) async throws -> ReloComputerInvite {
         var request = request(path: "api/devices/self/computer-invites", method: "POST")
         request.authorize(bearer: credential.accessToken)
-        request.httpBody = try JSONEncoder().encode(InviteBody(level: level, approvals: approvals, agents: agents.isEmpty ? nil : agents))
+        request.httpBody = try JSONEncoder().encode(InviteBody(level: level, approvals: approvals, agents: agents.isEmpty ? nil : agents, macApp: macApp))
         let (data, response) = try await data(for: request)
         guard response.statusCode == 201 || response.statusCode == 200 else {
             throw response.statusCode == 404 ? MobileAPIError.unavailable : Self.signInFailure(response.statusCode)

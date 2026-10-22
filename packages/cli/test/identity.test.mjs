@@ -10,7 +10,9 @@ const identity = ["--source", "Codex", "--project", "Relo", "--topic", "Release"
 const context = { providerName: "Codex", project: "Relo", threadName: "Release" };
 function dependencies(client, stdin) {
   return { prepareNotificationCommand: async ({ body }) => body,captureActivityCommand: async ({ body }) => ({ target: null,ifSequence: body.ifSequence }), loadConfig: async () => ({ apiUrl: "https://relo.example",token: "x".repeat(44) }),
-    clientFactory: () => noRunningCards(client),readStdinJson: async () => stdin,identityDefaults: () => ({}) };
+    clientFactory: () => noRunningCards(client),readStdinJson: async () => stdin,identityDefaults: () => ({}),
+    // The filesystem root: the one folder with no name, so a missing project stays missing.
+    cwd: "/" };
 }
 const creates = [
   ["notify", "send", "Ready"], ["ask", "Continue?", "--approval"],

@@ -22,7 +22,7 @@ struct CardActionStyle: ButtonStyle {
             .overlay(shape.strokeBorder(stroke, lineWidth: 1))
             .contentShape(shape)
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.75), value: configuration.isPressed)
     }
 

@@ -34,6 +34,22 @@ struct TodayActivityTests {
         #expect(!result.isEmpty)
     }
 
+    @Test("The hero's TODAY number is the strip's settled rows, never one per card update")
+    func heroCountsSettledRows() {
+        let running = HistoryRowProjection.row(InboxItem(id: "live", kind: .liveActivity, sourceName: "Fixture", title: "live",
+            createdAt: now.addingTimeInterval(-120),
+            activity: .init(state: "active", outcome: nil, status: "Working", progress: nil, steps: nil, updates: 40,
+                            startedAt: now.addingTimeInterval(-3600), endedAt: nil)), now: now)
+        #expect(running.outcome == .running)
+        let settled = TodayActivity.settled(rows: [running, row("a", at: now.addingTimeInterval(-600), done: true),
+                                                   row("b", at: now.addingTimeInterval(-300))], now: now, calendar: calendar)
+        #expect(settled.rows.map(\.id) == ["b", "a"])
+        let raw = InboxTodaySummary(notifications: 236, liveActivities: 3, active: 1, finished: 2)
+        #expect(raw.total == 239)
+        let shown = raw.counting(settled.rows.count)
+        #expect(shown.total == 2 && shown.finished == 2 && shown.notifications == 236)
+    }
+
     @Test("A day with nothing is empty")
     func empty() {
         let result = TodayActivity.make(rows: [], now: now, calendar: calendar)

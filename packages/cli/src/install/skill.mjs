@@ -77,6 +77,9 @@ function archivePathFor({ home, now, version, root }) {
   return candidate;
 }
 
+/** Archived copies kept: enough to recover the last few, never one per update forever (19 Oct: 148 had piled up). */
+export const KEPT_ARCHIVES = 4;
+
 async function moveAside(source, destination) {
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   try {
@@ -86,6 +89,10 @@ async function moveAside(source, destination) {
     await cp(source, destination, { recursive: true });
     await rm(source, { recursive: true, force: true });
   }
+  // Archive names start with a UTC stamp, so name order is age order.
+  const root = dirname(dirname(destination));
+  const old = readdirSync(root).filter((name) => /^\d{8}T\d{6}Z-/u.test(name)).sort().slice(0, -KEPT_ARCHIVES);
+  await Promise.all(old.map((name) => rm(join(root, name), { recursive: true, force: true })));
 }
 
 async function existingCopy(target) {

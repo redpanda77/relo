@@ -43,7 +43,9 @@ public struct BrowserSignIn: Equatable, Sendable {
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "redirect_uri", value: Self.redirectURI),
-            URLQueryItem(name: "state", value: state)
+            URLQueryItem(name: "state", value: state),
+            // The approval page names the app asking: Relo for Mac or the iPhone app.
+            URLQueryItem(name: "device", value: Self.device)
         ]
         if signUp { components.queryItems?.append(URLQueryItem(name: "mode", value: "sign-up")) }
         return components.url
@@ -64,6 +66,14 @@ public struct BrowserSignIn: Equatable, Sendable {
         }
         guard let code = value("code"), code.hasPrefix("relo_signin_") else { throw CallbackError.malformed }
         return .code(code)
+    }
+
+    static var device: String {
+        #if os(macOS)
+        "mac"
+        #else
+        "iphone"
+        #endif
     }
 
     private static func randomToken() -> String {

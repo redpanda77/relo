@@ -4,12 +4,13 @@
     "title": "Get started",
     "path": "/docs/get-started",
     "pages": [
-      "/docs/get-started/with-an-agent",
+      "/docs/get-started/from-scratch",
       "/docs/get-started/server",
-      "/docs/get-started/iphone",
       "/docs/get-started/cli",
+      "/docs/get-started/iphone",
       "/docs/get-started/first-card",
-      "/docs/get-started/agents"
+      "/docs/get-started/agents",
+      "/docs/get-started/with-an-agent"
     ]
   },
   {
@@ -18,6 +19,7 @@
     "pages": [
       "/docs/concepts/work",
       "/docs/concepts/cards",
+      "/docs/concepts/notch",
       "/docs/concepts/questions",
       "/docs/concepts/notifications",
       "/docs/concepts/sessions",

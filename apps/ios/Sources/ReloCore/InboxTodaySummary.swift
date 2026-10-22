@@ -6,13 +6,20 @@ public struct InboxTodaySummary: Equatable, Sendable {
     public let active: Int
     /// Live Activity runs seen today that are no longer active.
     public let finished: Int
-    /// Everything that happened today: notifications plus Live Activity runs (each counted once).
-    /// The hero's headline number, so it never contradicts the "Live Activities today" line.
-    public var total: Int { notifications + liveActivities }
+    /// The hero's headline number: notifications plus Live Activity runs, or, once `counting(_:)` sets it, today's
+    /// settled work as the strip below counts it (each card update is its own notification: on 19 Oct the raw count
+    /// read 236 over a strip of 31).
+    public let total: Int
 
-    public init(notifications: Int, liveActivities: Int, active: Int, finished: Int) {
+    public init(notifications: Int, liveActivities: Int, active: Int, finished: Int, total: Int? = nil) {
         self.notifications = notifications; self.liveActivities = liveActivities
         self.active = active; self.finished = finished
+        self.total = total ?? notifications + liveActivities
+    }
+
+    /// The same summary headed by `total` (TodayActivity.settled's row count).
+    public func counting(_ total: Int) -> Self {
+        Self(notifications: notifications, liveActivities: liveActivities, active: active, finished: finished, total: total)
     }
 
     public static func make(items: [InboxItem], attention: InboxAttentionProjection.Snapshot,

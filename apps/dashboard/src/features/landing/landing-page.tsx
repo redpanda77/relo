@@ -17,6 +17,7 @@ import { GITHUB_URL, GitHubMark } from "@/features/auth/github"
 import "@/features/landing/landing.css"
 import { ControlSection } from "@/features/landing/landing-control"
 import { FeatureViz, type FeatureVisual } from "@/features/landing/landing-features"
+import { LandingFilm } from "@/features/landing/landing-film"
 import { setupLandingMotion } from "@/features/landing/landing-motion"
 import type { LandingScene } from "@/features/landing/landing-scene"
 
@@ -231,7 +232,7 @@ function Chip({
   )
 }
 
-export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }) {
+export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?: string; filmBase?: string }) {
   const signUpPath = `${signInPath}?mode=sign-up`
   const rootRef = React.useRef<HTMLDivElement>(null)
   const stageRef = React.useRef<HTMLDivElement>(null)
@@ -387,6 +388,9 @@ export function LandingPage({ signInPath = "/sign-in" }: { signInPath?: string }
             <span />
           </div>
         </section>
+
+        {/* ---------- The film ---------- */}
+        {filmBase ? <LandingFilm base={filmBase} /> : null}
 
         {/* ---------- Sources ---------- */}
         <section id="one-place" aria-labelledby="one-place-title" className="landing-section !pb-16">

@@ -44,6 +44,9 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
 
   const works = await loadOwnerStateInputs(db,principalId,"visible",now,{ deviceId,ownerOverview: options.ownerOverview });
   const sessionIdByKey = new Map<string,string>(sessionRows.map((row) => [row.session_hash,publicId("ags",row.id)]));
+  // A card keeps its session's sealed name after the session ends (it leaves the Sessions view, not the card).
+  const namesByKey = new Map<string,unknown>(deviceId === undefined ? []
+    : sessionRows.filter((row) => row.sealed_names).map((row) => [row.session_hash,row.sealed_names]));
   const items: NowItem[] = works.map((work) => ({
     id: work.id,
     title: work.title,
@@ -53,8 +56,10 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
     project: work.project,
     steps: work.steps,
     progress: work.planProgress,
+    ...(work.planDigest ?? {}),
     producer: work.producer,
     sessionId: work.sessionKey ? sessionIdByKey.get(work.sessionKey) ?? null : null,
+    ...(work.sessionKey && namesByKey.has(work.sessionKey) ? { sessionNames: namesByKey.get(work.sessionKey) } : {}),
     notificationId: work.notificationId,
     startedAt: work.startedAt.toISOString(),
     declaredAt: work.declaredAt.toISOString(),

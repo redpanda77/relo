@@ -1,25 +1,36 @@
 ---
 title: Set up with your agent
 nav: Set up with your agent
-summary: Paste one line into Claude Code, Codex, OpenCode or any coding agent and it connects this computer to Relo for you, asking only what it must.
+summary: Your server runs? Paste one line into Claude Code, Codex, OpenCode or any coding agent and it connects this computer to Relo for you, asking only what it must.
 ---
 
 ## For you
 
-Your server and your iPhone app are ready, and you want this computer connected: the `relo` CLI, a
-sign-in, and every agent here (Claude Code, Codex, Gemini CLI, Cursor and the rest) told about Relo
-with its skill and instructions. Paste this into your agent, with your server's address:
+Your server is running and you created the owner account. Now you want this computer connected: the
+`relo` CLI, a sign-in, and every agent here (Claude Code, Codex, Gemini CLI, Cursor and the rest) told
+about Relo with its skill and instructions. Your iPhone can come later.
+
+The best way: in the Dashboard's **Connect a computer** (it opens right after you create the account;
+later, **Account → Computers → Add a computer**), choose **Let my agent do it**, pick the depth and press
+**Make the prompt**. Paste what it gives you into your agent:
+
+```text
+Read https://relo.example.com/install.md?code=rci_… and set up Relo on this computer at the track level. It sends me a first notification when it is done.
+```
+
+The one-time code in it signs the computer in, so the agent never asks you to sign in, and its first
+notification tells you it is done. Without a code, paste this, with your server's address:
 
 ```text
 Read https://relo.example.com/install.md and set up Relo on this computer.
 ```
 
-Works the same in OpenCode. Better: **Connect a computer** in the Relo app or Dashboard gives you this prompt with a one-time code
-in it (`install.md?code=rci_…`), so the agent never needs you to sign in. Without a code, the agent
-asks you to approve the sign-in in the Relo app. It takes about five minutes.
+The agent then asks you to approve its sign-in in the browser. It takes about five minutes. Works the
+same in OpenCode.
 
-No server or iPhone app yet? Start with [Run the server](/docs/get-started/server) and
-[Install the iPhone app](/docs/get-started/iphone), then come back.
+Both prompts read `/install.md` from your own server, so the server must already run. No server yet?
+Start with [Run the server](/docs/get-started/server), or let your agent run it too:
+[Start from nothing with your agent](/docs/get-started/from-scratch).
 
 ## For the agent
 
@@ -80,9 +91,9 @@ relo auth login --api-url "https://relo.example.com" --client-name "<this comput
 
 In an agent it does not block: it prints a `url`, a `code`, a two-digit `number` and a `qr` (the link
 as a QR code). Show the owner all of them, the QR code in a code block, and tell them the number and
-where to approve: in the Relo app on their iPhone (**Settings → Devices → Sign in a computer**, scan the QR code
-or type the code), or by opening the link in a browser. They pick the number the terminal shows. Then
-wait for it:
+where to approve: by opening the link in a browser where they are signed in to Relo, or, if they already
+have the Relo app on their iPhone, in **Settings → Devices → Sign in a computer** (scan the QR code or
+type the code). They pick the number the terminal shows. Then wait for it:
 
 ```sh
 relo auth login --wait
@@ -133,12 +144,16 @@ relo doctor
 
 Follow `next.run` for the first unmet step and ask the owner where it needs them:
 
-- `phone`: the owner opens the Relo app on their iPhone, signs in to the same server and allows
-  Live Activities. Then run `relo doctor` again.
-- `test`: run `relo test`. A card asks "Can you see this card?" on the phone; the owner taps Yes.
+- `phone`: no iPhone is signed in yet, which is normal on a first setup: the iPhone comes after the
+  computer. Ask the owner whether they have the Relo app. If they do, they open it, sign in to the same
+  server and allow notifications; run `relo doctor` again. If not, this computer is done: tell them the
+  next step is [Add your iPhone](/docs/get-started/iphone), and to run `relo test` here once it is
+  signed in.
+- `test`: run `relo test`. A card asks "Can you see this card on your iPhone?"; the owner taps Yes.
   If it stops before the owner answers, run it again.
 
-Done when `relo doctor` prints `ready: true`.
+Done when `relo doctor` prints `ready: true`, or when only `phone` is left and the owner has no iPhone
+app yet.
 
 ### 7. Finish
 

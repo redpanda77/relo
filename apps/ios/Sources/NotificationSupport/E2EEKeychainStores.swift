@@ -2,6 +2,18 @@ import Foundation
 import ReloCore
 import Security
 
+#if os(macOS)
+/// Whether this process uses the data-protection keychain: the signed Mac app does (its keychain access group
+/// entitlement), so access belongs to the app's ID and macOS never asks per item. A process without the entitlement
+/// (the package's tests) keeps the file-based keychain, which needs none.
+public enum ReloDataProtectionKeychain {
+    public static let available: Bool = {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+        return SecTaskCopyValueForEntitlement(task, "keychain-access-groups" as CFString, nil) != nil
+    }()
+}
+#endif
+
 /// Stores the end-to-end encryption key ring in the Keychain. With `accessGroup` (the app and both
 /// extensions share it) the Notification Service Extension and the Live Activity widget can open
 /// envelopes and sign answers. Readable after first unlock so a locked phone can still decrypt;
@@ -67,6 +79,11 @@ public struct KeychainKeyRingStore: ReloKeyRingStore {
             kSecAttrAccount as String: Self.account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
         return query
     }
 }
@@ -146,6 +163,11 @@ public struct KeychainTrustedClientStore: ReloTrustedClientStore {
             kSecAttrAccount as String: Self.account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
         return query
     }
 }
@@ -207,6 +229,11 @@ public struct KeychainTrustedApproverStore: ReloTrustedApproverStore {
             kSecAttrAccount as String: Self.account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
         return query
     }
 }
@@ -271,6 +298,11 @@ public struct KeychainReplayLedger: ReloReplayLedger {
             kSecAttrAccount as String: Self.account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
         return query
     }
 }
@@ -351,6 +383,11 @@ public final class KeychainNameBook: ReloNameBook, @unchecked Sendable {
             kSecAttrAccount as String: Self.account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
         return query
     }
 }
@@ -371,6 +408,9 @@ public enum ReloEncryptionState {
                 kSecAttrAccount as String: account,
             ]
             if let group { query[kSecAttrAccessGroup as String] = group }
+            #if os(macOS)
+            if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+            #endif
             SecItemDelete(query as CFDictionary)
         }
         ReloWidgetKeyMirror.shared?.update {

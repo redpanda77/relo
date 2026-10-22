@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
 import { platform } from "node:os";
 import { assertNoExtra, parseDuration, requireText } from "../shared/validate.mjs";
 import { normalizeApiUrl } from "../shared/config.mjs";
@@ -32,6 +33,13 @@ export function openBrowser(url) {
     stdio: "ignore",
     windowsHide: true,
   });
+  child.on("error", () => {});
+  child.unref();
+}
+
+/** Opens Relo for Mac (the notch app) at `path` with launch arguments; it reads them once, at start. */
+export function openMacApp(path, args) {
+  const child = spawn("open", [path, "--args", ...args], { detached: true, shell: false, stdio: "ignore" });
   child.on("error", () => {});
   child.unref();
 }
@@ -273,9 +281,15 @@ export async function join(options, fullCode, dependencies) {
   // A code means switch: the login it replaces is named afterwards, never asked about.
   let left;
   try { left = await dependencies.loadConfig(dependencies.configPath()); } catch { left = undefined; }
+  // The Mac app the install script just put in place (--mac-app): the redeem asks for its sign-in code with a PKCE
+  // challenge, and only the app is handed the verifier.
+  const macApp = typeof options["mac-app"] === "string" && dependencies.platform === "darwin" ? options["mac-app"] : undefined;
+  const macVerifier = macApp ? randomBytes(32).toString("base64url") : undefined;
+  const macAppChallenge = macVerifier ? createHash("sha256").update(macVerifier).digest("base64url") : undefined;
   let response;
   try {
-    response = await dependencies.clientFactory({ apiUrl }).redeemComputerInvite({ code, clientName, scopes, expiresInSeconds });
+    response = await dependencies.clientFactory({ apiUrl })
+      .redeemComputerInvite({ code, clientName, scopes, expiresInSeconds, ...(macAppChallenge ? { macAppChallenge } : {}) });
   } catch (error) {
     throw joinRedeemFailure(error, apiUrl);
   }
@@ -292,7 +306,19 @@ export async function join(options, fullCode, dependencies) {
   // Named only when it left another server: locally a login knows its server, not its account.
   const leftLogin = left && left.source !== "environment" && left.apiUrl && left.apiUrl !== apiUrl
     ? { server: left.apiUrl, name: left.principal?.name } : undefined;
-  return { saved, clientName, left: leftLogin, setup: { level, approvals: response?.setup?.approvals === true, agents } };
+  let mac;
+  if (macApp) {
+    const signInCode = typeof response?.macAppSignInCode === "string" ? response.macAppSignInCode : undefined;
+    try {
+      await dependencies.openMacApp(macApp, signInCode
+        ? ["--relo-origin", apiUrl, "--relo-sign-in-code", signInCode, "--relo-code-verifier", macVerifier]
+        : ["--relo-origin", apiUrl]);
+      mac = signInCode ? "signed-in" : "opened";
+    } catch {
+      mac = "not-opened";
+    }
+  }
+  return { saved, clientName, left: leftLogin, setup: { level, approvals: response?.setup?.approvals === true, agents }, ...(mac ? { mac } : {}) };
 }
 
 const PENDING_NEXT = "relo auth login --wait";
@@ -490,7 +516,7 @@ export async function runAuthCommand(command) {
   }
 
   if (group === "auth" && action === "invite") {
-    assertNoExtra(rest, 0, "Usage: relo auth invite [--level LEVEL] [--approvals on|off]");
+    assertNoExtra(rest, 0, "Usage: relo auth invite [--level LEVEL] [--approvals on|off] [--with-mac-app]");
     const { client } = await getAuthenticated(dependencies);
     const agents = [options.agent ?? []].flat();
     const { harnessFor } = await import("../harness/catalog.mjs");
@@ -499,14 +525,15 @@ export async function runAuthCommand(command) {
     const invite = await client.createComputerInvite({
       ...(options.level ? { level: options.level } : {}), ...(options.approvals ? { approvals: options.approvals === "on" } : {}),
       ...(agents.length ? { agents: [...new Set(agents.map((name) => harnessFor(name).id))] } : {}),
+      ...(options["with-mac-app"] ? { macApp: true } : {}),
     });
     return result("auth.invite", { command: invite.command, expiresAt: invite.expiresAt, level: invite.level, approvals: invite.approvals,
-      agents: invite.agents ?? null },
+      agents: invite.agents ?? null, macApp: invite.macApp === true },
       { message: "Paste the command on the new computer. It works once, for 30 minutes." });
   }
 
   if (group === "auth" && action === "join") {
-    assertNoExtra(rest, 1, "Usage: relo auth join CODE [--api-url URL] [--client-name NAME]");
+    assertNoExtra(rest, 1, "Usage: relo auth join CODE [--api-url URL] [--client-name NAME] [--mac-app PATH]");
     const joined = await join(options, rest[0], dependencies);
     const apiUrl = joined.saved.data.apiUrl;
     dependencies.stderr?.(`Signed in to ${apiUrl} as ${joined.clientName}. Setting up this computer's agents…`);

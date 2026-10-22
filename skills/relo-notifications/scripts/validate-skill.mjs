@@ -2,7 +2,7 @@
 // Structural checks for the Relo skill bundle: frontmatter, size, reachable references, and the
 // guidance an agent must always see. Behavioural checks live in tests/skill.test.mjs.
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -70,7 +70,7 @@ export function validateSkill(root = defaultRoot) {
   return { errors, stats: { lineCount } };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   const result = validateSkill(process.argv[2] ? resolve(process.argv[2]) : defaultRoot);
   // The source skill's numbers and exit codes are generated from the CLI (scripts/generate-facts.mjs).
   if (!process.argv[2]) {

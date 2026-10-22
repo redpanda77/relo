@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Hono } from "hono";
 import { requireScope } from "../auth.js";
 import {
-  bundledCli,createInvite,createInviteSchema,installScript,inviteStatus,redeemInvite,redeemInviteSchema,
+  bundledCli,bundledMacApp,createInvite,macAppcast,createInviteSchema,installScript,inviteStatus,redeemInvite,redeemInviteSchema,
 } from "../computer-invites.js";
 import { registerInviteActivityToken } from "../computer-invite-activity.js";
 import type { Database } from "../db.js";
@@ -24,7 +24,7 @@ export function registerPublicComputerInviteRoutes(app: Hono, db: Database, appU
     const bundled = cli();
     if (!bundled) return context.text("# This Relo server has no CLI to install.\nexit 1\n", 503);
     context.header("cache-control","no-store");
-    return context.body(installScript(origin,bundled),200,{ "content-type": "text/x-shellscript; charset=utf-8" });
+    return context.body(installScript(origin,bundled,bundledMacApp()),200,{ "content-type": "text/x-shellscript; charset=utf-8" });
   });
 
   app.get("/cli/relo-cli.tgz", (context) => {
@@ -32,6 +32,21 @@ export function registerPublicComputerInviteRoutes(app: Hono, db: Database, appU
     if (!bundled) return context.json({ error: "not_found" },404);
     return context.body(readFileSync(bundled.file),200,{ "content-type": "application/gzip",
       "x-relo-cli-version": bundled.version,"x-relo-cli-sha256": bundled.sha256,"cache-control": "no-store" });
+  });
+
+  // Relo for Mac, when this server hands it out (the install script's --mac-app).
+  app.get("/mac/relo-mac.zip", (context) => {
+    const mac = bundledMacApp();
+    if (!mac) return context.json({ error: "not_found" },404);
+    return context.body(readFileSync(mac.file),200,{ "content-type": "application/zip",
+      "x-relo-mac-version": mac.version,"x-relo-mac-sha256": mac.sha256,"cache-control": "no-store" });
+  });
+
+  // Relo for Mac's update feed (Sparkle): the build above, signed; 404 when this server has none to offer.
+  app.get("/mac/appcast.xml", (context) => {
+    const feed = macAppcast(origin,bundledMacApp());
+    if (!feed) return context.json({ error: "not_found" },404);
+    return context.body(feed,200,{ "content-type": "application/rss+xml; charset=utf-8","cache-control": "no-store" });
   });
 
   // The CLI this server hands out, for `relo update` and doctor's "behind" check (no account needed).
@@ -55,7 +70,8 @@ export function registerPublicComputerInviteRoutes(app: Hono, db: Database, appU
         ? { error: result.error,message: "A CI token already has this name; join with another --client-name." }
         : { error: result.error },result.error === "invalid_code" ? 400 : 409);
     }
-    return context.json({ accessToken: result.accessToken,credential: result.credential,setup: result.setup });
+    return context.json({ accessToken: result.accessToken,credential: result.credential,setup: result.setup,
+      ...(result.macAppSignInCode ? { macAppSignInCode: result.macAppSignInCode } : {}) });
   });
 }
 

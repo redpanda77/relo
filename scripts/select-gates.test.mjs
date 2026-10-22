@@ -17,6 +17,11 @@ test("paths only the phone, the notch app or internal notes read select no gate"
   assert.deepEqual(selected, []);
 });
 
+test("Dashboard sounds and images select only the Dashboard gate; its code still selects the server", () => {
+  assert.deepEqual(selectGates(["apps/dashboard/src/assets/sounds/done.m4a", "apps/dashboard/public/icon.png"]).selected, ["dashboard"]);
+  assert.deepEqual(gatesFor("apps/dashboard/src/assets/theme.ts"), heavy);
+});
+
 test("iOS fixtures and the E2EE source are shared with the server and CLI tests", () => {
   for (const path of ["apps/ios/Tests/ReloCoreTests/Fixtures/e2ee-v1.json", "apps/ios/Sources/ReloCore/E2EE/ReloSealedCards.swift"]) {
     assert.deepEqual(gatesFor(path), [...heavy, "cli"]);

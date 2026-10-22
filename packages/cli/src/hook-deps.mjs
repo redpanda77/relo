@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ReloApiClient } from "./shared/api-client.mjs";
 import { detectComputerName } from "./shared/computer.mjs";
-import { configPath, environmentConfig, loadAccountsSync, loadComputerNameSync, loadConfig, writeConfig } from "./shared/config.mjs";
+import { configPath, environmentConfig, loadAccountsSync, loadComputerNameSync, loadProjectsSync, loadVoicesSync, loadConfig, writeConfig } from "./shared/config.mjs";
 import { envSetting } from "./shared/settings.mjs";
 import { readStdinJson } from "./shared/stdin.mjs";
 import { VERSION } from "./version.mjs";
@@ -18,6 +18,9 @@ export function hookDependencies(overrides = {}) {
   const env = overrides.env ?? process.env;
   const configPathOf = overrides.configPath ?? (() => configPath({ env }));
   const loadAccounts = overrides.loadAccounts ?? (() => loadAccountsSync(configPathOf()));
+  // Folder project names (`relo project NAME`), read only when a project is resolved.
+  const loadProjects = overrides.loadProjects ?? (() => loadProjectsSync(configPathOf()));
+  const loadVoices = overrides.loadVoices ?? (() => loadVoicesSync(configPathOf()));
   const probes = {
     platform: overrides.platform, scutil: overrides.scutil, hostname: overrides.hostname, home: overrides.home,
     accounts: loadAccounts,
@@ -39,6 +42,8 @@ export function hookDependencies(overrides = {}) {
     computerName: overrides.computerName ?? (() => detectComputerName(env, probes)),
     accountProbes: probes,
     loadAccounts,
+    loadProjects,
+    loadVoices,
     // Streaming commands (relo listen) print one JSON line per item as it arrives.
     emit: overrides.emit ?? ((line) => process.stdout.write(`${JSON.stringify(line)}\n`)),
     configPath: configPathOf,

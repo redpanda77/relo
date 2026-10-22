@@ -4,7 +4,9 @@ import { test } from "node:test";
 import { mkdtempSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acquireUpdateLock, launcherManaged, maybeStartAutoUpdate, recordAutoUpdate, RETRY_MS } from "../src/owner/auto-update.mjs";
+import { acquireUpdateLock, ASK_MS, launcherManaged, maybeStartAutoUpdate, recordAutoUpdate, RETRY_MS, setUpdateMode, updateMode } from "../src/owner/auto-update.mjs";
+import { askToUpdate } from "../src/owner/update.mjs";
+import { EventEmitter } from "node:events";
 import { compareVersions } from "../src/owner/releases.mjs";
 import { ReloApiClient, latestCliSeen } from "../src/shared/api-client.mjs";
 import { dataRoot } from "../src/work/state-file.mjs";
@@ -77,4 +79,47 @@ test("the API client reads the server's newest CLI from any reply, without a req
   await new ReloApiClient({ apiUrl: "https://relo.example.test", token: "t", fetchImpl }).request("GET", "/api/v1/state");
   assert.equal(latestCliSeen(), "9.9.9");
   assert.equal(calls.length, 1);
+});
+
+test("the update mode: RELO_NO_UPDATE_CHECK, then RELO_UPDATES, then relo update --mode, else auto", () => {
+  const b = box();
+  assert.equal(updateMode({ home: b.home }), "auto");
+  setUpdateMode(b.home, "ask");
+  assert.equal(updateMode({ home: b.home }), "ask");
+  assert.equal(updateMode({ home: b.home, env: { RELO_UPDATES: "auto" } }), "auto");
+  assert.equal(updateMode({ home: b.home, env: { RELO_UPDATES: "nonsense" } }), "ask");
+  assert.equal(updateMode({ home: b.home, env: { RELO_UPDATES: "auto", RELO_NO_UPDATE_CHECK: "1" } }), "off");
+  setUpdateMode(b.home, "off");
+  assert.equal(b.start(), false, "off starts nothing");
+});
+
+test("ask mode asks once per version: no second question while the phone may answer, none after a no", () => {
+  const b = box();
+  setUpdateMode(b.home, "ask");
+  assert.equal(b.start(), true);
+  assert.equal(JSON.parse(readFileSync(join(dataRoot(b.home), "auto-update.json"), "utf8")).asking, true);
+  assert.equal(b.start({ now: NOW + RETRY_MS + 1 }), false, "an hour is not enough while asking");
+  assert.equal(b.start({ now: NOW + ASK_MS + 1 }), true, "after the question expired");
+  recordAutoUpdate(b.home, { declined: true, asking: false });
+  assert.equal(b.start({ now: NOW + 3 * ASK_MS }), false, "the owner said no to this version");
+  assert.equal(b.start({ latest: "0.17.42", now: NOW + 3 * ASK_MS }), true, "a newer version asks again");
+});
+
+test("the update question goes through relo ask with no agent session, and its exit code is the answer", async () => {
+  const runs = [];
+  const answer = (code) => askToUpdate({ dependencies: { entrypoint: "/x/relo.mjs", env: { HOME: "/h", PATH: "/bin", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s" } },
+    target: "0.17.52", computer: "build-box", spawnImpl: (command, args, options) => {
+      runs.push({ args, env: options.env });
+      const child = new EventEmitter();
+      setImmediate(() => child.emit("exit", code));
+      return child;
+    } });
+  assert.equal(await answer(0), "approved");
+  assert.equal(await answer(5), "declined");
+  assert.equal(await answer(8), "unanswered");
+  assert.equal(runs[0].args[1], "ask");
+  assert.equal(runs[0].args[2], "Update the Relo CLI on build-box to 0.17.52?");
+  assert.ok(runs[0].args.includes("--notification-only"));
+  assert.equal(runs[0].env.CLAUDECODE, undefined, "no agent session rides along");
+  assert.equal(runs[0].env.HOME, "/h");
 });

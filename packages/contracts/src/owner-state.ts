@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { sealedEnvelopeSchema } from "./sealed.js";
 import { computerIconSchema } from "./computers.js";
-import { planProgressWireSchema } from "./works.js";
+import { planDigestRoundSchema,planDigestStepSchema,planProgressWireSchema } from "./works.js";
 
 /**
  * The derived owner state (STATE-SPEC v2, sections 2.3 and 6). One server function, `derive()`,
@@ -26,8 +26,6 @@ export const OWNER_STATE_TIMING = Object.freeze({
   historySeconds: 8 * 60 * 60,
   /** T_yourTurn: a stopped turn with no delivery is "your turn" this long, on the card and in Sessions. */
   yourTurnSeconds: 5 * 60,
-  /** T_deliveredYourTurn: a delivered round is "your turn" this long in Now, then History as delivered. */
-  deliveredYourTurnSeconds: 60 * 60,
 } as const);
 /** T_fresh/2: "working quietly" evidence and the idle-session fold. */
 export const OWNER_STATE_QUIET_SECONDS = OWNER_STATE_TIMING.freshSeconds / 2;
@@ -106,7 +104,11 @@ export const ownerStateSurfaceSchema = z.object({
   relevance: z.number().min(0).max(1),
   /** APNs priority for a card push in this state: 10 for questions and outcomes, 5 for progress. */
   apnsPriority: z.union([z.literal(5), z.literal(10)]),
-  /** Only Needs you sets ActivityKit `alertConfiguration` (sound and expanded Dynamic Island once). */
+  /**
+   * Only Needs you alerts on its card push (ActivityKit's expanded Dynamic Island once). The alert's own cue
+   * (`aps.alert.sound`) names the state's moment in ADR 0013 (needs-you, failed, done, your-turn);
+   * the server's notification-sounds.ts owns the names.
+   */
   alertConfiguration: z.boolean(),
 }).strict();
 export type OwnerStateSurface = z.infer<typeof ownerStateSurfaceSchema>;
@@ -412,9 +414,21 @@ export const nowItemSchema = z.object({
    * older whole-plan window the current build still reads.
    */
   progress: planProgressWireSchema.nullable().optional(),
+  /**
+   * The work's whole plan as the inbox activity carries it (each step's state, parent and round; labels null for
+   * sealed or private work, opened by step id), so a device can draw rounds and nested steps; absent without a plan.
+   */
+  plan: z.array(planDigestStepSchema).max(120).optional(),
+  /** The plan's rounds; absent without them. Title and outcome are absent for sealed or private work. */
+  rounds: z.array(planDigestRoundSchema).max(60).optional(),
   producer: producerTypeSchema,
   /** The session row this work belongs to (agent sessions only), when known. */
   sessionId: z.string().regex(/^(ags|act)_[0-9a-f-]{36}$/).nullable(),
+  /**
+   * The session's end-to-end sealed names (as on its session row), for the devices that open them: the card keeps its
+   * session's name after the session ends and leaves the Sessions view. Devices only; absent without names.
+   */
+  sessionNames: z.unknown().optional(),
   /** The card's newest notification event (`ntf_…`), to open its detail; null when none is visible. */
   notificationId: z.string().regex(/^ntf_[0-9a-f-]{36}$/).nullable(),
   startedAt: timestamp,

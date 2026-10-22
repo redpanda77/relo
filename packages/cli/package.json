@@ -1,6 +1,6 @@
 {
   "name": "@relo/cli",
-  "version": "0.17.50",
+  "version": "0.17.58",
   "private": true,
   "description": "Command-line client for a self-hosted Relo server",
   "type": "module",

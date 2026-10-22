@@ -31,23 +31,3 @@ public enum PlanStepUpdates {
         stepStartedAt.map { now.timeIntervalSince($0) > retention } ?? false
     }
 }
-
-/// "Waiting on CI": the card status the CLI writes for `--waiting` (U4: the badge reads Waiting, not Running).
-public enum PlanWaiting {
-    public static let prefix = "Waiting on "
-
-    public static func reason(status: String?) -> String? {
-        guard let status = status?.trimmingCharacters(in: .whitespacesAndNewlines), status.hasPrefix(prefix),
-              status.count > prefix.count else { return nil }
-        return String(status.dropFirst(prefix.count))
-    }
-}
-
-public extension InboxItem {
-    /// The work declared it waits on something (its state, or the card's own "Waiting on …" status).
-    var isDeclaredWaiting: Bool {
-        guard kind == .liveActivity else { return false }
-        if (activity?.work ?? work)?.state == .waiting { return true }
-        return PlanWaiting.reason(status: detail ?? activitySummary?.status ?? activity?.status) != nil
-    }
-}

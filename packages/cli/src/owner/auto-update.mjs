@@ -12,8 +12,40 @@ import { dataRoot } from "../work/state-file.mjs";
 
 const LOCK_STALE_MS = 10 * 60_000;
 export const RETRY_MS = 3_600_000; // an hour
+/** How long the owner's phone may take to answer "update?" in ask mode; no new question for that version meanwhile. */
+export const ASK_MS = 8 * 3_600_000;
+export const UPDATE_MODES = Object.freeze(["auto", "ask", "off"]);
 
-const paths = (home) => ({ directory: dataRoot(home), lock: join(dataRoot(home), "auto-update.lock"), state: join(dataRoot(home), "auto-update.json") });
+const paths = (home) => ({ directory: dataRoot(home), lock: join(dataRoot(home), "auto-update.lock"), state: join(dataRoot(home), "auto-update.json"),
+  mode: join(dataRoot(home), "updates.json") });
+
+/**
+ * How a newer CLI the server offers is installed here: auto (by itself), ask (after the owner says yes on the phone)
+ * or off. RELO_NO_UPDATE_CHECK=1 is off; RELO_UPDATES wins over what `relo update --mode` stored; default auto.
+ */
+export function updateMode({ home, env = {} }) {
+  const disabled = env.RELO_NO_UPDATE_CHECK;
+  if (disabled !== undefined && disabled !== "" && disabled !== "0") return "off";
+  const fromEnv = String(env.RELO_UPDATES ?? "").trim().toLowerCase();
+  if (UPDATE_MODES.includes(fromEnv)) return fromEnv;
+  try {
+    const stored = JSON.parse(readFileSync(paths(home).mode, "utf8"))?.mode;
+    if (UPDATE_MODES.includes(stored)) return stored;
+  } catch { /* never set */ }
+  return "auto";
+}
+
+/** `relo update --mode`: stores how this computer takes updates. */
+export function setUpdateMode(home, mode) {
+  const { directory, mode: file } = paths(home);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileSync(file, JSON.stringify({ mode }), { mode: 0o600 });
+}
+
+/** The last automatic update's state (auto-update.json), or {}. */
+export function autoUpdateState(home) {
+  try { return JSON.parse(readFileSync(paths(home).state, "utf8")) ?? {}; } catch { return {}; }
+}
 
 /** True when this CLI runs from the install script's versioned folders (the layout an update can swap atomically). */
 export function launcherManaged({ home, entrypoint }) {
@@ -27,16 +59,20 @@ export function launcherManaged({ home, entrypoint }) {
  */
 export function maybeStartAutoUpdate({ latest, version, home, entrypoint, env = {}, now = Date.now(), compare, spawnImpl = spawn }) {
   try {
-    if (!latest || !version || env.RELO_NO_UPDATE_CHECK === "1" || compare(latest, version) <= 0) return false;
-    if (!launcherManaged({ home, entrypoint })) return false;
+    if (!latest || !version || compare(latest, version) <= 0) return false;
+    const mode = updateMode({ home, env });
+    if (mode === "off" || !launcherManaged({ home, entrypoint })) return false;
     const { directory, lock, state } = paths(home);
     try {
       const last = JSON.parse(readFileSync(state, "utf8"));
-      if (last?.target === latest && now - Date.parse(last.at) < RETRY_MS) return false;
+      // The owner said no to this version; a later one asks again.
+      if (last?.target === latest && (last.declined || last.unanswered)) return false;
+      if (last?.target === latest && now - Date.parse(last.at) < (last.asking ? ASK_MS : RETRY_MS)) return false;
     } catch { /* never tried */ }
     try { if (now - statSync(lock).mtimeMs < LOCK_STALE_MS) return false; } catch { /* no updater running */ }
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    writeFileSync(state, JSON.stringify({ target: latest, from: version, at: new Date(now).toISOString() }), { mode: 0o600 });
+    writeFileSync(state, JSON.stringify({ target: latest, from: version, at: new Date(now).toISOString(), ...(mode === "ask" ? { asking: true } : {}) }),
+      { mode: 0o600 });
     const child = spawnImpl(process.execPath, [entrypoint, "update", "--auto"], { detached: true, stdio: "ignore", env: { ...process.env, ...env } });
     child.unref?.();
     return true;

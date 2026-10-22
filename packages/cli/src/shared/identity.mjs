@@ -5,7 +5,7 @@ import { definedFields } from "./validate.mjs";
 import { detectHarness } from "../harness/catalog.mjs";
 import { configDirectory } from "../harness/paths.mjs";
 import { cleanLabel } from "./label.mjs";
-import { repositoryName } from "./repo.mjs";
+import { folderName, namedPlace } from "./repo.mjs";
 import { detectComputerName, resolveComputerName } from "./computer.mjs";
 import { envSetting } from "./settings.mjs";
 
@@ -51,25 +51,37 @@ export function detectAccount(env = process.env, probes = {}) {
 
 /**
  * Identity an agent should not have to repeat: RELO_SOURCE/RELO_PROJECT/RELO_TOPIC, then the
- * calling agent recognized from its environment and the git repository it runs in. The topic is
- * never guessed: only the caller knows what the work is about.
+ * calling agent recognized from its environment and the place it runs in (projectLabel). The topic is
+ * never guessed: only the caller knows what the work is about. `projects`: the saved folder names.
  */
-export function detectIdentityDefaults(env = process.env, cwd = process.cwd(), exists = existsSync) {
+export function detectIdentityDefaults(env = process.env, cwd = process.cwd(), exists = existsSync, projects = {}) {
   return definedFields({
     providerName: envSetting("source", env) ?? detectHarness(env)?.label,
-    project: projectLabel(env, cwd, exists),
+    project: projectLabel(env, cwd, exists, projects),
     threadName: envSetting("topic", env),
   });
 }
 
 /**
- * The project of work and of its session: RELO_PROJECT, else the git repository around `cwd`. The one rule
- * both the declared lane (cards) and the hook lane (session rows) use, cleaned the way the server stores it.
+ * The project of work and of its session: RELO_PROJECT, else the nearest of a folder named with `relo project
+ * NAME` and the git repository around `cwd`. The one rule both the declared lane (cards) and the hook lane
+ * (session rows) use, cleaned the way the server stores it. Undefined when neither names the place: the caller
+ * then tries the signed-in integration and last the folder's own name (fallbackProject).
  */
-export function projectLabel(env = process.env, cwd = process.cwd(), exists = existsSync) {
+export function projectLabel(env = process.env, cwd = process.cwd(), exists = existsSync, projects = {}) {
   const fromEnv = cleanLabel(envSetting("project", env), 120);
   if (fromEnv) return fromEnv;
-  try { return cleanLabel(repositoryName(cwd, exists), 120); } catch { return undefined; }
+  try { return cleanLabel(namedPlace(cwd, { exists, names: projects })?.name, 120); } catch { return undefined; }
+}
+
+/**
+ * The project when nothing names the place: the signed-in integration's name (integrationProject), else the
+ * working folder's own name. Never a made-up or product name: a card from ~/Documents/GitHub reads "GitHub".
+ */
+export function fallbackProject(config, dependencies) {
+  const integration = integrationProject(config, dependencies);
+  if (integration) return cleanLabel(integration, 120);
+  try { return cleanLabel(folderName(dependencies.cwd ?? process.cwd(), dependencies.home), 120); } catch { return undefined; }
 }
 
 /**

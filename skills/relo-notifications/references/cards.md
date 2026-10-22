@@ -212,3 +212,27 @@ moving work shows "Step 2 of 5 · <current step>" on the Lock Screen; no update 
 the card; 60 min without one takes it off the Lock Screen (any update brings it back); a paused work
 shows only in Now › Paused; a done work shows its final card for 15 min with one quiet notification;
 a failed one for 60 min with an alert; a dropped one goes to History only.
+
+Relo for Mac also says updates aloud on the owner's Mac, after their sound, always in one frame:
+"<Kind>: <name>. <gist>". Kind is `Needs you`, `Failed`, `Your turn` or `Finished`, so the owner knows from
+the first words whether it needs them ("Finished: Notch redesign. The cards are uniform and the list scrolls.").
+The lengths follow published guidance on spoken messages (ADR 0015): an urgent line carries the fewest ideas, news
+may carry up to about seven.
+
+- **Name**: give the work a spoken name on start, `--spoken-name "Notch redesign"`: a noun phrase of 2 to 4 words
+  (`relo work update --spoken-name` changes it). Without one the Mac takes the goal's first words, and the start
+  echo says which.
+- **Gist**: on `deliver` and `finish`, write the line for the ear with `--say "…"`: what happened and what it means,
+  at most 20 words; for a failure, the reason in at most 12. Never only "done": say what is done. No versions,
+  build numbers, hashes, ids, paths or links (they are refused); a count that is the news ("3 suites failed") is
+  fine. Without `--say` the CLI cuts the outcome's first phrases and the echo asks you to write it next time;
+  `Mac says: "…"` shows the whole line either way.
+- **Questions**: put the decision in the first sentence, at most 12 words, and the reasons after it or in
+  `--detail`; only the first sentence is said.
+- **Voice level**: the start echo says how much is said here. `relo voice` sets it for this computer, `relo voice
+  LEVEL --here` for one project, `RELO_VOICE` for one shell: `off` (nothing; a confidential project), `brief` (the
+  kind and the name), `full` (and the gist) or `verbose` (and each finished step, the default). At verbose, name
+  steps for the ear too. The owner's Mac setting can lower it, never raise it.
+
+The name and `--say` travel only inside the end-to-end encrypted card (a readable work says they were not sent and
+the Mac says the frame alone).

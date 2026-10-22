@@ -20,7 +20,7 @@ suite("Now items from works",() => {
   const nowItems = async () => {
     // The route's own loader (the owner phone's read, scope checks aside).
     const now = await loadNowSummary(db,principalId,undefined,undefined);
-    return [...now.running,...now.waitingOnYou,...now.quiet,...now.needsYou,...now.paused] as any[];
+    return [...now.running,...now.waitingOnYou,...now.quiet,...now.needsYou,...now.paused,...now.recent] as any[];
   };
 
   test("an item carries the work's plan as steps (skipped omitted) with the current label",async () => {

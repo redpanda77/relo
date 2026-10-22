@@ -12,7 +12,7 @@ const fixtureUrl = new URL("../fixtures/owner-state-v1.json",import.meta.url);
 const fixtureBytes = readFileSync(fixtureUrl,"utf8");
 const fixture = z.object({
   version: z.literal(1),
-  timing: z.object({ freshSeconds: z.number(),retireSeconds: z.number(),doneSeconds: z.number(),historySeconds: z.number(),yourTurnSeconds: z.number(),deliveredYourTurnSeconds: z.number() }).strict(),
+  timing: z.object({ freshSeconds: z.number(),retireSeconds: z.number(),doneSeconds: z.number(),historySeconds: z.number(),yourTurnSeconds: z.number() }).strict(),
   quietSeconds: z.number(),
   lockScreenMaxCards: z.number(),
   evaluationOrder: z.array(z.string()),
@@ -23,7 +23,7 @@ const fixture = z.object({
 }).strict().parse(JSON.parse(fixtureBytes));
 
 test("the six constants are the owner's decision (spec 10, decision 6)",() => {
-  assert.deepEqual({ ...OWNER_STATE_TIMING },{ freshSeconds: 1200,retireSeconds: 3600,doneSeconds: 900,historySeconds: 28800,yourTurnSeconds: 300,deliveredYourTurnSeconds: 3600 });
+  assert.deepEqual({ ...OWNER_STATE_TIMING },{ freshSeconds: 1200,retireSeconds: 3600,doneSeconds: 900,historySeconds: 28800,yourTurnSeconds: 300 });
   assert.equal(OWNER_STATE_QUIET_SECONDS,600);
   assert.equal(LOCK_SCREEN_MAX_CARDS,3);
 });

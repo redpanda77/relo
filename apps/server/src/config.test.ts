@@ -17,3 +17,14 @@ describe("APP_URL", () => {
     expect(loadConfig({ DATABASE_URL: "postgresql://x" }).APP_URL).toBe("http://127.0.0.1:8180");
   });
 });
+
+describe.each(["RELO_LANDING_FILM_URL", "RELO_ONBOARDING_FILM_URL"] as const)("%s", (key) => {
+  test("is an https folder or nothing: it lands in the page's CSP, so quotes and other schemes are refused", () => {
+    const base = { DATABASE_URL: "postgresql://x" };
+    expect(loadConfig(base)[key]).toBeUndefined();
+    expect(loadConfig({ ...base, [key]: "https://media.example.test/relo/film/v3" })[key]).toBe("https://media.example.test/relo/film/v3");
+    for (const bad of ["http://media.example.test/film", "https://media.example.test/a'; script-src *", "javascript:alert(1)"]) {
+      expect(() => loadConfig({ ...base, [key]: bad }), bad).toThrow();
+    }
+  });
+});

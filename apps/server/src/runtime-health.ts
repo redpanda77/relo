@@ -3,7 +3,7 @@ import { FACTS,isPublicOrigin } from "@relo/notification-contracts";
 import { contentPolicy } from "./content-policy.js";
 import type { Database } from "./db.js";
 
-const CURRENT_SCHEMA = "0129_agent_session_heartbeat.sql";
+const CURRENT_SCHEMA = "0130_computer_invite_mac_app.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";

@@ -1,3 +1,4 @@
+import AVFoundation
 import ReloPersistence
 import ReloCore
 import Combine
@@ -93,6 +94,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         guard !AppLaunchEnvironment.isHostedTest else { return true }
         UNUserNotificationCenter.current().delegate = self
         Self.registerNotificationCategories()
+        // Relo's push sounds go to where iOS looks for them (off the main path, a no-op once there).
+        ReloPushSounds.install()
         // APNs may rotate its ordinary token between launches, and ActivityKit may
         // wake this process in the background before SwiftUI scene tasks run.
         application.registerForRemoteNotifications()
@@ -140,10 +143,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        await MainActor.run {
+        let category = notification.request.content.categoryIdentifier
+        return await MainActor.run {
             NotificationCenter.default.post(name: .reloPushReceived, object: nil)
+            return ReloCuePlayer.shared.foregroundPresentation(category: category)
         }
-        return [.banner, .list, .sound, .badge]
     }
 
     /// Where a tapped notification leads, read from the response before any work starts (the response itself is
@@ -349,4 +353,117 @@ final class NotificationNavigationCoordinator: ObservableObject {
 extension Notification.Name {
     static let reloPushReceived = Notification.Name("relo.push-received")
     static let reloDeviceTokenChanged = Notification.Name("relo.device-token-changed")
+}
+
+// MARK: - Relo's cues (ADR 0013)
+
+extension ReloCue {
+    /// ADR 0013's haptic for each moment: needs you is a medium tap, failed an error, your turn a light tap, and
+    /// done, sent and linked are success. (SwiftUI has one success pattern, so done is not a lighter one.)
+    var feedback: SensoryFeedback {
+        switch self {
+        case .needsYou: .impact(weight: .medium)
+        case .failed: .error
+        case .yourTurn: .impact(weight: .light)
+        case .done, .sent, .linked: .success
+        }
+    }
+}
+
+/// Puts Relo's push sounds where iOS looks for them. A push's `aps.sound` names a file that iOS finds in the app
+/// bundle or in the app container's `Library/Sounds`. The cues ship in the asset catalog (data sets, so the project
+/// file needs no resource entry), which a push cannot see, so each launch copies the six `.caf` files into
+/// `Library/Sounds`. Cheap and idempotent: a file already there with the same bytes is left alone.
+enum ReloPushSounds {
+    static func install() {
+        Task.detached(priority: .utility) {
+            let files = FileManager.default
+            guard let library = files.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
+            let folder = library.appendingPathComponent("Sounds", isDirectory: true)
+            try? files.createDirectory(at: folder, withIntermediateDirectories: true)
+            for cue in ReloCue.allCases {
+                guard let data = NSDataAsset(name: cue.rawValue)?.data else { continue }
+                let file = folder.appendingPathComponent(cue.fileName)
+                if (try? Data(contentsOf: file)) == data { continue }
+                try? data.write(to: file, options: .atomic)
+            }
+        }
+    }
+}
+
+/// The in-app cues: the same files a push names, played from the asset catalog on the ambient audio session (the
+/// silent switch mutes them and other audio keeps playing), at a modest volume, in the foreground only.
+/// The rules of ADR 0013, section 2 live in `ReloCueGate`: once per moment id and one cue every 2 s. The first
+/// observation after launch is the baseline, and is the director's to keep (see `ReloDeckDirector`).
+@MainActor
+final class ReloCuePlayer {
+    static let shared = ReloCuePlayer()
+
+    /// Now is the selected tab and the app is active (set by NowView): the question's card is on screen.
+    var nowOnScreen = false
+
+    private var gate = ReloCueGate()
+    private var players: [ReloCue: AVAudioPlayer] = [:]
+    private var sessionReady = false
+    /// The last time a push in the foreground played its own cue, so the in-app one stays out of its way.
+    private var lastPushCueAt = Date.distantPast
+    /// The last time an in-app cue played, so a push that follows it presents without its own sound.
+    private var lastAppCueAt = Date.distantPast
+    private static let volume: Float = 0.6
+    private static let pushWindow: TimeInterval = 5
+
+    /// Plays `cue` for the moment `id` (once per id; with no id, each call is its own moment).
+    func play(_ cue: ReloCue, id: String? = nil) {
+        guard UIApplication.shared.applicationState == .active else { return }
+        // One channel per moment: a push that just played its own cue carried this one.
+        if cue.isPushCue, Date.now.timeIntervalSince(lastPushCueAt) < Self.pushWindow { return }
+        guard gate.admit(cue, id: id ?? UUID().uuidString), let player = player(for: cue) else { return }
+        startSession()
+        player.volume = Self.volume
+        player.currentTime = 0
+        player.play()
+        if cue.isPushCue { lastAppCueAt = .now }
+    }
+
+    /// How a push is presented while Relo is open (`willPresent`).
+    /// - A question, with Now on screen: the card and the in-app cue (sound and haptic) carry it, so only the
+    ///   notification list and the badge update, with no banner and no sound. Deciding "this very card is on
+    ///   screen" would need the card's id in the push; "Now is the visible tab" is the rule that holds from what
+    ///   exists, and the question is on Now's first section whenever it is.
+    /// - Anything else keeps its banner and its own cue (`.sound` plays the file the push names), unless an in-app
+    ///   cue just played: one channel per moment.
+    func foregroundPresentation(category: String) -> UNNotificationPresentationOptions {
+        if nowOnScreen, Self.isQuestion(category: category) { return [.list, .badge] }
+        if Date.now.timeIntervalSince(lastAppCueAt) < Self.pushWindow { return [.banner, .list, .badge] }
+        lastPushCueAt = .now
+        return [.banner, .list, .sound, .badge]
+    }
+
+    private static func isQuestion(category: String) -> Bool {
+        ["RELO_APPROVAL", "RELO_YES_NO", "RELO_CHOICE", "RELO_TEXT"].contains(category)
+            || category == ChoiceNotificationCategoryPolicy.staticCategoryIdentifier
+            || ChoiceNotificationCategoryPolicy.isPerQuestionCategory(category)
+    }
+
+    private func startSession() {
+        guard !sessionReady else { return }
+        sessionReady = true
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.ambient, mode: .default)
+        try? session.setActive(true)
+    }
+
+    private func player(for cue: ReloCue) -> AVAudioPlayer? {
+        if let player = players[cue] { return player }
+        guard let data = NSDataAsset(name: cue.rawValue)?.data,
+              let player = try? AVAudioPlayer(data: data, fileTypeHint: AVFileType.caf.rawValue) else { return nil }
+        player.prepareToPlay()
+        players[cue] = player
+        return player
+    }
+}
+
+private extension ReloCue {
+    /// The cues a push carries as its own sound (the server's `notification-sounds.ts`); sent and linked are in-app only.
+    var isPushCue: Bool { self != .sent && self != .linked }
 }

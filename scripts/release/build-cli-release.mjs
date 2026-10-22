@@ -12,7 +12,7 @@
 // --allow-dirty and --skip-checks exist for tests and local rehearsals; the manifest records `gitDirty`.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -273,7 +273,7 @@ function parseArguments(argv) {
   return options;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const built = await buildRelease({ ...parseArguments(process.argv.slice(2)), log: (line) => console.error(line) });
     console.log(JSON.stringify({ ok: true, version: built.version, directory: relative(process.cwd(), built.directory) || ".", gitCommit: built.gitCommit, gitDirty: built.gitDirty, files: built.files }, null, 2));

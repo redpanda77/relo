@@ -24,6 +24,7 @@ const assetContentTypes: Record<string,string> = {
   ".ico": "image/x-icon",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
+  ".m4a": "audio/mp4",
   ".js": "text/javascript; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",

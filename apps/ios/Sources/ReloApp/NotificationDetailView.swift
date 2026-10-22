@@ -144,7 +144,6 @@ struct NotificationDetailView: View {
                 ReloMissionTimeline(item: currentItem, steps: steps, window: window, outline: planOutline,
                                     progress: measuredProgress, status: presentation.status, now: model.attentionDate,
                                     serverOutcome: nowItem.flatMap(ReloStateStyle.init(item:)),
-                                    waiting: currentItem.isDeclaredWaiting,
                                     updates: { stepUpdates(for: $0) })
                 ReloActivityVisual(item: currentItem, accountID: model.credential?.accountId, mediaOnly: true)
             }
@@ -368,26 +367,6 @@ struct ActivityPresentationVisual: View {
         guard !items.isEmpty else { return "No steps" }
         let completed = items.filter { $0.state == .complete }.count
         return "\(completed) of \(items.count) complete"
-    }
-}
-
-@MainActor
-enum NotificationResponseHaptics {
-    static func decisionStarted() {
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.prepare()
-        generator.impactOccurred(intensity: 0.82)
-    }
-
-    static func responseFinished(_ phase: NotificationResponsePhase) {
-        let generator = UINotificationFeedbackGenerator()
-        generator.prepare()
-        switch phase {
-        case .accepted: generator.notificationOccurred(.success)
-        case .queued: generator.notificationOccurred(.warning)
-        case .rejected: generator.notificationOccurred(.error)
-        case .sending: break
-        }
     }
 }
 

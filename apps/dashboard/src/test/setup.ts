@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest"
+import { configure } from "@testing-library/react"
 import { MotionGlobalConfig } from "motion/react"
 
 function memoryStorage(): Storage {
@@ -47,3 +48,7 @@ Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", { value: (
 
 // jsdom has no frames to animate: motion jumps to each end state, so exits remove at once.
 MotionGlobalConfig.skipAnimations = true
+
+// findBy and waitFor wait up to 5 s, not 1: the release gates run on a capped builder where a busy moment
+// stretches a render past a second (two tests failed that way on 20 Oct, never on a fast machine).
+configure({ asyncUtilTimeout: 5000 })

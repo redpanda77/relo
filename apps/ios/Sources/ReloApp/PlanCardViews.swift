@@ -63,7 +63,7 @@ struct PlanMarkView: View {
             }
         }
         .frame(width: size, height: size)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: mark)
+        .animation(reduceMotion ? nil : .snappy(duration: 0.35), value: mark)
         .accessibilityHidden(true)
     }
 }
@@ -77,10 +77,10 @@ private struct PlanPulse: View {
         Circle().stroke(ReloHoloTheme.violet.opacity(reduceMotion ? 0.28 : (expanded ? 0 : 0.5)), lineWidth: 1)
             .frame(width: size, height: size)
             .scaleEffect(reduceMotion ? 1.35 : (expanded ? 1.9 : 1))
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeOut(duration: 1.8).repeatForever(autoreverses: false)) { expanded = true }
-            }
+            // Scoped to the ring: a repeating `withAnimation` also caught the row's own moves and made the
+            // mark drift whenever the plan above it changed height.
+            .animation(reduceMotion ? nil : .easeOut(duration: 1.8).repeatForever(autoreverses: false), value: expanded)
+            .onAppear { if !reduceMotion { expanded = true } }
     }
 }
 

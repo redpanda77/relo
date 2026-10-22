@@ -2,6 +2,9 @@ import ReloCore
 import Foundation
 import CryptoKit
 import Security
+#if os(macOS)
+import ReloNotificationSupport
+#endif
 
 public struct KeychainDeviceCredentialStore: DeviceCredentialStore, Sendable {
     private let store: KeychainDataStore
@@ -557,10 +560,16 @@ private struct KeychainDataStore: Sendable {
     }
 
     private var baseQuery: [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
+        return query
     }
 }

@@ -53,6 +53,11 @@ public struct KeychainLinkedBrowserStore: ReloLinkedBrowserStore {
             kSecAttrAccount as String: Self.account,
         ]
         if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        // The data-protection keychain, as on iOS: access belongs to the app's ID, so macOS never asks the owner to
+        // allow an app per item (the file-based login keychain did, again whenever the signing changed).
+        if ReloDataProtectionKeychain.available { query[kSecUseDataProtectionKeychain as String] = true }
+        #endif
         return query
     }
 }

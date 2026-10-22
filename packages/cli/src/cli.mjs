@@ -15,7 +15,7 @@ import { missingAction, selectSchemaCommands, unknownCommandHint } from "./sugge
 import { assertAllowedOptions } from "./shared/validate.mjs";
 import { getAuthenticated } from "./shared/login.mjs";
 import { result } from "./shared/outcome.mjs";
-import { integrationProject } from "./shared/identity.mjs";
+import { fallbackProject, integrationProject } from "./shared/identity.mjs";
 export { integrationProject };
 import { withSessionNotes } from "./agent/session-notes.mjs";
 import { latestCliSeen } from "./shared/api-client.mjs";
@@ -98,11 +98,11 @@ async function executeCommand(parsed, dependencies) {
     if (dryRun) dependencies.dryRun = true;
     const { config, client } = dryRun ? { config: undefined, client: refusingClient() } : await getAuthenticated(dependencies);
     Object.assign(command, { config, client });
-    // Outside a repository an app's work belongs to the integration it signed in as.
+    // A place nothing names: the integration the app signed in as, else the folder's own name.
     const detected = dependencies.creationDefaults;
     dependencies.creationDefaults = () => {
       const defaults = detected();
-      const project = defaults.project ?? integrationProject(config, dependencies);
+      const project = defaults.project ?? fallbackProject(config, dependencies);
       return project === undefined ? defaults : { ...defaults, project };
     };
   }

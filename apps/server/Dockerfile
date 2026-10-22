@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS pnpm
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS pnpm
 ARG PNPM_VERSION=11.20.0
 RUN npm install --global "pnpm@${PNPM_VERSION}"
 
@@ -22,6 +22,8 @@ COPY apps/server/tsconfig.json ./apps/server/tsconfig.json
 COPY apps/server/src ./apps/server/src
 COPY apps/server/migrations ./apps/server/migrations
 COPY apps/server/fixtures ./apps/server/fixtures
+# Relo for Mac, when the deploy put it here (apps/server/mac/README.md); else only its README.
+COPY apps/server/mac ./apps/server/mac
 RUN pnpm --filter @relo/server build
 # Add a computer (docs/site/guides/servers.md): the CLI this server hands out, packed with its skill. It has no
 # dependencies, so the install script only unpacks it; the manifest names its version and digest.
@@ -46,10 +48,11 @@ COPY --from=build /workspace/apps/server/dist ./apps/server/dist
 COPY --from=build /workspace/apps/server/fixtures ./apps/server/fixtures
 COPY --from=build /workspace/apps/server/migrations ./apps/server/migrations
 COPY --from=build /workspace/apps/server/cli ./apps/server/cli
+COPY --from=build /workspace/apps/server/mac ./apps/server/mac
 COPY --from=build /workspace/apps/dashboard/dist ./apps/dashboard/dist
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS runtime
 ENV NODE_ENV=production
 WORKDIR /workspace/apps/server
 RUN groupadd --system --gid 10001 relo \

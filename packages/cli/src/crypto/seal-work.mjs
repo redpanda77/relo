@@ -56,9 +56,11 @@ export async function workSealer({ client, config, dependencies, notes = [] }) {
  * ({ id, label, detail? }). The phone matches labels by step id (ReloSealedCards.swift); a step without a
  * label reads "Step n". Round 1 is titled by the goal, which is the card's own title, so it carries none.
  * `stepId` is the current leaf step's id, sent with the status so the phone can group a work's updates by step
- * (plan UX 4.6); absent when no step is current.
+ * (plan UX 4.6); absent when no step is current. `spoken` is the line Relo for Mac says aloud for a deliver or a
+ * finish (`--say`): it lives only in this sealed text, so the server never holds it, and the next update's card
+ * (built from the work again) leaves it out.
  */
-export function workCardText(work, { status } = {}) {
+export function workCardText(work, { status, spoken } = {}) {
   // Skipped steps keep their labels: the server still lists them (by id) and the phone shows them behind its
   // "n skipped" row, so a label left out reads "Not readable on this phone" on the owner's own phone.
   const steps = work?.plan?.steps ?? [];
@@ -73,8 +75,13 @@ export function workCardText(work, { status } = {}) {
   const current = (work?.plan?.steps ?? []).find((step) => step.state === "current");
   return {
     title: work?.goal ?? undefined,
+    // ADR 0015: how the work is called aloud ("Needs you: <name>."), declared with relo work start|update --spoken-name.
+    ...(work?.spokenName ? { name: work.spokenName } : {}),
+    // ADR 0015 revision 1: how much Relo for Mac may say of it (off|brief|full|verbose), from this computer's settings.
+    ...(work?.voice ? { voice: work.voice } : {}),
     status: status ?? (waiting ? `Waiting on ${waiting}` : work?.status ?? undefined),
     ...(current ? { stepId: current.id } : {}),
+    ...(spoken ? { spoken } : {}),
     ...(phases.some((phase) => phase.steps.length || phase.outcome) ? { phases } : {}),
   };
 }

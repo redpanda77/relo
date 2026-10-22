@@ -83,6 +83,10 @@ function bindEvidence(evidence: ProducerEvidence,work: DeclaredWork): BoundEvide
 const roundClosedAt = (work: OwnerStateInput["work"]): number | null =>
   work.lifecycle === "open" && work.roundClosedAt ? ms(work.roundClosedAt) : null;
 
+/** When the work's outcome landed: it finished, or (still open) its last round was delivered. */
+const outcomeAt = (work: OwnerStateInput["work"]): number | null =>
+  work.finishedAt !== null ? ms(work.finishedAt) : roundClosedAt(work);
+
 type Evaluated = { state: OwnerState; needsYou: NeedsYouReason | null };
 
 /** Spec 6.1 in the contracts' evaluation order; the first match wins. */
@@ -101,13 +105,9 @@ function evaluate(input: OwnerStateInput,evidence: BoundEvidence,now: number): E
       case "dropped": return "dropped";
       case "open": case "paused": break;
     }
-    // Delivered: an open work whose last round is closed is the owner's turn for T_deliveredYourTurn, then History as
-    // delivered. When its session ended it is a finished item: the final card for T_done, then History.
-    const closedAt = roundClosedAt(work);
-    if (closedAt !== null) {
-      const turn = evidence.sessionEnded ? T.done : T.deliveredYourTurn;
-      return now - closedAt < turn ? "waiting_on_you" : "done";
-    }
+    // Delivered: an open work whose last round is closed is an outcome, like a finished work (the final card for
+    // T_done, Since you looked until seen). The request is done; nothing waits on the owner, so never "your turn".
+    if (roundClosedAt(work) !== null) return "done";
     // An open work whose session ended is treated like a finished item too: Quiet (the final card) for T_done,
     // then no signal and History only (placementAt takes it out of Now). Shown only, never written.
     if (work.lifecycle === "open" && evidence.sessionEnded) {
@@ -133,8 +133,7 @@ function placementAt(input: OwnerStateInput,evidence: BoundEvidence,state: Owner
   let lockScreen = surface.lockScreen;
   let lockScreenUntil: number | null = null;
   if (surface.lockScreenSeconds !== null) {
-    const from = surface.lockScreenFrom === "finished"
-      ? (input.work.finishedAt === null ? null : ms(input.work.finishedAt))
+    const from = surface.lockScreenFrom === "finished" ? outcomeAt(input.work)
       : roundClosedAt(input.work) ?? evidence.turnStoppedAt(now);
     const until = from === null ? null : from + surface.lockScreenSeconds * 1000;
     if (until === null || now >= until) lockScreen = "none";
@@ -144,13 +143,10 @@ function placementAt(input: OwnerStateInput,evidence: BoundEvidence,state: Owner
   if (section === "since_you_looked") {
     // An outcome stays in Now until the owner opens it or for T_history; "left unfinished" is
     // counted once from the moment the work was left, then lives in History.
-    const from = state === "left_unfinished" ? evidence.clock.at + T.history
-      : input.work.finishedAt === null ? null : ms(input.work.finishedAt);
+    const from = state === "left_unfinished" ? evidence.clock.at + T.history : outcomeAt(input.work);
     const seen = input.work.seenAt !== null && from !== null && ms(input.work.seenAt) >= from;
     if (from === null || seen || now >= from + T.history) section = null;
   }
-  // A delivered round whose session ended is not "your turn" in Now: only the final card, then History.
-  if (state === "waiting_on_you" && roundClosedAt(input.work) !== null && evidence.sessionEnded) section = null;
   // An open work whose session ended leaves Now with its final card (T_done): History only.
   if (state === "no_signal" && input.work.lifecycle === "open" && evidence.sessionEnded) section = null;
   return { lockScreen,lockScreenUntil,now: section };
@@ -172,7 +168,7 @@ function nextChange(input: OwnerStateInput,evidence: BoundEvidence,now: number):
     clock + T.fresh,clock + T.retire,clock + T.history,clock + 2 * T.history,
     ...(work.waitingSince === null ? [] : [ms(work.waitingSince) + T.retire]),
     ...(work.finishedAt === null ? [] : [ms(work.finishedAt) + T.done,ms(work.finishedAt) + T.retire,ms(work.finishedAt) + T.history]),
-    ...(roundClosedAt(work) === null ? [] : [roundClosedAt(work)! + T.fresh,roundClosedAt(work)! + T.done,roundClosedAt(work)! + T.deliveredYourTurn]),
+    ...(roundClosedAt(work) === null ? [] : [roundClosedAt(work)! + T.done,roundClosedAt(work)! + T.history]),
     ...evidence.instants(now),
   ].filter((at) => at > now).sort((a,b) => a - b);
   const current = signature(input,evidence,now);

@@ -109,10 +109,14 @@ function validateProfileRecord(value) {
 export function validateConfig(value) {
   const profile = validateProfileRecord(value);
   const accounts = validAccounts(value.accounts);
+  const projects = validProjects(value.projects);
+  const voices = validVoices(value.voices);
   const computerName = validComputerName(value.computerName);
   return {
     ...profile,
     ...(Object.keys(accounts).length > 0 ? { accounts } : {}),
+    ...(Object.keys(projects).length > 0 ? { projects } : {}),
+    ...(Object.keys(voices).length > 0 ? { voices } : {}),
     ...(computerName ? { computerName } : {}),
   };
 }
@@ -122,7 +126,7 @@ function validComputerName(value) {
 }
 
 /**
- * The file on disk: `{version, activeProfile, profiles: {NAME: record}, accounts, computerName}`.
+ * The file on disk: `{version, activeProfile, profiles: {NAME: record}, accounts, projects, voices, computerName}`.
  * A file written before profiles existed is one flat record, read as the profile `default`.
  */
 function parseStored(value) {
@@ -133,6 +137,8 @@ function parseStored(value) {
     throw new AuthError("Relo config version is not supported.", { code: "INVALID_CONFIG" });
   }
   const accounts = validAccounts(value.accounts);
+  const projects = validProjects(value.projects);
+  const voices = validVoices(value.voices);
   const computerName = validComputerName(value.computerName);
   let profiles;
   if (value.profiles === undefined) {
@@ -147,7 +153,7 @@ function parseStored(value) {
   const names = Object.keys(profiles);
   const activeProfile = names.includes(value.activeProfile) ? value.activeProfile
     : names.includes(DEFAULT_PROFILE) ? DEFAULT_PROFILE : names[0];
-  return { activeProfile, profiles, accounts, ...(computerName ? { computerName } : {}) };
+  return { activeProfile, profiles, accounts, projects, voices, ...(computerName ? { computerName } : {}) };
 }
 
 function selectProfile(stored, requested) {
@@ -162,6 +168,8 @@ function selectProfile(stored, requested) {
   return {
     ...record,
     ...(Object.keys(stored.accounts).length > 0 ? { accounts: stored.accounts } : {}),
+    ...(Object.keys(stored.projects).length > 0 ? { projects: stored.projects } : {}),
+    ...(Object.keys(stored.voices ?? {}).length > 0 ? { voices: stored.voices } : {}),
     ...(stored.computerName ? { computerName: stored.computerName } : {}),
     profile: name,
     activeProfile: stored.activeProfile,
@@ -185,6 +193,23 @@ function validAccounts(value) {
     && name.trim().length > 0 && Array.from(name.trim()).length <= 40).map(([directory, name]) => [directory, name.trim()]));
 }
 
+/** Project names for folders on this computer (`relo project NAME`), keyed by the folder's absolute path. */
+/** How much Relo for Mac may say of work started in a place (ADR 0015): folder → off|brief|full|verbose; "*" is the default. */
+export const VOICE_LEVELS = Object.freeze(["off", "brief", "full", "verbose"]);
+
+function validVoices(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([place, level]) =>
+    place.length > 0 && place.length <= 1000 && VOICE_LEVELS.includes(level)));
+}
+
+function validProjects(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([directory, name]) =>
+    directory.length > 0 && directory.length <= 1000 && typeof name === "string"
+    && name.trim().length > 0 && Array.from(name.trim()).length <= 120).map(([directory, name]) => [directory, name.trim()]));
+}
+
 function readStoredSync(path, { platform = process.platform, uid = process.getuid?.() } = {}) {
   try {
     const info = lstatSync(path);
@@ -202,6 +227,16 @@ function readStoredSync(path, { platform = process.platform, uid = process.getui
  */
 export function loadAccountsSync(path = configPath(), options) {
   return validAccounts(readStoredSync(path, options).accounts);
+}
+
+/** Voice levels for folders (and "*"), read the same forgiving way as the project names. */
+export function loadVoicesSync(path = configPath(), options) {
+  return validVoices(readStoredSync(path, options).voices);
+}
+
+/** Project names for folders, read the same forgiving way as the account nicknames. */
+export function loadProjectsSync(path = configPath(), options) {
+  return validProjects(readStoredSync(path, options).projects);
 }
 
 /** The computer name cached by an earlier command (shared by every profile), or undefined. */
@@ -263,6 +298,8 @@ const storedText = (stored) => `${JSON.stringify({
   activeProfile: stored.activeProfile,
   profiles: stored.profiles,
   ...(Object.keys(stored.accounts ?? {}).length > 0 ? { accounts: stored.accounts } : {}),
+  ...(Object.keys(stored.projects ?? {}).length > 0 ? { projects: stored.projects } : {}),
+  ...(Object.keys(stored.voices ?? {}).length > 0 ? { voices: stored.voices } : {}),
   ...(stored.computerName ? { computerName: stored.computerName } : {}),
 }, null, 2)}\n`;
 
@@ -278,6 +315,8 @@ export async function writeConfig(path, config, {
 } = {}) {
   const record = validateProfileRecord(config);
   const accounts = config.accounts === undefined ? undefined : validAccounts(config.accounts);
+  const projects = config.projects === undefined ? undefined : validProjects(config.projects);
+  const voices = config.voices === undefined ? undefined : validVoices(config.voices);
   const expected = expectedRevision === undefined
     ? await configRevision(path, { platform, uid })
     : expectedRevision;
@@ -289,7 +328,7 @@ export async function writeConfig(path, config, {
     : profiles[existing?.activeProfile] ? existing.activeProfile : name;
   const computerName = validComputerName(config.computerName) ?? existing?.computerName;
   await commitText(path, storedText({ activeProfile, profiles, accounts: accounts ?? existing?.accounts,
-    ...(computerName ? { computerName } : {}) }), { platform, uid, expected, beforeCommit });
+    projects: projects ?? existing?.projects, voices: voices ?? existing?.voices, ...(computerName ? { computerName } : {}) }), { platform, uid, expected, beforeCommit });
   return path;
 }
 

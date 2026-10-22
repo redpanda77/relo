@@ -17,6 +17,14 @@ struct HistoryView: View {
         let since = since, now = model.attentionDate
         return HistoryRowProjection.filter(ReloHistoryResults.make(items: model.historyItems, query: state.searchQuery, kind: kind, projectID: projectID), origin: origin)
             .filter { InboxSourceProjection.matches($0, sourceID: sourceID) && HistoryRetention.isVisible($0, since: since, now: now) }
+            // Ongoing work (running, or waiting for you) is Now's; History is what is over.
+            .filter { HistoryRowProjection.row($0, now: now).outcome.isSettled }
+    }
+    /// Today's settled work by hour: the same rows and count as the hero's TODAY number on Now.
+    private var today: TodayActivity {
+        let history = model.historyItems.filter { clearedAt <= 0 || $0.createdAt.timeIntervalSince1970 >= clearedAt }
+        return .settled(rows: HistoryRowProjection.rows(InboxHistoryProjection.collapsedActivities(history), events: history,
+                                                        now: model.attentionDate), now: model.attentionDate)
     }
     /// Once loaded history reaches past the cutoff, older pages would only hold hidden items.
     private var olderPagesHidden: Bool {
@@ -41,6 +49,16 @@ struct HistoryView: View {
     private var filtered: Bool { !state.searchQuery.isEmpty || kind != .all || projectID != nil || sourceID != nil || origin != nil }
     var body: some View {
         List {
+            if !filtered, !today.isEmpty {
+                Section {
+                    VStack(alignment: .leading, spacing: 14) {
+                        NowSectionCaption(title: "Today", count: today.rows.count)
+                        ActivityStrip(activity: today)
+                    }
+                    .padding(.vertical, 8)
+                    .listRowBackground(Color.clear)
+                }
+            }
             Section {
                 filterBar
                     .listRowInsets(EdgeInsets())
