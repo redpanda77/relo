@@ -60,6 +60,9 @@ function testDatabase(
           { history_source: "Codex", history_computer: null },
         ]);
       }
+      if (sql.includes("interval '36 hours'")) {
+        return rows([{ at: now, history_signal: "done" }, { at: now, history_signal: "message" }]);
+      }
       if (sql.includes("AS total FROM (")) {
         options.historyQueries?.push({ sql, params });
         return rows([{ total: 32 }]);
@@ -507,14 +510,14 @@ describe("dashboard Inbox handlers", () => {
   test("preserves notification filters and clamps pagination", async () => {
     const result = await bootstrap(
       await app().request(
-        "/dashboard/inbox/notifications?project=Kuatzi&kind=decision&state=answered&page=9",
+        "/dashboard/inbox/notifications?project=Kuatzi&kind=decision&ending=done&page=9",
       ),
     );
     expect(result.kind).toBe("notification-history");
     if (result.kind !== "notification-history") return;
     expect(result.route.filters).toEqual({
       kind: "decision",
-      state: "answered",
+      ending: "done",
       project: "Kuatzi",
       source: null,
       computer: null,
@@ -532,34 +535,38 @@ describe("dashboard Inbox handlers", () => {
       nextHref: null,
     });
     expect(result.pagination.previousHref).toBe(
-      "/dashboard/inbox/notifications?kind=decision&state=answered&project=Kuatzi&page=1",
+      "/dashboard/inbox/notifications?kind=decision&ending=done&project=Kuatzi&page=1",
     );
   });
 
-  test("filters History by kind, state, source, computer and a literal search on every page", async () => {
+  test("filters History by kind, ending, source, computer and a literal search on every page", async () => {
     const historyQueries: Array<{ sql: string; params: unknown[] }> = [];
     const result = await bootstrap(
       await app({ historyQueries }).request(
-        "/dashboard/inbox/notifications?kind=live_activity&state=failed&source=Codex&computer=studio-mac&q=50%25_off&page=2",
+        "/dashboard/inbox/notifications?kind=work&ending=failed&source=Codex&computer=studio-mac&q=50%25_off&page=2",
       ),
     );
     expect(result.kind).toBe("notification-history");
     if (result.kind !== "notification-history") return;
     expect(result.route.filters).toEqual({
-      kind: "live_activity", state: "failed", project: null, source: "Codex", computer: "studio-mac", q: "50%_off",
+      kind: "work", ending: "failed", project: null, source: "Codex", computer: "studio-mac", q: "50%_off",
     });
     // The count and the page read the same filters, so "n matches" and the pages agree.
     expect(historyQueries).toHaveLength(2);
     for (const { sql, params } of historyQueries) {
-      expect(params.slice(0, 7)).toEqual([principalId, "live_activity", "failed", null, "Codex", "studio-mac", "%50\\%\\_off%"]);
+      expect(params.slice(0, 7)).toEqual([principalId, "work", "failed", null, "Codex", "studio-mac", "%50\\%\\_off%"]);
       expect(sql).toContain("kind='live_activity'");
-      expect(sql).toContain("activity_outcome='failed'");
+      expect(sql).toContain("history_signal='failed'");
+      // History is what is over, and a round shows once.
+      expect(sql).toContain("history_signal NOT IN ('running','needsYou') AND outcome_card_id IS NULL");
       // A sealed row matches the search by its source alone: its readable text is a placeholder.
       expect(sql).toMatch(/source ILIKE \$7 OR \(NOT COALESCE\(event_encrypted,false\)\s+AND NOT COALESCE\(activity_encrypted,false\)/);
     }
     expect(historyQueries[1]!.params.slice(7)).toEqual([25, 25]);
+    // Today's panel counts every page, unfiltered.
+    expect(result.recent).toEqual([{ at: expect.any(String), signal: "done" }, { at: expect.any(String), signal: "message" }]);
     expect(result.pagination.previousHref).toBe(
-      "/dashboard/inbox/notifications?kind=live_activity&state=failed&source=Codex&computer=studio-mac&q=50%25_off&page=1",
+      "/dashboard/inbox/notifications?kind=work&ending=failed&source=Codex&computer=studio-mac&q=50%25_off&page=1",
     );
   });
 
@@ -567,11 +574,11 @@ describe("dashboard Inbox handlers", () => {
     const historyQueries: Array<{ sql: string; params: unknown[] }> = [];
     const result = await bootstrap(
       await app({ historyQueries }).request(
-        "/dashboard/inbox/notifications?kind=question&state=active&source=Elsewhere&computer=other-mac&q=%20%20",
+        "/dashboard/inbox/notifications?kind=live_activity&ending=running&source=Elsewhere&computer=other-mac&q=%20%20",
       ),
     );
     if (result.kind !== "notification-history") throw new Error(result.kind);
-    expect(result.route.filters).toEqual({ kind: null, state: null, project: null, source: null, computer: null, q: null });
+    expect(result.route.filters).toEqual({ kind: null, ending: null, project: null, source: null, computer: null, q: null });
     expect(historyQueries[0]!.params).toEqual([principalId, null, null, null, null, null, null]);
     expect(historyQueries[0]!.sql).toContain("$2::text IS NULL");
   });
@@ -595,7 +602,7 @@ describe("dashboard Inbox handlers", () => {
   test("projects canonical Live Activity truth and origin context into history and detail", async () => {
     const history = await bootstrap(
       await app({ liveActivity: true }).request(
-        "/dashboard/inbox/notifications?kind=live_activity&state=stopped",
+        "/dashboard/inbox/notifications?kind=work&ending=attention",
       ),
     );
     expect(history.kind).toBe("notification-history");

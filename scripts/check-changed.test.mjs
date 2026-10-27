@@ -8,7 +8,7 @@ const files = {
   "packages/cli/src/owner/update.mjs": "",
   "apps/server/src/foo.ts": "", "apps/server/src/foo.test.ts": "", "apps/server/src/bar.ts": "",
   "apps/dashboard/src/a.tsx": "", "apps/dashboard/src/a.test.tsx": "",
-  ...Object.fromEntries(["environment", "state-paths", "reachability", "registry", "schema"].map((n) => [`packages/cli/test/${n}.test.mjs`, ""])),
+  ...Object.fromEntries(["environment", "state-paths", "reachability", "registry", "schema", "catalog", "harness-invariants"].map((n) => [`packages/cli/test/${n}.test.mjs`, ""])),
 };
 const fs = {
   exists: (path) => path in files,
@@ -19,17 +19,18 @@ const names = (paths) => selectChecks(paths, fs).checks.map((check) => check.nam
 const find = (paths, name) => selectChecks(paths, fs).checks.find((check) => check.name === name);
 
 test("a CLI-only change selects CLI checks and no server, dashboard, docs or Swift work", () => {
-  assert.deepEqual(names(["packages/cli/src/owner/update.mjs"]), ["cli-syntax", "cli-tests", "public-check"]);
+  assert.deepEqual(names(["packages/cli/src/owner/update.mjs"]), ["cli-syntax", "cli-tests", "docs-fresh", "public-check"]);
   const tests = find(["packages/cli/src/owner/update.mjs"], "cli-tests");
-  assert.deepEqual(tests.cmd.slice(-1), ["test/auto-update.test.mjs"]);
-  assert.ok(tests.cmd.includes("./test/hermetic-env.mjs"));
+  // Its importer, then the tests that scan every source (the environment list, the catalog, the harness invariants).
+  assert.deepEqual(tests.cmd.slice(-4), ["test/auto-update.test.mjs", "test/environment.test.mjs", "test/catalog.test.mjs", "test/harness-invariants.test.mjs"]);
+  assert.match(tests.cmd.join(" "), /bundle-skill.mjs && exec node --import .\/test\/hermetic-env.mjs/u);
   // Only the changed file is parsed, not the whole package.
   assert.deepEqual(find(["packages/cli/src/owner/update.mjs"], "cli-syntax").cmd.slice(-1), ["src/owner/update.mjs"]);
 });
 
 test("a CLI source with no importing test runs the convention tests", () => {
   const tests = find(["packages/cli/src/unknown.mjs"], "cli-tests");
-  assert.equal(tests.cmd.filter((arg) => arg.endsWith(".test.mjs")).length, 5);
+  assert.equal(tests.cmd.filter((arg) => arg.endsWith(".test.mjs")).length, 7);
 });
 
 test("the notifications skill is a CLI change", () => {
@@ -56,6 +57,10 @@ test("contracts select their typecheck and tests", () => {
   assert.deepEqual(names(["packages/contracts/src/x.ts"]), ["contracts-typecheck", "contracts-tests", "public-check"]);
 });
 
+test("owner-crypto selects its typecheck and tests, and the Dashboard that bundles it", () => {
+  assert.deepEqual(names(["packages/owner-crypto/src/keys.ts"]), ["owner-crypto-typecheck", "owner-crypto-tests", "dashboard-typecheck", "public-check"]);
+});
+
 test("a notch or iOS change runs nothing heavy and says so", () => {
   for (const path of ["apps/notch/Sources/A.swift", "apps/ios/Sources/B.swift"]) {
     const { checks, notes } = selectChecks([path], fs);
@@ -69,8 +74,15 @@ test("the docs build runs only when site docs changed", () => {
   assert.ok(!names(["packages/cli/src/args.mjs"]).includes("docs-build"));
 });
 
+test("a CLI source or site docs change checks the committed docs site is current", () => {
+  assert.ok(names(["packages/cli/src/args.mjs"]).includes("docs-fresh"));
+  assert.ok(names(["docs/site/index.md"]).includes("docs-fresh"));
+  assert.ok(!names(["packages/cli/test/other.test.mjs"]).includes("docs-fresh"));
+});
+
 test("argument parsing", () => {
-  assert.deepEqual(parseArgs(["--files", "a", "b", "--plan"]), { mode: "files", files: ["a", "b"], since: undefined, plan: true });
+  assert.deepEqual(parseArgs(["--files", "a", "b", "--plan"]), { mode: "files", files: ["a", "b"], since: undefined, plan: true, preflight: false });
+  assert.equal(parseArgs(["--since", "x", "--preflight"]).preflight, true);
   assert.equal(parseArgs(["--since", "origin/main"]).since, "origin/main");
   assert.throws(() => parseArgs(["--nope"]));
 });

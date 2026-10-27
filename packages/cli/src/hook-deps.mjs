@@ -12,6 +12,14 @@ import { readStdinJson } from "./shared/stdin.mjs";
 import { VERSION } from "./version.mjs";
 import { stateRoot } from "./work/state-file.mjs";
 
+/**
+ * The signals that end a hook. POSIX: SIGTERM, SIGINT, SIGHUP. Windows (Node docs, "Signal events"): SIGTERM is never
+ * delivered (process.kill and a parent's kill end the process outright, no handler runs), SIGINT is Ctrl+C, SIGBREAK is
+ * Ctrl+Break and SIGHUP is a closed console window. Whatever cannot be caught there is covered by the cleanup in the
+ * hook's own finally (a normal end) and by the interaction's expiry.
+ */
+export const terminationSignals = (platform = process.platform) => (platform === "win32" ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGTERM", "SIGINT", "SIGHUP"]);
+
 export const entrypointOf = (overrides) => overrides.entrypoint ?? fileURLToPath(new URL("../bin/relo.mjs", import.meta.url));
 
 export function hookDependencies(overrides = {}) {
@@ -90,7 +98,7 @@ export function hookDependencies(overrides = {}) {
     }),
     // Claude Code ends a hook when the owner answers its own dialog first: withdraw the question then.
     onTerminate: overrides.onTerminate ?? ((handler) => {
-      const signals = ["SIGTERM", "SIGINT", "SIGHUP"];
+      const signals = terminationSignals(overrides.platform);
       for (const signal of signals) process.once(signal, handler);
       return () => { for (const signal of signals) process.removeListener(signal, handler); };
     }),

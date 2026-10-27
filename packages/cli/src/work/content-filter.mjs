@@ -72,7 +72,7 @@ export function checkText(field, value, { flag = `--${field}`, goal, words = tru
     throw refuse("--status repeats the goal; say what is happening now.", flag);
   }
   if (hasAbsolutePath(text)) {
-    throw refuse(`${flag} contains a file path; the owner's Lock Screen never shows paths. Name the thing instead ("the release script").`, flag);
+    throw refuse(`${flag} contains a file path; the owner's screen never shows paths. Name the thing instead ("the release script").`, flag);
   }
   if (looksLikeToken(text)) throw refuse(`${flag} contains something that looks like a secret or token; it was not sent.`, flag);
   return text;

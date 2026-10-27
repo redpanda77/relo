@@ -1,5 +1,6 @@
 import * as React from "react"
 
+import type { WorkActions } from "@/features/inbox/end-work"
 import type { NowItem } from "@/features/inbox/now-model"
 import type { NowPlace } from "@/features/inbox/now-events"
 import type { WorkTone } from "@/lib/work-outcome"
@@ -16,7 +17,9 @@ import type { WorkTone } from "@/lib/work-outcome"
  * - tones: the tone each card last showed, so a card the server moves to another list (Running to
  *   Needs you) arrives in its old tone and crossfades in place (written by the cards, display only);
  * - offline: the last refetch failed, so live work is the last known state ("Unconfirmed", as on
- *   the iPhone), not a claim that it is still running.
+ *   the iPhone), not a claim that it is still running;
+ * - links: the notifications that carry a link (a small mark on their card, "Has a link");
+ * - actions: the owner's End and Dismiss on a card; null where the page offers none.
  */
 export type NowStage = {
   ready: boolean
@@ -29,6 +32,8 @@ export type NowStage = {
   offline: boolean
   /** Work id → the session that holds it, so a card names the session it runs in (iOS sessionsByWork). */
   sessionByWork: ReadonlyMap<string, { id: string; computer: string | null }>
+  links: ReadonlySet<string>
+  actions: WorkActions | null
 }
 
 const EMPTY_ITEMS: ReadonlyMap<string, NowItem> = new Map()
@@ -45,6 +50,8 @@ export const NOW_STAGE_DEFAULT: NowStage = {
   tones: new Map(),
   offline: false,
   sessionByWork: new Map(),
+  links: EMPTY_IDS,
+  actions: null,
 }
 
 export const NowStageContext = React.createContext<NowStage>(NOW_STAGE_DEFAULT)

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mirror",
+  "description": "Mirror notch windows (one per extra display, label notch-<monitor>) draw the state the main notch broadcasts and send the owner's actions back as events. They have no http permission: only the main notch reaches a server.",
+  "windows": ["notch-*"],
+  "permissions": ["core:default"]
+}

@@ -1,4 +1,4 @@
-import type { AnswerAction, AnswerSignature } from "@/lib/e2ee/answer"
+import type { AnswerAction, AnswerSignature } from "@relo/owner-crypto"
 
 /**
  * Answering questions from a linked browser (docs/ENCRYPTION-PROTOCOL.md, "Answering from a

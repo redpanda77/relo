@@ -150,7 +150,10 @@ public struct ReloTrustedClients: Sendable {
             if let existing { pinned[existing] = entry } else { pinned.append(entry) }
             changed = true
         }
-        if changed { try store.save(pinned) }
+        if changed {
+            try store.save(pinned)
+            ReloE2EEGeneration.bump()
+        }
         return changed
     }
 
@@ -167,6 +170,7 @@ public struct ReloTrustedClients: Sendable {
         clients.append(ReloTrustedClient(clientId: client.clientId, name: client.name, keyId: client.keyId,
                                          publicKey: client.publicKey, verifiedAt: now, level: "verified"))
         try store.save(clients)
+        ReloE2EEGeneration.bump()
     }
 
     /// The computers waiting for the owner's approval on this phone.
@@ -192,16 +196,21 @@ public struct ReloTrustedClients: Sendable {
         clients[index].level = level
         clients[index].verifiedAt = now
         try store.save(clients)
+        ReloE2EEGeneration.bump()
     }
 
     public func forget(clientId: String) throws {
         try store.save(try store.load().filter { $0.clientId != clientId })
+        ReloE2EEGeneration.bump()
     }
 
     /// Key id → X9.63 public key, the form `ReloE2EE.open` takes.
-    public func trustedSenders() throws -> [String: Data] {
+    public func trustedSenders() throws -> [String: Data] { Self.trustedSenders(in: try store.load()) }
+
+    /// The same map from a list already loaded, so one read of the store serves a whole batch of opens.
+    public static func trustedSenders(in clients: [ReloTrustedClient]) -> [String: Data] {
         var senders: [String: Data] = [:]
-        for client in try store.load() where client.isTrusted {
+        for client in clients where client.isTrusted {
             if let key = try? ReloE2EE.data(base64URL: client.publicKey, length: 65, field: "client_key"),
                ReloE2EE.keyID(publicKeyX963: key) == client.keyId {
                 senders[client.keyId] = key

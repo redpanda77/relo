@@ -8,6 +8,7 @@ export default Object.freeze({
   detect: (env) => Object.keys(env).some((key) => /^CODEX_(?!HOME$)/u.test(key)),
   sessionVariable: "CODEX_THREAD_ID",
   config: { variable: "CODEX_HOME", home: ".codex" },
+  installation: { binaries: ["codex"], apps: ["Codex.app"], folder: {} },
   instructions: { global: "AGENTS.md" },
   skills: "~/.agents/skills",
   // Older Codex releases read <CODEX_HOME>/skills: copies there are still found, so they can be removed.
@@ -16,5 +17,7 @@ export default Object.freeze({
   agents: "agents",
   agentFormat: "toml",
   mcp: { format: "toml", key: "mcp_servers", launch: "shell", toolTimeout: true, global: "config.toml" },
+  // Hooks: <CODEX_HOME>/hooks.json, user-level only (a project's .codex/ folder is shared with the team).
+  hooks: { global: "hooks.json" },
   mcpClient: /^codex/iu,
 });

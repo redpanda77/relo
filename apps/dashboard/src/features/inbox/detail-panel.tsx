@@ -9,14 +9,14 @@ import {
 } from "@/components/ui/sheet"
 import { cardFor } from "@/features/inbox/activity-model"
 import { DetailSkeleton } from "@/features/inbox/detail-skeleton"
-import { NotificationDetailBody, type DetailOrigin } from "@/features/inbox/notification-detail"
+import { NotificationDetailBody, type DetailOrigin, type DetailWork } from "@/features/inbox/notification-detail"
 import type { NotificationDetail, NotificationSummary } from "@/features/inbox/types"
 import type { InboxService } from "@/services/inbox-service"
 
 type Panel =
-  | { state: "loading"; id: string; origin: DetailOrigin }
-  | { state: "ready"; id: string; origin: DetailOrigin; detail: NotificationDetail }
-  | { state: "failed"; id: string; origin: DetailOrigin; href: string }
+  | { state: "loading"; id: string; origin: DetailOrigin; work?: DetailWork }
+  | { state: "ready"; id: string; origin: DetailOrigin; work?: DetailWork; detail: NotificationDetail }
+  | { state: "failed"; id: string; origin: DetailOrigin; work?: DetailWork; href: string }
 
 /** Where a listed notification came from, for its detail (sealed names it has not learned are left out). */
 export function detailOriginOf(notification: NotificationSummary): DetailOrigin {
@@ -47,22 +47,23 @@ export function useDetailPanel(service: InboxService) {
   // The last panel stays rendered while the sheet slides away, so closing never flashes a skeleton.
   const [panel, setPanel] = useState<Panel | null>(null)
   const [isOpen, setIsOpen] = useState(false)
-  const open = async (id: string, from: DetailOrigin | string = {}) => {
+  /** `work`: the Now work behind it, when the owner may end it from here. */
+  const open = async (id: string, from: DetailOrigin | string = {}, work?: DetailWork) => {
     const origin = typeof from === "string" ? originFromContext(from) : from
     setIsOpen(true)
-    setPanel({ state: "loading", id, origin })
+    setPanel({ state: "loading", id, origin, work })
     try {
       const route = await fetchDashboardRoute(detailHref(id))
       if (
         route.kind === "dashboard" &&
         route.bootstrap.kind === "notification-detail"
       ) {
-        setPanel({ state: "ready", id, origin, detail: route.bootstrap })
+        setPanel({ state: "ready", id, origin, work, detail: route.bootstrap })
       } else {
-        setPanel({ state: "failed", id, origin, href: detailHref(id) })
+        setPanel({ state: "failed", id, origin, work, href: detailHref(id) })
       }
     } catch {
-      setPanel({ state: "failed", id, origin, href: detailHref(id) })
+      setPanel({ state: "failed", id, origin, work, href: detailHref(id) })
     }
   }
 
@@ -82,6 +83,7 @@ export function useDetailPanel(service: InboxService) {
               variant="panel"
               detail={panel.detail}
               origin={panel.origin}
+              work={panel.work}
               service={service}
               heading={(title) => (
                 <SheetTitle className="pr-8 text-xl font-semibold tracking-tight">

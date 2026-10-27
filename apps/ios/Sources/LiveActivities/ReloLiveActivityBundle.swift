@@ -8,6 +8,7 @@ struct ReloLiveActivityBundle: WidgetBundle {
     /// End-to-end sealed cards open on this phone while their state is decoded (E5). This process
     /// has no Keychain, so it reads the widget mirror the app and the extension keep current.
     init() {
+        ReloWidgetKeyMirror.installLabelMemory()
         let sealed = ReloSealedContent.live(widget: true)
         ReloSealedCards.install(sealed.cardOpener(log: ReloSealedOpenLog.live()))
         if let book = sealed.nameBook { ReloSealedCards.installNames { book.names() } }

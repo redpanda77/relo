@@ -120,8 +120,19 @@ export function mapAgentSessionRows(rows: any[],{ now,phases,limit }:
     }));
 }
 
+/**
+ * A session's readable name: the title its snapshots carried (unencrypted accounts), else, when the session has no name
+ * at all (no readable title and no sealed names), the goal of its open card, so the row is never nameless.
+ */
+function sessionTitle(row: any,goalByKey: ReadonlyMap<string,string> | undefined): { title?: string } {
+  if (typeof row.title === "string" && row.title) return { title: row.title };
+  const goal = row.sealed_names ? undefined : goalByKey?.get(row.session_hash);
+  return goal ? { title: goal } : {};
+}
+
 /** Rows of the Sessions view (owner-facing): hidden rows dropped, idle ones folded (spec 6.2). */
-export function sessionsViewRows(rows: any[],now: Date,{ withSealedNames = false } = {}): SessionRow[] {
+export function sessionsViewRows(rows: any[],now: Date,{ withSealedNames = false,goalByKey }:
+  { withSealedNames?: boolean; goalByKey?: ReadonlyMap<string,string> } = {}): SessionRow[] {
   const result: SessionRow[] = [];
   for (const { row,derived } of rankedSessions(rows,now)) {
     if (derived.hidden) continue;
@@ -131,6 +142,7 @@ export function sessionsViewRows(rows: any[],now: Date,{ withSealedNames = false
       phase: derived.phase,observed: true,waitingFor: derived.waitingFor,lastSeenAt: derived.lastSeenAt,fold: derived.fold,
       workId: row.card_id ? publicId("act",row.card_id) : null,
       ...(withSealedNames && row.sealed_names ? { sealedNames: row.sealed_names } : {}),
+      ...sessionTitle(row,goalByKey),
       nextChangeAt: derived.nextChangeAt,
       ...displayFacts(row),
     });

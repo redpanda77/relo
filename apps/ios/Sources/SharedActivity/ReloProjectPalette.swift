@@ -1,14 +1,17 @@
 import ReloCore
 import SwiftUI
 
-/// A project's color: one of three, by its palette slot, so a project reads the same on every card.
+/// A project's colour: one of twelve by its palette slot (`ProjectPalette`, the contracts' table), so a project reads
+/// the same on every card and every surface.
 enum ReloProjectPalette {
     static func color(for project: InboxProjectIdentity?, fallback: Color = .primary) -> Color {
-        guard let slot = project?.paletteSlot else { return fallback }
-        switch slot % 3 {
-        case 0: return .reloInteractive
-        case 1: return .reloSignalIndigo
-        default: return .reloSignalCoral
+        color(slot: project?.paletteSlot, name: project?.name) ?? fallback
+    }
+
+    static func color(slot: Int?, name: String?) -> Color? {
+        ProjectPalette.slot(slot, name: name).map { slot in
+            let rgb = ProjectPalette.rgb(slot)
+            return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
         }
     }
 }

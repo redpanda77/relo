@@ -8,10 +8,12 @@ import { readHarnessCredential } from "./credential.mjs";
 import { normalize } from "./events.mjs";
 import { observedLabels, resolveSessionTitle } from "./labels.mjs";
 import { observedEntry } from "./observed.mjs";
-import { readObservedPhase, recordObservedEvent } from "./session-state.mjs";
+import { readObservedContextAt, readObservedPhase, recordObservedEvent } from "./session-state.mjs";
 import { markSent, reduce, snapshotDue } from "./state-machine.mjs";
 
 const CONTEXT_READING_EVENTS = new Set(["stop", "tool_end"]);
+/** The transcript tail is read at most this often per session: a tool-heavy turn would read 256 KB on every tool end. */
+export const CONTEXT_READ_MS = 20_000;
 
 async function debug(dependencies, message) {
   if (dependencies.env.RELO_DEBUG !== "1") return;
@@ -22,11 +24,13 @@ async function debug(dependencies, message) {
   } catch { /* nothing more to do */ }
 }
 
-async function labelsFor(event, adapter, config, input, dependencies, titleCache) {
+async function labelsFor(event, adapter, config, input, dependencies, titleCache, sessionCwd) {
   // Without the CLI config there is no way to know whether this computer seals: send no labels rather
   // than readable ones.
   if (!config) return { labels: {}, names: {} };
-  const found = await observedLabels({ cwd: event.cwd, harnessEnv: adapter.harnessEnv?.(dependencies.env) ?? dependencies.env, config, dependencies });
+  // Events with no folder (the MCP server's heartbeat, a synthetic end) name the session's own folder, not the
+  // process's: else the project would be wherever the flusher runs, a name no card shares.
+  const found = await observedLabels({ cwd: event.cwd ?? sessionCwd, harnessEnv: adapter.harnessEnv?.(dependencies.env) ?? dependencies.env, config, dependencies });
   // The session's title (the Desktop sidebar's under Claude Desktop), read locally; it travels only inside the sealed names.
   // `titleCache` (the Desktop file's path, or when none was found) is kept in the observed state, never sent.
   let resolved;
@@ -66,6 +70,17 @@ function withHarnessProcess(state, previous, entries, adapter, dependencies) {
 }
 
 /**
+ * Notes the session's transcript path (local only, never sent: observedBody is a whitelist) so the liveness sweep can
+ * look for the owner's interrupt, which no hook reports (core/sweep.mjs). Only a harness that can read one asks.
+ */
+function withTranscript(state, adapter, input) {
+  if (typeof adapter.interrupted !== "function" || !state || state.phase === "ended") return state;
+  let path;
+  try { path = adapter.transcriptPath?.(input); } catch { path = undefined; }
+  return path && path !== state.transcriptPath ? { ...state, transcriptPath: path } : state;
+}
+
+/**
  * Handles one hook event. Resolves with { queued, phase?, seq?, reason? }; never rejects.
  * `named` is the canonical event from the command line (the harness's own event name wins).
  */
@@ -76,9 +91,15 @@ export async function processHook({ adapter, named, input, dependencies }) {
     // The turn ended or a tool finished: the session's context size, where the harness can read it from its
     // transcript (the status line does not run in every host). A count only; the gate is the state machine's.
     if (CONTEXT_READING_EVENTS.has(event.event) && !event.subagent) {
-      let tokens;
-      try { tokens = adapter.contextTokens?.(input); } catch { tokens = undefined; }
-      if (Number.isInteger(tokens)) event.contextTokens = tokens;
+      const now = dependencies.now();
+      // A turn's end (stop) always reads: it is once per turn and its snapshot carries the final reading.
+      const last = event.event === "stop" ? undefined : await readObservedContextAt(dependencies.observedStateDirectory, event.session).catch(() => undefined);
+      if (!(now - last >= 0 && now - last < CONTEXT_READ_MS)) {
+        let tokens;
+        try { tokens = adapter.contextTokens?.(input); } catch { tokens = undefined; }
+        if (Number.isInteger(tokens)) event.contextTokens = tokens;
+        event.contextReadAt = now;
+      }
     }
     return await processEvent({ adapter, event, input, dependencies });
   } catch (error) {
@@ -121,14 +142,16 @@ export async function processEvent({ adapter, event, input, dependencies }) {
       return reduce(current, entry.event, entry.now);
     }, previous);
     state = withHarnessProcess(state, previous, entries, adapter, dependencies);
+    state = withTranscript(state, adapter, input);
     if (!snapshotDue(state, now)) return { state, queued: false };
     let next = markSent(state, now);
     // The heartbeat flag marks one snapshot only: no return path keeps it in the stored state.
     const { heartbeat: _lingering, ...unflagged } = state;
     try {
       const config = await Promise.resolve().then(() => dependencies.loadConfig(dependencies.configPath())).catch(() => undefined);
-      const { labels, names, title, titleCache } = await labelsFor(event, adapter, config, input, dependencies, { titlePath: state.titlePath, titleMissAt: state.titleMissAt });
-      const { titlePath: _path, titleMissAt: _miss, ...rest } = next;
+      const { labels, names, title, titleCache } = await labelsFor(event, adapter, config, input, dependencies,
+        { titlePath: state.titlePath, titleMissAt: state.titleMissAt, nameCache: state.nameCache }, state.harnessCwd);
+      const { titlePath: _path, titleMissAt: _miss, nameCache: _names, ...rest } = next;
       next = { ...rest, ...titleCache };
       // Not signed in: no server to queue it for. The local state is kept; nothing is queued.
       const server = await observedServer(config, dependencies);

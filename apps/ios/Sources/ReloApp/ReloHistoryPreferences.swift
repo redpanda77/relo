@@ -2,11 +2,6 @@ import ReloCore
 import SwiftUI
 import UserNotifications
 
-/// The opt-in to show each session's context use and cost on Now (off by default).
-enum ReloSessionUsagePreferences {
-    static let showKey = "relo.sessions.showUsage"
-}
-
 /// The person's choice of how much past to see on this iPhone, shared by Now, History and Settings.
 enum ReloHistoryPreferences {
     static let retentionKey = "relo.history.retention"

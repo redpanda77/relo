@@ -11,6 +11,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/dashboard/package.json ./apps/dashboard/package.json
 COPY apps/server/package.json ./apps/server/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/owner-crypto/package.json ./packages/owner-crypto/package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter @relo/server...
 
 COPY tsconfig.base.json ./tsconfig.base.json
@@ -18,12 +19,16 @@ COPY apps/dashboard ./apps/dashboard
 COPY packages/contracts/tsconfig.json ./packages/contracts/tsconfig.json
 COPY packages/contracts/src ./packages/contracts/src
 COPY packages/contracts/fixtures ./packages/contracts/fixtures
+COPY packages/owner-crypto/tsconfig.json ./packages/owner-crypto/tsconfig.json
+COPY packages/owner-crypto/src ./packages/owner-crypto/src
 COPY apps/server/tsconfig.json ./apps/server/tsconfig.json
 COPY apps/server/src ./apps/server/src
 COPY apps/server/migrations ./apps/server/migrations
 COPY apps/server/fixtures ./apps/server/fixtures
 # Relo for Mac, when the deploy put it here (apps/server/mac/README.md); else only its README.
 COPY apps/server/mac ./apps/server/mac
+# Relo for Windows, likewise (apps/server/windows/README.md).
+COPY apps/server/windows ./apps/server/windows
 RUN pnpm --filter @relo/server build
 # Add a computer (docs/site/guides/servers.md): the CLI this server hands out, packed with its skill. It has no
 # dependencies, so the install script only unpacks it; the manifest names its version and digest.
@@ -42,6 +47,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/dashboard/package.json ./apps/dashboard/package.json
 COPY apps/server/package.json ./apps/server/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/owner-crypto/package.json ./packages/owner-crypto/package.json
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts \
   --filter @relo/server --filter @relo/notification-contracts
 COPY --from=build /workspace/apps/server/dist ./apps/server/dist
@@ -49,6 +55,7 @@ COPY --from=build /workspace/apps/server/fixtures ./apps/server/fixtures
 COPY --from=build /workspace/apps/server/migrations ./apps/server/migrations
 COPY --from=build /workspace/apps/server/cli ./apps/server/cli
 COPY --from=build /workspace/apps/server/mac ./apps/server/mac
+COPY --from=build /workspace/apps/server/windows ./apps/server/windows
 COPY --from=build /workspace/apps/dashboard/dist ./apps/dashboard/dist
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
 

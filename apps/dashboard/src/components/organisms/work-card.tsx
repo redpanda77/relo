@@ -10,20 +10,24 @@
  *   tone={WorkTone}                   // meaning colour (lib/work-outcome.ts): meter, state word, tint; crossfades on change
  *   title="…"  encrypted={bool}       // encrypted: title becomes EncryptedText, summary is dropped
  *   origin={{ source, project, projectColor, topic, showSource }}   // "Claude Code · relo › Release review"
- *   eyebrow="QUESTION"                // mono eyebrow before the origin on the header line: needs-you cards only
+ *   eyebrow="QUESTION"                // mono eyebrow before the origin on the header line (plain list cards)
+ *   asked                             // a question: orange wash, answers in the content, "ASKED 6:42 PM" in the footer
+ *   answers={node}                    // the answer buttons: a two-column grid under the status (.card-answers)
+ *   caption="Step 3 of 3 · Deploy"    // the footer's left on a live card (defaults to the meter's)
  *   summary="…"  summaryLines={2|4}  // status in the producer's words (needs you: 4 lines)
  *   note="…"                          // a footnote under the status (what a late answer means)
  *   extra={node}                      // a Strip under the status: the answered-question strip
  *   meter={{ steps: {done,total,current}, progress, live, finished }}   // StepTrack in the progress row, with the step caption
- *   state={{ label, icon }}           // "Running", "Your turn", "Done" in the tone, 12px icon: the header's trailing badge
+ *   state={{ label, icon, dot, quietSince }}   // the header's trailing chip: "NEEDS YOU · 4:12", "YOUR TURN", "RUNNING", "QUIET 14 MIN", "DONE"
  *   facts={[node, …]}                 // muted parts: "33m", "updated 3m ago"
- *   runningSince="ISO"                // footer trailing: "running 12:40", ticking (display only); else
+ *   runningSince="ISO"                // footer trailing: the elapsed timer in the tone, ticking (display only); else
  *   at="ISO"                          // footer trailing: a clock time ("12:40")
  *   computer="Studio Mac"             // its icon (computerIcon, laptop when unknown) + name
  *   glyph={node}                      // leading 28px glyph (hidden on a narrow card)
  *   tint  live                        // needs you washes the glass; moving work shimmers its state
- *   deadline="ISO"                    // the countdown, in the header's trailing slot (replaces the state badge)
+ *   deadline="ISO"                    // the countdown, inside the state chip ("NEEDS YOU · 4:12")
  *   actions={node}                    // buttons in the footer, trailing, outside the open target
+ *   end={node}                        // the owner's small End at the footer's end, beside the time (Now's quiet, paused and your-turn work)
  *   onOpen={() => …}  openLabel="Open …"   // the card (minus the footer) opens the detail
  *   attrs  open  className
  * />
@@ -55,6 +59,7 @@ import { ComputerIcon } from "@/components/atoms/computer-icon"
 import { EncryptedText } from "@/components/atoms/encrypted-text"
 import { SignalGlyph } from "@/components/atoms/signal-glyph"
 import { StepTrack } from "@/components/atoms/step-track"
+import { Badge, type BadgeTone } from "@/components/card/badge"
 import {
   Card,
   CardCorner,
@@ -70,7 +75,9 @@ import {
   CardStatus,
   CardTitle,
   Countdown,
+  CountdownText,
   Origin,
+  QuietFor,
   RunningFor,
   type DataAttributes,
   type OriginParts,
@@ -92,7 +99,19 @@ export type WorkMeter = {
   caption?: string | null
 }
 
-export type WorkState = { label: string; icon?: LucideIcon | null }
+export type WorkState = {
+  label: string
+  icon?: LucideIcon | null
+  /** The chip leads with the meaning dot instead of its icon (needs you, running, quiet work). */
+  dot?: boolean
+  /** Quiet work: the chip counts the minutes since this instant ("QUIET 14 MIN"). */
+  quietSince?: string | null
+}
+
+/** A work tone as the chip's palette tone. */
+function chipTone(tone: WorkTone): BadgeTone {
+  return tone === "cyanQuiet" ? "cyan" : tone === "neutral" ? "slate" : tone
+}
 
 export type WorkCardProps = {
   variant?: "live" | "row"
@@ -102,6 +121,12 @@ export type WorkCardProps = {
   origin?: WorkOrigin | null
   summary?: string | null
   summaryLines?: 2 | 4
+  /** The step caption for the footer's left ("Step 3 of 3 · Deploy"); defaults to the meter's. */
+  caption?: string | null
+  /** A question or permission: the orange card with its breathing wash, the answers in the content, "ASKED 6:42 PM" in the footer. */
+  asked?: boolean
+  /** The answer buttons (two-column grid under the status). */
+  answers?: React.ReactNode
   eyebrow?: string | null
   note?: string | null
   extra?: React.ReactNode
@@ -118,6 +143,7 @@ export type WorkCardProps = {
   live?: boolean
   deadline?: string | null
   actions?: React.ReactNode
+  end?: React.ReactNode
   onOpen?: () => void
   openLabel?: string
   attrs?: DataAttributes
@@ -187,6 +213,9 @@ export const WorkCard = React.memo(function WorkCard({
   origin,
   summary,
   summaryLines = 2,
+  caption: givenCaption,
+  asked = false,
+  answers,
   eyebrow,
   note,
   extra,
@@ -202,6 +231,7 @@ export const WorkCard = React.memo(function WorkCard({
   live = false,
   deadline,
   actions,
+  end,
   onOpen,
   openLabel,
   attrs,
@@ -212,7 +242,7 @@ export const WorkCard = React.memo(function WorkCard({
   const steps = meter?.steps && meter.steps.total > 0 ? meter.steps : null
   const label = openLabel ?? (encrypted ? "Open encrypted item" : `Open ${title}`)
   const originNode = origin ? <Origin {...origin} /> : null
-  const time = runningSince ? <RunningFor since={runningSince} /> : at && clockTime(at) ? <ClockTime at={at} /> : null
+  const time = runningSince ? <RunningFor since={runningSince} prefix="running " /> : at && clockTime(at) ? <ClockTime at={at} /> : null
   const computerNode = computer ? (
     <span className="card-computer" data-part="origin">
       <ComputerIcon icon={computerIcon ?? "laptop"} />
@@ -220,12 +250,36 @@ export const WorkCard = React.memo(function WorkCard({
     </span>
   ) : null
   const stateNode = state ? <CardState label={state.label} icon={state.icon} /> : null
-  const caption = meter ? (meter.caption ?? stepsCaption(steps, { finished: meter.finished })) : null
+  const caption = givenCaption !== undefined ? givenCaption : meter ? (meter.caption ?? stepsCaption(steps, { finished: meter.finished })) : null
   const facing = (facts ?? []).filter((fact) => fact != null && fact !== "")
   const parts: React.ReactNode[] = [...(variant === "row" ? [caption] : []), ...facing, computerNode]
   const meta = parts.some((part) => part != null && part !== "") ? <CardMeta parts={parts} /> : null
-  // The header's one trailing thing: the countdown, else the state badge.
+  // The row's one trailing thing: the countdown, else the state badge.
   const trailing = deadline ? <Countdown deadline={deadline} /> : stateNode ? <CardCorner>{stateNode}</CardCorner> : null
+
+  // The live card's header chip: the state as a mono chip (needs you with its countdown, your turn with a
+  // return arrow, running with the glowing dot and the sweep, quiet with a moon, done and failed with their marks).
+  const StateIcon = state?.icon
+  const chip = state ? (
+    <Badge
+      tone={chipTone(tone)}
+      part="state"
+      icon={state.dot ? undefined : StateIcon ? <StateIcon aria-hidden="true" /> : null}
+      dot={state.dot && tone === "orange"}
+      live={live && tone === "cyan"}
+      value={state.quietSince ? "quiet" : state.label}
+    >
+      {state.quietSince ? <QuietFor since={state.quietSince} /> : state.label}
+      {deadline ? (
+        <>
+          {" · "}
+          <CountdownText deadline={deadline} />
+        </>
+      ) : null}
+    </Badge>
+  ) : deadline ? (
+    <Countdown deadline={deadline} />
+  ) : null
 
   if (variant === "row") {
     return (
@@ -247,9 +301,10 @@ export const WorkCard = React.memo(function WorkCard({
     )
   }
 
-  const hasHeader = Boolean(eyebrow || originNode || trailing)
+  const header = chip ?? null
+  const hasHeader = Boolean(eyebrow || originNode || header)
   const progressRow = meter && (steps || meter.progress != null) ? (
-    <CardProgressRow caption={caption}>
+    <CardProgressRow>
       <StepTrack
         done={steps?.done}
         total={steps?.total}
@@ -262,12 +317,25 @@ export const WorkCard = React.memo(function WorkCard({
       />
     </CardProgressRow>
   ) : null
+  // The footer: a question has the computer on the left and "ASKED 6:42 PM" on the right; other work has the
+  // step caption (and facts) on the left, the computer and the time (the elapsed timer in the tone while running) on the right.
+  const clock = asked && at && clockTime(at) ? <time className="card-time" dateTime={at}>{`Asked ${clockTime(at)}`}</time> : null
+  const stamp = asked ? clock : runningSince ? <RunningFor since={runningSince} className="card-time" /> : at && clockTime(at) ? <time className="card-time" dateTime={at}>{clockTime(at)}</time> : null
+  const leftParts = asked ? [computerNode, ...facing] : [caption, ...facing]
+  const left = leftParts.some((part) => part != null && part !== "") ? <CardMeta parts={leftParts} /> : null
+  const trail = asked ? stamp : computerNode || stamp ? (
+    <>
+      {computerNode}
+      {computerNode && stamp ? <span className="card-sep" aria-hidden="true"> · </span> : null}
+      {stamp}
+    </>
+  ) : null
   return (
-    <Card variant="live" tone={tone} tint={tint} live={live} open={open} className={className}>
+    <Card variant="live" tone={tone} tint={tint} live={live} wash={asked && tint} open={open} className={className} data-asked={asked || undefined}>
       <CardHit onOpen={onOpen} label={label} attrs={attrs}>
         {glyph ? <CardLead>{glyph}</CardLead> : null}
         <CardMain>
-          {hasHeader ? <CardHeader eyebrow={eyebrow} origin={originNode} trailing={trailing} /> : null}
+          {hasHeader ? <CardHeader eyebrow={eyebrow} origin={originNode} trailing={header} /> : null}
           <CardTitle encrypted={encrypted}>{title}</CardTitle>
           {shownSummary ? <CardStatus lines={summaryLines}>{shownSummary}</CardStatus> : null}
           {progressRow}
@@ -275,7 +343,8 @@ export const WorkCard = React.memo(function WorkCard({
           {note ? <CardNote>{note}</CardNote> : null}
         </CardMain>
       </CardHit>
-      <CardFooter meta={meta} actions={actions} time={time} onOpenMeta={onOpen} />
+      {answers ? <div className="card-answers-slot">{answers}</div> : null}
+      <CardFooter meta={left} actions={actions} trail={trail} end={end} onOpenMeta={onOpen} />
     </Card>
   )
 })

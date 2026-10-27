@@ -1,0 +1,105 @@
+/* Local mode's screens: the setup steps and the Settings section. Uses the Settings window's own classes (.sheet, .row,
+   .btn, .check, .warn, .link) and adds only what they lack. */
+.lsteps {
+  width: 380px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lstep {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lstep-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.95);
+}
+.lstep[data-state="pending"] .lstep-head {
+  font-weight: 400;
+  color: rgb(255 255 255 / 0.45);
+}
+.lstep-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.lstep-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.lstep-note {
+  padding-left: 32px;
+  font-size: 12px;
+  color: rgb(255 255 255 / 0.5);
+}
+.lstep-agents {
+  padding-left: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lstep-agent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: rgb(255 255 255 / 0.85);
+}
+.lspin {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 0.25);
+  border-top-color: #fff;
+  animation: lspin 0.8s linear infinite;
+}
+:root[data-reduce-motion] .lspin {
+  animation-duration: 3s;
+}
+@keyframes lspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.lfail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 400px;
+  text-align: center;
+}
+.lbuttons {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+}
+.ldone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: center;
+  color: rgb(255 255 255 / 0.68);
+  font-size: 14px;
+  max-width: 420px;
+}
+.lconfirm {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12.5px;
+  color: rgb(255 255 255 / 0.8);
+}
+.lconfirm .lbuttons {
+  justify-content: flex-end;
+}

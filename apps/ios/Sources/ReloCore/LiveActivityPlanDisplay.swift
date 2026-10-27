@@ -70,8 +70,9 @@ public enum LiveActivityPlanDisplay {
         _ items: [LiveActivityDisplayPresentation.Step], count: (Int, Int)? = nil
     ) -> [Step] {
         items.map { item in
-            // "Step n" is the server's stand-in for a label this phone could not open: never shown as text.
-            let label = ReloSealedCards.isPlaceholderStep(item.label) ? PlanProgress.unreadable : item.label
+            // "Step n" is the server's stand-in for a label this phone could not open: never shown as text, so the
+            // plan line reads "Step 1 of 4" without a label rather than naming a step it cannot read.
+            let label: String? = ReloSealedCards.isPlaceholderStep(item.label) ? nil : item.label
             switch item.state {
             case .complete: return Step(label: label, state: .done, id: item.id)
             case .pending: return Step(label: label, state: .open, id: item.id)

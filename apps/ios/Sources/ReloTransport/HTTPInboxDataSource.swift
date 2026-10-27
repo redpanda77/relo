@@ -35,14 +35,18 @@ public struct HTTPInboxDataSource: InboxDataSource {
         switch http.statusCode {
         case 200:
             do {
-                guard data.count <= 4 * 1_024 * 1_024 else { throw InboxRemoteError.incompatibleResponse }
-                let result = try ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: resolved(data))
+                // The server keeps the snapshot under 3 MiB (each work's plan is sent once); the cap only guards memory.
+                guard data.count <= 16 * 1_024 * 1_024 else { throw InboxRemoteError.incompatibleResponse }
+                let firstPass = resolved(data)
+                let result = try ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: firstPass).resolvingShared()
                 guard result.isValid else { throw InboxRemoteError.incompatibleResponse }
                 guard let sealedOpener else { return result }
-                // Opening teaches names; a second pass shows them on this same snapshot.
+                // Opening teaches names; a second pass shows them on this same snapshot. It runs only when
+                // the names changed the text, and its opens come from the opener's cache: no crypto.
                 let opened = result.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
-                guard nameResolver != nil,
-                      let named = try? ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: resolved(data)) else { return opened }
+                let secondPass = resolved(data)
+                guard nameResolver != nil, secondPass != firstPass,
+                      let named = try? ReloWireJSON.decoder().decode(InboxRepairResponse.self, from: secondPass).resolvingShared() else { return opened }
                 return named.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
             } catch { throw InboxRemoteError.incompatibleResponse }
         case 401, 403: throw InboxRemoteError.unauthorized
@@ -67,14 +71,18 @@ public struct HTTPInboxDataSource: InboxDataSource {
         case 200:
             let decoder = ReloWireJSON.decoder()
             do {
-                let page = try decoder.decode(InboxHistoryPage.self, from: resolved(data))
+                let firstPass = resolved(data)
+                let page = try decoder.decode(InboxHistoryPage.self, from: firstPass)
                 guard InboxHistoryPagePolicy.isValid(page, requestedCursor: cursor) else {
                     throw InboxRemoteError.unavailable
                 }
                 guard let sealedOpener else { return page }
-                // Opening envelopes teaches names; the second pass shows them on this same page.
+                // Opening envelopes teaches names; the second pass (only when they changed the text, its opens
+                // served from the opener's cache) shows them on this same page.
                 let opened = page.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
-                guard nameResolver != nil, let named = try? decoder.decode(InboxHistoryPage.self, from: resolved(data)) else { return opened }
+                let secondPass = resolved(data)
+                guard nameResolver != nil, secondPass != firstPass,
+                      let named = try? decoder.decode(InboxHistoryPage.self, from: secondPass) else { return opened }
                 return named.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
             } catch let error as InboxRemoteError {
                 throw error
@@ -136,11 +144,14 @@ public struct HTTPInboxDataSource: InboxDataSource {
             throw InboxRemoteError.unavailable
         }
         let detail: InboxNotificationDetail
-        do { detail = try Self.decoder().decode(InboxNotificationDetail.self, from: resolved(data)) }
+        let firstPass = resolved(data)
+        do { detail = try Self.decoder().decode(InboxNotificationDetail.self, from: firstPass) }
         catch { throw InboxRemoteError.incompatibleResponse }
         guard let sealedOpener else { return detail }
         let opened = detail.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
-        guard nameResolver != nil, let named = try? Self.decoder().decode(InboxNotificationDetail.self, from: resolved(data)) else { return opened }
+        let secondPass = resolved(data)
+        guard nameResolver != nil, secondPass != firstPass,
+              let named = try? Self.decoder().decode(InboxNotificationDetail.self, from: secondPass) else { return opened }
         return named.openingSealed(sealedOpener, diagnose: sealedDiagnoser)
     }
 

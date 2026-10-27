@@ -27,11 +27,13 @@ function sessionsUnsupported(error) {
 }
 
 export class ReloApiClient {
-  constructor({ apiUrl, token, fetchImpl = globalThis.fetch, version = "0.9.0",
+  constructor({ apiUrl, token, local, fetchImpl = globalThis.fetch, version = "0.9.0",
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)) }) {
     this.sleep = sleep;
     this.apiUrl = String(apiUrl).replace(/\/$/, "");
     this.token = token;
+    // The account is local (Relo for Mac's own server on this computer): nothing is encrypted or signed.
+    this.local = local === true;
     this.fetchImpl = fetchImpl;
     this.version = version;
   }

@@ -25,23 +25,36 @@ const clip = (value: string,max: number) => value.length > max ? `${value.slice(
  * current one. Substeps never become segments or change the count (plan 14, workstream 7); the current step's
  * own fraction travels in `plan.fill`.
  */
-export function cardSteps(plan: WorkPlan | null,options: { readable?: boolean } = {}): { labels: string[]; current: number; before?: number; after?: number; plan?: PlanProgressWire } | undefined {
+export function cardSteps(plan: WorkPlan | null,options: { readable?: boolean } = {}): {
+  labels: string[]; ids: string[]; current: number; states: Array<"done" | "current" | "pending">; before?: number; after?: number; plan?: PlanProgressWire;
+} | undefined {
   // The card shows the round in play (the open one, or the delivered last one), never an earlier round's steps.
   const round = plan?.rounds ? lastRound(plan).n : null;
   const visible = (plan?.steps ?? []).filter((step) => step.state !== "skipped" && step.parent === undefined && (round === null || (step.round ?? 1) === round));
   if (!visible.length) return undefined;
   const wire = planProgressWire(plan,{ readable: options.readable === true,labelMax: 40 });
-  // The top-level step that is, or holds, the current step.
+  // The top-level step that is, or holds, the current step. None current (between steps, a delivered round)
+  // means no step is marked: a current step is never invented.
   const holder = wire?.currentId ?? null;
-  let currentIndex = holder === null ? -1 : visible.findIndex((step) => step.id === holder);
-  if (currentIndex < 0) currentIndex = visible.length - 1;
-  const start = Math.max(0,Math.min(currentIndex - 2,visible.length - CARD_STEP_WINDOW));
+  const holderIndex = holder === null ? -1 : visible.findIndex((step) => step.id === holder);
+  const start = Math.max(0,Math.min((holderIndex < 0 ? visible.findIndex((step) => step.state !== "done") : holderIndex) - 2,visible.length - CARD_STEP_WINDOW));
   const window = visible.slice(start,start + CARD_STEP_WINDOW);
+  // Each shown step's own state from the plan, not from a position: the bar lights exactly what the plan says.
+  const states = window.map((step, index): "done" | "current" | "pending" =>
+    start + index === holderIndex ? "current" : step.state === "done" ? "done" : "pending");
+  const firstOpen = states.findIndex((state) => state !== "done");
+  // Steps of earlier rounds this round carries on (counted by the wire's total) are done and hidden before the window.
+  const carried = wire ? Math.max(0,wire.total - visible.length) : 0;
+  const before = Math.max(0,start) + carried;
   return {
     labels: window.map((step) => clip(step.label ?? `Step ${step.id.slice(1)}`,40)),
-    current: currentIndex - start + 1,
+    // The plan's step ids: the phone opens a sealed work's labels by id (s1), never by the card's position (step_1).
+    ids: window.map((step) => step.id),
+    // The schema's positional marker; `states` is what the surfaces draw from.
+    current: states.indexOf("current") >= 0 ? states.indexOf("current") + 1 : firstOpen >= 0 ? firstOpen + 1 : window.length,
+    states,
     // The window above is what the current phone build draws; it counts the whole plan, not just the window.
-    ...(start > 0 ? { before: start } : {}),
+    ...(before > 0 ? { before } : {}),
     ...(visible.length > start + window.length ? { after: visible.length - start - window.length } : {}),
     // The plan UX count (U1, U2): top-level steps of the round in play, where the work is, its substeps. The
     // phone writes the plan line from this; labels only for a readable work (step labels are clipped as above).

@@ -2,6 +2,7 @@ import { inboxHistorySummarySchema,inboxSnapshotResponseSchema,safeContextSchema
 import type { Database } from "../db.js";
 import type { InboxActor } from "../pending-inventory.js";
 import { visibilityDeviceId } from "../owner-overview.js";
+import { planRoundKeptSql,planStepKeptSql } from "./plan-digest-sql.js";
 
 const contextFields = {
   providerName: 80,computer: 120,account: 40,project: 120,providerThreadId: 200,providerWorkItemId: 200,threadName: 160,taskTitle: 160,
@@ -15,14 +16,96 @@ const contextProjection = `jsonb_strip_nulls(jsonb_build_object(
   'taskTitleSource',CASE WHEN e.payload#>>'{context,taskTitleSource}' IN ('provider','prompt_summary','explicit','fallback') THEN e.payload#>>'{context,taskTitleSource}' END
 ))`;
 
+/**
+ * The phone rejects a snapshot over 4 MiB (HTTPInboxDataSource) and then reads as offline on every sync. Each
+ * card event carries its work's whole plan and sealed text, so a long work's events alone can pass it (27 Oct:
+ * 4.45 MB). The items stay under 3 MiB, leaving room for the rest of the response and resolved names.
+ */
+export const SNAPSHOT_ITEMS_MAX_BYTES = 3 * 1024 * 1024;
+
+/** The newest items (they come newest first) whose JSON fits in `budget` bytes; older ones stay in History's pages. */
+export function newestWithin<T>(items: readonly T[],budget: number): T[] {
+  // The brackets, and a comma before each item but the first.
+  let used = 1;
+  const kept: T[] = [];
+  for (const item of items) {
+    used += Buffer.byteLength(JSON.stringify(item)) + 1;
+    if (used > budget) break;
+    kept.push(item);
+  }
+  return kept;
+}
+
+/**
+ * The newest items that fit `budget` bytes together with the works they reference (an item's `activity.workId`);
+ * a work's digest or sealed envelope counts once, with the first (newest) item that needs it, and unreferenced ones are dropped.
+ */
+export function withinBudget(items: readonly unknown[],works: Record<string,unknown>,budget: number,envelopes: Record<string,unknown> = {}): {
+  items: unknown[]; works: Record<string,unknown>; envelopes: Record<string,unknown>;
+} {
+  // The items' brackets and the works' and envelopes' braces.
+  let used = 5;
+  const keptItems: unknown[] = [];
+  const keptWorks: Record<string,unknown> = {};
+  const keptEnvelopes: Record<string,unknown> = {};
+  const entryCost = (key: string,value: unknown) => Buffer.byteLength(JSON.stringify(key)) + Buffer.byteLength(JSON.stringify(value)) + 2;
+  for (const item of items) {
+    let cost = Buffer.byteLength(JSON.stringify(item)) + 1;
+    const entry = item as { activity?: { workId?: string } | null; sealed?: { contentRef?: string } | null };
+    const key = entry.activity?.workId;
+    const ref = entry.sealed?.contentRef;
+    const needsWork = key !== undefined && key in works && !(key in keptWorks);
+    const needsEnvelope = ref !== undefined && ref in envelopes && !(ref in keptEnvelopes);
+    if (needsWork) cost += entryCost(key,works[key]);
+    if (needsEnvelope) cost += entryCost(ref,envelopes[ref]);
+    if (used + cost > budget) break;
+    used += cost;
+    keptItems.push(item);
+    if (needsWork) keptWorks[key] = works[key];
+    if (needsEnvelope) keptEnvelopes[ref] = envelopes[ref];
+  }
+  return { items: keptItems,works: keptWorks,envelopes: keptEnvelopes };
+}
+
+/** The first iPhone build that reads `works` and `envelopes`; an older one fails its whole sync on a `contentRef`. */
+export const SHARED_SNAPSHOT_MIN_BUILD = 119;
+
+/** Whether a device's recorded build reads the shared maps (false for an older iPhone build; true when unknown). */
+export function readsSharedSnapshot(build: string | null | undefined): boolean {
+  const number = build ? Number.parseInt(build,10) : Number.NaN;
+  return !Number.isFinite(number) || number >= SHARED_SNAPSHOT_MIN_BUILD;
+}
+
+/** The older shape for an older iPhone: each item carries its work's plan and its sealed content again. */
+export function inlineShared(snapshot: { items: unknown[]; works: Record<string,unknown>; envelopes: Record<string,unknown> }): {
+  items: unknown[]; works: Record<string,unknown>; envelopes: Record<string,unknown>;
+} {
+  const items = snapshot.items.map((raw) => {
+    const item = { ...(raw as Record<string,unknown>) };
+    const activity = item.activity as Record<string,unknown> | null | undefined;
+    const work = activity && typeof activity.workId === "string" ? snapshot.works[activity.workId] as Record<string,unknown> | undefined : undefined;
+    if (activity && work) item.activity = { ...activity,...(work.plan ? { plan: work.plan } : {}),...(work.rounds ? { rounds: work.rounds } : {}) };
+    const sealed = item.sealed as Record<string,unknown> | null | undefined;
+    if (sealed) {
+      const { contentRef,...rest } = sealed;
+      const content = typeof contentRef === "string" ? snapshot.envelopes[contentRef] ?? null : rest.content;
+      const plan = work?.sealed && JSON.stringify(work.sealed) !== JSON.stringify(content) ? { plan: work.sealed } : {};
+      item.sealed = { ...rest,content,...plan };
+    }
+    return item;
+  });
+  // Inline, each item is larger again: the older build's 4 MiB limit still holds.
+  return { items: newestWithin(items,SNAPSHOT_ITEMS_MAX_BYTES),works: {},envelopes: {} };
+}
+
 /** One PostgreSQL statement means one visibility snapshot for rows and totals.
  * There is no timestamp high-water mark: the next repair sees every committed
  * row still inside the newest 250, including transactions that began earlier.
  */
 export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promise<InboxSnapshotResponse> {
   const result = await db.query<{
-    items: unknown[]; total: number; unread: InboxSnapshotResponse["unread"];
-    server_time: Date; latest_at: string | null; latest_id: string | null;
+    items: unknown[]; envelopes: Record<string,unknown>; works: Record<string,Record<string,unknown>>; total: number; unread: InboxSnapshotResponse["unread"];
+    server_time: Date; latest_at: string | null; latest_id: string | null; app_build: string | null;
   }>(`WITH clock AS MATERIALIZED (SELECT statement_timestamp() AS at),
   visible AS MATERIALIZED (
     SELECT e.id,e.created_at,e.project_resource_id,e.read_at,e.withdrawn_at
@@ -37,8 +120,39 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
   ), unread AS (
     SELECT project_resource_id,count(*)::int AS count FROM visible
     WHERE read_at IS NULL AND withdrawn_at IS NULL GROUP BY project_resource_id
+  ), work_events AS (
+    -- The works of the retained card events, and whether any of those events is private (labels are then nulled).
+    SELECT activity.work_id,bool_or(e.payload->>'privacy'='private' OR e.payload#>>'{liveActivity,privacy}'='private') AS is_private
+    FROM retained JOIN notification_events e ON e.id=retained.id
+    JOIN live_activities activity ON e.kind='live_activity' AND activity.principal_id=e.principal_id
+      AND activity.id=CASE WHEN e.payload#>>'{liveActivity,activityId}' ~ '^act_[0-9a-f-]{36}$'
+        THEN substring(e.payload#>>'{liveActivity,activityId}' from 5)::uuid END
+    WHERE activity.work_id IS NOT NULL GROUP BY activity.work_id
+  ), work_digests AS (
+    -- Only the top-level nulls go (a plan step's null label is data: the phone opens it by id).
+    SELECT 'wrk_'||work.id::text AS key,(SELECT COALESCE(jsonb_object_agg(field.key,field.value),'{}'::jsonb)
+      FROM jsonb_each(jsonb_build_object(
+        'plan',(SELECT jsonb_agg(jsonb_build_object('id',plan_step.step->>'id','state',plan_step.step->>'state',
+            'label',CASE WHEN wk.is_private OR work.sealed_text THEN NULL ELSE left(plan_step.step->>'label',120) END)
+            || jsonb_strip_nulls(jsonb_build_object('parent',plan_step.step->'parent','round',plan_step.step->'round',
+              'detail',CASE WHEN wk.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(plan_step.step->>'detail',200)) END))
+            ORDER BY plan_step.position)
+          FROM jsonb_array_elements(CASE WHEN jsonb_typeof(work.plan->'steps')='array' THEN work.plan->'steps' ELSE '[]'::jsonb END)
+            WITH ORDINALITY plan_step(step,position)
+          WHERE plan_step.step->>'state' IN ('open','current','done','skipped') AND ${planStepKeptSql("plan_step.step")}),
+        'rounds',CASE WHEN jsonb_typeof(work.plan->'rounds')='array' THEN (SELECT jsonb_agg(
+            jsonb_strip_nulls(jsonb_build_object('n',r.round->'n','state',r.round->'state',
+              'title',CASE WHEN wk.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(r.round->>'title',80)) END,
+              'outcome',CASE WHEN wk.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(r.round->>'outcome',200)) END,
+              'openedAt',r.round->'openedAt','closedAt',r.round->'closedAt')) ORDER BY r.position)
+          FROM jsonb_array_elements(work.plan->'rounds') WITH ORDINALITY r(round,position)
+          WHERE ${planRoundKeptSql("r.position")}) END,
+      'sealed',CASE WHEN work.sealed_text AND jsonb_typeof(work.sealed->'content')='object' THEN work.sealed->'content' END)) field WHERE field.value<>'null'::jsonb) AS digest
+    FROM work_events wk JOIN works work ON work.id=wk.work_id AND work.principal_id=$1
   ), summaries AS (
-    SELECT e.created_at,e.id,jsonb_build_object(
+    SELECT e.created_at,e.id,
+      CASE WHEN jsonb_typeof(COALESCE(e.payload->'sealed',activity.sealed)->'alerts')='array'
+        THEN COALESCE(e.payload->'sealed',activity.sealed)->'content' END AS sealed_content,jsonb_build_object(
       'id','ntf_'||e.id::text,'kind',CASE WHEN e.kind='live_activity' THEN 'live_activity' ELSE 'notification' END,
       'sourceName',left(e.source,200),'sourceImageUrl',e.image_url,'title',left(e.title,200),
       'contentSummary',jsonb_build_object(
@@ -56,7 +170,13 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
       'interaction',CASE WHEN request.id IS NOT NULL THEN jsonb_build_object(
         'id','int_'||request.id::text,'kind',request.kind,'state',request.state,
         'prompt',CASE WHEN (e.payload->>'privacy'='private' OR e.payload#>>'{liveActivity,privacy}'='private') THEN 'Private notification' ELSE left(request.prompt,240) END,
-        'expiresAt',request.expires_at,'respondedAt',request.responded_at) END,
+        'expiresAt',request.expires_at,'respondedAt',request.responded_at)
+        -- A choice carries its options and the chosen one, as the detail resource does: the phone rejects a choice
+        -- without options, and one such item failed its whole sync (the inbox read as offline).
+        || CASE WHEN request.kind='choice' THEN jsonb_build_object('options',COALESCE(request.options,'[]'::jsonb),
+          'response',CASE WHEN jsonb_typeof(request.response->'optionId')='string' AND jsonb_typeof(request.response->'label')='string'
+            THEN jsonb_build_object('optionId',request.response->>'optionId','label',request.response->>'label') END)
+          ELSE '{}'::jsonb END END,
       'context',${contextProjection},
       'resources',CASE WHEN source.id IS NOT NULL AND project.id IS NOT NULL THEN jsonb_build_object(
         'source',jsonb_build_object('id','src_'||source.id::text,'kind',source.kind,'name',left(source.display_name,200)),
@@ -78,29 +198,21 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
           'current',CASE WHEN private.is_private THEN NULL ELSE NULLIF(left(steps.current,80),'') END,
           'currentIndex',steps.current_index,'fill',steps.fill) END,
         'updates',GREATEST(activity.sequence,0)+1,
-        'plan',(SELECT jsonb_agg(jsonb_build_object('id',plan_step.step->>'id','state',plan_step.step->>'state',
-            'label',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE left(plan_step.step->>'label',120) END)
-            || jsonb_strip_nulls(jsonb_build_object('parent',plan_step.step->'parent','round',plan_step.step->'round',
-              'detail',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(plan_step.step->>'detail',200)) END))
-            ORDER BY plan_step.position)
-          FROM jsonb_array_elements(CASE WHEN jsonb_typeof(work.plan->'steps')='array' THEN work.plan->'steps' ELSE '[]'::jsonb END)
-            WITH ORDINALITY plan_step(step,position)
-          WHERE plan_step.step->>'state' IN ('open','current','done','skipped')),
-        'rounds',CASE WHEN jsonb_typeof(work.plan->'rounds')='array' THEN (SELECT jsonb_agg(
-            jsonb_strip_nulls(jsonb_build_object('n',r.round->'n','state',r.round->'state',
-              'title',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(r.round->>'title',80)) END,
-              'outcome',CASE WHEN private.is_private OR work.sealed_text THEN NULL ELSE to_jsonb(left(r.round->>'outcome',200)) END,
-              'openedAt',r.round->'openedAt','closedAt',r.round->'closedAt')) ORDER BY r.position)
-          FROM jsonb_array_elements(work.plan->'rounds') WITH ORDINALITY r(round,position)) END,
         'roundOutcome',CASE WHEN NOT (private.is_private OR work.sealed_text) AND work.lifecycle='open'
             AND jsonb_typeof(work.plan->'rounds')='array' AND work.plan->'rounds'->-1->>'state'='closed'
           THEN left(work.plan->'rounds'->-1->>'outcome',200) END,
-        'startedAt',activity.created_at,'endedAt',activity.ended_at) END,
+        'startedAt',activity.created_at,'endedAt',activity.ended_at)
+        -- The work's plan digest and newest card text are sent once per work (the response's works map).
+        || CASE WHEN work.id IS NOT NULL THEN jsonb_build_object('workId','wrk_'||work.id::text) ELSE '{}'::jsonb END END,
       -- End-to-end sealed text for this phone (its own alert envelope and the shared content).
       'sealed',CASE WHEN jsonb_typeof(COALESCE(e.payload->'sealed',activity.sealed)->'alerts')='array' THEN jsonb_build_object(
         'alert',(SELECT alert FROM jsonb_array_elements(COALESCE(e.payload->'sealed',activity.sealed)->'alerts') alert
-          WHERE $2::uuid IS NOT NULL AND alert#>>'{recipients,0,device}'='dev_'||$2::text LIMIT 1),
-        'content',COALESCE(e.payload->'sealed',activity.sealed)->'content') END,
+          WHERE $2::uuid IS NOT NULL AND alert#>>'{recipients,0,device}'='dev_'||$2::text LIMIT 1)
+        -- The shared content is sent once per distinct envelope (the response's envelopes map), by its md5.
+        ) || CASE WHEN COALESCE(e.payload->'sealed',activity.sealed)->'content' IS NOT NULL
+            AND COALESCE(e.payload->'sealed',activity.sealed)->'content'<>'null'::jsonb
+          THEN jsonb_build_object('contentRef',md5((COALESCE(e.payload->'sealed',activity.sealed)->'content')::text))
+          ELSE jsonb_build_object('content',COALESCE(e.payload->'sealed',activity.sealed)->'content') END END,
       'relevance',CASE WHEN relevance.notification_event_id IS NOT NULL THEN jsonb_build_object(
         'subjectId','sub_'||relevance.subject_id::text,'generation',relevance.generation,'revision',relevance.revision,
         'status',relevance.relevance->>'status','supersededAt',relevance.superseded_at,
@@ -157,12 +269,16 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
       FROM interactions i WHERE i.notification_event_id=e.id AND ($2::uuid IS NULL OR i.device_id=$2)
     ) receipts ON true
   ) SELECT COALESCE((SELECT jsonb_agg(item ORDER BY created_at DESC,id DESC) FROM summaries),'[]'::jsonb) AS items,
+    COALESCE((SELECT jsonb_object_agg(key,digest) FROM work_digests),'{}'::jsonb) AS works,
+    COALESCE((SELECT jsonb_object_agg(md5(sealed_content::text),sealed_content) FROM (
+      SELECT DISTINCT sealed_content FROM summaries WHERE sealed_content IS NOT NULL AND sealed_content<>'null'::jsonb) distinct_envelopes),'{}'::jsonb) AS envelopes,
     (SELECT count(*)::int FROM visible) AS total,
     jsonb_build_object('account',COALESCE((SELECT sum(count)::int FROM unread),0),
       'projects',COALESCE((SELECT jsonb_object_agg(COALESCE('prj_'||project_resource_id::text,'direct'),count) FROM unread),'{}'::jsonb)) AS unread,
     clock.at AS server_time,
     (SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_at,
-    (SELECT id FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_id
+    (SELECT id FROM retained ORDER BY created_at DESC,id DESC LIMIT 1) AS latest_id,
+    (SELECT app_build FROM devices WHERE id=$2) AS app_build
   FROM clock`, [actor.principalId,actor.deviceId ?? null,visibilityDeviceId(actor) ?? null]);
   const row = result.rows[0]!;
   const items = row.items.map(raw => {
@@ -181,6 +297,8 @@ export async function loadInboxSnapshot(db: Database, actor: InboxActor): Promis
     if (!parsed.success) console.warn("inbox snapshot: skipped an unreadable item", value.id, parsed.error.issues.map(issue => issue.path.join(".")).join(","));
     return parsed.success;
   });
-  return inboxSnapshotResponseSchema.parse({items,total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
+  const kept = withinBudget(items,row.works,SNAPSHOT_ITEMS_MAX_BYTES,row.envelopes);
+  const shared = actor.deviceId && !readsSharedSnapshot(row.app_build) ? inlineShared(kept) : kept;
+  return inboxSnapshotResponseSchema.parse({...shared,total:row.total,unread:row.unread,serverTime:row.server_time.toISOString(),
     readWatermark:row.latest_at && row.latest_id ? Buffer.from(JSON.stringify([row.latest_at,row.latest_id])).toString("base64url") : null});
 }

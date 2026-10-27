@@ -22,6 +22,12 @@ import { stepsCaption, workOutcome, type WorkOutcome, type WorkTone } from "@/li
 
 export type { NowItem, NowSummary, SessionRow }
 
+/** Rows Since you looked shows before "Show n more" (the iPhone's four). */
+export const SINCE_ROWS = 4
+
+/** What a late answer to a missed question means; said on the card and in the detail (the iPhone's words). */
+export const LATE_ANSWER_NOTE = "Late answers reach the session marked late. An approval here is not permission: the session must ask again."
+
 /** The server's `now` on the overview, when present and valid. */
 export function overviewNow(overview: unknown): NowSummary | null {
   if (!overview || typeof overview !== "object" || !("now" in overview)) return null
@@ -35,6 +41,14 @@ function clock(value: string): string {
   const date = new Date(value)
   if (!Number.isFinite(date.valueOf())) return ""
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)
+}
+
+const SETTLED_CLOCK = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" })
+/** A settled row's time as the iPhone shows it: the clock without AM or PM ("6:31"). */
+function settledClock(value: string): string {
+  const date = new Date(value)
+  if (!Number.isFinite(date.valueOf())) return ""
+  return SETTLED_CLOCK.formatToParts(date).filter((part) => part.type !== "dayPeriod").map((part) => part.value).join("").trim()
 }
 
 function sameDay(a: Date, b: Date) {
@@ -121,6 +135,11 @@ function evidence(item: NowItem) {
   return item.owner.evidenceAt ?? item.declaredAt
 }
 
+/** A needs-you item whose question timed out unanswered: it offers Dismiss and Answer late (the iPhone's Missed card). */
+export function isMissedQuestion(item: Pick<NowItem, "owner" | "question">): boolean {
+  return item.owner.state === "needs_you" && item.question?.standing === "missed"
+}
+
 /** Card copy by owner state (spec 6.2; iOS NowScreenModel rows). Quiet cards never say "Running". */
 export function nowCardView(item: NowItem, relative: (iso: string) => string, topic: string | null = null, computer: string | null = null): NowCardView {
   const encrypted = isSealedItem(item)
@@ -154,7 +173,7 @@ export function nowCardView(item: NowItem, relative: (iso: string) => string, to
     origin: {
       source: displayNameOrNull(item.sourceName),
       project,
-      projectColor: project ? projectColor(hashSlot(project)) : null,
+      projectColor: project ? projectColor(item.projectSlot ?? hashSlot(project)) : null,
       // The session's own name, unless the card is titled the same.
       topic: topic && topic !== item.title ? topic : null,
     },
@@ -163,6 +182,14 @@ export function nowCardView(item: NowItem, relative: (iso: string) => string, to
     case "needs_you": {
       const reason = item.owner.needsYou
       view.at = item.question?.askedAt ?? item.declaredAt
+      if (isMissedQuestion(item)) {
+        view.chip = "MISSED"
+        view.note = LATE_ANSWER_NOTE
+        // The chip names it; Dismiss and Answer late sit in the footer beside "Asked 14:02".
+        view.state = workOutcome({ state: item.owner.state, standing: "missed" })
+        view.facts.push(`Asked ${clock(view.at)}`)
+        break
+      }
       if (reason === "permission") {
         view.chip = "PERMISSION"
         // The hint rides the footer's metadata: where to answer it.
@@ -208,26 +235,62 @@ export function nowCardView(item: NowItem, relative: (iso: string) => string, to
   return view
 }
 
-export type NowFold = "quiet" | "paused"
-
-export const FOLD_LABEL: Record<NowFold, string> = {
-  quiet: "Quiet",
-  paused: "Paused",
+/** A compact settled or parked row (Since you looked, Quiet, Paused): the iPhone's settledRow. */
+export type SettledKind = "done" | "failed" | "dropped" | "left" | "quiet" | "paused"
+export type SettledView = {
+  id: string
+  title: string
+  kind: SettledKind
+  /** "project · computer"; "project · dropped · computer" for dropped work, "stopped" for work left unfinished. */
+  subline: string
+  /** The clock time that matters (when it settled), formatted; empty when unknown. */
+  time: string
+  at: string | null
+  /** A failed row's panel text: what the server says happened. */
+  status: string | null
 }
+
+/** One settled row's words. `parked` is the fold the row sits in (it sets the icon of quiet and paused work). */
+export function settledView(item: NowItem, computer: string | null, parked?: "quiet" | "paused"): SettledView {
+  const state = item.owner.state
+  const kind: SettledKind =
+    parked === "paused" || state === "paused" ? "paused"
+    : parked === "quiet" ? "quiet"
+    : state === "failed" ? "failed"
+    : state === "done" ? "done"
+    : state === "left_unfinished" ? "left"
+    : state === "dropped" ? "dropped"
+    : "quiet"
+  const note = kind === "dropped" ? "dropped" : kind === "left" ? "stopped" : null
+  const project = displayNameOrNull(item.project)
+  const at = evidence(item)
+  return {
+    id: item.id,
+    title: item.title,
+    kind,
+    subline: [project, note, computer].filter((part): part is string => Boolean(part)).join(" \u00b7 "),
+    time: at ? settledClock(at) : "",
+    at,
+    status: isSealedItem(item) || !item.status || SEALED_STATUSES.has(item.status.trim()) ? null : item.status,
+  }
+}
+
+export type NowFold = "quiet" | "paused"
 
 export type NowBlock =
   | { kind: "sinceYouLooked"; text: string; muted: boolean; recent: NowItem[]; more: NowItem[] }
   | { kind: "needsYou"; items: NowItem[] }
   | { kind: "waitingOnYou"; items: NowItem[] }
-  | { kind: "fold"; fold: NowFold; count: number; items: NowItem[] }
+  /** Quiet and Paused share one fold line: "Quiet 2 · Paused 1   Show ›" (counts are the server's `folds`). */
+  | { kind: "parked"; quiet: { count: number; items: NowItem[] }; paused: { count: number; items: NowItem[] } }
   | { kind: "running"; title: "Running" | "Last known"; items: NowItem[] }
   | { kind: "sessions"; sessions: NowSummary["sessions"] }
   | { kind: "allClear"; text: string }
 
 /**
- * The fixed block order: Needs you, Waiting on you, Running, Since you looked (finished work never
- * sits above running work), Quiet, Paused, Sessions. Waiting on you is an open section (the owner's turn is shown, never folded); Quiet and
- * Paused fold. A block with nothing to show is omitted; All clear when nothing is open.
+ * The fixed block order (the iPhone's NowScreenModel.make): Needs you, Your turn, Running, Since you looked (finished
+ * work never sits above running work), the one Quiet and Paused line, Sessions. Your turn is an open section (the
+ * owner's turn is shown, never folded). A block with nothing to show is omitted; All clear when nothing is open.
  */
 export function nowBlocks(summary: NowSummary, options: { offline?: boolean } = {}): NowBlock[] {
   const since = sinceLine(summary)
@@ -235,9 +298,14 @@ export function nowBlocks(summary: NowSummary, options: { offline?: boolean } = 
   if (summary.needsYou.length) blocks.push({ kind: "needsYou", items: summary.needsYou })
   if (summary.waitingOnYou.length) blocks.push({ kind: "waitingOnYou", items: summary.waitingOnYou })
   if (summary.running.length) blocks.push({ kind: "running", title: options.offline ? "Last known" : "Running", items: summary.running })
-  blocks.push({ kind: "sinceYouLooked", text: since.text, muted: since.muted, recent: summary.recent.slice(0, 3), more: summary.recent.slice(3) })
-  if (summary.folds.quiet) blocks.push({ kind: "fold", fold: "quiet", count: summary.folds.quiet, items: summary.quiet })
-  if (summary.folds.paused) blocks.push({ kind: "fold", fold: "paused", count: summary.folds.paused, items: summary.paused })
+  blocks.push({ kind: "sinceYouLooked", text: since.text, muted: since.muted, recent: summary.recent.slice(0, SINCE_ROWS), more: summary.recent.slice(SINCE_ROWS) })
+  if (summary.folds.quiet || summary.folds.paused) {
+    blocks.push({
+      kind: "parked",
+      quiet: { count: summary.folds.quiet, items: summary.quiet },
+      paused: { count: summary.folds.paused, items: summary.paused },
+    })
+  }
   if (summary.sessions.sessions.length) blocks.push({ kind: "sessions", sessions: summary.sessions })
   const open = summary.needsYou.length + summary.waitingOnYou.length + summary.running.length + summary.folds.quiet + summary.folds.paused
   if (open === 0) blocks.push({ kind: "allClear", text: "Standing by" })

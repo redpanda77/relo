@@ -51,7 +51,10 @@ public struct KeychainKeyRingStore: ReloKeyRingStore {
 
     public func save(_ state: ReloKeyRingState) throws {
         guard state.identity != ReloWidgetKeyMirror.noIdentity else { throw CredentialStoreError.invalidData }
-        defer { mirror?.update { $0.prekeys = ReloWidgetKeyMirror.openable(state.prekeys) } }
+        defer {
+            mirror?.update { $0.prekeys = ReloWidgetKeyMirror.openable(state.prekeys) }
+            ReloE2EEGeneration.bump()
+        }
         let attributes: [String: Any] = [
             kSecValueData as String: try JSONEncoder().encode(state),
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
@@ -68,6 +71,7 @@ public struct KeychainKeyRingStore: ReloKeyRingStore {
     }
 
     public func delete() throws {
+        defer { ReloE2EEGeneration.bump() }
         let status = SecItemDelete(baseQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw CredentialStoreError.keychain(status) }
     }
@@ -138,7 +142,10 @@ public struct KeychainTrustedClientStore: ReloTrustedClientStore {
     }
 
     public func save(_ clients: [ReloTrustedClient]) throws {
-        defer { mirror?.update { $0.trusted = clients } }
+        defer {
+            mirror?.update { $0.trusted = clients }
+            ReloE2EEGeneration.bump()
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let attributes: [String: Any] = [
@@ -246,23 +253,102 @@ public extension ReloTrustedApprovers {
 
 /// The replay ledger, shared by the app and the Notification Service Extension through the same
 /// Keychain group, so a replay is caught whichever process opens the envelope first.
+///
+/// Each process keeps the ledger in memory and treats the Keychain as its backing store: a context
+/// already known is answered without touching the Keychain (a snapshot admits hundreds), an unknown
+/// one first re-reads the Keychain when the copy is more than 2 s old (the other process may have
+/// admitted it meanwhile), and a change is written through at once unless one was written in the last
+/// second, when a single trailing write carries the burst. A ledger that cannot be written never
+/// blocks reading; it only weakens replay detection.
 public struct KeychainReplayLedger: ReloReplayLedger {
     public static let account = "e2ee-replay-ledger-v1"
     private let service: String
     private let accessGroup: String?
+    private let memory: Memory
 
     public init(service: String = "relo.e2ee", accessGroup: String?) {
         self.service = service
         self.accessGroup = accessGroup
+        self.memory = Memory.shared(for: "\(service)|\(accessGroup ?? "")")
+    }
+
+    /// Sign-out deleted the Keychain item: the in-memory copy must not resurrect it.
+    public static func forgetMemory() { Memory.forgetAll() }
+
+    /// One per process and Keychain item, so every `ReloSealedContent.live()` shares it.
+    fileprivate final class Memory: @unchecked Sendable {
+        private static let registry = NSLock()
+        private nonisolated(unsafe) static var all: [String: Memory] = [:]
+
+        static func shared(for key: String) -> Memory {
+            registry.withLock {
+                if let known = all[key] { return known }
+                let made = Memory()
+                all[key] = made
+                return made
+            }
+        }
+
+        static func forgetAll() {
+            let memories = registry.withLock { Array(all.values) }
+            for memory in memories { memory.reset() }
+        }
+
+        let lock = NSLock()
+        var entries: [String: ReloReplayEntry] = [:]
+        var loadedAt: Date?
+        var wroteAt = Date.distantPast
+        var dirty = false
+        var flushScheduled = false
+
+        func reset() {
+            lock.withLock {
+                entries = [:]
+                loadedAt = nil
+                dirty = false
+            }
+        }
     }
 
     public func admit(context: String, itemID: String, now: Date) -> Bool {
-        var entries = load()
-        let before = entries
-        let admitted = ReloReplayRules.admit(&entries, context: context, itemID: itemID, now: now)
-        // A ledger that cannot be written never blocks reading; it only weakens replay detection.
-        if entries != before { save(entries) }
-        return admitted
+        memory.lock.withLock {
+            let clock = Date()
+            if let known = memory.entries[context], memory.loadedAt != nil { return known.itemID == itemID }
+            // Unknown here: another process may know it, so a stale copy is refreshed first.
+            if memory.loadedAt.map({ clock.timeIntervalSince($0) > 2 }) ?? true {
+                // What this process admitted and has not written yet outranks the Keychain's copy.
+                memory.entries = load().merging(memory.entries) { _, mine in mine }
+                memory.loadedAt = clock
+            }
+            let existed = memory.entries[context] != nil
+            let admitted = ReloReplayRules.admit(&memory.entries, context: context, itemID: itemID, now: now)
+            if admitted, !existed {
+                memory.dirty = true
+                if clock.timeIntervalSince(memory.wroteAt) >= 1 {
+                    flush()
+                } else if !memory.flushScheduled {
+                    memory.flushScheduled = true
+                    let service = service, group = accessGroup
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+                        let ledger = KeychainReplayLedger(service: service, accessGroup: group)
+                        ledger.memory.lock.withLock {
+                            ledger.memory.flushScheduled = false
+                            if ledger.memory.dirty { ledger.flush() }
+                        }
+                    }
+                }
+            }
+            return admitted
+        }
+    }
+
+    /// Caller holds `memory.lock`. Merges what the other process wrote since, so neither erases the other.
+    private func flush() {
+        let merged = load().merging(memory.entries) { _, mine in mine }
+        memory.entries = merged
+        save(merged)
+        memory.dirty = false
+        memory.wroteAt = Date()
     }
 
     private func load() -> [String: ReloReplayEntry] {
@@ -417,6 +503,8 @@ public enum ReloEncryptionState {
             $0.trusted = []
             $0.names = [:]
         }
+        KeychainReplayLedger.forgetMemory()
+        ReloE2EEGeneration.bump()
     }
 }
 
@@ -448,6 +536,11 @@ public struct ReloWidgetKeyMirror: Sendable {
               let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
         return ReloWidgetKeyMirror(url: root.appendingPathComponent("Library/Application Support/Relo/e2ee-widget-v1.json"))
     }()
+
+    /// Shares the last known step labels between the app and the widget through the App Group, next to the mirror.
+    public static func installLabelMemory() {
+        ReloStepLabelMemory.configure(file: shared?.url.deletingLastPathComponent().appendingPathComponent("step-labels-v1.json"))
+    }
 
     /// Only software prekeys open outside the process that made them.
     static func openable(_ prekeys: [ReloStoredPrekey]) -> [ReloStoredPrekey] {

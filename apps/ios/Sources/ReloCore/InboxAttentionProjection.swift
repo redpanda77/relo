@@ -195,7 +195,7 @@ public enum ReloHistoryFilter: String, CaseIterable, Identifiable, Sendable {
 public enum ReloHistoryResults {
     public static func make(items: [InboxItem], query: String, kind: ReloHistoryFilter,
                             projectID: String?) -> [InboxItem] {
-        InboxHistoryProjection.collapsedActivities(items).filter {
+        InboxHistoryProjection.readable(items).filter {
             kind.matches($0) && InboxHierarchyProjection.matchesProject($0, selectedProjectID: projectID)
                 && InboxHistoryProjection.matchesSearch($0, query: query)
         }

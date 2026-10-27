@@ -72,11 +72,11 @@ test("the file path is cached in the observed state, never sent, and a rename is
   const walk = async (dir) => { for (const e of await readdir(dir, { withFileTypes: true })) { const p = join(dir, e.name); if (e.isDirectory()) await walk(p); else files.push(p); } };
   await walk(box.state);
   const kept = files.filter((file) => !file.includes("Library") && !file.includes("outbox"));
-  assert.ok(kept.some((file) => readFileSync(file, "utf8").includes(path)), "the path is kept in the observed state");
+  assert.ok(kept.some((file) => readFileSync(file, "utf8").includes(JSON.stringify(path).slice(1, -1))), "the path is kept in the observed state");
   writeFileSync(path, JSON.stringify(meta("Renamed sidebar name")));
   await due(box);
   assert.equal(titles(box).at(-1), "Renamed sidebar name");
-  for (const entry of box.entries) assert.equal(JSON.stringify(entry.body).includes(path), false, "the path is not on the wire");
+  for (const entry of box.entries) assert.equal(JSON.stringify(entry.body).includes(JSON.stringify(path).slice(1, -1)), false, "the path is not on the wire");
 });
 
 test("a cached path is read directly: no scan, so a folder-less home still answers", (t) => {

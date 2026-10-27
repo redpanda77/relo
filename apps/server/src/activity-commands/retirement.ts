@@ -1,6 +1,8 @@
 import { createHash,randomUUID } from "node:crypto";
 import { LOCK_SCREEN_MAX_CARDS,OWNER_STATE_TIMING,type OwnerStateResult } from "@relo/notification-contracts";
 import { loadOwnerStateInputs } from "../derive/load.js";
+import { loadIslandCounts } from "../api/now-routes.js";
+import type { IslandCounts } from "../derive/now-summary.js";
 import { deriveOwnerState } from "../derive/owner-state.js";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
@@ -54,6 +56,8 @@ function reasonFor(owner: OwnerStateResult): RetirementReason {
  * moved ≥ 10 min past the last pushed one gets a priority-5 update carrying the new staleDate; a card
  * whose derived state differs from the last pushed one (a hook moved it: your turn, waiting) gets an
  * update carrying the new state, so the Lock Screen follows sessions without a producer write.
+ * A shown card whose island count (`islandCounts`: the satellites) differs from the one it last carried
+ * gets a priority-5 update carrying the new count, so the island follows other sessions starting and ending.
  * `since` (the previous pass) wakes each account whose derived state changed by time alone in
  * between (1.5d). Returns the earliest next change so the worker sleeps until then.
  */
@@ -75,7 +79,7 @@ export async function retireByPolicy(db: Database,apnsMode: ApnsMode,limit = 200
     const byPrincipal = new Map<string,Shown[]>();
     for (const row of shown) byPrincipal.set(row.principal_id,[...(byPrincipal.get(row.principal_id) ?? []),row]);
     const due: Candidate[] = [];
-    const restale: Array<Shown & { owner: OwnerStateResult; stateChanged: boolean }> = [];
+    const restale: Array<Shown & { owner: OwnerStateResult; stateChanged: boolean; counts: IslandCounts }> = [];
     let nextAt: number | null = null;
     let woken = 0;
     for (const [principalId,rows] of byPrincipal) {
@@ -93,14 +97,20 @@ export async function retireByPolicy(db: Database,apnsMode: ApnsMode,limit = 200
         }
       }
       // The state last pushed per card: a hook can move a card (your turn, waiting) with no producer write.
+      // And the island count it last carried: another session starting or ending changes every card's satellites.
+      const counts = await loadIslandCounts(client,principalId);
       const lastPushed = new Map<string,string>();
-      for (const row of (await client.query<{ activity: string; state: string | null }>(
+      const lastLive = new Map<string,string | null>();
+      for (const row of (await client.query<{ activity: string; state: string | null; live: string | null }>(
         `SELECT DISTINCT ON (payload#>>'{liveActivity,activityId}') payload#>>'{liveActivity,activityId}' AS activity,
-           payload#>>'{liveActivity,owner,state}' AS state
+           payload#>>'{liveActivity,owner,state}' AS state,payload#>>'{liveActivity,owner,live}' AS live
          FROM notification_events WHERE principal_id=$1 AND kind='live_activity'
            AND payload#>>'{liveActivity,activityId}'=ANY($2::text[])
          ORDER BY payload#>>'{liveActivity,activityId}',created_at DESC,id DESC`,
-        [principalId,ids.map((id) => publicId("act",id))])).rows) if (row.state) lastPushed.set(row.activity,row.state);
+        [principalId,ids.map((id) => publicId("act",id))])).rows) {
+        if (row.state) lastPushed.set(row.activity,row.state);
+        lastLive.set(row.activity,row.live);
+      }
       if (changed) {
         // 1.5d: phones refetch when derived state changes by time alone (no client timers).
         await client.query("SELECT pg_notify('relo_current_changes',json_build_object('principalId',$1::uuid,'subjectId',NULL)::text)",[principalId]);
@@ -128,7 +138,11 @@ export async function retireByPolicy(db: Database,apnsMode: ApnsMode,limit = 200
           const pushed = row.stale_date_pushed?.valueOf() ?? null;
           const last = lastPushed.get(publicId("act",row.activity_id));
           const stateChanged = last !== undefined && last !== owner.state;
-          if (stateChanged || (pushed !== null && Date.parse(owner.staleDate) - pushed >= RESTALE_MIN_MS)) restale.push({ ...row,owner,stateChanged });
+          const live = lastLive.get(publicId("act",row.activity_id));
+          const countChanged = live !== undefined && live !== String(counts.live);
+          if (stateChanged || countChanged || (pushed !== null && Date.parse(owner.staleDate) - pushed >= RESTALE_MIN_MS)) {
+            restale.push({ ...row,owner,stateChanged,counts });
+          }
         }
       }
     }
@@ -163,7 +177,7 @@ export async function retireByPolicy(db: Database,apnsMode: ApnsMode,limit = 200
       const { changed: _changed,...owner } = row.owner as OwnerStateResult & { changed?: boolean };
       // A moved state is a change the owner should see now (high priority); a staleDate refresh is not.
       await enqueueDisplayCommand(client,apnsMode,{ ...row,reason: "retired_no_signal" },"update",
-        row.stateChanged ? { ...owner,changed: true } as OwnerStateResult : owner);
+        { ...owner,...row.counts,...(row.stateChanged ? { changed: true } : {}) } as OwnerStateResult);
       restaled += 1;
     }
     await client.query("COMMIT");

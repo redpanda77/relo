@@ -12,7 +12,7 @@ const WITHOUT_SESSION = detected.filter((harness) => !harness.sessionVariable).m
 const CONFIG_FOLDERS = detected.filter((harness) => harness.config?.variable).map((harness) => harness.config.variable).join(" / ");
 const SESSION_NAMES = SESSION_VARIABLES.map(([, variable]) => variable).join(", ");
 
-export const GUIDE = `Relo puts your work on the owner's iPhone: one open work per session, shown while it matters.
+export const GUIDE = `Relo puts your work on the owner's iPhone or Mac: one open work per session, shown while it matters.
 
   relo work start --goal "Fix the login crash" --plan "Reproduce the crash,Find the cause,Choose the fix"
   relo work update --status "Reproduced on iOS 17" --next-step
@@ -45,11 +45,10 @@ Output: relo work and relo state print their echo; the rest one compact JSON lin
 --full: the whole server reply. Errors print once, with a hint.
 Exit: ${exitCodeLine([0, 5, 4, 8])}
       ${exitCodeLine([2, 3, 1, 6, 7])}
-relo doctor: ready? (follow next.run) · relo auth login (agents: prints the link, then relo auth login --wait) · relo test (once)
-relo setup: tells this computer's agents about Relo (the owner's command: block and skill per harness) · relo uninstall
-relo keys status: end-to-end encryption is automatic · a new phone waits: relo keys approve PHONE (a person), or approve it on your trusted iPhone → Settings → Devices
+relo doctor: ready? (follow next.run) · relo auth login (agents: prints the link, then relo auth login --wait) · relo test (once) (not with Relo for Mac on its own)
+relo keys status: end-to-end encryption is automatic once an iPhone is trusted (none with Relo for Mac on its own) · a new phone waits: relo keys approve PHONE (a person), or approve it on your trusted iPhone → Settings → Devices
 relo update [--check] [--rollback]: new CLI release (install-script CLIs update themselves; run it when a reply says the CLI is behind)
-relo setup: owner's choice, never automatic (--level notify|track|guide|optimize: how deep, --show: what is installed; --mcp: MCP server entry for shell-less harnesses) · relo sessions · --dry-run checks a command without sending · relo help identity · relo help all (every flag) · relo schema [COMMAND] (JSON)`;
+relo setup: tells this computer's agents about Relo (the owner's command, never automatic: block and skill per harness; --level notify|track|guide|optimize: how deep, --show: what is installed; --mcp: MCP server entry for shell-less harnesses) · relo uninstall · relo sessions · --dry-run checks a command without sending · relo help identity · relo help all (every flag) · relo schema [COMMAND] (JSON)`;
 
 export const IDENTITY_HELP = `Work identity: source > project > topic, plus where it ran: computer and account
 
@@ -80,7 +79,7 @@ const SECTIONS = [
   ["Questions, on this session's open work", ["ask", "interaction", "listen"]],
   ["Notifications: sparingly, for finished outcomes", ["notify"]],
   ["Live Activity cards: the owner's terminal (relo admin offers them across sessions)", ["activity"]],
-  ["Sign-in, phones and checks", ["auth", "test", "doctor", "devices", "account", "project", "voice", "services"]],
+  ["Sign-in, phones and checks", ["auth", "test", "doctor", "devices", "account", "project", "voice", "usage", "services"]],
   ["This computer: the owner's commands (an agent runs them only when asked)", ["setup", "uninstall", "update", "config", "mcp", "hook", "statusline"]],
   ["End-to-end encryption keys", ["keys"]],
   ["Owner administration: across sessions (an agent only when the owner asks)", ["admin", "sessions"]],

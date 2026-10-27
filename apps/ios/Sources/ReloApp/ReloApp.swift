@@ -198,10 +198,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     @MainActor private static func handle(_ route: NotificationRoute) async {
         switch route {
         case .approveAccess(let id): await DeviceAccessActionCoordinator.shared.approve(id)
-        case .openAccess(let id): await NotificationNavigationCoordinator.shared.openAccessRequest(id)
-        case .securitySettings: await NotificationNavigationCoordinator.shared.openSecuritySettings()
+        case .openAccess(let id): NotificationNavigationCoordinator.shared.openAccessRequest(id)
+        case .securitySettings: NotificationNavigationCoordinator.shared.openSecuritySettings()
         case .action(let request): await BackgroundNotificationActionCoordinator.shared.handle(request)
-        case .open(let notificationID): await NotificationNavigationCoordinator.shared.open(notificationID)
+        case .open(let notificationID): NotificationNavigationCoordinator.shared.open(notificationID)
         case .url(let url): await UIApplication.shared.open(url)
         case .none: break
         }

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>RELOAPIOrigin</key>
+	<string>$(RELO_API_ORIGIN)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(RELO_SPARKLE_PUBLIC_KEY)</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict/>
+	</array>
+</dict>
+</plist>

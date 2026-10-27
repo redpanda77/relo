@@ -53,6 +53,17 @@ struct ReconnectRecoveryTests {
         h.controller.deactivate(); await h.source.finish()
     }
 
+    @Test func incompatibleReplyRetriesOnTheBackoffInsteadOfStayingDead() async throws {
+        let h = Harness(failures: 0)
+        await h.source.setFailure(InboxRemoteError.incompatibleResponse)
+        await h.source.setFailures(2)
+        h.controller.activate()
+        _ = await h.recorder.next { $0.connection == .incompatible }
+        _ = await h.recorder.next { $0.connection == .current }
+        #expect(h.sleeper.recovery.first == .seconds(2))
+        h.controller.deactivate(); await h.source.finish()
+    }
+
     @Test func networkPathChangeRetriesImmediatelyInsteadOfWaitingOutTheBackoff() async throws {
         let h = Harness(failures: 1)
         h.sleeper.hold = true
@@ -138,12 +149,14 @@ private actor ScriptedSource: CurrentStateSource {
     private(set) var fetches = 0, streamOpens = 0
     private var hints: AsyncThrowingStream<CurrentChangeHint, Error>.Continuation?
     init(failures: Int) { remainingFailures = failures }
+    private var failure: any Error = InboxRemoteError.unavailable
     func setFailures(_ count: Int) { remainingFailures = count }
+    func setFailure(_ error: any Error) { failure = error }
     func dropStream() { hints?.finish(throwing: InboxRemoteError.unavailable) }
     func finish() { hints?.finish() }
     func fetchCurrent(ids: [String]?) async throws -> CurrentInboxResponse {
         fetches += 1
-        if remainingFailures > 0 { remainingFailures -= 1; throw InboxRemoteError.unavailable }
+        if remainingFailures > 0 { remainingFailures -= 1; throw failure }
         let time = Date(timeIntervalSince1970: 1_800_000_000)
         let item = CurrentSubjectProjection(subjectId: "sub_11111111-1111-1111-1111-111111111111", notificationId: "ntf_11111111-1111-1111-1111-111111111111", kind: .notice,
             version: .init(generation: 1, revision: 1), title: "Current", summary: "Summary", source: "Source",

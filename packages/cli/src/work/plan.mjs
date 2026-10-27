@@ -196,7 +196,7 @@ function find(plan, x, labelsKnown, state) {
   const inRound = roundSteps(plan);
   if (/^s\d+$/u.test(x)) return inRound.find((s) => s.id === x) ?? plan.steps.find((s) => s.id === x);
   if (!labelsKnown) {
-    throw new WorkRefusal("REFUSED_LABELS_UNKNOWN", { what: "this computer cannot read this work's step names (it was started elsewhere), so steps can't be matched by name", state: `steps by id: ${plan.steps.map((s) => `${s.id} (${s.state})`).join(", ")}`, next: 'relo work update --step s3  |  relo work update --add "…"' });
+    throw new WorkRefusal("REFUSED_LABELS_UNKNOWN", { what: "this computer cannot read this work's step names (it was started elsewhere), so steps can't be matched by name", state: `steps by id: ${roundSteps(plan).map((s) => `${s.id} (${s.state})`).join(", ")}`, next: 'relo work update --step s3  |  relo work update --add "…"' });
   }
   const matches = inRound.filter((s) => norm(s.label) === norm(x));
   return matches.find((s) => s.state !== "skipped") ?? matches[0];
@@ -320,7 +320,7 @@ export function applyChange(input, change, labelsKnown = true, state = "nothing 
   if (change.step) {
     if (!plan) throw new WorkRefusal("REFUSED_NO_PLAN", { what: "this work has no plan, so there is no step to move to", state, next: 'relo work update --plan "…"' });
     const target = find(plan, change.step, labelsKnown, state);
-    if (!target) throw new WorkRefusal("REFUSED_UNKNOWN_STEP", { what: `no step "${change.step}" in this plan`, state: `steps: ${plan.steps.map((s) => `${s.id} ${s.label ?? ""} (${s.state})`).join(", ")}`, next: /^s\d+(\.\d+)*$/u.test(change.step) ? `relo work update --step <one of the listed ids>  (relo state lists them)` : `relo work update --add "${change.step}" --step "${change.step}"` });
+    if (!target) throw new WorkRefusal("REFUSED_UNKNOWN_STEP", { what: `no step "${change.step}" in this plan`, state: `steps: ${roundSteps(plan).map((s) => `${s.id} ${s.label ?? ""} (${s.state})`).join(", ")}`, next: /^s\d+(\.\d+)*$/u.test(change.step) ? `relo work update --step <one of the listed ids>  (relo state lists them)` : `relo work update --add "${change.step}" --step "${change.step}"` });
     if (plan.steps.some((s) => s.parent === target.id)) {
       const kids = plan.steps.filter((s) => s.parent === target.id).map((s) => s.id);
       throw new WorkRefusal("REFUSED_STEP_HAS_CHILDREN", { what: `step ${target.id} has sub-steps; only a step without them can be current`, state, next: `relo work update --step ${kids[0]}` });

@@ -80,9 +80,9 @@ export function registerSessionWorkRoutes(app: Hono,shared: ApiRouteContext): vo
     }
     const actor = { kind: "credential" as const,principalId: caller.principalId,credentialId: caller.credentialId,sourceName: caller.sourceName };
     for (const work of outcome.changed) await projectWorkCard(db,apnsMode,credentialCardActor(db,actor),work);
-    // The card may have just started: report it as it stands now.
+    // The card may have just started (a new work, or a new round after a delivered one) or ended: report it as it stands now.
     const card = outcome.changed.length ? await activeCardFor(db,outcome.changed.at(-1)!.id) : undefined;
-    const body = card && outcome.body.work.card === null
+    const body = card
       ? { ...outcome.body,work: { ...outcome.body.work,card: serializeWork(outcome.changed.at(-1)!,card).card } }
       : outcome.body;
     return context.json(body,outcome.status);

@@ -1,9 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
-import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, lstat, open, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { renameWithRetry } from "./atomic-write.mjs";
 import { AuthError, UsageError } from "./errors.mjs";
+import { ensurePrivateDirectory } from "./private-dir.mjs";
 import { isPrivateHost } from "./origin.generated.mjs";
 
 const MAX_CONFIG_BYTES = 32 * 1024;
@@ -52,6 +54,16 @@ export function configPath({ env = process.env, platform = process.platform, hom
   return join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "relo", "config.json");
 }
 
+/** Is this API URL's host this computer (127.0.0.0/8, localhost, ::1)? Only the host decides; "local" is the account's own mark. */
+export function isLoopbackApiUrl(value) {
+  try {
+    const host = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/gu, "").replace(/\.$/u, "");
+    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127(\.\d{1,3}){3}$/u.test(host);
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeApiUrl(value) {
   let apiUrl;
   try {
@@ -75,7 +87,7 @@ export function normalizeApiUrl(value) {
 const DEFAULT_PROFILE = "default";
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/u;
 
-function profileName(value) {
+export function profileName(value) {
   const name = String(value ?? "").trim();
   if (!PROFILE_NAME.test(name)) {
     throw new UsageError(`Invalid profile name "${name}": use 1-40 letters, digits, "-" or "_".`);
@@ -83,7 +95,7 @@ function profileName(value) {
   return name;
 }
 
-/** One sign-in (a profile): server, credential, and what the first phone test learned. */
+/** One sign-in (a profile): server, credential, `local` (an account on the server Relo for Mac hosts: nothing is sealed), and what the first phone test learned. */
 function validateProfileRecord(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new AuthError("Relo config must be a JSON object.", { code: "INVALID_CONFIG" });
@@ -101,6 +113,7 @@ function validateProfileRecord(value) {
     apiUrl: normalizeApiUrl(value.apiUrl),
     token: value.token,
     principal: typeof value.principal === "object" && value.principal ? value.principal : undefined,
+    ...(value.local === true ? { local: true } : {}),
     ...(phoneTest ? { phoneTest } : {}),
     ...(pendingTest ? { pendingTest } : {}),
   };
@@ -144,8 +157,7 @@ function parseStored(value) {
   if (value.profiles === undefined) {
     profiles = { [DEFAULT_PROFILE]: validateProfileRecord(value) };
   } else {
-    if (!value.profiles || typeof value.profiles !== "object" || Array.isArray(value.profiles)
-      || Object.keys(value.profiles).length === 0) {
+    if (!value.profiles || typeof value.profiles !== "object" || Array.isArray(value.profiles)) {
       throw new AuthError("Relo config has no profiles.", { code: "INVALID_CONFIG" });
     }
     profiles = Object.fromEntries(Object.entries(value.profiles).map(([name, record]) => [profileName(name), validateProfileRecord(record)]));
@@ -153,10 +165,14 @@ function parseStored(value) {
   const names = Object.keys(profiles);
   const activeProfile = names.includes(value.activeProfile) ? value.activeProfile
     : names.includes(DEFAULT_PROFILE) ? DEFAULT_PROFILE : names[0];
+  // A file whose last profile was removed keeps its other fields: no profiles, no active one.
   return { activeProfile, profiles, accounts, projects, voices, ...(computerName ? { computerName } : {}) };
 }
 
-function selectProfile(stored, requested) {
+function selectProfile(stored, requested, path) {
+  if (Object.keys(stored.profiles).length === 0) {
+    throw new AuthError(`No Relo credential configured at ${path}.`, { code: "CONFIG_NOT_FOUND" });
+  }
   const name = requested === undefined ? stored.activeProfile : profileName(requested);
   const record = stored.profiles[name];
   if (!record) {
@@ -257,17 +273,44 @@ async function readStored(path, options) {
 }
 
 /** The active profile (or `profile`) as one flat config; `profiles` lists every profile name. */
-export async function loadConfig(path = configPath(), { platform = process.platform, uid = process.getuid?.(), profile } = {}) {
+export async function loadConfig(path = configPath(), { platform = process.platform, uid = process.getuid?.(), profile, env = process.env, home = homedir() } = {}) {
   const read = await readStored(path, { platform, uid });
   if (read === null) {
     throw new AuthError(`No Relo credential configured at ${path}.`, { code: "CONFIG_NOT_FOUND" });
   }
-  return { ...selectProfile(read.stored, profile), path, revision: read.revision };
+  const selected = selectProfile(read.stored, profile, path);
+  return { ...selected, apiUrl: followLocalServerPort(selected, { env, home, platform }), path, revision: read.revision };
+}
+
+/** Where Relo for Mac keeps its local server's settings (the port it listens on). RELO_LOCAL_SERVER_CONFIG overrides it (tests). */
+export function localServerConfigPath({ env = process.env, home = homedir(), platform = process.platform } = {}) {
+  if (env.RELO_LOCAL_SERVER_CONFIG) return env.RELO_LOCAL_SERVER_CONFIG;
+  return platform === "darwin" ? join(home, "Library", "Application Support", "Relo", "server", "config.json") : undefined;
+}
+
+/**
+ * The local server moves port between launches: a `local` profile on loopback uses the port its server's own config
+ * names now, keeping the stored host. One small file read; anything unreadable keeps the stored URL.
+ */
+function followLocalServerPort(config, options) {
+  if (config.local !== true || !isLoopbackApiUrl(config.apiUrl)) return config.apiUrl;
+  const file = localServerConfigPath(options);
+  if (!file) return config.apiUrl;
+  try {
+    const port = JSON.parse(readFileSync(file, "utf8"))?.port;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return config.apiUrl;
+    const url = new URL(config.apiUrl);
+    if (url.port === String(port)) return config.apiUrl;
+    url.port = String(port);
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return config.apiUrl;
+  }
 }
 
 async function commitText(path, text, { platform, uid, expected, beforeCommit }) {
   const directory = dirname(path);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await ensurePrivateDirectory(directory, { platform });
   if (platform !== "win32") await chmod(directory, 0o700);
   const temporary = join(directory, `.config.${process.pid}.${randomBytes(8).toString("hex")}.tmp`);
   let handle;
@@ -284,7 +327,7 @@ async function commitText(path, text, { platform, uid, expected, beforeCommit })
         code: "CONFIGURATION_CHANGED",
       });
     }
-    await rename(temporary, path);
+    await renameWithRetry(temporary, path, { platform });
     if (platform !== "win32") await chmod(path, 0o600);
   } catch (error) {
     await handle?.close().catch(() => {});
@@ -347,7 +390,7 @@ export async function switchProfile(path, name, { platform = process.platform, u
   return { profile: wanted, profiles: names };
 }
 
-/** Removes the credential: just `profile` when others remain, else the whole file. */
+/** Removes the credential: just `profile` (or the active one); the file stays, with its other fields, even when no profile is left. */
 export async function removeConfig(path, { expectedRevision, profile, platform = process.platform, uid = process.getuid?.() } = {}) {
   try {
     if (expectedRevision !== undefined && await configRevision(path) !== expectedRevision) {
@@ -357,9 +400,9 @@ export async function removeConfig(path, { expectedRevision, profile, platform =
     }
     let read;
     try { read = await readStored(path, { platform, uid }); } catch { read = null; }
-    const names = read ? Object.keys(read.stored.profiles) : [];
-    if (read && names.length > 1) {
+    if (read) {
       const target = profile ?? read.stored.activeProfile;
+      if (!Object.hasOwn(read.stored.profiles, target)) return false;
       const profiles = Object.fromEntries(Object.entries(read.stored.profiles).filter(([name]) => name !== target));
       const remaining = Object.keys(profiles);
       const activeProfile = remaining.includes(read.stored.activeProfile) ? read.stored.activeProfile

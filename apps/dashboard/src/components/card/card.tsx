@@ -38,6 +38,7 @@ export function Card({
   tone,
   tint = false,
   live = false,
+  wash = false,
   open = false,
   className,
   ...props
@@ -49,6 +50,8 @@ export function Card({
   tint?: boolean
   /** Moving work: its state shimmers. */
   live?: boolean
+  /** A question: a breathing wash of the tone behind the words (motion allowed only). */
+  wash?: boolean
   /** Ringed while its detail sheet is open. */
   open?: boolean
 } & React.ComponentProps<"div">) {
@@ -58,6 +61,7 @@ export function Card({
       data-variant={variant}
       data-tint={tint || undefined}
       data-live={live || undefined}
+      data-wash={wash || undefined}
       data-open={open || undefined}
       className={cn("card", tone && toneClass(tone as WorkTone), variant !== "row" && "glass", className)}
       {...props}
@@ -242,18 +246,24 @@ export function CardFooter({
   meta,
   actions,
   time,
+  trail,
+  end,
   onOpenMeta,
   className,
 }: {
   meta?: React.ReactNode
+  /** A work card's trailing words (the computer and the time), when there are no actions. */
+  trail?: React.ReactNode
   actions?: React.ReactNode
   /** The clock time or the running timer; shown only when there are no actions. */
   time?: React.ReactNode
+  /** The owner's small action at the footer's end (End), beside the time and apart from the actions. */
+  end?: React.ReactNode
   onOpenMeta?: () => void
   className?: string
 }) {
-  const trailingTime = actions ? null : time
-  if (!meta && !actions && !trailingTime) return null
+  const trailingTime = actions ? null : trail ?? time
+  if (!meta && !actions && !trailingTime && !end) return null
   return (
     <div data-slot="card-footer" className={cn("card-foot", className)}>
       {meta ? (
@@ -262,20 +272,20 @@ export function CardFooter({
         </div>
       ) : null}
       {actions ? <CardActions>{actions}</CardActions> : null}
-      {trailingTime ? <span className="card-foot-time">{trailingTime}</span> : null}
+      {trailingTime ? <span className="card-foot-time" data-trail={trail ? "" : undefined}>{trailingTime}</span> : null}
+      {end ? <div className="card-foot-end">{end}</div> : null}
     </div>
   )
 }
 
 /**
- * The progress row, in the card's flow: the meter across the full width, the step caption (one line,
- * truncates) on its own line under it. The Lock Screen's layout, on every surface.
+ * The progress row, in the card's flow: the meter across the full width. The step caption moved to the
+ * card's footer (left), as on the iPhone.
  */
-export function CardProgressRow({ caption, children }: { caption?: string | null; children: React.ReactNode }) {
+export function CardProgressRow({ children }: { children: React.ReactNode }) {
   return (
     <div className="card-progress">
       <div className="card-progress-bar">{children}</div>
-      {caption ? <span className="card-progress-caption">{caption}</span> : null}
     </div>
   )
 }

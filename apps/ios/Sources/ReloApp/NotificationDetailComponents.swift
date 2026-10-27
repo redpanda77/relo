@@ -48,22 +48,69 @@ struct ReloMessageKind {
     }
 }
 
-/// How a tap destination reads: a web page by host, a Shortcut by name, or an app by its scheme.
+/// How a tap destination reads: a web page by its site and page, a Shortcut by name, or an app by its scheme.
 struct ReloDestinationLabel {
     let symbol: String
     let title: String
     let detail: String
+    /// What VoiceOver says the tile does.
+    let action: String
 
     init(url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""
         if NotificationDestinationPolicy.isWebLink(url) {
-            (symbol, title, detail) = ("link", "Open link", url.host() ?? url.absoluteString)
+            let host = (url.host() ?? url.absoluteString).replacingOccurrences(of: "www.", with: "", options: .anchored)
+            let path = url.path(percentEncoded: false)
+            let page = path.isEmpty || path == "/" ? nil : path
+            (symbol, title, detail, action) = ("safari", host, page ?? "Opens in your browser", "Open link")
         } else if scheme == "shortcuts" {
             let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                 .queryItems?.first(where: { $0.name == "name" })?.value
-            (symbol, title, detail) = ("square.stack.3d.up.fill", "Run Shortcut", name ?? "Shortcuts")
+            (symbol, title, detail, action) = ("square.stack.3d.up.fill", name ?? "Shortcuts", "Runs a Shortcut", "Run Shortcut")
         } else {
-            (symbol, title, detail) = ("arrow.up.forward.app.fill", "Open in app", "\(scheme)://")
+            (symbol, title, detail, action) = ("arrow.up.forward.app.fill", "\(scheme)://", "Opens in its app", "Open in app")
+        }
+    }
+}
+
+/// The link a message carries, as a tile: the destination's mark, where it goes and what it opens, and the
+/// arrow that says it leaves Relo.
+struct ReloLinkTile: View {
+    let url: URL
+
+    var body: some View {
+        let link = ReloDestinationLabel(url: url)
+        Link(destination: url) {
+            HStack(spacing: 12) {
+                Image(systemName: link.symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.reloInteractive)
+                    .frame(width: 38, height: 38)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.reloInteractive.opacity(0.16)))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.reloInteractive.opacity(0.28), lineWidth: 0.75))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(link.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                    Text(link.detail).font(.caption).foregroundStyle(Color.reloSecondaryText)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.reloInteractive)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(Color.reloInteractive.opacity(0.14)))
+            }
+            .padding(10).frame(minHeight: 58)
+            .background(RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous).fill(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous)
+                .strokeBorder(Color.white.opacity(0.10), lineWidth: 0.75))
+            .contentShape(RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous))
+        }
+        .buttonStyle(ReloPressStyle())
+        .accessibilityLabel("\(link.action), \(link.title)")
+        .contextMenu {
+            Button { UIPasteboard.general.url = url } label: { Label("Copy link", systemImage: "doc.on.doc") }
         }
     }
 }
@@ -103,100 +150,6 @@ struct ReloDetailSection<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .reloCard()
         }
-    }
-}
-
-/// Sent → Accepted by Apple → Received → Opened → Answered. The rail draws in once on appear.
-struct ReloDeliveryTimelineView: View {
-    let timeline: NotificationDeliveryTimeline
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var revealed = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(timeline.steps.enumerated()), id: \.element.id) { index, step in
-                HStack(alignment: .top, spacing: 14) {
-                    VStack(spacing: 0) {
-                        marker(step).padding(.top, 3)
-                        if index < timeline.steps.count - 1 {
-                            Rectangle()
-                                .fill(rail(after: index))
-                                .frame(width: 1.5)
-                                .frame(maxHeight: .infinity)
-                                .scaleEffect(x: 1, y: revealed ? 1 : 0, anchor: .top)
-                                .animation(reduceMotion ? nil : .easeOut(duration: 0.35).delay(0.12 + Double(index) * 0.12),
-                                           value: revealed)
-                        }
-                    }
-                    .frame(width: 14)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(step.title).font(.subheadline.weight(step.state == .waiting ? .regular : .medium))
-                                .foregroundStyle(step.state == .waiting ? Color.reloSecondaryText : step.state == .failed ? Color.reloErrorText : .primary)
-                            Spacer(minLength: 8)
-                            if let date = step.date {
-                                Text(date, format: .dateTime.hour().minute().second())
-                                    .font(.caption.monospacedDigit()).foregroundStyle(Color.reloSecondaryText)
-                            }
-                        }
-                        if let detail = step.detail {
-                            Text(detail).font(.caption).foregroundStyle(Color.reloSecondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.bottom, index < timeline.steps.count - 1 ? 16 : 0)
-                    .opacity(revealed || reduceMotion ? 1 : 0)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.3).delay(Double(index) * 0.12), value: revealed)
-                }
-                .accessibilityElement(children: .combine)
-            }
-        }
-        .onAppear { revealed = true }
-    }
-
-    private func color(_ state: NotificationDeliveryTimeline.StepState) -> Color {
-        switch state {
-        case .complete: ReloStateStyle.done.color
-        case .waiting: ReloStateStyle.running.color
-        case .failed: ReloStateStyle.failed.color
-        }
-    }
-
-    private func rail(after index: Int) -> Color {
-        timeline.steps[index + 1].state == .complete ? Color.reloDone.opacity(0.55) : Color.white.opacity(0.14)
-    }
-
-    @ViewBuilder private func marker(_ step: NotificationDeliveryTimeline.Step) -> some View {
-        let tint = color(step.state)
-        ZStack {
-            if step.state == .waiting {
-                Circle().strokeBorder(tint, lineWidth: 1.5)
-                ReloWaitingPulse(color: tint)
-            } else {
-                Circle().fill(tint)
-                    .shadow(color: tint.opacity(0.6), radius: 4)
-                Image(systemName: step.state == .failed ? "xmark" : "checkmark")
-                    .font(.system(size: 6.5, weight: .black)).foregroundStyle(Color.reloCanvas)
-            }
-        }
-        .frame(width: 12, height: 12)
-        .scaleEffect(revealed || reduceMotion ? 1 : 0.4)
-        .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.6), value: revealed)
-        .accessibilityHidden(true)
-    }
-}
-
-/// A slow ring around the step that is still in progress; static with Reduce Motion.
-private struct ReloWaitingPulse: View {
-    let color: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var expanded = false
-    var body: some View {
-        Circle().stroke(color.opacity(expanded ? 0 : 0.6), lineWidth: 1)
-            .scaleEffect(expanded ? 2.2 : 1)
-            // Scoped to the ring, so the repeat never catches the timeline's own layout changes.
-            .animation(reduceMotion ? nil : .easeOut(duration: 1.6).repeatForever(autoreverses: false), value: expanded)
-            .onAppear { if !reduceMotion { expanded = true } }
     }
 }
 

@@ -5,6 +5,7 @@
 //   node scripts/check-changed.mjs --files a b c   exactly these paths
 //   node scripts/check-changed.mjs --staged        staged paths only (the pre-commit hook)
 //   node scripts/check-changed.mjs --plan ...      print the selected checks and run none
+//   node scripts/check-changed.mjs --preflight ... only the CLI tests, docs freshness and public:check (deploy.sh)
 // Every check runs through scripts/step.mjs (a budget, a no-output timeout, no stdin). Exit 1 if any check fails.
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
@@ -14,6 +15,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_CONVENTION_TESTS = ["environment", "state-paths", "reachability", "registry", "schema"]
   .map((name) => `packages/cli/test/${name}.test.mjs`);
+// Tests that scan every CLI source, so no importer finds them: any source change runs them (each failed a release once).
+const CLI_SCAN_TESTS = ["environment", "catalog", "harness-invariants"].map((name) => `packages/cli/test/${name}.test.mjs`);
+// The checks a release cannot afford to learn about from the remote gates: seconds here, minutes there (deploy.sh).
+const PREFLIGHT = new Set(["cli-syntax", "cli-tests", "docs-fresh", "public-check"]);
 
 const defaultFs = {
   exists: (path) => existsSync(join(ROOT, path)),
@@ -72,9 +77,11 @@ export function selectChecks(paths, fs = defaultFs) {
       if (importers.length) tests.push(...importers); else unmatched = true;
     }
     if (unmatched || tests.length === 0) tests.push(...CLI_CONVENTION_TESTS.filter((test) => fs.exists(test)));
+    if (cli.some((path) => path.startsWith("packages/cli/src/"))) tests.push(...CLI_SCAN_TESTS.filter((test) => fs.exists(test)));
     const files = unique(tests).map((test) => test.replace(/^packages\/cli\//u, ""));
+    // Bundle the skill first, as the package's own test script does: the copy in packages/cli/skill goes stale.
     checks.push({ name: "cli-tests", cwd: "packages/cli", timeout: "120s",
-      cmd: ["node", "--import", "./test/hermetic-env.mjs", "--test", ...files] });
+      cmd: ["sh", "-c", 'node scripts/bundle-skill.mjs && exec node --import ./test/hermetic-env.mjs --test "$@"', "cli-tests", ...files] });
     // Hook code: its wall-clock budgets are measured here, on the Mac the hooks run on (the builder skips them).
     if (cli.some((path) => /^packages\/cli\/(bin\/|src\/(hook-deps|cli|deps)\.mjs$|src\/harness\/)/u.test(path))) {
       checks.push({ name: "cli-hook-budget", cwd: "packages/cli", timeout: "60s",
@@ -98,9 +105,21 @@ export function selectChecks(paths, fs = defaultFs) {
     if (tests.length) checks.push({ name: "dashboard-tests", cwd: "apps/dashboard", timeout: "120s", cmd: ["npx", "vitest", "run", ...tests] });
   }
 
+  if (under("packages/owner-crypto/").length) {
+    checks.push({ name: "owner-crypto-typecheck", cwd: "packages/owner-crypto", timeout: "120s", cmd: ["npx", "tsc", "-p", "tsconfig.json", "--noEmit"] });
+    checks.push({ name: "owner-crypto-tests", cwd: "packages/owner-crypto", timeout: "120s", cmd: ["npx", "vitest", "run"] });
+    // The Dashboard bundles it from source: it must still compile.
+    if (!dashboard.length) checks.push({ name: "dashboard-typecheck", cwd: "apps/dashboard", timeout: "180s", cmd: ["npx", "tsc", "-b"] });
+  }
+
   if (under("packages/contracts/src/").length || under("packages/contracts/test/").length) {
     checks.push({ name: "contracts-typecheck", cwd: "packages/contracts", timeout: "120s", cmd: ["npx", "tsc", "-p", "tsconfig.json", "--noEmit"] });
     checks.push({ name: "contracts-tests", cwd: "packages/contracts", timeout: "120s", cmd: ["npx", "tsx", "--test", "test/*.test.ts"] });
+  }
+
+  if (under("packages/owner-client/src/").length) {
+    checks.push({ name: "owner-client-typecheck", cwd: "packages/owner-client", timeout: "120s", cmd: ["npx", "tsc", "-p", "tsconfig.json", "--noEmit"] });
+    checks.push({ name: "owner-client-tests", cwd: "packages/owner-client", timeout: "120s", cmd: ["npx", "vitest", "run"] });
   }
 
   if (under("apps/notch/").length || under("apps/ios/").length) {
@@ -109,6 +128,11 @@ export function selectChecks(paths, fs = defaultFs) {
 
   if (under("docs/site/").length) {
     checks.push({ name: "docs-build", cwd: "apps/server", timeout: "120s", cmd: ["npm", "run", "docs:build"] });
+  }
+  // The docs site carries the CLI's help and environment: a CLI source change can leave it stale.
+  if (under("docs/site/").length || under("packages/cli/src/").length) {
+    checks.push({ name: "docs-fresh", cwd: "apps/server", timeout: "60s",
+      cmd: ["npx", "vitest", "run", "src/web/docs-site.test.ts", "-t", "the committed site module is current"] });
   }
 
   checks.push({ name: "public-check", cwd: ".", timeout: "60s", cmd: ["npm", "run", "public:check"] });
@@ -122,10 +146,11 @@ function git(args) {
 }
 
 export function parseArgs(argv) {
-  const options = { mode: "working", files: [], since: undefined, plan: false };
+  const options = { mode: "working", files: [], since: undefined, plan: false, preflight: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--plan") options.plan = true;
+    else if (arg === "--preflight") options.preflight = true;
     else if (arg === "--staged") options.mode = "staged";
     else if (arg === "--since") { options.mode = "since"; options.since = argv[++i]; if (!options.since) throw new Error("--since takes a ref"); }
     else if (arg === "--files") { options.mode = "files"; while (i + 1 < argv.length && !argv[i + 1].startsWith("--")) options.files.push(argv[++i]); }
@@ -144,7 +169,9 @@ function changedPaths(options) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const paths = changedPaths(options);
-  const { checks, notes } = selectChecks(paths);
+  const selected = selectChecks(paths);
+  const notes = selected.notes;
+  const checks = options.preflight ? selected.checks.filter((check) => PREFLIGHT.has(check.name)) : selected.checks;
   console.log(`check-changed: ${paths.length} changed path(s); checks: ${checks.map((check) => check.name).join(", ")}`);
   for (const note of notes) console.log(`  note: ${note}`);
   if (options.plan) { for (const check of checks) console.log(`  ${check.name} (${check.cwd}): ${check.cmd.join(" ")}`); return 0; }

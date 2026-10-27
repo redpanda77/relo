@@ -8,10 +8,12 @@
 import { createHash, createHmac } from "node:crypto";
 import { b64u, fromB64u, sealEnvelope, verifyPrekey } from "./e2ee.mjs";
 import { identityKeys, subkey, trustKey } from "./keystore.mjs";
-import { approveCommand, ensureTrust, trustNotices, trustedPhones } from "./trust.mjs";
+import { approveCommand, ensureTrust, isPhoneId, pinnedPhones, trustNotices, trustedPhones } from "./trust.mjs";
 import { isOwnerOverview, phoneLabel } from "./device-names.mjs";
 import { keyStorePath, loadKeyStore } from "./keystore.mjs";
-import { EXIT, ReloError } from "../shared/errors.mjs";
+import { EXIT, ReloError, LOCAL_NOT_LINKED, LOCAL_RELINK } from "../shared/errors.mjs";
+import { isLoopbackApiUrl } from "../shared/config.mjs";
+import { dropDeviceKeys } from "./device-keys-cache.mjs";
 import { groupingKey, loadKnownNames, opaqueContext, rememberNames } from "./opaque-names.mjs";
 
 const MAX_ALERT_PLAINTEXT = 760;
@@ -27,11 +29,15 @@ const MAX_PREKEY_AGE_MS = 30 * 86_400_000;
 
 /**
  * This computer's trust, established automatically, or null when this computer has never sealed for
- * this server and the server cannot do end-to-end encryption (an older server, no key store).
+ * this server and the server cannot do end-to-end encryption (an older server, no key store), or when
+ * the account is local (see below).
  * Once a phone is trusted, anything that would downgrade to readable text fails closed: a server
  * that hides the phone's keys must not be able to make the CLI send readable content.
  */
 export async function trustFor({ client, config, dependencies, notes }) {
+  // A local account (Relo for Mac's own server) whose server is on this computer: nothing leaves it, so nothing is sealed.
+  // Both conditions: an SSH tunnel to a remote server is loopback too, but it is not marked local, so it still seals.
+  if (config.local === true && isLoopbackApiUrl(config.apiUrl)) return null;
   let known = null;
   try {
     known = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
@@ -46,6 +52,7 @@ export async function trustFor({ client, config, dependencies, notes }) {
     return { ...trust, committed: committed || trust.store.committed?.[config.apiUrl] === true
       || trustedPhones(trust.store, config.apiUrl).length > 0 };
   } catch (error) {
+    await dropDeviceKeys(dependencies);
     // The cause stays on the error: a network failure lets `relo work` queue the write (EDGE.3).
     if (committed) throw Object.assign(sealingUnavailable(error?.message), { cause: error });
     // Never sealed for this server: a server without key routes or a test double stays readable.
@@ -58,7 +65,9 @@ export async function trustFor({ client, config, dependencies, notes }) {
 /**
  * The names behind an agent session's handles, sealed for this computer's trusted phones and linked
  * browsers (kind "names"), as { envelope, recipients } where `recipients` names who it is sealed for;
- * null when there is nobody to seal for. Agent sessions carry no other envelope, so without this the
+ * { plain: true } when this account is not encrypted (Relo for Mac's local server, a computer never committed with
+ * nobody to seal for on a server that does not require it): the labels then go readable, as the cards do; null when
+ * there is nobody to seal for and readable labels are not allowed. Agent sessions carry no other envelope, so without this the
  * phone could only show the handles. When `unlessRecipients` equals the current recipients nothing is
  * sealed (envelope null): a browser linked after the session began changes them, and only then is it
  * sealed again so the new browser can read the session's names.
@@ -66,9 +75,16 @@ export async function trustFor({ client, config, dependencies, notes }) {
 export async function sealSessionNames({ names = {}, title, session, client, config, dependencies, unlessRecipients }) {
   if (Object.keys(names).length === 0 && !title) return null;
   const trust = await trustFor({ client, config, dependencies, notes: [] });
-  if (!trust) return null;
-  const { eligible, readers } = sealablePhones(trust.store, config.apiUrl, trust.devices);
-  if (eligible.length === 0) return null;
+  if (!trust) return { plain: true };
+  const { eligible, readers } = await sealRecipients({ trust, client, config });
+  // Names carry no alert, so Relo for Mac and linked browsers can be their only readers: an account with no phone
+  // (or one whose phone was skipped) still names its sessions' handles, which the hooks send whenever a key is pinned.
+  if (eligible.length === 0 && readers.length === 0) {
+    if (trust.committed) return null;
+    let required = false;
+    try { required = (await client.endToEndPolicy())?.required === true; } catch { /* an older server: not required */ }
+    return required ? null : { plain: true };
+  }
   const recipients = [...eligible, ...readers].map((device) => device.deviceId).sort().join(",");
   if (unlessRecipients === recipients) return { envelope: null, recipients };
   const envelope = sealEnvelope({ kind: "names", context: `ses:${String(session).slice(0, 32)}`, sender: identityKeys(trust.store),
@@ -76,12 +92,14 @@ export async function sealSessionNames({ names = {}, title, session, client, con
   return { envelope, recipients };
 }
 
-export function sealingUnavailable(reason) {
+export function sealingUnavailable(reason, { local = false } = {}) {
+  if (local) return new ReloError(`${LOCAL_NOT_LINKED} Nothing was sent.`, { code: "E2EE_UNAVAILABLE", exitCode: EXIT.API, details: { hint: LOCAL_RELINK } });
   return new ReloError(`End-to-end encryption is on for this server but the phone's keys are unavailable${reason ? ` (${reason})` : ""}. Nothing was sent.`,
     { code: "E2EE_UNAVAILABLE", exitCode: EXIT.API, details: { hint: "Open Relo on the iPhone, then retry; relo keys status shows the phones" } });
 }
 
-const STORE_ERRORS = new Set(["ENOENT", "EACCES", "EROFS", "ENOTDIR", "EPERM"]);
+// EEXIST: Windows' answer to a mkdir under a file (ENOTDIR elsewhere).
+const STORE_ERRORS = new Set(["ENOENT", "EACCES", "EROFS", "ENOTDIR", "EPERM", "EEXIST"]);
 
 /** The opaque work identity for a sealed request (E2.5), and the names to seal for the phone. */
 export async function opaqueIdentity(store, context, dependencies) {
@@ -131,6 +149,36 @@ export function sealablePhones(store, apiUrl, devices, requestedDeviceIds) {
     }
   }
   return { eligible, readers: readers.slice(0, Math.max(0, 16 - eligible.length)), skipped };
+}
+
+/**
+ * Who a sealed command is for: the one rule every sealer (notice, question, card, work, session names) uses.
+ * Phones first (with the readers beside them). With no phone eligible but Relo for Mac (an owner overview device)
+ * holding a current key, a computer that is committed to encryption, or a server that requires it, seals for the
+ * Mac instead of sending readable content or refusing: a Mac-only account on a remote server would otherwise
+ * deadlock. The server needs one alert envelope per sealed command, so the Mac stands in for the phone there.
+ * Only when no phone is pinned for this server at all: a pinned phone that was merely skipped (a stale key, a
+ * changed key held in strict mode, one waiting for approval) is never replaced by the Mac, or the phone would
+ * silently get nothing; the caller then reports the skip reason. A server that does not require encryption
+ * (Automatic, no phone) still gets readable content.
+ */
+export async function sealRecipients({ trust, client, config, deviceIds }) {
+  const found = sealablePhones(trust.store, config.apiUrl, trust.devices, deviceIds);
+  if (found.eligible.length > 0) return found;
+  const macs = found.readers.filter((reader) => isPhoneId(reader.deviceId));
+  if (macs.length === 0) return found;
+  if (pinnedPhones(trust.store, config.apiUrl).length > 0) return found;
+  if (!trust.committed) {
+    let required = false;
+    try { required = (await client.endToEndPolicy())?.required === true; } catch { /* an older server: not required */ }
+    if (!required) return found;
+  }
+  return { ...found, eligible: macs, readers: found.readers.filter((reader) => !macs.includes(reader)) };
+}
+
+/** Why nobody can be sealed for: each skipped phone and its reason, else the plain statement. */
+export function noRecipientReason(skipped = []) {
+  return skipped.length ? skipped.map((phone) => `${phone.label}: ${phone.reason}`).join("; ") : "no trusted phone has a current key";
 }
 
 /** "encrypted for 1 phone; not sent to iPhone Air (Simulator) (waiting for approval: relo keys approve iphone-air)". */
@@ -186,10 +234,10 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
   // Trust on first use: phones with keys are trusted automatically and everything to them is sealed.
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return body;
-  const { store, devices } = trust;
-  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, body.deviceIds);
+  const { store } = trust;
+  const { eligible, readers, skipped } = await sealRecipients({ trust, client, config, deviceIds: body.deviceIds });
   if (eligible.length === 0) {
-    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    if (trust.committed) throw sealingUnavailable(noRecipientReason(skipped));
     return body;
   }
   const identity = await opaqueIdentity(store, body.context, dependencies);
@@ -215,10 +263,10 @@ export async function sealNoticeRequest({ body, key, client, config, dependencie
 export async function sealQuestion({ title, prompt, detail, key, client, config, dependencies, notes, deviceIds, context }) {
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return null;
-  const { store, devices } = trust;
-  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
+  const { store } = trust;
+  const { eligible, readers, skipped } = await sealRecipients({ trust, client, config, deviceIds });
   if (eligible.length === 0) {
-    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    if (trust.committed) throw sealingUnavailable(noRecipientReason(skipped));
     return null;
   }
   if (skipped.length) notes.push(skippedNote("question", eligible, skipped));

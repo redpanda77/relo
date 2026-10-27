@@ -21,15 +21,19 @@ export const ENVIRONMENT = Object.freeze([
   { name: "RELO_STATE_DIR", setting: "stateDir", purpose: "Where Relo keeps all of its local state: session copies, the outbox, hook bookkeeping, the sealed-card cache, asked questions, names, seen notes and the command journal (default $XDG_STATE_HOME/relo, else ~/.local/state/relo)." },
   { name: "XDG_STATE_HOME", purpose: "The standard state folder; Relo uses $XDG_STATE_HOME/relo when RELO_STATE_DIR is not set." },
   { name: "XDG_CONFIG_HOME", purpose: "The standard config folder; the config file is $XDG_CONFIG_HOME/relo/config.json when set." },
+  { name: "XDG_DATA_HOME", purpose: "The standard data folder; `relo usage` finds OpenCode's data in $XDG_DATA_HOME/opencode when set, else ~/.local/share/opencode." },
   { name: "RELO_KEY_STORE_PATH", purpose: "Another location for this computer's end-to-end keys (default e2ee.json beside the config file)." },
   { name: "RELO_HARNESS_CREDENTIAL_PATH", purpose: "Another location for the hooks' presence-only credential (default beside the config file)." },
   { name: "RELO_HANDOFF_THRESHOLD", purpose: "Optimize only: the context use in whole percent (1-100, default 60) at which the next prompt is nudged to hand off and continue in a fresh session, once per round." },
   { name: "RELO_NO_UPDATE_CHECK", setting: "updateCheck", purpose: "1: no update checks or automatic updates: relo doctor does not look for a newer CLI release (otherwise once a day, 2 s timeout) and a newer CLI your server offers is not installed by itself." },
-  { name: "RELO_UPDATES", purpose: "auto, ask or off: how a newer CLI your server offers is installed here (default: what relo update --mode set, else auto). ask: your phone asks first." },
+  { name: "RELO_HOOK_LAUNCHER", internal: true, purpose: "Set by Relo for Mac: its own launcher (~/.local/bin/relo), which setup names by path in the agents' hooks so they follow the app." },
+  { name: "RELO_LOCAL_SERVER_CONFIG", internal: true, purpose: "Another location for Relo for Mac's local server config (default: ~/Library/Application Support/Relo/server/config.json), whose port a local profile follows." },
+  { name: "RELO_UPDATES", purpose: "auto, ask, off or managed (the Relo app updates it): how a newer CLI your server offers is installed here (default: what relo update --mode set, else auto). ask: your phone asks first." },
   { name: "RELO_RELEASES_URL", purpose: "Another releases API for relo update and the update check (a self-hoster's mirror)." },
   { name: "RELO_DEBUG", purpose: "1: relo hook appends its errors to hook-debug.log in the state folder, and relo mcp logs to stderr (both are silent otherwise)." },
   { name: "RELO_MCP_SESSION", purpose: "Set by relo mcp for the commands it runs: one session per MCP connection.", internal: true },
   { name: "RELO_NO_BACKGROUND_FLUSH", purpose: "1: hooks do not start the background flusher (tests).", internal: true },
+  { name: "RELO_NO_REGISTRY_WRITES", purpose: "1: never write the Windows registry (the user Path); tests.", internal: true },
 ]);
 
 /** The variables a person sets, for relo schema. */

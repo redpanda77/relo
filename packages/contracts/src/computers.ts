@@ -130,3 +130,27 @@ export const computerInviteStatusSchema = z.object({
   }).strict().nullable(),
 }).strict();
 export type ComputerInviteStatus = z.infer<typeof computerInviteStatusSchema>;
+
+/**
+ * The command that adds a computer, once per shell family: `posix` pipes the server's install.sh into sh (Linux, macOS),
+ * `windows` runs its install.ps1 in PowerShell. Both carry the one-time code, and `-WindowsApp` / `--mac-app` when the
+ * code asks for the desktop app. `command` on the invite is `posix`, kept for clients that predate the other.
+ */
+export const computerInviteCommandsSchema = z.object({ posix: z.string(), windows: z.string() }).strict();
+export type ComputerInviteCommands = z.infer<typeof computerInviteCommandsSchema>;
+
+/** What making a code returns: the owner sees the code and its commands once. */
+export const computerInviteSchema = z.object({
+  inviteId: z.string().regex(/^cin_[0-9a-f-]{36}$/),
+  code: z.string(),
+  /** The POSIX command (`commands.posix`), for clients that predate `commands`. */
+  command: z.string(),
+  commands: computerInviteCommandsSchema,
+  expiresAt: z.string(),
+  level: z.string(),
+  approvals: z.boolean(),
+  agents: z.array(z.string()).nullable(),
+  /** Whether the computer also gets this system's Relo desktop app (Relo for Mac, Relo for Windows), opened signed in. */
+  desktopApp: z.boolean(),
+}).strict();
+export type ComputerInvite = z.infer<typeof computerInviteSchema>;

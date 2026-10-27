@@ -25,7 +25,7 @@
 //     Observed lane: a newer snapshot for the same sessionKey REPLACES the pending older one (latest
 //     wins; the body's seq protects order on the server). Declared lane: strict FIFO, never collapsed.
 //
-//   flush({ directory, send, server, budgetMs = 10_000, now? }) -> Promise<{ sent, pending, dead, locked? }>
+//   flush({ directory, send, server, budgetMs = 10_000, now?, lanes? }) -> Promise<{ sent, pending, dead, locked? }>
 //     server: the API origin `send` talks to (required). An entry queued for another server (or for none)
 //     is never sent: it is dropped into dead.json with the reason "queued for another server". Entries
 //     queued by a test, another profile or an old login can never reach the server that flushes now.
@@ -49,9 +49,10 @@
 // Storage: one JSON file per entry (directory/<lane>/<name>.json), written to a temp file and renamed, so
 // concurrent hook processes never read-modify-write a shared file and a crash leaves no half entry.
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { renameWithRetry, writeFileAtomic } from "../shared/atomic-write.mjs";
 import { stateRoot } from "../work/state-file.mjs";
 import { FACTS } from "../shared/facts.generated.mjs";
 
@@ -120,11 +121,7 @@ function fifoFileName(now) {
   return `${String(now).padStart(15, "0")}-${String(counter).padStart(6, "0")}-${randomBytes(4).toString("hex")}.json`;
 }
 
-async function writeAtomic(path, dir, text) {
-  const temp = join(dir, `.tmp-${process.pid}-${randomBytes(6).toString("hex")}`);
-  await writeFile(temp, text, { mode: 0o600 });
-  await rename(temp, path);
-}
+const writeAtomic = (path, dir, text) => writeFileAtomic(path, text);
 
 export async function enqueue({ directory, lane, entry, now = Date.now() }) {
   if (!directory) throw new TypeError("outbox directory is required");
@@ -283,7 +280,7 @@ async function flushLane({ directory, lane, send, server, deadline, clock, count
     // file and is not deleted with the one we sent.
     const inflight = join(directory, lane, `.inflight-${file.name}`);
     try {
-      await rename(file.path, inflight);
+      await renameWithRetry(file.path, inflight);
     } catch {
       continue;
     }
@@ -332,15 +329,15 @@ async function flushLane({ directory, lane, send, server, deadline, clock, count
     // it replaces this one, so put ours back only if the slot is still empty.
     const exists = await stat(file.path).then(() => true, () => false);
     if (lane === "observed" && exists) await rm(inflight, { force: true });
-    else await rename(inflight, file.path).catch(() => {});
+    else await renameWithRetry(inflight, file.path).catch(() => {});
     return;
   }
 }
 
 // Inflight files left by a flusher that crashed mid-send go back in the queue (or yield to a newer
 // observed snapshot).
-async function recoverInflight(directory) {
-  for (const lane of LANES) {
+async function recoverInflight(directory, lanes = LANES) {
+  for (const lane of lanes) {
     const dir = join(directory, lane);
     let names = [];
     try {
@@ -352,12 +349,25 @@ async function recoverInflight(directory) {
       const original = join(dir, name.slice(".inflight-".length));
       const exists = await stat(original).then(() => true, () => false);
       if (exists) await rm(join(dir, name), { force: true });
-      else await rename(join(dir, name), original).catch(() => {});
+      else await renameWithRetry(join(dir, name), original).catch(() => {});
     }
   }
 }
 
-export async function flush({ directory, send, server, budgetMs = 10_000, now = () => Date.now() }) {
+/**
+ * True when a lane's folder holds nothing at all (not even an inflight leftover or a temp file), so a caller whose
+ * flush would only lock, scan and unlock can skip it. One readdir; a missing folder is empty.
+ */
+export async function laneIdle({ directory, lane }) {
+  try {
+    return (await readdir(join(directory, lane))).length === 0;
+  } catch (error) {
+    return error?.code === "ENOENT";
+  }
+}
+
+/** `lanes` limits the flush to those lanes (a work command flushes only the declared one, never renaming hook snapshots). */
+export async function flush({ directory, send, server, budgetMs = 10_000, now = () => Date.now(), lanes = LANES }) {
   if (!directory) throw new TypeError("outbox directory is required");
   if (typeof send !== "function") throw new TypeError("outbox flush needs a send function");
   const origin = serverOrigin(server);
@@ -367,15 +377,17 @@ export async function flush({ directory, send, server, budgetMs = 10_000, now = 
   if (!token) return { sent: 0, pending: (await pending({ directory })).total, dead: 0, locked: true };
   const counts = { sent: 0, dead: 0 };
   try {
-    await recoverInflight(directory);
+    await recoverInflight(directory, lanes);
     const deadline = clock() + Math.max(0, budgetMs);
-    for (const lane of LANES) {
+    for (const lane of lanes) {
       await flushLane({ directory, lane, send, server: origin, deadline, clock, counts });
     }
   } finally {
     await releaseLock(directory, token);
   }
-  return { sent: counts.sent, pending: (await pending({ directory })).total, dead: counts.dead };
+  const left = await pending({ directory });
+  // `declared` only for a caller that limited the lanes: it already needs that count and skips a second scan.
+  return { sent: counts.sent, pending: left.total, dead: counts.dead, ...(lanes === LANES ? {} : { declared: left.declared }) };
 }
 
 export async function pending({ directory, now = Date.now() }) {

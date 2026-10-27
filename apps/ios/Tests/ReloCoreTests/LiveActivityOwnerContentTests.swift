@@ -94,8 +94,21 @@ struct LiveActivityOwnerContentTests {
         #expect(sparse.lockScreen == .shown)
         #expect(sparse.needsYouCount == 0)
         #expect(sparse.chip == .quiet)
+        let bare = try JSONDecoder().decode(LiveActivityOwner.self, from: Data(#"{"state":"stale"}"#.utf8))
+        #expect(bare.declaredAt == nil, "a missing declaredAt is nil, never the epoch (it rendered 'updated 59 days ago')")
+        #expect(bare.finishedAt == nil)
         let unknownPlacement = try JSONDecoder().decode(LiveActivityOwner.self, from: Data(#"{"state":"moving","placement":"orbit","declaredAt":1800000000}"#.utf8))
         #expect(unknownPlacement.lockScreen == .shown, "unknown placement renders the shown layout")
+    }
+
+    @Test("The owner block carries the island's live count; an older push without it reads zero")
+    func liveCount() throws {
+        let decode = { (json: String) in try JSONDecoder().decode(LiveActivityOwner.self, from: Data(json.utf8)) }
+        let counted = try decode(#"{"state":"moving","placement":"shown","needsYouCount":1,"live":3}"#)
+        #expect(counted.live == 3 && counted.needsYouCount == 1)
+        #expect(try decode(#"{"state":"moving","placement":"shown","needsYouCount":0}"#).live == 0)
+        let again = try decode(String(decoding: JSONEncoder().encode(counted), as: UTF8.self))
+        #expect(again.live == 3)
     }
 
     @Test("Step labels resolve by step id, not by position (sealed v2 text)")

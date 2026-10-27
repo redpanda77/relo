@@ -4,7 +4,7 @@
  * current or delivered, it arranges what the server declared, folds what is long (4.7), hides what is
  * skipped (U8) and opens only the current step (U7). The count (U1) is the contracts' `planProgress`.
  */
-import { isPlaceholderLabel } from "@/lib/e2ee/open-plan-text"
+import { isPlaceholderLabel } from "@relo/owner-crypto"
 import { planProgress, type PlanProgress, type WorkPlan } from "@relo/notification-contracts"
 
 export type PlanStepState = "open" | "current" | "done" | "skipped"

@@ -474,7 +474,7 @@ export function registerActivityRoutes(app: Hono, db: Database, apnsMode: ApnsMo
       if (!created) throw new Error("activity wait persistence failed");
       await transaction.commit();
       // The phone cannot show this card (Live Activities off or no start token): say so plainly.
-      if (apnsMode !== "disabled" && delivery.apnsJobs === 0) {
+      if (apnsMode !== "disabled" && delivery.eligibleDevices > 0 && delivery.apnsJobs === 0) {
         await notifyQuestionFallback(db,{ principalId: auth.principalId,activityId,apnsMode,
           contentCipher: dependencies.contentCipher });
       }

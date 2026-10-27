@@ -1,6 +1,7 @@
 import "./hermetic-env.mjs";
 import { loginKeyStoreEnv } from "./cli-fixtures.mjs";
 import assert from "node:assert/strict";
+import { resolve, sep } from "node:path";
 import test from "node:test";
 import { ApiError } from "../src/shared/errors.mjs";
 import { execute, run } from "../src/cli.mjs";
@@ -8,7 +9,7 @@ import { detectAccount } from "../src/shared/identity.mjs";
 import { detectComputerName } from "../src/shared/computer.mjs";
 import { cardDependencies, fakeCards } from "./fake-cards.mjs";
 
-const HOME = "/Users/test";
+const HOME = resolve("/Users/test");
 const darwin = { platform: "darwin", home: HOME };
 
 test("the computer name comes from RELO_COMPUTER, then scutil, then the hostname without its domain", () => {
@@ -25,18 +26,18 @@ test("the account is RELO_ACCOUNT, a stored nickname, or the name of a custom ag
   const claude = { CLAUDECODE: "1" };
   assert.deepEqual(detectAccount({ ...claude, RELO_ACCOUNT: "work" }, { home: HOME }).account, "work");
   assert.equal(detectAccount(claude, { home: HOME }).account, undefined);
-  assert.equal(detectAccount(claude, { home: HOME }).configDirectory, `${HOME}/.claude`);
-  assert.equal(detectAccount(claude, { home: HOME, accounts: () => ({ [`${HOME}/.claude`]: "personal" }) }).account, "personal");
+  assert.equal(detectAccount(claude, { home: HOME }).configDirectory, `${HOME}${sep}.claude`);
+  assert.equal(detectAccount(claude, { home: HOME, accounts: () => ({ [`${HOME}${sep}.claude`]: "personal" }) }).account, "personal");
   for (const [directory, expected] of [
-    [`${HOME}/.claude-work`, "work"], [`${HOME}/.claude_side`, "side"], [`${HOME}/accounts/acme`, "acme"],
-    [`${HOME}/other/.claude`, undefined], [`${HOME}/x/claude`, undefined],
+    [`${HOME}${sep}.claude-work`, "work"], [`${HOME}${sep}.claude_side`, "side"], [`${HOME}${sep}accounts/acme`, "acme"],
+    [`${HOME}${sep}other/.claude`, undefined], [`${HOME}${sep}x/claude`, undefined],
   ]) assert.equal(detectAccount({ ...claude, CLAUDE_CONFIG_DIR: directory }, { home: HOME }).account, expected, directory);
-  assert.equal(detectAccount({ CODEX_THREAD_ID: "t", CODEX_HOME: `${HOME}/.codex-lab` }, { home: HOME }).account, "lab");
+  assert.equal(detectAccount({ CODEX_THREAD_ID: "t", CODEX_HOME: `${HOME}${sep}.codex-lab` }, { home: HOME }).account, "lab");
   // A nickname beats the folder name; another agent's variable is ignored; no agent, no account.
-  assert.equal(detectAccount({ ...claude, CLAUDE_CONFIG_DIR: `${HOME}/.claude-work` },
-    { home: HOME, accounts: () => ({ [`${HOME}/.claude-work`]: "Acme" }) }).account, "Acme");
-  assert.equal(detectAccount({ ...claude, CODEX_HOME: `${HOME}/.codex-lab` }, { home: HOME }).account, undefined);
-  assert.equal(detectAccount({ CLAUDE_CONFIG_DIR: `${HOME}/.claude-work` }, { home: HOME }).account, undefined);
+  assert.equal(detectAccount({ ...claude, CLAUDE_CONFIG_DIR: `${HOME}${sep}.claude-work` },
+    { home: HOME, accounts: () => ({ [`${HOME}${sep}.claude-work`]: "Acme" }) }).account, "Acme");
+  assert.equal(detectAccount({ ...claude, CODEX_HOME: `${HOME}${sep}.codex-lab` }, { home: HOME }).account, undefined);
+  assert.equal(detectAccount({ CLAUDE_CONFIG_DIR: `${HOME}${sep}.claude-work` }, { home: HOME }).account, undefined);
 });
 
 test("notices carry the computer and account; flags override", async () => {
@@ -57,7 +58,7 @@ test("notices carry the computer and account; flags override", async () => {
 function accountDeps(initial = {}) {
   const state = { accounts: initial, written: [] };
   return { state, deps: {
-    env: { CLAUDECODE: "1", CLAUDE_CONFIG_DIR: `${HOME}/.claude-work` }, home: HOME, configPath: () => "/cfg/config.json",
+    env: { CLAUDECODE: "1", CLAUDE_CONFIG_DIR: `${HOME}${sep}.claude-work` }, home: HOME, configPath: () => "/cfg/config.json",
     loadAccounts: () => state.accounts,
     loadStoredConfig: async () => ({ apiUrl: "https://relo.example", token: "x".repeat(44), accounts: state.accounts, revision: "r1", path: "/cfg/config.json" }),
     writeConfig: async (path, config, options) => { state.written.push({ path, config, options }); state.accounts = config.accounts; },
@@ -67,11 +68,11 @@ function accountDeps(initial = {}) {
 test("relo account shows, stores and clears the nickname for this agent config directory", async () => {
   const { state, deps } = accountDeps();
   const shown = await execute(["account"], deps);
-  assert.deepEqual(shown.data, { account: "work", via: "directory", agent: "Claude Code", configDir: `${HOME}/.claude-work` });
+  assert.deepEqual(shown.data, { account: "work", via: "directory", agent: "Claude Code", configDir: `${HOME}${sep}.claude-work` });
   const saved = await execute(["account", "Acme"], deps);
   assert.equal(saved.data.account, "Acme");
   assert.equal(saved.data.saved, true);
-  assert.deepEqual(state.written[0].config.accounts, { [`${HOME}/.claude-work`]: "Acme" });
+  assert.deepEqual(state.written[0].config.accounts, { [`${HOME}${sep}.claude-work`]: "Acme" });
   assert.equal(state.written[0].options.expectedRevision, "r1");
   const cleared = await execute(["account", "--clear"], deps);
   assert.equal(cleared.data.account, "work");

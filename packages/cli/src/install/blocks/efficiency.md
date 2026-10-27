@@ -1,3 +1,2 @@
 - Give every subagent a model: the smallest for search and reading, the middle one for implementing, the largest for planning and review. Start fresh subagents, not forks.
 - No subagent for coupled work, small changes or back-and-forth; parallel ones are one step with `--progress n/m`.
-- Context past about 60%: `relo work handoff --next "…"` and continue in a fresh session rather than compacting.

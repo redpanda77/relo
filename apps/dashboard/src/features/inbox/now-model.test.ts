@@ -2,19 +2,19 @@ import { describe, expect, it } from "vitest"
 import { nowSummarySchema } from "@relo/notification-contracts"
 
 import fixtureText from "../../../../../packages/contracts/fixtures/owner-state-v1.json?raw"
-import { isSealedItem, nowBlocks, nowCardView, sinceLine, sinceParts, withoutUnreadable } from "@/features/inbox/now-model"
+import { isSealedItem, nowBlocks, nowCardView, settledView, sinceLine, sinceParts, withoutUnreadable } from "@/features/inbox/now-model"
 
 const summary = nowSummarySchema.parse(JSON.parse(fixtureText).nowSummary)
 
 describe("now model", () => {
   it("blocks follow the spec order", () => {
-    const order = ["needsYou", "waitingOnYou", "running", "sinceYouLooked", "fold", "fold", "sessions", "allClear"]
+    const order = ["needsYou", "waitingOnYou", "running", "sinceYouLooked", "parked", "sessions", "allClear"]
     const kinds = nowBlocks(summary).map((block) => block.kind)
     let at = 0
     for (const kind of kinds) {
       const next = order.indexOf(kind, at)
       expect(next).toBeGreaterThanOrEqual(0)
-      at = next + (kind === "fold" ? 0 : 1)
+      at = next + 1
     }
     expect(kinds.indexOf("sinceYouLooked")).toBeGreaterThan(kinds.indexOf("running"))
   })
@@ -33,7 +33,7 @@ describe("now model", () => {
   it("waiting on you is an open section, never a fold", () => {
     const blocks = nowBlocks(summary)
     expect(blocks.find((block) => block.kind === "waitingOnYou")).toMatchObject({ items: summary.waitingOnYou })
-    expect(blocks.some((block) => block.kind === "fold" && (block.fold as string) === "waitingOnYou")).toBe(false)
+    expect(blocks.some((block) => (block.kind as string) === "fold")).toBe(false)
   })
 
   it("quiet cards never say running, and only moving work ticks a running timer", () => {
@@ -63,7 +63,7 @@ describe("now model", () => {
     expect(nowCardView(done!, String).state?.label).toBe("Done")
     const unfinished = { ...done!, owner: { ...done!.owner, state: "left_unfinished" as const } }
     expect(nowCardView(unfinished, String).state?.label).toBe("Left unfinished")
-    expect(nowCardView(summary.waitingOnYou[0]!, String).state).toMatchObject({ label: "Your turn", tone: "yellow" })
+    expect(nowCardView(summary.waitingOnYou[0]!, String).state).toMatchObject({ label: "Your turn", tone: "amber" })
     // A needs-you card carries its reason as the mono chip instead of a state word.
     const needs = nowCardView(summary.needsYou[0]!, String)
     expect(needs.chip).toBe("QUESTION")
@@ -81,10 +81,22 @@ describe("now model", () => {
     expect(view.facts.join(" ")).not.toContain("Encrypted")
   })
 
-  it("folds equal the summary counts", () => {
-    for (const block of nowBlocks(summary)) {
-      if (block.kind === "fold") expect(block.count).toBe(summary.folds[block.fold])
-    }
+  it("Quiet and Paused are one parked block whose counts are the summary's folds", () => {
+    const parked = nowBlocks(summary).filter((block) => block.kind === "parked")
+    expect(parked).toHaveLength(1)
+    expect(parked[0]).toMatchObject({ quiet: { count: summary.folds.quiet, items: summary.quiet }, paused: { count: summary.folds.paused, items: summary.paused } })
+    expect(nowBlocks({ ...summary, folds: { ...summary.folds, quiet: 0, paused: 0 } }).some((block) => block.kind === "parked")).toBe(false)
+  })
+
+  it("settled rows: the outcome icon, \"project · computer\" and the time", () => {
+    const failed = { ...summary.recent[0]!, owner: { ...summary.recent[0]!.owner, state: "failed" as const } }
+    expect(settledView(failed, "MacBook")).toMatchObject({ kind: "failed", subline: `${failed.project} · MacBook`, title: failed.title })
+    expect(settledView({ ...failed, owner: { ...failed.owner, state: "dropped" as const } }, "MacBook").subline).toBe(`${failed.project} · dropped · MacBook`)
+    expect(settledView({ ...failed, owner: { ...failed.owner, state: "left_unfinished" as const } }, null)).toMatchObject({ kind: "left", subline: `${failed.project} · stopped` })
+    expect(settledView({ ...failed, owner: { ...failed.owner, state: "done" as const } }, null).kind).toBe("done")
+    expect(settledView({ ...failed, owner: { ...failed.owner, state: "stale" as const } }, null, "quiet").kind).toBe("quiet")
+    expect(settledView({ ...failed, owner: { ...failed.owner, state: "paused" as const } }, null, "paused").kind).toBe("paused")
+    expect(settledView(failed, null).time).toMatch(/\d/u)
   })
 
   it("a linked browser leaves out what it cannot open, never what needs the owner, and counts match", () => {

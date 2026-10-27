@@ -4,11 +4,13 @@
 // owned by the current user, no symlinks). It holds this computer's P-256 identity key and the
 // phone identity keys a person verified with a safety number. The CLI seals only to those phones.
 import { lstatSync, readFileSync } from "node:fs";
-import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { hkdfSync, randomBytes } from "node:crypto";
+import { hkdfSync } from "node:crypto";
+import { writeFileAtomic } from "../shared/atomic-write.mjs";
 import { configPath } from "../shared/config.mjs";
 import { AuthError } from "../shared/errors.mjs";
+import { ensurePrivateDirectory } from "../shared/private-dir.mjs";
 import { b64u, fromB64u, generateKeyPair, keyId, publicKeyFor } from "./e2ee.mjs";
 
 const MAX_STORE_BYTES = 256 * 1024;
@@ -63,22 +65,9 @@ export async function loadKeyStore(path, options) {
   return text === null ? emptyStore() : parseStore(text, path);
 }
 
-export async function saveKeyStore(path, store) {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomBytes(6).toString("hex")}.tmp`;
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(`${JSON.stringify(store, null, 2)}\n`);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  try {
-    await rename(temporary, path);
-  } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
-  }
+export async function saveKeyStore(path, store, { privateDirectory = {} } = {}) {
+  await ensurePrivateDirectory(dirname(path), privateDirectory);
+  await writeFileAtomic(path, `${JSON.stringify(store, null, 2)}\n`, { sync: true });
 }
 
 /** Loads the store, creating this computer's identity key on first use. */

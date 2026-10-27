@@ -6,12 +6,15 @@ struct CardTitle: View {
     let text: String
     var style: Style = .row
     @Environment(\.dynamicTypeSize) private var typeSize
+    /// The question's size in the design (16.5), scaling with Dynamic Type.
+    @ScaledMetric(relativeTo: .headline) private var heroSize: CGFloat = 16.5
 
     init(_ text: String, style: Style = .row) { self.text = text; self.style = style }
 
     var body: some View {
         Text(text)
-            .font(style == .hero ? ReloLayout.cardHero : ReloLayout.cardTitle)
+            .font(style == .hero ? .system(size: heroSize, weight: .semibold) : ReloLayout.cardTitle)
+            .lineSpacing(1.5)
             .foregroundStyle(.primary)
             .lineLimit(typeSize.isAccessibilitySize ? nil : (style == .hero ? 4 : 3))
             .fixedSize(horizontal: false, vertical: true)
@@ -23,12 +26,12 @@ struct CardTitle: View {
 /// What the work says about itself, in its own words: one or two lines under the title.
 struct CardStatusLine: View {
     let text: String
-    var color: Color = .reloSecondaryText
+    var color: Color = Color.white.opacity(0.6)
     var symbol: String? = nil
     var lines = 2
     @Environment(\.dynamicTypeSize) private var typeSize
 
-    init(_ text: String, color: Color = .reloSecondaryText, symbol: String? = nil, lines: Int = 2) {
+    init(_ text: String, color: Color = Color.white.opacity(0.6), symbol: String? = nil, lines: Int = 2) {
         self.text = text; self.color = color; self.symbol = symbol; self.lines = lines
     }
 

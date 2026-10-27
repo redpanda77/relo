@@ -1,3 +1,4 @@
+import { overviewReaderIds } from "../owner-overview.js";
 import { randomUUID } from "node:crypto";
 import { beginActivityTransaction,sameActivityTargets } from "../activity-lifecycle-domain.js";
 import { recordActivityCorrelationDecision,recordActivityStartEvidence } from "../activity-relationships.js";
@@ -89,7 +90,9 @@ export async function startServiceActivity(db:Database,actor:Extract<ActivityAct
            AND ($2::uuid[] IS NULL OR id=ANY($2::uuid[])) ORDER BY id`,
         [lockedService.principal_id,requestedIds],
       );
-      if (requestedIds && devices.rows.length !== requestedIds.length) {
+      // A named owner overview device (the Mac) is a valid recipient, never a card target (owner-overview.ts).
+      const namedReaders = requestedIds ? await overviewReaderIds(client,lockedService.principal_id,requestedIds) : [];
+      if (requestedIds && devices.rows.length+namedReaders.length !== requestedIds.length) {
         await transaction.rollback();
         return startRejected({error: "invalid_device_selection"},"invalid");
       }

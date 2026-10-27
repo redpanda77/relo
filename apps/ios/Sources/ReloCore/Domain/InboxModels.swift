@@ -245,6 +245,8 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
     /// The work this item belongs to (ADR 0007): a card of it, or a question or notice that references it.
     /// Sent as `work: { id, … }` or `workId`; absent from servers before works.
     public let work: ReloWork?
+    /// A work's outcome notification: the card of the round it reports, which History shows instead.
+    public let outcomeOf: String?
 
     public init(
         id: String,
@@ -272,7 +274,8 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         activityEvent: InboxHistoryMetadata.ActivityEvent? = nil,
         activity: InboxCardDigest? = nil,
         sealed: InboxSealedNotice? = nil,
-        work: ReloWork? = nil
+        work: ReloWork? = nil,
+        outcomeOf: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -300,6 +303,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         self.resources = resources
         self.sealed = sealed
         self.work = work.flatMap { $0.isEmpty ? nil : $0 }
+        self.outcomeOf = outcomeOf
     }
 
     public var validatedDestinationURL: URL? {
@@ -316,7 +320,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         case result, deliveryState
         case apnsAcceptedAt, receivedAt, openedAt, createdAt, destinationUrl, privacy
         case liveActivity, activitySummary, interaction, context, resources, activityEvent, activity, sealed
-        case work, workId
+        case work, workId, outcomeOf
     }
 
     public init(from decoder: Decoder) throws {
@@ -342,9 +346,10 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         activitySummary = try values.decodeIfPresent(InboxActivitySummary.self, forKey: .activitySummary)
         activityEvent = try values.decodeIfPresent(InboxHistoryMetadata.ActivityEvent.self, forKey: .activityEvent)
         activity = try values.decodeIfPresent(InboxCardDigest.self, forKey: .activity)
-        // An interaction kind or state from a newer server leaves the item readable without it.
-        interaction = try values.decodeSupportedInteraction(
-            InboxInteraction.self, forKey: .interaction, isSupported: InboxInteraction.isSupported)
+        // An interaction kind or state from a newer server, or one that breaks its own contract (a choice
+        // without its options), leaves the item readable without it: one such item never fails a whole sync.
+        interaction = (try? values.decodeSupportedInteraction(
+            InboxInteraction.self, forKey: .interaction, isSupported: InboxInteraction.isSupported)) ?? nil
         context = try values.decodeIfPresent(InboxContext.self, forKey: .context)
         resources = try values.decodeIfPresent(InboxResourceLinks.self, forKey: .resources)
         sealed = try values.decodeIfPresent(InboxSealedNotice.self, forKey: .sealed)
@@ -356,6 +361,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
             work = (work ?? ReloWork(id: nil)).with(id: id)
         }
         self.work = work.flatMap { $0.isEmpty ? nil : $0 }
+        outcomeOf = (try? values.decodeIfPresent(String.self, forKey: .outcomeOf)) ?? nil
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -386,6 +392,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
         try values.encodeIfPresent(activity, forKey: .activity)
         try values.encodeIfPresent(sealed, forKey: .sealed)
         try values.encodeIfPresent(work, forKey: .work)
+        try values.encodeIfPresent(outcomeOf, forKey: .outcomeOf)
     }
 
     /// The work this item belongs to, from wherever the server put it.
@@ -399,7 +406,7 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: destinationUrl, privacy: privacy, liveActivity: liveActivity, activitySummary: activitySummary,
             interaction: interaction, context: context, resources: resources, activityEvent: activityEvent,
-            activity: activity, sealed: sealed, work: work)
+            activity: activity, sealed: sealed, work: work, outcomeOf: outcomeOf)
     }
 }
 

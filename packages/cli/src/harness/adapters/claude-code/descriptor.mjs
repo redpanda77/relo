@@ -10,9 +10,11 @@ export default Object.freeze({
   // Claude Code on the web runs in a throwaway cloud sandbox, not on the owner's computer: no computer sign-in there.
   ephemeral: { label: "Claude Code on the web", detect: (env) => env.CLAUDE_CODE_REMOTE === "true" },
   // The harness's own process, for the liveness check: a command line of the claude binary (the CLI and the desktop app's bundled one) or of node running the package.
-  processPattern: /(?:^|\/)claude(?:\s|$)|@anthropic-ai\/claude-code/u,
+  // Windows: `...\claude-code\2.1.308\<hash>\claude.exe --output-format ...` (case-sensitive, so the desktop app's `Claude.exe` is not it).
+  processPattern: /(?:^|[\\/"'])claude(?:\.exe)?["']?(?:\s|$)|@anthropic-ai[\\/]claude-code/u,
   sessionVariable: "CLAUDE_CODE_SESSION_ID",
   config: { variable: "CLAUDE_CONFIG_DIR", home: ".claude" },
+  installation: { binaries: ["claude"], apps: [], folder: {} },
   instructions: { global: "CLAUDE.md" },
   skills: "skills",
   // Optimize's extras (plan 12 §4.6): named subagent definitions, and the status line setting in the hooks file.

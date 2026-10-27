@@ -365,10 +365,155 @@ extension AppModel {
         } catch {
             assertionFailure("Preview current work did not decode: \(error)")
         }
+        if !clear { seedPreviewSessions(now: now) }
+    }
+
+    /// Capture only: sessions on three machines for the header's satellites and machines line and the Now
+    /// sessions cards. MacBook Pro has two Claude Code sessions waiting for input and one Codex session working;
+    /// The build server has one Claude Code session working on a running card; Studio has two idle sessions.
+    func seedPreviewSessions(now: Date = .now) {
+        let iso = ISO8601DateFormatter()
+        func at(_ minutes: Double) -> String { iso.string(from: now.addingTimeInterval(minutes * 60)) }
+        func session(_ id: String, source: String, project: String, computer: String, icon: String, phase: String,
+                     waitingFor: String? = nil, title: String, minutesAgo: Double, contextPct: Int? = nil,
+                     costUsd: Double? = nil, workId: String? = nil, idle: Bool = false) -> [String: Any] {
+            var row: [String: Any] = [
+                "id": id, "source": source, "project": project, "computer": computer, "computerIcon": icon,
+                "phase": phase, "observed": true, "lastSeenAt": at(-minutesAgo), "title": title]
+            if let waitingFor { row["waitingFor"] = waitingFor }
+            if let contextPct { row["contextPct"] = contextPct }
+            if let costUsd { row["costUsd"] = costUsd }
+            if let workId { row["workId"] = workId }
+            if idle { row["fold"] = "idle" }
+            return row
+        }
+        let running: [String: Any] = [
+            "id": "act_previewrun", "title": "Deploying the server image", "status": "Pushing to the registry",
+            "sourceName": "Claude Code", "producer": "agent_session", "sessionId": "ses_preview_buildserver",
+            "notificationId": "ntf_previewworking", "computerIcon": "server", "project": "relo",
+            "startedAt": at(-22), "declaredAt": at(-1),
+            "steps": ["done": 2, "total": 3, "current": "Deploy"],
+            "owner": ["state": "moving", "evidenceAt": at(-1), "evidenceSource": "declared", "staleDate": at(19),
+                      "lockScreen": "shown", "now": "running", "relevance": 0.9, "apnsPriority": 5]]
+        let sessions: [[String: Any]] = [
+            session("ses_preview_release", source: "claude-code", project: "relo", computer: "MacBook Pro", icon: "laptop",
+                    phase: "waiting", waitingFor: "turn", title: "Mac release", minutesAgo: 3, contextPct: 62, costUsd: 1.84),
+            session("ses_preview_header", source: "claude-code", project: "relo", computer: "MacBook Pro", icon: "laptop",
+                    phase: "waiting", waitingFor: "input", title: "Now header study", minutesAgo: 1, contextPct: 88, costUsd: 4.10),
+            session("ses_preview_limits", source: "codex", project: "relo", computer: "MacBook Pro", icon: "laptop",
+                    phase: "working", title: "Rate limits", minutesAgo: 0, contextPct: 31),
+            session("ses_preview_buildserver", source: "claude-code", project: "relo", computer: "Build Server", icon: "server",
+                    phase: "working", title: "Server deploy", minutesAgo: 0, contextPct: 44, costUsd: 2.37, workId: "act_previewrun"),
+            session("ses_preview_studio1", source: "claude-code", project: "docs", computer: "Studio", icon: "desktop",
+                    phase: "idle", title: "Docs pass", minutesAgo: 70, idle: true),
+            session("ses_preview_studio2", source: "codex", project: "web", computer: "Studio", icon: "desktop",
+                    phase: "idle", title: "Landing copy", minutesAgo: 95, idle: true),
+        ]
+        let summary: [String: Any] = [
+            "serverTime": at(0), "refreshAt": at(30),
+            "sinceYouLooked": ["since": at(-120), "finished": 0, "failed": 0, "waitingOnYou": 0,
+                               "stoppedWithoutFinishing": 0, "needsYou": 0],
+            "needsYou": [], "recent": [], "waitingOnYou": [], "running": [running], "quiet": [], "paused": [],
+            "folds": ["waitingOnYou": 0, "quiet": 0, "paused": 0],
+            "lockScreen": ["cards": [], "needsYouCount": 0],
+            "sessions": ["sessions": sessions, "folds": ["idle": 2]]]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: summary)
+            receiveNowSummary(try ReloWireJSON.decoder().decode(NowSummary.self, from: data))
+        } catch {
+            assertionFailure("Preview sessions did not decode: \(error)")
+        }
     }
 }
 
 extension AppModel {
+    /// Capture only (`--screen sessions` / `--screen since`): settled work for Since you looked (done, failed,
+    /// dropped, a script's nightly backup) and for the Quiet and Paused fold, on top of the seeded sessions.
+    func seedPreviewSettled(now: Date = .now) {
+        guard var summary = nowSummary else { return }
+        let iso = ISO8601DateFormatter()
+        func at(_ minutes: Double) -> String { iso.string(from: now.addingTimeInterval(minutes * 60)) }
+        func item(_ id: String, _ title: String, state: String, status: String?, source: String, project: String?,
+                  session: String, minutesAgo: Double, lockScreen: String = "none") -> NowItem? {
+            var json: [String: Any] = [
+                "id": id, "notificationId": "ntf_" + id, "title": title, "sourceName": source, "producer": source == "script" ? "script" : "agent_session",
+                "sessionId": session, "startedAt": at(-minutesAgo - 30), "declaredAt": at(-minutesAgo),
+                "owner": ["state": state, "evidenceAt": at(-minutesAgo), "evidenceSource": "declared",
+                          "staleDate": at(-minutesAgo + 20), "lockScreen": lockScreen, "relevance": 0.3, "apnsPriority": 5]]
+            if let status { json["status"] = status }
+            if let project { json["project"] = project }
+            return (try? JSONSerialization.data(withJSONObject: json)).flatMap { try? ReloWireJSON.decoder().decode(NowItem.self, from: $0) }
+        }
+        summary.recent = [
+            item("act_prevdone", "Release server 0.18.113", state: "done", status: "Shipped", source: "Claude Code",
+                 project: "relo", session: "ses_preview_buildserver", minutesAgo: 20),
+            item("act_prevfailed", "Run the iOS layout tests", state: "failed",
+                 status: "CardLayoutTests failed: 2 of 41. The simulator was not booted.", source: "Claude Code",
+                 project: "relo", session: "ses_preview_release", minutesAgo: 33),
+            item("act_prevdropped", "Clean up old worktrees", state: "dropped", status: nil, source: "Claude Code",
+                 project: "relo", session: "ses_preview_header", minutesAgo: 55),
+            item("act_prevbackup", "Nightly backup", state: "done", status: "Verified", source: "script",
+                 project: nil, session: "ses_preview_buildserver", minutesAgo: 110),
+        ].compactMap { $0 }
+        summary.quiet = [
+            item("act_prevquiet1", "Index the design archive", state: "stale", status: "Waiting for the next batch",
+                 source: "Claude Code", project: "relo", session: "ses_preview_limits", minutesAgo: 40, lockScreen: "dimmed"),
+            item("act_prevquiet2", "Draft the changelog", state: "no_signal", status: nil, source: "Codex",
+                 project: "relo", session: "ses_preview_limits", minutesAgo: 75),
+        ].compactMap { $0 }
+        summary.paused = [
+            item("act_prevpaused", "Review the push payload", state: "paused", status: "Waiting for the review",
+                 source: "Claude Code", project: "relo", session: "ses_preview_header", minutesAgo: 90),
+        ].compactMap { $0 }
+        receiveNowSummary(summary)
+    }
+}
+
+extension AppModel {
+    /// Capture only (`--screen cards`): the work cards of the C1 design on the real Now screen. A live question
+    /// that the Now summary also lists (joined on its notification id for its project, session and computer), a
+    /// your-turn card with a finished plan, and a running card on the build server at its last step.
+    func seedPreviewCards(now: Date = .now) {
+        guard var summary = nowSummary else { return }
+        let iso = ISO8601DateFormatter()
+        func at(_ minutes: Double) -> String { iso.string(from: now.addingTimeInterval(minutes * 60)) }
+        func item(_ json: [String: Any]) -> NowItem? {
+            (try? JSONSerialization.data(withJSONObject: json)).flatMap { try? ReloWireJSON.decoder().decode(NowItem.self, from: $0) }
+        }
+        let question = item([
+            "id": "act_previewquestion", "title": "Approve the release?", "status": "All checks passed.",
+            "sourceName": "Claude Code", "producer": "agent_session", "sessionId": "ses_preview_release",
+            "notificationId": "ntf_11111111-2222-4333-8444-000000000011", "project": "relo",
+            "startedAt": at(-30), "declaredAt": at(-2),
+            "owner": ["state": "needs_you", "needsYou": "question", "evidenceAt": at(-2), "evidenceSource": "declared",
+                      "staleDate": at(18), "lockScreen": "top", "now": "needs_you", "relevance": 1, "apnsPriority": 10]])
+        let turn = item([
+            "id": "act_previewturn", "title": "Map the Now header’s states, then improve them",
+            "status": "Finished its turn and waits for your reply.",
+            "sourceName": "Claude Code", "producer": "agent_session", "sessionId": "ses_preview_header",
+            "project": "relo", "startedAt": at(-60), "declaredAt": at(-9),
+            "steps": ["done": 4, "total": 4, "current": "Report"],
+            "owner": ["state": "waiting_on_you", "evidenceAt": at(-9), "evidenceSource": "declared", "staleDate": at(20),
+                      "lockScreen": "your_turn", "now": "waiting_on_you", "relevance": 0.8, "apnsPriority": 5]])
+        let running = item([
+            "id": "act_previewrun", "title": "Map Relo for Mac’s onboarding and launch, then improve them",
+            "status": "Waiting on the deploy", "sourceName": "Claude Code", "producer": "agent_session",
+            "sessionId": "ses_preview_buildserver", "notificationId": "ntf_previewworking", "computerIcon": "server",
+            "project": "relo", "startedAt": at(-12), "declaredAt": at(-1),
+            "steps": ["done": 2, "total": 3, "current": "Deploy", "currentIndex": 3, "fill": 0.0],
+            "owner": ["state": "moving", "evidenceAt": at(-1), "evidenceSource": "declared", "staleDate": at(19),
+                      "lockScreen": "shown", "now": "running", "relevance": 0.9, "apnsPriority": 5]])
+        summary.needsYou = [question].compactMap { $0 }
+        summary.waitingOnYou = [turn].compactMap { $0 }
+        summary.running = [running].compactMap { $0 }
+        summary.sessions.sessions = summary.sessions.sessions.map { row in
+            var row = row
+            if row.id == "ses_preview_buildserver" { row.title = "Local installable version" }
+            return row
+        }
+        receiveNowSummary(summary)
+    }
+
     /// Capture only: the preview working activity as a Quiet work (session idle since 3:12 PM) in the Now summary,
     /// so its detail offers End work.
     func seedPreviewQuietWork(reason: String = "session_idle", now: Date = .now) {

@@ -156,6 +156,9 @@ suite("Dashboard marks end-to-end sealed items without their envelopes (ADR 0005
     await session("other-session-0000000000", "p-qqqqqqqqqqqqqqqq", envelope([phone.publicId], "names" as SealedEnvelope["kind"]));
     const named = (await db.query<{ id: string }>("SELECT id FROM agent_sessions WHERE session_hash='named-session-0000000000'")).rows[0]!.id;
 
+    // History lists what is over: the card ends before History is read.
+    await db.query("UPDATE live_activities SET state='ended',ended_at=now() WHERE id=$1", [card.body.activity.id.slice(4)]);
+
     const read = dashboard();
     const history = await read<"notification-history">("/dashboard/inbox/notifications");
     expect(history.namesFrom).toEqual([`ags_${named}`]);

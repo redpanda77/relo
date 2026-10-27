@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The notch page may listen for events, call the app's own commands (allowed by default) and reach a Relo server over HTTP through Rust: the server sends no CORS headers, so the webview cannot call it directly. https anywhere (the owner types the address); plain http only to this machine.",
+  "windows": ["notch"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*" },
+        { "url": "https://*:*" },
+        { "url": "http://localhost:*" },
+        { "url": "http://127.0.0.1:*" }
+      ]
+    }
+  ]
+}

@@ -98,7 +98,7 @@ test("start, update, repeat start and finish print the echo and keep one work pe
   assert.equal(s.server.calls[0].headers["relo-harness"], "claude-code");
   assert.ok(s.server.calls.every((c) => c.headers["relo-session-key"]));
   const file = statSync(join(s.state, "relo", "sessions"));
-  assert.equal(file.mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(file.mode & 0o777, 0o700);
   const before = s.server.calls.length;
   r = await s.relo("work", "start", "--goal", "Release 0.17");
   assert.match(r.text, /\(open, continuing\)/u);

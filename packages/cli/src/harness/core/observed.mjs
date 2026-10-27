@@ -50,6 +50,21 @@ export function observedEntry(state, labels, names, title) {
   };
 }
 
+/** The marker's recipients for an account whose labels go readable. */
+const PLAIN = "plain";
+const LABELS = ["project", "computer", "account"];
+
+/** The snapshot with each label handle replaced by its name (an account that is not encrypted). */
+function readableLabels(body, names, title) {
+  const readable = { ...body };
+  const line = typeof title === "string" ? title.replace(/\s+/gu, " ").trim().slice(0, 80).trim() : "";
+  if (line) readable.title = line;
+  for (const key of LABELS) {
+    if (typeof readable[key] === "string" && names[readable[key]]) readable[key] = names[readable[key]];
+  }
+  return readable;
+}
+
 /** How often a session whose names are already delivered looks for recipients that appeared since (a newly linked browser). */
 export const RECIPIENT_RECHECK_MS = 10 * 60_000;
 
@@ -68,7 +83,10 @@ export async function prepareObserved(entry, { client, config, dependencies }) {
   // A renamed session seals again: the title is part of what was delivered.
   const digest = createHash("sha256").update(JSON.stringify([Object.entries(names).sort(), title ?? null])).digest("hex");
   const directory = dependencies.hookStateDirectory;
-  const marker = join(directory, `names-${String(session).slice(0, 24)}`);
+  // names3-<server>-<session>: keyed by server origin too, so a "plain" marker for Relo for Mac's local server never
+  // makes snapshots to an encrypted remote one readable (names2- was per session; every live session seals once more).
+  const origin = createHash("sha256").update(String(config.apiUrl)).digest("hex").slice(0, 8);
+  const marker = join(directory, `names3-${origin}-${String(session).slice(0, 24)}`);
   const now = dependencies.now?.() ?? Date.now();
   const record = (recipients) => async () => {
     await mkdir(directory, { recursive: true, mode: 0o700 }).catch(() => {});
@@ -80,15 +98,19 @@ export async function prepareObserved(entry, { client, config, dependencies }) {
   } catch { /* not sent yet */ }
   const [sentDigest, sentRecipients, checkedAt] = delivered;
   const same = sentDigest === digest;
-  if (same && now - Number(checkedAt) < RECIPIENT_RECHECK_MS) return { body, after: async () => {} };
+  if (same && now - Number(checkedAt) < RECIPIENT_RECHECK_MS) {
+    return { body: sentRecipients === PLAIN ? readableLabels(body, names, title) : body, after: async () => {} };
+  }
   let sealed = null;
   try {
     // Sealing loads only here, in the flusher: a hook queuing a snapshot never pays for it.
     const { sealSessionNames } = await import("../../crypto/seal-notice.mjs");
-    sealed = await sealSessionNames({ names, title, session, client, config: { apiUrl: config.apiUrl }, dependencies,
+    sealed = await sealSessionNames({ names, title, session, client, config, dependencies,
       unlessRecipients: same ? sentRecipients : undefined });
   } catch { /* names stay handles until the next snapshot */ }
   if (!sealed) return { body, after: async () => {} };
+  // Nobody reads sealed names on this account and it is not encrypted: the labels go readable, like its cards.
+  if (sealed.plain) return { body: readableLabels(body, names, title), after: record(PLAIN) };
   // The recipients are unchanged: only the time of this check moves on.
   if (!sealed.envelope) { await record(sealed.recipients)(); return { body, after: async () => {} }; }
   return { body: { ...body, sealedNames: sealed.envelope }, after: record(sealed.recipients) };

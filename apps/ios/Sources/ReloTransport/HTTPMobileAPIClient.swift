@@ -54,6 +54,54 @@ public struct HTTPMobileAPIClient: MobileAPIClient, Sendable {
         }
     }
 
+    public func signInMethods() async throws -> SignInMethods {
+        let (data, response) = try await data(for: request(path: "api/mobile/sign-in/methods"))
+        // An older server has no such route: it offers only the browser sign-in.
+        guard response.statusCode == 200 else { return SignInMethods(apple: false) }
+        return try Self.decode(SignInMethods.self, from: data)
+    }
+
+    public func signInWithApple(
+        identityToken: String,
+        nonce: String,
+        codeChallenge: String,
+        installationId: String,
+        name: PersonNameComponents?
+    ) async throws -> AccountSession {
+        struct Name: Encodable { let firstName: String?; let lastName: String? }
+        struct Input: Encodable {
+            let identityToken: String; let nonce: String; let codeChallenge: String; let installationId: String; let name: Name?
+        }
+        struct Output: Decodable {
+            struct Session: Decodable { let id: String; let expiresAt: Date }
+            let sessionToken: String; let session: Session; let user: AccountUser
+        }
+        struct Refusal: Decodable { let error: String?; let status: String? }
+        // Apple shares the name only the first time; empty parts are left out.
+        let given = name?.givenName.flatMap { $0.isEmpty ? nil : $0 }
+        let family = name?.familyName.flatMap { $0.isEmpty ? nil : $0 }
+        var request = request(path: "api/mobile/sign-in/apple", method: "POST")
+        request.httpBody = try Self.makeEncoder().encode(Input(
+            identityToken: identityToken, nonce: nonce, codeChallenge: codeChallenge, installationId: installationId,
+            name: given == nil && family == nil ? nil : Name(firstName: given, lastName: family)
+        ))
+        let (data, response) = try await data(for: request)
+        switch response.statusCode {
+        case 200:
+            let output = try Self.decode(Output.self, from: data)
+            return AccountSession(accessToken: output.sessionToken, sessionId: output.session.id,
+                                  expiresAt: output.session.expiresAt, user: output.user)
+        case 202: throw AppleSignInRefusal.approvalPending
+        case 400: throw MobileAPIError.invalidRequest
+        case 401, 403, 409:
+            let refusal = try? Self.decode(Refusal.self, from: data)
+            if let code = refusal?.error, let known = AppleSignInRefusal(serverError: code) { throw known }
+            throw response.statusCode == 403 ? MobileAPIError.accountDisabled : MobileAPIError.invalidRequest
+        case 429: throw MobileAPIError.rateLimited(retryAfterSeconds: nil)
+        default: throw MobileAPIError.unavailable
+        }
+    }
+
     public func validateAccountSession(token: String) async throws -> AccountSession {
         var request = request(path: "api/auth/get-session")
         request.authorize(bearer: token)

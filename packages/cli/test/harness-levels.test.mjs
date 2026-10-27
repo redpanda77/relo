@@ -73,7 +73,9 @@ test("every installed hook command names a canonical event or a local role the h
     for (const [native, groups] of Object.entries(entries)) {
       for (const g of groups) for (const h of g.hooks) {
         const name = h.command.split(" ")[2];
-        if (name in EVENT_COMMANDS) assert.equal(adapter.events[native], EVENT_COMMANDS[name], `${adapter.id} ${native}`);
+        // The idle prompt is a Notification the adapter refines to `idle` (see claude-code refine).
+        if (name === "idle") assert.equal(adapter.refine("wait", { notification_type: "idle_prompt" }), "idle");
+        else if (name in EVENT_COMMANDS) assert.equal(adapter.events[native], EVENT_COMMANDS[name], `${adapter.id} ${native}`);
       }
     }
   }

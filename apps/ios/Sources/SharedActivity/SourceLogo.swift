@@ -1,40 +1,46 @@
+import ReloCore
 import SwiftUI
 
 /// A known agent's own mark in place of its name ("Claude Code" reads as the Claude Code mascot).
-/// Unknown sources keep their name. Marks: Lobe Icons (MIT), template-rendered and tinted here.
-enum SourceLogo: Equatable, Sendable {
-    case claudeCode, codex, openCode
+/// Unknown sources keep their name. Which sources are known: ReloCore's KnownHarness.
+/// Marks: Lobe Icons (MIT) for Claude Code, OpenCode and Antigravity; Simple Icons (CC0) for the rest.
+struct SourceLogo: Equatable, Sendable {
+    let harness: KnownHarness
+
+    static let claudeCode = SourceLogo(harness: .claudeCode)
+
+    init(harness: KnownHarness) { self.harness = harness }
 
     init?(sourceName: String) {
-        switch sourceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "claude code", "claude", "claude-code": self = .claudeCode
-        case "codex", "openai codex", "codex cli": self = .codex
-        case "opencode", "open code": self = .openCode
-        default: return nil
-        }
+        guard let harness = KnownHarness(source: sourceName) else { return nil }
+        self.harness = harness
     }
 
     var assetName: String {
-        switch self {
+        switch harness {
         case .claudeCode: "SourceClaudeCode"
         case .codex: "SourceCodex"
         case .openCode: "SourceOpenCode"
+        case .gemini: "SourceGemini"
+        case .antigravity: "SourceAntigravity"
+        case .claudeDesktop: "SourceClaudeDesktop"
+        case .cursor: "SourceCursor"
+        case .copilot: "SourceCopilot"
+        case .vscode: "SourceVSCode"
+        case .amp: "SourceAmp"
         }
     }
 
-    var name: String {
-        switch self {
-        case .claudeCode: "Claude Code"
-        case .codex: "Codex"
-        case .openCode: "OpenCode"
-        }
-    }
+    var name: String { harness.label }
 
     /// The brand's own color where it has one; otherwise the surrounding text color.
     var tint: Color? {
-        switch self {
+        switch harness {
         case .claudeCode: Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
-        case .codex, .openCode: nil
+        case .claudeDesktop: Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
+        case .gemini: Color(red: 0x31 / 255, green: 0x86 / 255, blue: 0xFF / 255)
+        case .vscode: Color(red: 0x00 / 255, green: 0x7A / 255, blue: 0xCC / 255)
+        case .codex, .openCode, .antigravity, .cursor, .copilot, .amp: nil
         }
     }
 }

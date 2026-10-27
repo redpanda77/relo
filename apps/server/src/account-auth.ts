@@ -2,7 +2,15 @@ import { betterAuth } from "better-auth";
 import { bearer, twoFactor } from "better-auth/plugins";
 import type { Database } from "./db.js";
 
-export function createAccountAuth(authDb: Database, baseURL: string, secret: string, clientIpHeader?: string) {
+/** Sign in with Apple (apple-sign-in.ts): the web Services ID and the iPhone app's bundle ID, each optional. */
+export type AppleSignInConfig = { servicesId?: string | undefined; bundleId?: string | undefined };
+
+export function appleSignInEnabled(apple: AppleSignInConfig | undefined): apple is AppleSignInConfig {
+  return Boolean(apple?.servicesId || apple?.bundleId);
+}
+
+export function createAccountAuth(authDb: Database, baseURL: string, secret: string, clientIpHeader?: string, apple?: AppleSignInConfig) {
+  const appleAudiences = [apple?.servicesId,apple?.bundleId].filter((value): value is string => Boolean(value));
   return betterAuth({
     appName: "Relo Notifications",
     baseURL,
@@ -14,6 +22,11 @@ export function createAccountAuth(authDb: Database, baseURL: string, secret: str
       minPasswordLength: 8,
       maxPasswordLength: 128,
     },
+    // Only Apple ID tokens, verified against Apple's keys for these audiences; apple-sign-in.ts is the only caller
+    // (the generic /api/auth/sign-in/social and callback routes are closed). The secret is never used: no code exchange.
+    ...(appleAudiences.length ? { socialProviders: { apple: {
+      clientId: appleAudiences[0]!, clientSecret: "unused", audience: appleAudiences,
+    } } } : {}),
     user: {
       modelName: "users",
       fields: {
@@ -34,6 +47,10 @@ export function createAccountAuth(authDb: Database, baseURL: string, secret: str
       },
     },
     account: {
+      // Sign in with Apple joins the account that already has its email (password accounts never verify theirs),
+      // but only when Apple says it verified that email: Apple is not a trusted provider. The match is on the exact
+      // address, so a private-relay address joins only an account created with that same relay address.
+      accountLinking: { enabled: true, requireLocalEmailVerified: false, trustedProviders: [] },
       modelName: "accounts",
       fields: {
         accountId: "account_id",

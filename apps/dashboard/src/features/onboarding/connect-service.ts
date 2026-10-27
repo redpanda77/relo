@@ -1,20 +1,19 @@
-import type { ComputerInviteStatus } from "@relo/notification-contracts"
+import type { ComputerInvite as MadeComputerInvite, ComputerInviteStatus } from "@relo/notification-contracts"
 
-import { b64u, fromB64u } from "@/lib/e2ee/bytes"
+import { b64u, fromB64u } from "@relo/owner-crypto"
 
-/** The one-time code made for the wizard (`POST /api/dashboard/computer-invites`). */
-export type ComputerInvite = {
-  inviteId: string
-  code: string
-  command: string
-  expiresAt: string
-  level: string
-  approvals: boolean
-  agents?: string[] | null
-  macApp?: boolean
+/** The one-time code made for the wizard (`POST /api/dashboard/computer-invites`): the code and one command per shell family. */
+export type ComputerInvite = MadeComputerInvite
+
+/** Which shell the new computer runs: `posix` (macOS, Linux) pipes install.sh into sh, `windows` runs install.ps1 in PowerShell. */
+export type ShellFamily = keyof MadeComputerInvite["commands"]
+
+export type InviteOptions = { level: string; approvals?: boolean; agents?: string[]; desktopApp?: boolean }
+
+/** The shell this browser's own computer most likely runs, as the picker's first guess. */
+export function guessShell(): ShellFamily {
+  try { return /^win/i.test(navigator.platform) ? "windows" : "posix" } catch { return "posix" }
 }
-
-export type InviteOptions = { level: string; approvals?: boolean; agents?: string[]; macApp?: boolean }
 
 /** The harnesses a code can set up, in the order the wizard lists them. */
 export const SETUP_AGENTS = ["claude-code", "codex", "opencode", "gemini", "cursor", "copilot", "amp"] as const
@@ -96,7 +95,7 @@ export type MadeInvite = {
   level: string
   approvals: boolean
   agents: string[] | null
-  macApp?: boolean
+  desktopApp?: boolean
 }
 
 let madeInMemory: MadeInvite | null = null
@@ -115,8 +114,8 @@ export const STATUS_POLL_MS = 5_000
 /** An agent that has not used the code by now probably stalled: offer the command. */
 export const AGENT_STALL_MS = 120_000
 
-export function agentPrompt(origin: string, code: string, level: string, macApp = false) {
-  return `Read ${origin}/install.md?code=${code}${macApp ? "&mac=1" : ""} and set up Relo on this computer at the ${level} level. It sends me a first notification when it is done.`
+export function agentPrompt(origin: string, code: string, level: string, desktopApp = false) {
+  return `Read ${origin}/install.md?code=${code}${desktopApp ? "&app=1" : ""} and set up Relo on this computer at the ${level} level. It sends me a first notification when it is done.`
 }
 
 /** The binding half of a code: 16 random bytes, b64url (22 chars). It lives in the wizard's memory only. */
@@ -127,7 +126,8 @@ export function newBind(): string {
 /** The code and command as the owner copies them: `rci_<redeem>.<bind>`. The server only ever saw `<redeem>`. */
 export function withBind(invite: ComputerInvite, bind: string): ComputerInvite {
   const code = `${invite.code}.${bind}`
-  return { ...invite, code, command: invite.command.split(invite.code).join(code) }
+  const bound = (command: string) => command.split(invite.code).join(code)
+  return { ...invite, code, command: bound(invite.command), commands: { posix: bound(invite.commands.posix), windows: bound(invite.commands.windows) } }
 }
 
 /**

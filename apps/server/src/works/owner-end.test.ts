@@ -79,6 +79,16 @@ suite("Owner End: POST /api/works/:workId/end",() => {
     expect((await end(work.id)).body.error).toBe("work_finished");
   });
 
+  test("the card id Now lists a work by ends it too, and another account's card is unknown",async () => {
+    const work = (await start()).body.work;
+    await age(work.id,25);
+    const card = (await db.query("SELECT id FROM live_activities WHERE work_id=$1",[work.id.slice(4)])).rows[0].id as string;
+    await bootstrapOwner(db,"other",other);
+    const stranger = await pair((await db.query("SELECT id FROM owner_principals WHERE handle='other'")).rows[0].id);
+    expect((await end(`act_${card}`,stranger)).status).toBe(404);
+    expect(await end(`act_${card}`)).toMatchObject({ status: 200,body: { work: { lifecycle: "dropped",outcome: "Ended by you" } } });
+  });
+
   test("a paused work can be ended",async () => {
     const work = (await start()).body.work;
     await request("POST","/api/session/works/current/pause",{ status: { readable: "Break" } },owner,A);

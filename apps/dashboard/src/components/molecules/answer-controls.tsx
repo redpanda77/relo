@@ -19,7 +19,11 @@
  * - `showPrompt?` (default true): render the question line above the buttons
  * - `countdown?` (default true): render the time left beside the buttons; a card that shows it in its
  *   header's corner passes false
+ * - `late?`: a missed question answered late: no countdown, no expiry line, no confirmation; the result says it was recorded late
  * - `link?`, `service?`: the browser link and the HTTP service; tests inject fakes, pages omit them
+ *
+ * `layout="card"`: the buttons are the card's answers: a two-column grid (`.card-answers`), the affirmative
+ * (or the last of a binary pair) first and filled in orange, the rest secondary glass.
  *
  * Rendering: one wrapping row, gap 8: the countdown (the card set's Countdown) leading, the buttons
  * (card action height; outline, then primary) trailing. In a card footer (`.card-actions`) the
@@ -34,7 +38,7 @@ import { Countdown } from "@/components/card"
 import { ActionButton, type ActionPhase } from "@/components/molecules/action-button"
 import { Button } from "@/components/ui/button"
 import { currentBrowserLink, type BrowserLink, type BrowserLinkState } from "@/lib/e2ee/browser-link"
-import type { AnswerSignature } from "@/lib/e2ee/answer"
+import type { AnswerSignature } from "@relo/owner-crypto"
 import { playCue } from "@/lib/sound"
 import { useTicker } from "@/lib/ticker"
 import { timeLeft } from "@/lib/time-left"
@@ -75,6 +79,8 @@ export function AnswerControls({
   countdown: showCountdown = true,
   link: givenLink,
   service,
+  layout = "row",
+  late = false,
   className,
 }: {
   question: AnswerableQuestion
@@ -83,6 +89,10 @@ export function AnswerControls({
   countdown?: boolean
   link?: AnswerLink | null
   service?: AnswerService
+  /** "card": the answers as a two-column grid of 42px capsules, the affirmative first and filled in orange (a Now question card). */
+  layout?: "row" | "card"
+  /** A missed question answered late: no countdown or expiry, and nothing to confirm (the answer is a note, never permission). */
+  late?: boolean
   className?: string
 }) {
   const link = givenLink === undefined ? currentBrowserLink() : givenLink
@@ -91,6 +101,7 @@ export function AnswerControls({
   const now = useTicker(Boolean(question.expiresAt))
   const left = timeLeft(question.expiresAt, now)
   const linked = state.status === "linked"
+  const cardLayout = layout === "card"
 
   // A sealed question: open it first; its context is what the answer binds to.
   const [opened, setOpened] = React.useState<{ context: string; prompt: string | null } | "unreadable" | null>(null)
@@ -167,7 +178,7 @@ export function AnswerControls({
     }
   }
 
-  const countdown = showCountdown && left !== "" ? <Countdown deadline={question.expiresAt} /> : null
+  const countdown = showCountdown && !late && left !== "" ? <Countdown deadline={question.expiresAt} /> : null
   const promptLine = showPrompt && prompt ? <p className="basis-full text-sm font-medium text-foreground">{prompt}</p> : null
 
   let body: React.ReactNode
@@ -188,7 +199,7 @@ export function AnswerControls({
         .
       </p>
     )
-  } else if (left === null) {
+  } else if (left === null && !late) {
     body = <p className="text-sm text-muted-foreground">This question expired. Nothing proceeds without your answer.</p>
   } else if (question.encrypted && question.readableHere === false) {
     // Sealed only to the phones (the computer did not seal it to this browser): no buttons that would fail.
@@ -199,12 +210,13 @@ export function AnswerControls({
     body = (
       <>
         <p className="mr-auto text-sm text-foreground">This lets {source} proceed.</p>
-        <div className="answer-buttons" role="group" aria-label="Confirm">
-          <Button type="button" variant="outline" disabled={Boolean(running)} onClick={() => setConfirming(null)}>
+        <div className={cardLayout ? "card-answers" : "answer-buttons"} role="group" aria-label="Confirm">
+          <Button type="button" variant="outline" className={cardLayout ? "card-answer" : undefined} disabled={Boolean(running)} onClick={() => setConfirming(null)}>
             Back
           </Button>
           <ActionButton
             type="button"
+            {...(cardLayout ? { tone: "var(--neon-orange)", className: "card-answer" } : {})}
             phase={phase && sameChoice(phase.choice, confirming) ? phase.phase : "idle"}
             pendingLabel="Signing…"
             successLabel="Answered"
@@ -218,20 +230,23 @@ export function AnswerControls({
   } else {
     const waiting = state.status === "starting" || (question.encrypted && opened === null)
     const choice = question.kind !== "approval" && question.actions.every((entry) => entry.action === "choose")
+    // The card's grid puts the primary (the last of the sender's order) first, as the iPhone does.
+    const ordered = cardLayout && !choice ? [...question.actions].reverse() : question.actions
     body = (
-      <div className="answer-buttons" role="group" aria-label="Answer">
-        {question.actions.map((entry, index) => {
-          const primary = !choice && index === question.actions.length - 1
+      <div className={cardLayout ? "card-answers" : "answer-buttons"} role="group" aria-label="Answer">
+        {ordered.map((entry) => {
+          const primary = !choice && question.actions.indexOf(entry) === question.actions.length - 1
           return (
             <ActionButton
               key={`${entry.action}:${entry.optionId ?? ""}`}
               type="button"
               variant={primary ? "default" : "outline"}
+              {...(cardLayout ? { tone: primary ? "var(--neon-orange)" : undefined, className: "card-answer" } : {})}
               disabled={waiting || Boolean(running && !sameChoice(running, entry))}
               phase={phase && sameChoice(phase.choice, entry) ? phase.phase : "idle"}
               pendingLabel="Signing…"
               successLabel="Answered"
-              onClick={() => (positive(entry) ? setConfirming(entry) : void submit(entry))}
+              onClick={() => (positive(entry) && !late ? setConfirming(entry) : void submit(entry))}
             >
               {entry.label}
             </ActionButton>
@@ -242,7 +257,7 @@ export function AnswerControls({
   }
 
   return (
-    <div className={cn("answer-controls", className)} data-slot="answer-controls">
+    <div className={cn("answer-controls", className)} data-slot="answer-controls" data-layout={cardLayout ? "card" : undefined}>
       {promptLine}
       {answered ? null : countdown}
       {body}

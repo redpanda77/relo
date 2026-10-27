@@ -5,7 +5,8 @@
 //   open     the session started and has not been prompted yet
 //   working  a prompt or a tool is running
 //   waiting  blocked on the owner (a permission or input prompt)
-//   stopped  the turn ended: it is the owner's turn
+//   stopped  the turn ended (or was stopped by the owner: `stop` is idempotent, so an interrupt that two signals
+//            report twice changes nothing): it is the owner's turn
 //   ended    the session ended
 //
 // Rules (principle 10, subagents roll up into their session):
@@ -21,6 +22,8 @@
 //     background job: like a subagent it holds the turn's Stop as working and counts as an open tool. No
 //     hook says when it finishes; it wakes the agent, so the job ends with the next turn's Stop (or after
 //     SUBAGENT_RETIRE_MS);
+//   - `idle` (the harness says the session sits at its prompt: Claude Code's idle_prompt) is a stop only for a
+//     working session with nothing running; a waiting, stopped or ended session keeps its phase;
 //   - once the parent stopped or ended, an uncounted subagent's event only extends lastSeenAt;
 //   - start with source "compact" keeps the phase; any other start (startup, resume, clear, fork) begins
 //     a fresh turn state ("open"), with seq kept so the server still sees a monotonic sequence;
@@ -92,6 +95,8 @@ export function reduce(previous, event, now) {
   s.lastSeenAt = at;
   // A hook's own reading of the context size (from the transcript); the status line's percent and cost stay as they were.
   if (Number.isInteger(event.contextTokens) && event.contextTokens >= 0) s.contextTokens = event.contextTokens;
+  // When the hook last read the transcript (hooks throttle the 256 KB tail read by it); local, never sent.
+  if (Number.isFinite(event.contextReadAt)) s.contextReadAt = event.contextReadAt;
   const setPhase = (phase) => {
     if (s.phase !== phase) { s.phase = phase; s.phaseSince = at; }
   };
@@ -164,7 +169,7 @@ export function reduce(previous, event, now) {
     // An end is final unless the session goes on: Claude Code can send SessionEnd and keep the session (on 19 Oct one
     // ran for hours after it, its card hidden as a finished session's). A prompt starts a turn, so it is never the late
     // tail of the last one; other activity counts once the reorder grace is over.
-    const goesOn = event.event === "prompt" || (event.event !== "end" && event.event !== "compact" && now - Date.parse(s.phaseSince) >= REORDER_GRACE_MS);
+    const goesOn = event.event === "prompt" || (event.event !== "end" && event.event !== "compact" && event.event !== "idle" && now - Date.parse(s.phaseSince) >= REORDER_GRACE_MS);
     if (!goesOn) return done();
     delete s.endReason;
     resetTurn();
@@ -232,6 +237,14 @@ export function reduce(previous, event, now) {
         s.stopPendingSince = null;
         setPhase("stopped");
       }
+      break;
+    case "idle":
+      // The turn finished and the harness has sat at its prompt: the owner's turn. Never overrides a prompt that
+      // waits on the owner, and never ends a turn that subagents or background jobs still hold.
+      if (s.phase !== "working" || running()) break;
+      resetTurn();
+      s.stopPendingSince = null;
+      setPhase("stopped");
       break;
     case "end":
       resetTurn();

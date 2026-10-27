@@ -63,11 +63,11 @@ function runCommand(command, input, { timeoutMs = TIMEOUT_MS, track } = {}) {
     let child;
     let output = "";
     try {
-      // Commands are `relo hook <event> --agent opencode` (commandsFor checks the prefix): plain words, no shell needed.
+      // Commands are `relo hook <event> --agent opencode` (commandsFor checks the prefix): plain words. Always this CLI's
+      // node and entry as an argument array, never a shell (there is none to rely on, least of all on Windows).
+      if (!LAUNCH) { resolve(""); return; }
       const words = command.split(" ").filter(Boolean);
-      child = LAUNCH
-        ? spawn(LAUNCH.node, [LAUNCH.script, ...words.slice(1)], { stdio: ["pipe", "pipe", "ignore"], env: process.env })
-        : spawn("/bin/sh", ["-c", command], { stdio: ["pipe", "pipe", "ignore"], env: process.env });
+      child = spawn(LAUNCH.node, [LAUNCH.script, ...words.slice(1)], { stdio: ["pipe", "pipe", "ignore"], env: process.env, windowsHide: true });
     } catch {
       resolve("");
       return;
@@ -104,7 +104,9 @@ function bridge({ directoryOf, lookupParent }) {
   async function parentOf(id) {
     if (!parents.has(id)) {
       let parent;
-      try { parent = await lookupParent(id); } catch { parent = undefined; }
+      // A failed lookup is not an answer: remembered as "no parent", a subagent stayed a root session for good and
+      // counted as one more session working. Only a lookup that answered is kept; a failure asks again next event.
+      try { parent = await lookupParent(id); } catch { return null; }
       remember(id, parent);
     }
     return parents.get(id) ?? null;
@@ -223,6 +225,11 @@ async function server({ client, directory }) {
           break;
         case "session.status":
           if (properties.status?.type === "idle") relo.send("session.idle", properties.sessionID, {}, "subagent.idle");
+          else if (properties.status?.type === "busy") relo.send("session.busy", properties.sessionID, {}, "subagent.busy");
+          break;
+        case "session.error":
+          // Esc (MessageAbortedError) or any failure ends the turn; a stop is idempotent next to session.idle.
+          relo.send("session.error", properties.sessionID, {}, "subagent.idle");
           break;
         case "session.deleted":
           relo.send("session.deleted", properties.info?.id, {}, "subagent.idle");
@@ -256,6 +263,11 @@ function onEvent(relo, event, answer) {
     relo.remember(data.sessionID, data.parentID);
     relo.titled(data.sessionID, data.title);
     relo.send("session.created", data.sessionID, { source: "startup" }, "subagent.created");
+  } else if (type === "session.error") {
+    relo.send("session.error", data.sessionID, {}, "subagent.idle");
+  } else if (type === "session.status") {
+    if (data.status?.type === "idle") relo.send("session.idle", data.sessionID, {}, "subagent.idle");
+    else if (data.status?.type === "busy") relo.send("session.busy", data.sessionID, {}, "subagent.busy");
   } else if (type === "session.renamed") {
     relo.titled(data.sessionID, data.title);
   } else if (type === "session.inbox.enqueued") {
@@ -305,8 +317,11 @@ async function setup(context) {
   });
   const answer = typeof context.permission?.reply === "function"
     ? async (reply) => { try { await context.permission.reply(reply); } catch { /* answered meanwhile */ } } : undefined;
-  (async () => {
-    for await (const event of context.event.subscribe("session.created")) {
+  // The typed API takes one event type per subscription, but the session.created stream has been seen to carry every
+  // event (the handlers below rely on it). The stop signals (session.error, session.status) get a subscription of
+  // their own so they arrive either way; every OpenCode event carries an id and one seen twice is handled once.
+  const consume = async (type) => {
+    for await (const event of context.event.subscribe(type)) {
       if (typeof event?.id === "string") {
         if (handled.has(event.id)) continue;
         handled.add(event.id);
@@ -320,7 +335,9 @@ async function setup(context) {
       }
       onEvent(relo, event, answer);
     }
-  })().catch(() => { listening = false; });
+  };
+  consume("session.created").catch(() => { listening = false; });
+  for (const type of ["session.error", "session.status"]) consume(type).catch(() => {});
 }
 
 export default { id: "relo", setup, server };

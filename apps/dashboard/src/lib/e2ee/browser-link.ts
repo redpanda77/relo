@@ -3,9 +3,22 @@
  * keys, registers them, learns whether a trusted phone linked it, trusts the account's computers on
  * first use, and fetches the envelopes sealed to it. Plaintext never leaves this module's callers.
  */
-import { signAnswer, type AnswerAction, type AnswerSignature } from "./answer"
-import { b64u, copy, fromB64u, type Bytes } from "./bytes"
-import { approveComputerSigningInput, approveDeviceSigningInput, keyId, linkSigningInput, openEnvelope, verifyBytes } from "./envelope"
+import {
+  approveComputerSigningInput,
+  approveDeviceSigningInput,
+  b64u,
+  copy,
+  fromB64u,
+  keyId,
+  linkSigningInput,
+  openEnvelope,
+  signAnswer,
+  verifyBytes,
+  type AnswerAction,
+  type AnswerSignature,
+  type Bytes,
+  type SealedOpener,
+} from "@relo/owner-crypto"
 import {
   ensureBrowserKeys,
   indexedDbStore,
@@ -515,12 +528,6 @@ export class BrowserLink {
       },
     }
   }
-}
-
-export type SealedOpener = {
-  fetchEnvelopes(ids: string[]): Promise<Record<string, unknown>>
-  /** The opened content, or null when this browser cannot open it. */
-  open(envelope: unknown): Promise<unknown>
 }
 
 /** A raw r||s signature (b64u) over `message` by an X9.63 public key (b64u). */

@@ -12,6 +12,8 @@ import {
 } from "../notification-content.js";
 import { accountOrRedirect,isoDate,pageNumber,secureHtml,dashboardDocumentOptions,type DashboardDocumentOptions } from "./http.js";
 import type { z } from "zod";
+import type { HistoryEnding, HistoryKind } from "@relo/notification-contracts";
+import { planRoundKeptSql,planStepKeptSql } from "../inbox/plan-digest-sql.js";
 import { loadNowSummary } from "../api/now-routes.js";
 import { loadOwnerStateInputs } from "../derive/load.js";
 import { deriveOwnerState } from "../derive/owner-state.js";
@@ -20,31 +22,42 @@ import { inboxDashboardBootstrapSchema,inboxOverviewSchema,notificationHistorySc
 
 const pageSize = 25;
 /**
- * History's kinds, as the iPhone names them: messages (plain notifications), decisions (anything that
- * asked the owner), Live Activities (work cards) and responses (what the owner answered). Each is a
- * predicate over one logical row of `notificationListSql`.
+ * History's kinds, as the iPhone's filter sheet names them: work (cards), messages (plain notifications)
+ * and decisions (anything that asked the owner). Each is a predicate over one row of `historyRowsSql`.
  */
 const historyKinds = {
-  message: `kind='notification' AND question IS NULL`,
-  decision: `question IS NOT NULL`,
-  live_activity: `kind='live_activity'`,
-  response: `question->>'state' IN ('approved','denied','yes','no','replied')`,
-} as const;
-/** History's states in the owner's words, mapped honestly onto the stored truth. */
-const historyStates = {
-  running: `activity_state='active'`,
-  done: `activity_state<>'active' AND activity_outcome='completed'`,
-  failed: `activity_state<>'active' AND activity_outcome='failed'`,
-  // Ended without saying it was done or failed: dropped, expired, replaced or ended by a safeguard.
-  stopped: `activity_state<>'active' AND activity_outcome IS NULL`,
-  answered: `question->>'state' IN ('approved','denied','yes','no','replied')`,
-  missed: `(question->>'state'='expired' OR (question->>'state'='pending'
-    AND (question->>'expiresAt')::timestamptz<=statement_timestamp()))`,
-} as const;
-type HistoryKind = keyof typeof historyKinds;
-type HistoryState = keyof typeof historyStates;
+  work: `kind='live_activity'`,
+  message: `kind<>'live_activity' AND question IS NULL`,
+  decision: `kind<>'live_activity' AND question IS NOT NULL`,
+} satisfies Record<HistoryKindName, string>;
+/** How a row ended, by meaning (history.ts): the Today chips and the filter's "How it ended". */
+const historyEndings = {
+  done: `history_signal='done'`,
+  attention: `history_signal='attention'`,
+  failed: `history_signal='failed'`,
+  message: `history_signal='message'`,
+} satisfies Record<HistoryEnding, string>;
+/**
+ * What a row means, as the iPhone classifies it (NowSignal.of over HistoryRow.Outcome): a card by its own
+ * state, a question by its answer, anything else is a message. Running work and a question still waiting
+ * are Now's, never History's.
+ */
+const historySignalSql = `CASE
+    WHEN kind='live_activity' THEN CASE
+      WHEN activity_state='active' OR (activity_state IS NULL AND state='active') THEN 'running'
+      WHEN activity_state IN ('expired','replaced') THEN 'attention'
+      WHEN activity_outcome='completed' THEN 'done'
+      WHEN activity_outcome='failed' THEN 'failed'
+      ELSE 'attention' END
+    WHEN question IS NOT NULL THEN CASE
+      WHEN question->>'state'='pending' AND (question->>'expiresAt' IS NULL
+        OR (question->>'expiresAt')::timestamptz>statement_timestamp()) THEN 'needsYou'
+      WHEN question->>'state' IN ('approved','yes','replied','responded','canceled') THEN 'done'
+      ELSE 'attention' END
+    ELSE 'message' END`;
+type HistoryKindName = HistoryKind;
 const historyKindNames = Object.keys(historyKinds) as HistoryKind[];
-const historyStateNames = Object.keys(historyStates) as HistoryState[];
+const historyEndingNames = Object.keys(historyEndings) as HistoryEnding[];
 
 /** "50%_off" -> "50\%\_off": a search is literal text, never a pattern. */
 function likePattern(query: string): string {
@@ -52,14 +65,14 @@ function likePattern(query: string): string {
 }
 
 /**
- * History's filters over one logical row ($2 kind … $7 search). The search reads only what the
+ * History's filters over one settled row ($2 kind, $3 ending … $7 search). The search reads only what the
  * server can read: a sealed row (ADR 0005) holds placeholders, so it matches by its source alone.
  */
-function historyFilterSql(kind: HistoryKind | null, state: HistoryState | null): string {
+function historyFilterSql(kind: HistoryKind | null, ending: HistoryEnding | null): string {
   return [
     // Every parameter stays referenced, so Postgres can type it.
     kind ? `($2::text IS NOT NULL AND (${historyKinds[kind]}))` : "$2::text IS NULL",
-    state ? `($3::text IS NOT NULL AND (${historyStates[state]}))` : "$3::text IS NULL",
+    ending ? `($3::text IS NOT NULL AND (${historyEndings[ending]}))` : "$3::text IS NULL",
     `($4::text IS NULL OR NULLIF(BTRIM(activity_context->>'project'),'')=$4)`,
     `($5::text IS NULL OR source=$5)`,
     `($6::text IS NULL OR NULLIF(BTRIM(activity_context->>'computer'),'')=$6)`,
@@ -718,6 +731,12 @@ const notificationListSql = `SELECT e.id,e.source,e.kind,e.title,e.body,e.deep_l
       WHERE q.principal_id=e.principal_id AND (qe.id=e.id OR (a.id IS NOT NULL
         AND qe.payload#>>'{liveActivity,activityId}'=('act_'||a.id::text)))
       ORDER BY q.created_at DESC,q.id DESC LIMIT 1) AS question,
+    -- A work's outcome notification names the card of the round it reports, so History shows that round once.
+    (SELECT card.id FROM live_activities card
+      WHERE card.principal_id=e.principal_id AND card.created_at<=e.created_at
+        AND card.work_id=CASE WHEN e.payload#>>'{workOutcome,workId}' ~ '^wrk_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          THEN substring(e.payload#>>'{workOutcome,workId}' from 5)::uuid END
+      ORDER BY card.created_at DESC LIMIT 1) AS outcome_card_id,
     ROW_NUMBER() OVER (
       PARTITION BY ${logicalNotificationKeySql}
       ORDER BY e.created_at DESC,e.id DESC
@@ -738,6 +757,16 @@ const notificationListSql = `SELECT e.id,e.source,e.kind,e.title,e.body,e.deep_l
     LEFT JOIN interactions i ON i.interaction_request_id=r.id
     WHERE r.notification_event_id=e.id ORDER BY i.created_at DESC NULLS LAST,r.created_at DESC LIMIT 1
   ) response ON true`;
+
+/**
+ * History's rows: one per card or notification, each with what it means, settled only, and without a work's
+ * outcome notification whose round's card is already a row ($1 is the principal).
+ */
+const historyRowsSql = `SELECT * FROM (SELECT *,${historySignalSql} AS history_signal
+    FROM (${notificationListSql}
+    WHERE e.principal_id=$1) logical_notifications
+    WHERE logical_rank=1) history_rows
+  WHERE history_signal NOT IN ('running','needsYou') AND outcome_card_id IS NULL`;
 
 export function createDashboardInboxHandlers(
   dependencies: InboxHandlerDependencies,
@@ -866,8 +895,8 @@ export function createDashboardInboxHandlers(
     if (account instanceof Response) return account;
     const kind =
       historyKindNames.find((value) => value === context.req.query("kind")) ?? null;
-    const state =
-      historyStateNames.find((value) => value === context.req.query("state")) ?? null;
+    const ending =
+      historyEndingNames.find((value) => value === context.req.query("ending")) ?? null;
     const projectOptions = await db.query<{ project: string }>(
       `SELECT DISTINCT ${notificationProjectSql} AS project
       FROM notification_events e
@@ -900,15 +929,13 @@ export function createDashboardInboxHandlers(
     const requestedComputer = optionalString(context.req.query("computer"));
     const computer = requestedComputer && computers.includes(requestedComputer) ? requestedComputer : null;
     const q = optionalString(context.req.query("q"))?.slice(0, 120) ?? null;
-    const filters = { kind, state, project, source, computer, q };
-    const filterParams = [account.principalId, kind, state, project, source, computer, q ? likePattern(q) : null];
-    const where = historyFilterSql(kind, state);
+    const filters = { kind, ending, project, source, computer, q };
+    const filterParams = [account.principalId, kind, ending, project, source, computer, q ? likePattern(q) : null];
+    const where = historyFilterSql(kind, ending);
     const counts = await loadCounts(db, account.principalId);
     const filtered = await db.query<{ total: number }>(
-      `SELECT count(*)::int AS total FROM (${notificationListSql}
-      WHERE e.principal_id=$1) logical_notifications
-      WHERE logical_rank=1
-        AND ${where}`,
+      `SELECT count(*)::int AS total FROM (${historyRowsSql}) settled
+      WHERE ${where}`,
       filterParams,
     );
     const pages = pagination(
@@ -918,12 +945,17 @@ export function createDashboardInboxHandlers(
       filters,
     );
     const notifications = await db.query<any>(
-      `SELECT * FROM (${notificationListSql}
-      WHERE e.principal_id=$1) logical_notifications
-      WHERE logical_rank=1
-        AND ${where}
+      `SELECT * FROM (${historyRowsSql}) settled
+      WHERE ${where}
       ORDER BY created_at DESC,id DESC LIMIT $8 OFFSET $9`,
       [...filterParams, pageSize, (pages.page - 1) * pageSize],
+    );
+    // The Today panel's rows, unfiltered and across pages: the browser cuts its own calendar day from them.
+    const recent = await db.query<{ at: Date | string; history_signal: HistoryEnding }>(
+      `SELECT COALESCE(activity_updated_at,created_at) AS at,history_signal FROM (${historyRowsSql}) settled
+      WHERE COALESCE(activity_updated_at,created_at)>statement_timestamp()-interval '36 hours'
+      ORDER BY at DESC LIMIT 2000`,
+      [account.principalId],
     );
     const unread = await db.query<{ project: string; count: number }>(
       `SELECT COALESCE(resource_project_name,'Direct') AS project,count(*)::int AS count
@@ -959,7 +991,14 @@ export function createDashboardInboxHandlers(
           count: number(row.count),
         })),
       },
-      notifications: await withAbsences(db,account.principalId,notifications.rows.map(notificationSummary)),
+      notifications: await withAbsences(db,account.principalId,notifications.rows.map((row) => ({
+        ...notificationSummary(row),
+        historySignal: row.history_signal as HistoryEnding,
+      }))),
+      recent: recent.rows.flatMap((row) => {
+        const at = isoDate(row.at);
+        return at ? [{ at, signal: row.history_signal }] : [];
+      }),
       pagination: pages,
     };
     return secureHtml(context, await renderDocument(await withNamesFrom(account.principalId, bootstrap),dashboardDocumentOptions(context)));
@@ -1035,13 +1074,14 @@ export function createDashboardInboxHandlers(
                 ORDER BY plan_step.position)
               FROM jsonb_array_elements(CASE WHEN jsonb_typeof(work.plan->'steps')='array' THEN work.plan->'steps' ELSE '[]'::jsonb END)
                 WITH ORDINALITY plan_step(step,position)
-              WHERE plan_step.step->>'state' IN ('open','current','done','skipped')),
+              WHERE plan_step.step->>'state' IN ('open','current','done','skipped') AND ${planStepKeptSql("plan_step.step")}),
             'rounds',CASE WHEN jsonb_typeof(work.plan->'rounds')='array' THEN (SELECT jsonb_agg(
                 jsonb_strip_nulls(jsonb_build_object('n',r.round->'n','state',r.round->'state',
                   'title',CASE WHEN hidden.yes THEN NULL ELSE to_jsonb(left(r.round->>'title',80)) END,
                   'outcome',CASE WHEN hidden.yes THEN NULL ELSE to_jsonb(left(r.round->>'outcome',200)) END,
                   'openedAt',r.round->'openedAt','closedAt',r.round->'closedAt')) ORDER BY r.position)
-              FROM jsonb_array_elements(work.plan->'rounds') WITH ORDINALITY r(round,position)) END)
+              FROM jsonb_array_elements(work.plan->'rounds') WITH ORDINALITY r(round,position)
+              WHERE ${planRoundKeptSql("r.position")}) END)
           FROM works work
           CROSS JOIN LATERAL (SELECT work.sealed_text IS TRUE
             OR COALESCE(e.payload->>'privacy',e.payload#>>'{liveActivity,privacy}','standard')='private' AS yes) hidden

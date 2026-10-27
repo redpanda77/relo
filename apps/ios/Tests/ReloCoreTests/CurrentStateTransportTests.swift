@@ -100,7 +100,7 @@ struct CurrentStateTransportTests {
         case "oversized": body = currentPage(items: Array(repeating: currentItem, count: 51).joined(separator: ","))
         case "cursor": body = currentPage(cursor: #""original""#, more: true)
         case "missingDeadline": body = currentPage(items: currentItem.replacingOccurrences(of: #""kind":"notice""#, with: #""kind":"decision""#))
-        default: body = String(repeating: "x", count: 1_048_577)
+        default: body = String(repeating: "x", count: 4_194_305)
         }
         let fixture = CurrentHTTPFixture([.json(body)]); defer { fixture.close() }
         await #expect(throws: InboxRemoteError.incompatibleResponse) { try await fixture.source.fetchCurrentPage(after: "original") }

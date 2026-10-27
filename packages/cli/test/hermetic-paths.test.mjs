@@ -15,9 +15,11 @@ import { stateRoot } from "../src/work/state-file.mjs";
 
 const realHome = userInfo().homedir;
 const under = (path, root) => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+// On Windows the temp folder lives inside the real profile (C:\Users\me\AppData\Local\Temp), so "under the real home" excludes it.
+const underRealHome = (path) => under(path, realHome) && !under(path, tmpdir());
 
 test("every default state path in a test process is a temp folder, never under the real home", () => {
-  assert.ok(!under(homedir(), realHome), `homedir() is ${homedir()}`);
+  assert.ok(!underRealHome(homedir()), `homedir() is ${homedir()}`);
   const paths = {
     "stateRoot()": stateRoot(),
     "stateRoot({})": stateRoot({}),
@@ -26,7 +28,7 @@ test("every default state path in a test process is a temp folder, never under t
     "configPath()": configPath(),
   };
   for (const [name, path] of Object.entries(paths)) {
-    assert.ok(!under(path, realHome), `${name} resolves under the real home: ${path}`);
+    assert.ok(!underRealHome(path), `${name} resolves under the real home: ${path}`);
     assert.ok(under(path, tmpdir()) || path.startsWith(`/private${tmpdir()}`), `${name} is not a temp folder: ${path}`);
   }
 });
@@ -59,7 +61,7 @@ test("an injected env without a state folder keeps the state under the injected 
   const env = { PATH: process.env.PATH, HOME: fakeRealHome, RELO_NO_BACKGROUND_FLUSH: "1", RELO_NO_UPDATE_CHECK: "1",
     RELO_KEY_STORE_PATH: join(sandbox, "e2ee.json"), RELO_HARNESS_CREDENTIAL_PATH: join(sandbox, "harness-credential") };
   await promisify(execFile)(process.execPath, ["--input-type=module", "-e", script, sandbox], { env, cwd: sandbox });
-  const queued = join(sandbox, ".local", "state", "relo", "outbox", "declared");
+  const queued = join(sandbox, ...(process.platform === "win32" ? ["AppData", "Local", "Relo", "state"] : [".local", "state", "relo"]), "outbox", "declared");
   assert.ok(existsSync(queued) && readdirSync(queued).length > 0, "the offline start was queued under the injected home");
   assert.deepEqual(readdirSync(fakeRealHome), [], "nothing was written under the process's home");
 });

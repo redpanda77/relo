@@ -9,6 +9,28 @@ afterEach(() => {
 })
 
 describe("AuthPage", () => {
+  const appleBootstrap = {
+    version: 1 as const, kind: "auth" as const, view: "form" as const, macApp: false, windowsApp: false,
+    route: { path: "/sign-in" as const, nextPath: "/mobile/sign-in?state=abc" }, mode: "sign-in" as const,
+    registration: "approval" as const, title: "Sign in to Relo", description: "Sign in.",
+  }
+
+  test("offers Continue with Apple only where the server has it, returning to the page asked for", () => {
+    const { unmount } = render(<AuthPage bootstrap={appleBootstrap} />)
+    expect(screen.queryByRole("link", { name: "Continue with Apple" })).toBeNull()
+    unmount()
+    render(<AuthPage bootstrap={{ ...appleBootstrap, appleSignIn: true }} />)
+    expect(screen.getByRole("link", { name: "Continue with Apple" }).getAttribute("href"))
+      .toBe("/api/auth/apple/start?next=%2Fmobile%2Fsign-in%3Fstate%3Dabc")
+  })
+
+  test("says why Sign in with Apple sent the browser back", () => {
+    window.history.replaceState(null, "", "/sign-in?apple=account_exists")
+    render(<AuthPage bootstrap={{ ...appleBootstrap, appleSignIn: true }} />)
+    expect(screen.getByText("This email already has a Relo account. Sign in with its password.")).toBeTruthy()
+    window.history.replaceState(null, "", "/")
+  })
+
   test("preserves sign-in field names and sends a remembered session", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -18,12 +40,12 @@ describe("AuthPage", () => {
       <AuthPage
         bootstrap={{
           version: 1,
-          kind: "auth", view: "form",
+          kind: "auth", view: "form", macApp: false, windowsApp: false,
           route: { path: "/", nextPath: "/dashboard/testing" },
           mode: "sign-in",
           registration: "closed",
           title: "Sign in to Relo",
-          description: "Use the same private Relo server account as your iPhone.",
+          description: "Sign in with your Relo account.",
         }}
         onAuthenticated={onAuthenticated}
       />
@@ -54,7 +76,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" }, mode: "sign-in",
+          version: 1, kind: "auth", view: "form", macApp: false, windowsApp: false, route: { path: "/", nextPath: "/dashboard" }, mode: "sign-in",
           registration: "closed", title: "Sign in to Relo", description: "Sign in.",
         }}
         onAuthenticated={onAuthenticated}
@@ -86,7 +108,7 @@ describe("AuthPage", () => {
       <AuthPage
         bootstrap={{
           version: 1,
-          kind: "auth", view: "form",
+          kind: "auth", view: "form", macApp: false, windowsApp: false,
           route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-up",
           registration: "closed",
@@ -105,7 +127,7 @@ describe("AuthPage", () => {
 
   test("offers registration only when the admin allows it", () => {
     const base = {
-      version: 1 as const, kind: "auth" as const, view: "form" as const,
+      version: 1 as const, kind: "auth" as const, view: "form" as const, macApp: false, windowsApp: false,
       route: { path: "/" as const, nextPath: "/dashboard" },
       mode: "sign-in" as const, title: "Sign in to Relo", description: "Use your account.",
     }
@@ -125,7 +147,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" },
+          version: 1, kind: "auth", view: "form", macApp: false, windowsApp: false, route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-in", registration: "open", title: "Sign in to Relo", description: "Use your account.",
         }}
       />
@@ -146,7 +168,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" },
+          version: 1, kind: "auth", view: "form", macApp: false, windowsApp: false, route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-in", registration: "approval", title: "Sign in to Relo", description: "Use your account.",
         }}
         onAuthenticated={onAuthenticated}
@@ -168,7 +190,7 @@ describe("AuthPage", () => {
     render(
       <AuthPage
         bootstrap={{
-          version: 1, kind: "auth", view: "form", route: { path: "/", nextPath: "/dashboard" },
+          version: 1, kind: "auth", view: "form", macApp: false, windowsApp: false, route: { path: "/", nextPath: "/dashboard" },
           mode: "sign-in", registration: "closed", title: "Sign in to Relo", description: "Use your account.",
         }}
       />
@@ -177,5 +199,57 @@ describe("AuthPage", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "guest-password" } })
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }))
     expect(await screen.findByText("The server admin has turned off access for this account.")).toBeTruthy()
+  })
+
+  describe("inside an app's browser sign-in", () => {
+    const callback = "relo://auth/callback?pending=relo_pending_" + "a".repeat(43) + "&state=state_abcdefghijklmnop"
+    const hintQuery = "code_challenge=" + "A".repeat(43) + "&code_challenge_method=S256&redirect_uri=relo%3A%2F%2Fauth%2Fcallback&state=state_abcdefghijklmnop"
+    const bootstrap = {
+      version: 1 as const, kind: "auth" as const, view: "form" as const, macApp: false, windowsApp: false,
+      route: { path: "/sign-in" as const, nextPath: "/mobile/sign-in?" + hintQuery },
+      mode: "sign-in" as const, registration: "approval" as const, title: "Sign in to Relo", description: "Use your account.",
+    }
+    function fillSignUp() {
+      fireEvent.click(screen.getByRole("button", { name: /Create an account/ }))
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Guest" } })
+      fireEvent.change(screen.getByLabelText("Email"), { target: { value: "guest@example.test" } })
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: "guest-password" } })
+      fireEvent.click(screen.getByRole("button", { name: "Create account" }))
+    }
+
+    test("a pending sign-up sends the browser back to the app with its ticket and says so", async () => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ status: "approval_pending", redirect: callback }), { status: 202 })
+      )
+      const onReturnToApp = vi.fn()
+      render(<AuthPage bootstrap={bootstrap} onReturnToApp={onReturnToApp} onAuthenticated={vi.fn()} />)
+      fillSignUp()
+      expect(await screen.findByText(/You can close this window/)).toBeTruthy()
+      expect(screen.getByText(/Your account is waiting for approval\./)).toBeTruthy()
+      expect(onReturnToApp).toHaveBeenCalledWith(callback)
+      expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>)["x-relo-mobile-sign-in"]).toBe(hintQuery)
+    })
+
+    test("a pending sign-in does the same, and any other address is never followed", async () => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "approval_pending", redirect: callback }), { status: 403 })
+      ).mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "approval_pending", redirect: "https://evil.example/?x=1" }), { status: 202 })
+      )
+      const onReturnToApp = vi.fn()
+      const { unmount } = render(<AuthPage bootstrap={bootstrap} onReturnToApp={onReturnToApp} />)
+      fireEvent.change(screen.getByLabelText("Email"), { target: { value: "guest@example.test" } })
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: "guest-password" } })
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }))
+      expect(await screen.findByText(/You can close this window/)).toBeTruthy()
+      expect(onReturnToApp).toHaveBeenCalledWith(callback)
+      unmount()
+      onReturnToApp.mockClear()
+      render(<AuthPage bootstrap={bootstrap} onReturnToApp={onReturnToApp} />)
+      fillSignUp()
+      expect(await screen.findByText("Waiting for approval")).toBeTruthy()
+      expect(onReturnToApp).not.toHaveBeenCalled()
+      expect(screen.queryByText(/You can close this window/)).toBeNull()
+    })
   })
 })

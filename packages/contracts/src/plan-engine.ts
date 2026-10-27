@@ -8,6 +8,8 @@
 export const WORK_PLAN_MAX_STEPS = 30;
 export const WORK_PLAN_MAX_NODES = 120;
 export const WORK_PLAN_MAX_DEPTH = 3;
+/** A card event carries the steps of only the newest rounds (a long work would otherwise repeat them all in every event). */
+export const PLAN_ROUNDS_WITH_STEPS = 3;
 
 export type StepState = "open" | "current" | "done" | "skipped";
 export type WorkResult = "finished" | "failed" | "dropped";

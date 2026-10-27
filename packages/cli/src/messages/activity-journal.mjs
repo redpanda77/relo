@@ -24,7 +24,10 @@ async function privateDirectory(path) {
   if (!info.isDirectory() || info.isSymbolicLink() || (process.platform !== "win32"
     && ((info.mode & 0o777) !== 0o700 || info.uid !== process.getuid?.()))) throw unavailable();
   if (created) for (let cursor = path; ; cursor = dirname(cursor)) {
-    await syncDirectory(cursor); if (cursor === dirname(created)) break;
+    await syncDirectory(cursor);
+    // Stop at the parent of the first folder made, or at the filesystem root: on Windows mkdir reports the
+    // path in a different spelling than dirname builds, so the equality alone never matched and looped forever.
+    if (cursor === dirname(created) || dirname(cursor) === cursor) break;
   }
 }
 function validate(record) {

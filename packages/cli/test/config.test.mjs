@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { posix } from "./posix-path.mjs";
 import {
   configPath,
   configRevision,
@@ -18,11 +19,11 @@ const TOKEN = `klb_${"s".repeat(44)}`;
 
 test("resolves platform-specific config paths", () => {
   assert.equal(
-    configPath({ env: {}, platform: "darwin", home: "/Users/test" }),
+    posix(configPath({ env: {}, platform: "darwin", home: "/Users/test" })),
     "/Users/test/Library/Application Support/relo/config.json",
   );
   assert.equal(
-    configPath({ env: { XDG_CONFIG_HOME: "/config" }, platform: "linux", home: "/home/test" }),
+    posix(configPath({ env: { XDG_CONFIG_HOME: "/config" }, platform: "linux", home: "/home/test" })),
     "/config/relo/config.json",
   );
   assert.equal(

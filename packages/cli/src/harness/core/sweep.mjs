@@ -8,6 +8,7 @@
 //    only for records without a harnessPid;
 //  - check: is that process alive, plus garbage collection. Throttled to once per interval (a marker file shared by
 //    every caller, so two callers never double the `ps` work).
+// A third, unthrottled step: the owner's interrupt (adapter.interrupted), for a working session quiet INTERRUPT_QUIET_MS.
 // Callers: the outbox flusher (every flush) and the Relo MCP server (once a minute, through the composition root),
 // so a quit session is found even when no hook fires anywhere. The MCP server also ends its harness's sessions the
 // moment the harness exits (endSessionsOfProcess).
@@ -23,6 +24,8 @@ export const SWEEP_INTERVAL_MS = 60_000;
  * higher seq for it and would ignore the snapshots.
  */
 export const ENDED_KEEP_MS = 8 * 24 * 60 * 60 * 1000;
+/** A working session quiet this long gets one look at its transcript for the owner's interrupt. */
+export const INTERRUPT_QUIET_MS = 20_000;
 const MAX_FILES = 500;
 const MAX_BYTES = 64 * 1024;
 /** Files removed per run, so cleaning up never holds the flusher. */
@@ -107,6 +110,17 @@ export async function sweepGoneSessions({ dependencies, adapterFor, intervalMs =
         }
         const adapter = adapterFor(state.harness);
         if (!adapter) continue;
+        // An interrupt runs no Stop hook (Claude Code): a quiet working session whose transcript now ends in the owner's
+        // interrupt marker is stopped, through the same state machine. A stop clears open tools; it is idempotent.
+        if (state.phase === "working" && !state.stopPendingSince && typeof adapter.interrupted === "function" && typeof state.transcriptPath === "string") {
+          const seen = Date.parse(state.lastSeenAt);
+          if (Number.isFinite(seen) && now - seen >= INTERRUPT_QUIET_MS && adapter.interrupted({ path: state.transcriptPath, since: seen })) {
+            await processEvent({ adapter, input: {}, dependencies: run,
+              event: { event: "stop", harness: state.harness, session: state.session, subagent: false, interrupted: true,
+                ...(typeof state.harnessCwd === "string" ? { cwd: state.harnessCwd } : {}) } });
+            continue;
+          }
+        }
         // Resolve: the process the hook noted becomes the harness's own (or none). A noted process already gone is
         // recorded as none, never as "gone": it may only have been the shell that ran the hook.
         if (state.harnessPid === undefined && Number.isInteger(state.harnessCandidate) && typeof adapter.harnessProcess === "function") {

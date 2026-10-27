@@ -1,11 +1,11 @@
 # Relo
 
-**Every agent, script and app you run, wherever it runs, in one place on your iPhone.**
+**Every agent, script and app you run, wherever it runs, in one place on your iPhone or your Mac.**
 
 Your work no longer happens on one machine or in one tool. Claude Code on the laptop, Codex on another
 computer, a nightly job on a home server, your own product waiting on a human decision. Each has its own
 way of saying it is done, and its own way of getting stuck waiting for you. Relo brings all of it to one
-place you already look at: your iPhone's Lock Screen and Dynamic Island.
+place you already look at: your iPhone's Lock Screen and Dynamic Island, or your Mac's notch.
 
 Every source, agent, script or app, can:
 
@@ -16,8 +16,9 @@ Every source, agent, script or app, can:
 | **Carry the details** | the plan's steps, the specifics, what happened while you were away | the iPhone app and the web Dashboard |
 | **Ask for your input** | approve, decline, answer yes/no or pick an option; no answer means no | right on the card, signed by your phone |
 
-All of it runs on **a server you own**, and the content is **end-to-end encrypted** on the computer that
-sends it: the server, its backups and Apple's push service carry your work but cannot read it.
+Run it on one Mac with **Relo for Mac** (nothing leaves the Mac, no server, no account), or on **a server
+you own**, where content is **end-to-end encrypted** on the computer that sends it once an iPhone is
+trusted: the server, its backups and Apple's push service carry your work but cannot read it.
 
 Why it matters: [docs/VALUE-PROPOSITION.md](docs/VALUE-PROPOSITION.md).
 
@@ -77,8 +78,9 @@ prompts to the phone. Everything works without them.
 
 ## Get started
 
-Three pieces, in about an hour: **your server**, **this computer**, **your iPhone**. The full guide is in
-the docs, which every Relo server also serves at `/docs`: [Get started](docs/site/get-started/index.md).
+Two ways in. **Relo for Mac:** download the app, no server. **Your own server:** your server, this
+computer, and optionally your iPhone, in about an hour. The full guide is in the docs, which every Relo
+server also serves at `/docs`: [Get started](docs/site/get-started/index.md).
 
 **Hand it to your coding agent.** Paste this into Claude Code, Codex or any agent. It runs the server,
 waits while you create the owner account, connects this computer and points you to the iPhone app, asking

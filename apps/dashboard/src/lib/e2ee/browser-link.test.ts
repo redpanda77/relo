@@ -2,8 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { safetyNumber } from "@relo/cli-e2ee"
 
 import { BrowserLink, linkCode } from "./browser-link"
-import { b64u } from "./bytes"
-import { approveComputerSigningInput, keyId } from "./envelope"
+import { approveComputerSigningInput, b64u, keyId } from "@relo/owner-crypto"
 import { memoryStore } from "./keys"
 import { hasLockedItems } from "./open-sealed"
 

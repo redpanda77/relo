@@ -93,6 +93,16 @@ public protocol MobileAPIClient: Sendable {
         codeVerifier: String,
         installationId: String
     ) async throws -> AccountSession
+    /// The sign-ins this server offers; a server without the route offers none beyond the browser.
+    func signInMethods() async throws -> SignInMethods
+    /// Signs in with a native Sign in with Apple identity token; throws `AppleSignInRefusal` when the server says no.
+    func signInWithApple(
+        identityToken: String,
+        nonce: String,
+        codeChallenge: String,
+        installationId: String,
+        name: PersonNameComponents?
+    ) async throws -> AccountSession
     func validateAccountSession(token: String) async throws -> AccountSession
     func registerDevice(
         sessionToken: String,
@@ -138,6 +148,14 @@ public extension MobileAPIClient {
         code: String,
         codeVerifier: String,
         installationId: String
+    ) async throws -> AccountSession { throw MobileAPIError.unavailable }
+    func signInMethods() async throws -> SignInMethods { SignInMethods(apple: false) }
+    func signInWithApple(
+        identityToken: String,
+        nonce: String,
+        codeChallenge: String,
+        installationId: String,
+        name: PersonNameComponents?
     ) async throws -> AccountSession { throw MobileAPIError.unavailable }
     func deliveryTransportStatus(sessionToken: String) async throws -> DeliveryTransportStatus {
         throw MobileAPIError.unavailable

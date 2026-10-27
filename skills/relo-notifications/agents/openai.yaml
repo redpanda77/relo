@@ -1,7 +1,7 @@
 interface:
   display_name: "Relo Notifications"
-  short_description: "A live view of your work on the owner's iPhone, with approvals"
-  default_prompt: "Use $relo-notifications to show this task live on my iPhone."
+  short_description: "A live view of your work on the owner's iPhone or Mac, with approvals"
+  default_prompt: "Use $relo-notifications to show this task live on my iPhone or Mac."
 
 policy:
   allow_implicit_invocation: true

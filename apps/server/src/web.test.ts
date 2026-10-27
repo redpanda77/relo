@@ -946,7 +946,7 @@ suite("account web authentication", () => {
       });
       if (firstLaunch) dashboardActivityId = body.activity.id;
       else expect(body.activity.id).toBe(dashboardActivityId);
-      expect(body.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
+      expect(body.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
       return body;
     };
     const primaryRun = await launch({
@@ -1138,7 +1138,7 @@ suite("account web authentication", () => {
       id: activityId, state: "active", status: "Running 73%", progress: 0.73, sequence: updateSequence,
       presentation: updatedPresentation,presentationHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(updatedBody.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
+    expect(updatedBody.delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
     expect(updatedBody.eventIds).toHaveLength(2);
     const persistedUpdate = await db.query(
       "SELECT presentation,presentation_sha256 FROM live_activities WHERE id=$1",
@@ -1234,7 +1234,7 @@ suite("account web authentication", () => {
     // The question folds into the running card: same card, now asking.
     expect(waitingBody.activity).toMatchObject({ id: activityId, status: "Needs you" });
     expect(waitingBody.interaction).toMatchObject({ kind: "approval", state: "pending" });
-    expect(waitingBody.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
+    expect(waitingBody.delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
     expect(waitingBody.eventIds).toHaveLength(2);
     expect(waitingBody.eventIds[0]).toBe(waitingBody.eventId);
     expect(waitingBody.interactions[0]).toEqual(waitingBody.interaction);
@@ -1434,7 +1434,7 @@ suite("account web authentication", () => {
     )).rows[0]).toEqual({
       presentation: terminalPresentation,presentation_sha256: endedBody.activity.presentationHash,
     });
-    expect(endedBody.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
+    expect(endedBody.delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 0 });
     expect(endedBody.eventIds).toHaveLength(2);
     const parentOperations = await db.query<any>(
       `SELECT operation,delivery_summary,companion_activity_id,activity_snapshot,

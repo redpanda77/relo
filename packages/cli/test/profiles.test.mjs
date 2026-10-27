@@ -164,3 +164,86 @@ test("switchProfile and writeConfig keep every other profile byte-equal in meani
   assert.equal(after.profiles.b.phoneTest, undefined);
   assert.equal(after.activeProfile, "b");
 });
+
+// Relo for Mac joins its own server into the profile `local`, beside whatever the owner signed in to already.
+const LOCAL_TOKEN = `relo_${"l".repeat(43)}`;
+const LOCAL_URL = "http://127.0.0.1:8187";
+const JOIN_CODE = `rci_${"a".repeat(32)}`;
+const localClient = (state, { down = false } = {}) => () => ({
+  redeemComputerInvite: async (body) => ({ accessToken: LOCAL_TOKEN, setup: { level: "track", approvals: false },
+    credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_llll", scopes: body.scopes } }),
+  revokeAuth: async () => { state.tokens.push("revoke-attempted"); if (down) throw new Error("connect ECONNREFUSED 127.0.0.1:8187"); return { revoked: true }; },
+  authStatus: async () => ({ authenticated: true, credential: { id: "k", clientName: "Studio", prefix: "p", scopes: SCOPES } }),
+});
+
+test("join --profile local --local saves its own profile, makes it active and leaves the others intact", async () => {
+  const b = await box();
+  const out = await b.run(["auth", "join", JOIN_CODE, "--api-url", LOCAL_URL, "--local", "--profile", "local", "--no-setup"], { clientFactory: localClient(b.state) });
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out.line));
+  const file = await b.read();
+  assert.deepEqual(Object.keys(file.profiles), ["default", "local"]);
+  assert.equal(file.activeProfile, "local");
+  assert.equal(file.profiles.default.token, HOME_TOKEN, "the other login is untouched");
+  assert.equal(file.profiles.default.apiUrl, "https://home.example");
+  assert.equal(file.profiles.local.token, LOCAL_TOKEN);
+  assert.equal(file.profiles.local.local, true);
+  assert.equal(out.line.join?.profile ?? out.line.profile, "local");
+  assert.equal(out.line.join?.left, undefined, "nothing was left: the other login stays as a profile");
+});
+
+test("join without --profile still replaces the active login and names the one it left", async () => {
+  const b = await box();
+  const out = await b.run(["auth", "join", JOIN_CODE, "--api-url", LOCAL_URL, "--local", "--no-setup"], { clientFactory: localClient(b.state) });
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out.line));
+  const file = await b.read();
+  assert.deepEqual(Object.keys(file.profiles), ["default"], "the active profile was overwritten, as before");
+  assert.equal(file.profiles.default.token, LOCAL_TOKEN);
+  assert.equal(out.line.join.left.server, "https://home.example", "the left login is named in the output");
+});
+
+test("logout --profile local removes it even when its server is down, and another profile becomes active", async () => {
+  const b = await box();
+  await b.run(["auth", "join", JOIN_CODE, "--api-url", LOCAL_URL, "--local", "--profile", "local", "--no-setup"], { clientFactory: localClient(b.state) });
+  const out = await b.run(["auth", "logout", "--profile", "local"], { clientFactory: localClient(b.state, { down: true }) });
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out.line));
+  assert.ok(b.state.tokens.includes("revoke-attempted"), "the revoke was tried");
+  assert.equal(out.line.credentialsRemoved, true);
+  assert.equal(out.line.activeProfile, "default");
+  const file = await b.read();
+  assert.deepEqual(Object.keys(file.profiles), ["default"]);
+  assert.equal(file.activeProfile, "default");
+  assert.equal(file.profiles.default.token, HOME_TOKEN);
+  // A profile that is not there is already logged out, and removes nothing.
+  const again = await b.run(["auth", "logout", "--profile", "local"], { clientFactory: localClient(b.state, { down: true }) });
+  assert.equal(again.exitCode, EXIT.OK);
+  assert.equal(again.line.alreadyLoggedOut, true);
+  assert.equal((await b.read()).profiles.default.token, HOME_TOKEN);
+});
+
+test("logout --profile on a profile that is not the active one keeps the active one", async () => {
+  const b = await box();
+  await b.run(["auth", "join", JOIN_CODE, "--api-url", LOCAL_URL, "--local", "--profile", "local", "--no-setup"], { clientFactory: localClient(b.state) });
+  await b.run(["auth", "switch", "default"]);
+  const out = await b.run(["auth", "logout", "--profile", "local"], { clientFactory: localClient(b.state) });
+  assert.equal(out.exitCode, EXIT.OK);
+  const file = await b.read();
+  assert.deepEqual(Object.keys(file.profiles), ["default"]);
+  assert.equal(file.activeProfile, "default");
+  assert.equal((await b.run(["activity", "list", "--profile", "x"])).exitCode, EXIT.USAGE, "--profile is still only for auth login, join and logout");
+});
+
+test("login without --api-url never reuses a local account's loopback address", async () => {
+  const b = await box({ legacy: false });
+  await writeConfig(b.path, { apiUrl: LOCAL_URL, token: LOCAL_TOKEN, local: true, profile: "local" });
+  const out = await b.run(["auth", "login", "--profile", "work", "--no-wait"]);
+  assert.equal(out.exitCode, EXIT.USAGE, JSON.stringify(out.line));
+  assert.match(out.line.error.message, /--api-url/u);
+  assert.match(out.line.error.hint, /Relo for Mac's own server/u);
+  assert.deepEqual(b.state.started, [], "no sign-in was started against the loopback address");
+  const join = await b.run(["auth", "join", JOIN_CODE, "--no-setup"]);
+  assert.equal(join.exitCode, EXIT.USAGE);
+  // A remote login's address is still reused, as before.
+  const remote = await box();
+  await remote.run(["auth", "login", "--profile", "work", "--no-wait"]);
+  assert.deepEqual(remote.state.started, ["https://home.example"]);
+});

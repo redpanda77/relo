@@ -97,3 +97,20 @@ test("doctor fails clearly when the schema is behind",async () => {
   expect(snapshot.ok).toBe(false);
   expect(snapshot.checks.database).toMatchObject({ ok: false,currentMigration: "0000_old" });
 });
+
+test("doctor treats an account whose only device is Relo for Mac as ready, but not a Mac beside a silent phone", async () => {
+  const now = new Date("2026-08-16T12:00:00.000Z");
+  const snapshotWith = async (devices: Record<string,string>) => readDoctorSnapshot({
+    query: async (sql: string) => {
+      if (sql.includes("schema_migrations")) return { rows: [{ version: latestMigration }] };
+      if (sql.includes("runtime_components")) return { rows: [{
+        release_identity: null,started_at: now,last_heartbeat_at: now,details: { mode: "disabled",configured: false },
+      }] };
+      return { rows: [devices] };
+    },
+  } as any,{ principalId: "principal",apnsMode: "disabled",now });
+  const macOnly = await snapshotWith({ active: "1",notifications: "0",live_activities: "0",owner_overview: "1" });
+  expect(macOnly.checks.devices).toMatchObject({ ok: true,ownerOverview: 1 });
+  const silentPhone = await snapshotWith({ active: "2",notifications: "0",live_activities: "0",owner_overview: "1" });
+  expect(silentPhone.checks.devices.ok).toBe(false);
+});

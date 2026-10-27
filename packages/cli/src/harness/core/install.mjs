@@ -1,7 +1,10 @@
 // The `json-hooks-map` settings editor (plan 05 §3.1): reconciles one settings file to exactly the
 // adapter's entries for a level. Relo's entries are those whose command starts with `relo hook `;
-// everyone else's hooks, keys and order are untouched.
+// everyone else's hooks, keys and order are untouched. An adapter whose file holds named hooks
+// (`install.named`, Antigravity: { "<hook name>": { Event: [...] } }) gets one named hook of Relo's own, read and
+// written here in the same { Event: [group] } shape: its `inline` events list handlers without a group.
 import { UsageError } from "../../shared/errors.mjs";
+import { bareCommand, isReloHookCommand, reloRest } from "./launch.mjs";
 
 export const HOOK_COMMAND_PREFIX = "relo hook ";
 
@@ -33,17 +36,35 @@ export function parseSettings(path, text) {
   return settings;
 }
 
-const isRelo = (hook) => typeof hook?.command === "string" && hook.command.startsWith(HOOK_COMMAND_PREFIX);
+// Bare (`relo hook x`) or absolute (`"node" "relo.mjs" hook x`, written on Windows): both are Relo's.
+const isRelo = (hook) => isReloHookCommand(hook?.command);
 const canonical = (value) => JSON.stringify(value, Object.keys(value ?? {}).sort());
-const roleOf = (hook) => hook.command.slice(HOOK_COMMAND_PREFIX.length).split(" ")[0];
+const roleOf = (hook) => reloRest(hook.command).slice("hook ".length).split(" ")[0];
+
+/** The hook events of a parsed settings file as { Event: [group] }: its `hooks`, or the adapter's named hook. */
+function hookEvents(settings, adapter) {
+  const named = adapter?.install?.named;
+  if (!named) return settings?.hooks ?? {};
+  const own = settings?.[named.key];
+  if (!own || typeof own !== "object" || Array.isArray(own)) return {};
+  return Object.fromEntries(Object.entries(own).filter(([, value]) => Array.isArray(value))
+    .map(([event, value]) => [event, named.inline.includes(event) ? [{ hooks: value }] : value]));
+}
+
+/** The adapter's named hook for { Event: [group] } entries, in its file's own shape. */
+function namedHook(entries, adapter) {
+  const { named, eventOrder } = adapter.install;
+  return Object.fromEntries(eventOrder.filter((event) => entries[event])
+    .map((event) => [event, named.inline.includes(event) ? entries[event].flatMap((g) => g.hooks) : entries[event]]));
+}
 
 /** Relo's groups per event in a parsed settings object (Relo-only groups, other hooks stripped). */
-export function reloGroups(settings) {
+export function reloGroups(settings, adapter) {
   const out = {};
-  for (const [event, groups] of Object.entries(settings?.hooks ?? {})) {
+  for (const [event, groups] of Object.entries(hookEvents(settings, adapter))) {
     if (!Array.isArray(groups)) continue;
     const mine = groups.filter((g) => Array.isArray(g?.hooks) && g.hooks.some(isRelo))
-      .map((g) => ({ ...(g.matcher !== undefined ? { matcher: g.matcher } : {}), hooks: g.hooks.filter(isRelo) }));
+      .map((g) => ({ ...(g.matcher !== undefined ? { matcher: g.matcher } : {}), hooks: g.hooks.filter(isRelo).map((h) => ({ ...h, command: bareCommand(h.command) })) }));
     if (mine.length > 0) out[event] = mine;
   }
   return out;
@@ -60,7 +81,7 @@ const signature = (groups) => JSON.stringify(Object.keys(groups).sort().map((eve
  */
 export function inferLevel(settings, adapter) {
   const { levels, entries } = adapter.install;
-  const mine = reloGroups(settings);
+  const mine = reloGroups(settings, adapter);
   if (Object.keys(mine).length === 0) return { level: "off", outdated: [] };
   for (const level of levels) if (level !== "off" && signature(entries(level)) === signature(mine)) return { level, outdated: [] };
   const roles = new Set(Object.values(mine).flatMap((gs) => gs.flatMap((g) => g.hooks.map(roleOf))));
@@ -78,13 +99,24 @@ export function inferLevel(settings, adapter) {
 }
 
 /** { action: created|updated|unchanged|removed, level, content?, empty?, changes: {before, after} } */
-export function planLevel(path, current, level, adapter) {
+export function planLevel(path, current, level, adapter, launch) {
   const { levels, entries, eventOrder } = adapter.install;
   if (!levels.includes(level)) throw new Error(`unknown hook level ${level}`);
   const form = current === undefined ? { indent: "  ", eol: "\n", final: "\n", bom: "" } : layout(current);
   const settings = current === undefined || current.trim() === "" ? {} : parseSettings(path, current);
   const before = JSON.stringify(settings);
-  const had = reloGroups(settings);
+  const had = reloGroups(settings, adapter);
+  const wanted = entries(level, launch);
+  const changes = { before: Object.keys(had).sort(), after: Object.keys(wanted).sort() };
+  if (adapter.install.named) {
+    // Relo's named hook is rewritten whole; the owner's `enabled` switch on it is kept.
+    const { key } = adapter.install.named;
+    const own = settings[key];
+    const enabled = own && typeof own === "object" && !Array.isArray(own) ? own.enabled : undefined;
+    delete settings[key];
+    if (Object.keys(wanted).length > 0) settings[key] = { ...(enabled === undefined ? {} : { enabled }), ...namedHook(wanted, adapter) };
+    return outcome({ current, level, settings, before, form, changes });
+  }
   const hooks = settings.hooks ?? {};
   for (const event of Object.keys(hooks)) {
     if (!Array.isArray(hooks[event])) continue;
@@ -95,10 +127,12 @@ export function planLevel(path, current, level, adapter) {
     });
     if (kept.length > 0) hooks[event] = kept; else delete hooks[event];
   }
-  const wanted = entries(level);
   for (const event of eventOrder) if (wanted[event]) hooks[event] = [...(hooks[event] ?? []), ...wanted[event]];
   if (Object.keys(hooks).length > 0) settings.hooks = hooks; else delete settings.hooks;
-  const changes = { before: Object.keys(had).sort(), after: Object.keys(wanted).sort() };
+  return outcome({ current, level, settings, before, form, changes });
+}
+
+function outcome({ current, level, settings, before, form, changes }) {
   if (current === undefined && level === "off") return { action: "unchanged", level, changes };
   if (JSON.stringify(settings) === before && current !== undefined) return { action: "unchanged", level, changes };
   const empty = Object.keys(settings).length === 0;

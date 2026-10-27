@@ -1,0 +1,241 @@
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+import { openSealedTree as openTree, type SealedMemory, type SealedOpener } from "../src"
+
+/** What a client keeps (the Dashboard keeps it in lib/encrypted.ts); the transform itself holds no state. */
+function recorder() {
+  const names = new Map<string, string>()
+  const sessionTitles = new Map<string, string>()
+  const memory: SealedMemory = {
+    rememberNames: (learned) => learned.forEach((name, handle) => names.set(handle, name)),
+    rememberSessionTitle: (id, title) => void sessionTitles.set(id, title),
+  }
+  return { names, sessionTitles, memory }
+}
+/** A rendered name, or null for a handle nothing named (the Dashboard omits those). */
+const knownName = (names: Map<string, string>, value: string) =>
+  /^[ptwca]-[a-z2-7]{16}$/u.test(value) ? (names.get(value) ?? null) : value
+let remembered = recorder()
+const openSealedTree = <T,>(tree: T, opener: SealedOpener) => openTree(tree, opener, remembered.memory)
+
+const PROJECT = "p-abcdefghijklmnop"
+const COMPUTER = "c-bcdefghijklmnopq"
+const SESSION_PROJECT = "p-cdefghijklmnopqr"
+const UNKNOWN = "t-defghijklmnopqrs"
+
+function page() {
+  return {
+    kind: "inbox-overview",
+    shell: { account: { id: "acct_1" } },
+    route: { path: `/dashboard/inbox?project=${PROJECT}` },
+    filterOptions: { projects: [PROJECT] },
+    pendingResponses: [{ notificationId: "ntf_q1", encrypted: true, title: "Encrypted question", prompt: "Encrypted question", source: COMPUTER }],
+    recentNotifications: [
+      {
+        id: "ntf_n1",
+        encrypted: true,
+        title: "Encrypted notice",
+        body: "Encrypted",
+        context: { project: PROJECT, taskTitle: `Work on ${UNKNOWN}` },
+        question: { kind: "question", encrypted: true, prompt: "Encrypted question" },
+        activity: {
+          id: "act_a1",
+          encrypted: true,
+          title: "Encrypted card",
+          status: "Updating…",
+          detail: null,
+          steps: { done: 1, total: 3, current: "Step 2" },
+          stepItems: [{ label: "Step 1", state: "done" }, { label: "Step 2", state: "active" }, { label: "Step 3", state: "pending" }],
+        },
+      },
+      { id: "ntf_locked", encrypted: true, title: "Encrypted notice", body: "Encrypted" },
+      { id: "ntf_plain", title: "Plain", body: "Readable" },
+    ],
+    sessions: [{ id: "ags_s1", project: SESSION_PROJECT, computer: COMPUTER }],
+  }
+}
+
+const contents: Record<string, unknown> = {
+  ntf_q1: { title: "Deploy?", summary: "Ship 0.15.5 to production?", body: "Ship 0.15.5 to production?" },
+  ntf_n1: { title: "Tests passed", summary: "848 green", body: "## Result\nAll good", names: { [PROJECT]: "relo" } },
+  act_a1: { title: "Release", status: "Building", detail: "iOS archive", steps: ["Lint", "Build", "Upload"], names: { [COMPUTER]: "Studio Mac" } },
+  ags_s1: { names: { [SESSION_PROJECT]: "relo-ios" } },
+}
+
+/** The envelope kind each row carries, as the CLI seals them. */
+const KINDS: Record<string, string> = { ntf_q1: "question", ntf_n1: "notice", act_a1: "card", ags_s1: "names" }
+
+beforeEach(() => {
+  remembered = recorder()
+})
+
+describe("openSealedTree", () => {
+  it("replaces placeholders, resolves handles and leaves unopenable items locked", async () => {
+    const fetchEnvelopes = vi.fn(async (ids: string[]) =>
+      Object.fromEntries(ids.filter((id) => id in contents).map((id) => [id, { id, kind: KINDS[id] }]))
+    )
+    const original = page()
+    const { tree, opened } = await openSealedTree(original, {
+      fetchEnvelopes,
+      open: async (envelope) => contents[(envelope as { id: string }).id] ?? null,
+    })
+    expect(fetchEnvelopes).toHaveBeenCalledTimes(1)
+    expect(fetchEnvelopes.mock.calls[0]![0].sort()).toEqual(["act_a1", "ags_s1", "ntf_locked", "ntf_n1", "ntf_q1"])
+    expect(opened).toBe(4)
+    expect(original.recentNotifications[0]!.title).toBe("Encrypted notice")
+
+    expect(tree.pendingResponses[0]).toMatchObject({ encrypted: false, opened: true, title: "Deploy?", prompt: "Ship 0.15.5 to production?", source: "Studio Mac" })
+    const [notice, locked, plain] = tree.recentNotifications
+    expect(notice).toMatchObject({ encrypted: false, title: "Tests passed", body: "## Result\nAll good", context: { project: "relo", taskTitle: `Work on ${UNKNOWN}` } })
+    expect(notice!.question).toMatchObject({ encrypted: false, prompt: "848 green" })
+    expect(notice!.activity).toMatchObject({
+      encrypted: false,
+      title: "Release",
+      status: "Building",
+      detail: "iOS archive",
+      steps: { current: "Build" },
+      stepItems: [{ label: "Lint" }, { label: "Build" }, { label: "Upload" }],
+    })
+    expect(locked).toEqual({ id: "ntf_locked", encrypted: true, title: "Encrypted notice", body: "Encrypted" })
+    expect(plain).toEqual({ id: "ntf_plain", title: "Plain", body: "Readable" })
+    expect(tree.sessions[0]).toMatchObject({ id: "ags_s1", project: "relo-ios", computer: "Studio Mac" })
+    // Links and server filter values keep the handle; displayName() names it.
+    expect(tree.route.path).toContain(PROJECT)
+    expect(tree.filterOptions.projects).toEqual([PROJECT])
+    expect(remembered.names.get(PROJECT)).toBe("relo")
+    expect(remembered.names.has(UNKNOWN)).toBe(false)
+  })
+
+  it("opens a sealed plan by step id: labels, details and round titles, never by position (plan 12b)", async () => {
+    const tree = {
+      recentNotifications: [
+        {
+          id: "ntf_p1",
+          encrypted: true,
+          title: "Encrypted card",
+          body: "Encrypted",
+          activity: {
+            id: "act_p1",
+            encrypted: true,
+            title: "Encrypted card",
+            status: "Updating…",
+            plan: [{ id: "x2", state: "current", round: 2 }, { id: "x1", state: "done", round: 1 }],
+            rounds: [{ n: 1, state: "closed" }, { n: 2, state: "open" }],
+          },
+        },
+      ],
+    }
+    const content = {
+      title: "Login fix",
+      status: "Working",
+      phases: [
+        { id: "r1", title: "Fix the crash", outcome: "Fixed", steps: [{ id: "x1", label: "Reproduce it" }] },
+        { id: "r2", title: "Expand to iOS", steps: [{ id: "x2", label: "Port the fix", detail: "same refresh path" }] },
+      ],
+    }
+    const { tree: opened } = await openSealedTree(tree, {
+      fetchEnvelopes: async (ids) => Object.fromEntries(ids.map((id) => [id, { id, kind: id.startsWith("act_") ? "card" : "notice" }])),
+      open: async () => content,
+    })
+    const activity = opened.recentNotifications[0]!.activity as { plan: Array<Record<string, unknown>>; rounds: Array<Record<string, unknown>> }
+    expect(activity.plan).toMatchObject([{ id: "x2", label: "Port the fix", detail: "same refresh path" }, { id: "x1", label: "Reproduce it" }])
+    expect(activity.rounds).toMatchObject([{ n: 1, title: "Fix the crash", outcome: "Fixed" }, { n: 2, title: "Expand to iOS" }])
+  })
+
+  it("review L4: an envelope of the wrong kind for its row stays locked, and a handle two envelopes name differently stays a handle", async () => {
+    const swapped: Record<string, string> = { ...KINDS, act_a1: "notice", ags_s1: "card" }
+    const conflicting: Record<string, unknown> = { ...contents, ntf_q1: { ...(contents.ntf_q1 as object), names: { [PROJECT]: "someone-else" } } }
+    const { tree } = await openSealedTree(page(), {
+      fetchEnvelopes: async (ids) => Object.fromEntries(ids.filter((id) => id in conflicting).map((id) => [id, { id, kind: swapped[id] }])),
+      open: async (envelope) => conflicting[(envelope as { id: string }).id] ?? null,
+    })
+    expect(tree.recentNotifications[0]!.activity).toMatchObject({ encrypted: true })
+    expect(tree.sessions[0]!.project).toBe(SESSION_PROJECT)
+    expect(tree.recentNotifications[0]!.context).toMatchObject({ project: PROJECT })
+  })
+
+  it("opens Now items by their card id and keeps them valid for the strict Now contract", async () => {
+    const item = {
+      id: "act_n1",
+      title: "Encrypted card",
+      status: "Updating…",
+      notificationId: "ntf_n9",
+      steps: { done: 1, total: 3, current: "Step 2" },
+      owner: { state: "moving" },
+    }
+    const plain = { ...item, id: "act_plain", title: "Readable", status: "Building", steps: { ...item.steps } }
+    const { tree, opened } = await openSealedTree({ now: { running: [item, plain] } }, {
+      fetchEnvelopes: async (ids) => Object.fromEntries(ids.filter((id) => id === "act_n1").map((id) => [id, { id, kind: "card" }])),
+      open: async () => ({ title: "x".repeat(260), status: "Linting", steps: ["Lint", "Build", "Upload"] }),
+    })
+    expect(opened).toBe(1)
+    const [sealed, readable] = tree.now.running
+    expect(sealed).toEqual({ ...item, title: "x".repeat(200), status: "Linting", steps: { done: 1, total: 3, current: "Build" } })
+    expect(readable).toEqual(plain)
+  })
+
+  describe("History: names from the page's agent sessions (namesFrom)", () => {
+    // A card's later updates seal its text without names: only the session's names envelope names the project.
+    const history = (namesFrom?: string[]) => ({
+      kind: "notification-history",
+      filterOptions: { projects: [PROJECT] },
+      notifications: [{
+        id: "ntf_h1", encrypted: true, title: "Encrypted card", body: "",
+        context: { project: PROJECT, threadName: UNKNOWN },
+        activity: { id: "act_h1", encrypted: true, title: "Encrypted card", status: "Updating…", context: { project: PROJECT, threadName: UNKNOWN } },
+      }],
+      ...(namesFrom ? { namesFrom } : {}),
+    })
+    const envelopes: Record<string, { kind: string; content: unknown }> = {
+      ntf_h1: { kind: "card", content: { title: "Ship the release", status: "Building" } },
+      act_h1: { kind: "card", content: { title: "Ship the release", status: "Building" } },
+      ags_s9: { kind: "names", content: { names: { [PROJECT]: "relo" }, title: "Release session" } },
+      ntf_x: { kind: "notice", content: { names: { [PROJECT]: "not-from-a-session" } } },
+    }
+    const opener = () => {
+      const fetchEnvelopes = vi.fn(async (ids: string[]) =>
+        Object.fromEntries(ids.filter((id) => id in envelopes).map((id) => [id, { id, kind: envelopes[id]!.kind }])))
+      return { fetchEnvelopes, open: async (envelope: unknown) => envelopes[(envelope as { id: string }).id]?.content ?? null }
+    }
+
+    it("names a sealed project handle when a session's envelope names it", async () => {
+      const sealed = opener()
+      const { tree } = await openSealedTree(history(["ags_s9", "ntf_x"]), sealed)
+      expect(sealed.fetchEnvelopes.mock.calls[0]![0].sort()).toEqual(["act_h1", "ags_s9", "ntf_h1"])
+      const [row] = tree.notifications
+      expect(row!.activity).toMatchObject({ encrypted: false, title: "Ship the release", context: { project: "relo", threadName: UNKNOWN } })
+      expect(knownName(remembered.names, row!.activity.context.project)).toBe("relo")
+      // A handle no opened envelope names stays omitted.
+      expect(knownName(remembered.names, row!.activity.context.threadName)).toBeNull()
+      expect(tree.filterOptions.projects).toEqual([PROJECT])
+      expect(remembered.sessionTitles.get("ags_s9")).toBe("Release session")
+    })
+
+    it("without namesFrom the project stays an omitted handle", async () => {
+      const { tree } = await openSealedTree(history(), opener())
+      expect(tree.notifications[0]!.activity.context.project).toBe(PROJECT)
+      expect(knownName(remembered.names, PROJECT)).toBeNull()
+    })
+
+  })
+
+  it("makes no request when nothing is sealed", async () => {
+    const fetchEnvelopes = vi.fn(async () => ({}))
+    const tree = { kind: "docs", items: [{ id: "x", title: "Plain" }] }
+    expect((await openSealedTree(tree, { fetchEnvelopes, open: async () => null })).tree).toBe(tree)
+    expect(fetchEnvelopes).not.toHaveBeenCalled()
+  })
+})
+
+describe("a client that remembers nothing", () => {
+  it("opens the tree the same without a memory", async () => {
+    const tree = { items: [{ id: "ntf_a", encrypted: true, title: "Encrypted notice" }] }
+    const opener = {
+      fetchEnvelopes: async () => ({ ntf_a: { kind: "notice" } }),
+      open: async () => ({ title: "Opened", names: { "p-abcdefghijklmnop": "relo" } }),
+    }
+    const { tree: opened, names } = await openTree(tree, opener)
+    expect(opened.items[0]).toMatchObject({ title: "Opened", encrypted: false })
+    expect(names.get("p-abcdefghijklmnop")).toBe("relo")
+  })
+})

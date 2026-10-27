@@ -4,13 +4,15 @@
     "title": "Get started",
     "path": "/docs/get-started",
     "pages": [
-      "/docs/get-started/from-scratch",
+      "/docs/get-started/mac",
+      "/docs/get-started/windows",
       "/docs/get-started/server",
       "/docs/get-started/cli",
       "/docs/get-started/iphone",
       "/docs/get-started/first-card",
       "/docs/get-started/agents",
-      "/docs/get-started/with-an-agent"
+      "/docs/get-started/with-an-agent",
+      "/docs/get-started/from-scratch"
     ]
   },
   {

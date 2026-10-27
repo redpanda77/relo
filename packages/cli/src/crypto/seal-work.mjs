@@ -3,9 +3,10 @@
 // predicted ids only; `sealed` holds the card text (kind "card", the envelope the iPhone widget opens:
 // title/status/steps) for the work's card.
 import { randomUUID } from "node:crypto";
+import { FACTS } from "../shared/facts.generated.mjs";
 import { identityKeys } from "./keystore.mjs";
 import { MAX_CARD_CONTENT_BYTES, fitCardText } from "./seal-card.mjs";
-import { opaqueIdentity, sealablePhones, sealingUnavailable, sealNotice, skippedNote, trustFor } from "./seal-notice.mjs";
+import { noRecipientReason, opaqueIdentity, sealRecipients, sealingUnavailable, sealNotice, skippedNote, trustFor } from "./seal-notice.mjs";
 import { sealSelfCopy, selfKey } from "./self-copy.mjs";
 
 /**
@@ -17,24 +18,33 @@ export async function workSealer({ client, config, dependencies, notes = [] }) {
   if (!config?.apiUrl || typeof dependencies?.configPath !== "function") return null;
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return null;
-  const { store, devices } = trust;
-  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices);
+  const { store } = trust;
+  const { eligible, readers, skipped } = await sealRecipients({ trust, client, config });
   if (eligible.length === 0) {
-    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    if (trust.committed) throw sealingUnavailable(noRecipientReason(skipped));
     return null;
   }
   if (skipped.length) notes.push(skippedNote("card", eligible, skipped));
   const sender = identityKeys(store);
   const own = selfKey(sender.privateKey);
+  // A plan change sends one request per plan command, each with the same card and copy: seal each distinct text once
+  // per command (this sealer lives for one), not once per request.
+  const memo = new Map();
+  const once = (kind, parts, make) => {
+    const key = `${kind}\0${JSON.stringify(parts)}`;
+    if (!memo.has(key)) memo.set(key, make());
+    return memo.get(key);
+  };
+  /** The content (fetched by the app) holds every label in full; only the push alert is trimmed to its budget. */
+  const sealCard = (text, names) => {
+    const clean = Object.fromEntries(Object.entries(text).filter(([, value]) => value !== undefined && value !== null));
+    const content = fitCardText(clean, MAX_CARD_CONTENT_BYTES);
+    return sealNotice({ kind: "card", sender, idempotencyKey: `relo-work:${randomUUID()}`, phones: eligible, readers, content, alert: fitCardText(clean), names });
+  };
   return {
-    self: (text) => sealSelfCopy(own, text),
+    self: (text) => once("self", text, () => sealSelfCopy(own, text)),
     /** `names`: the handle → name map for the work's opaque context, so the phone shows the names. */
-    seal(text, names) {
-      // The content (fetched by the app) holds every label in full; only the push alert is trimmed to its budget.
-      const clean = Object.fromEntries(Object.entries(text).filter(([, value]) => value !== undefined && value !== null));
-      const content = fitCardText(clean, MAX_CARD_CONTENT_BYTES);
-      return sealNotice({ kind: "card", sender, idempotencyKey: `relo-work:${randomUUID()}`, phones: eligible, readers, content, alert: fitCardText(clean), names });
-    },
+    seal: (text, names) => once("card", [text, names], () => sealCard(text, names)),
     /**
      * The outcome notification of a deliver or finish, sealed on its own (kind "notice": title and outcome, as
      * `relo notify` seals). Never the card's envelopes: the phone opens those as a card, not as a notification.
@@ -65,12 +75,17 @@ export function workCardText(work, { status, spoken } = {}) {
   // "n skipped" row, so a label left out reads "Not readable on this phone" on the owner's own phone.
   const steps = work?.plan?.steps ?? [];
   const waiting = work?.waiting && typeof work.waiting === "object" ? work.waiting.reason : work?.waiting;
-  const rounds = work?.plan?.rounds ?? (steps.length ? [{ n: 1, state: "open" }] : []);
-  const phases = rounds.map((round) => ({
+  // An empty rounds list (a fresh work with no round opened yet) is the single first round too, not "no phases":
+  // with no phase every step label is left out and the phone shows "Not readable on this phone" for the whole plan.
+  const listed = work?.plan?.rounds;
+  const rounds = listed?.length ? listed : (steps.length ? [{ n: 1, state: "open" }] : []);
+  // A long work keeps steps only for its newest rounds (the server's same rule, FACTS.work.planRoundsWithSteps): an older
+  // round is its entry alone (title, outcome), so the card does not grow with every round. The phone reads a phase without steps.
+  const phases = rounds.map((round, at) => ({
     id: `r${round.n}`,
     ...(round.title ? { title: round.title } : {}),
     ...(round.outcome ? { outcome: round.outcome } : {}),
-    steps: steps.filter((step) => (step.round ?? 1) === round.n).map((step, index) => ({ id: step.id, label: step.label ?? `Step ${index + 1}`, ...(step.detail ? { detail: step.detail } : {}) })),
+    ...(at < rounds.length - FACTS.work.planRoundsWithSteps ? {} : { steps: steps.filter((step) => (step.round ?? 1) === round.n).map((step, index) => ({ id: step.id, label: step.label ?? `Step ${index + 1}`, ...(step.detail ? { detail: step.detail } : {}) })) }),
   }));
   const current = (work?.plan?.steps ?? []).find((step) => step.state === "current");
   return {
@@ -82,7 +97,7 @@ export function workCardText(work, { status, spoken } = {}) {
     status: status ?? (waiting ? `Waiting on ${waiting}` : work?.status ?? undefined),
     ...(current ? { stepId: current.id } : {}),
     ...(spoken ? { spoken } : {}),
-    ...(phases.some((phase) => phase.steps.length || phase.outcome) ? { phases } : {}),
+    ...(phases.some((phase) => phase.steps?.length || phase.outcome) ? { phases } : {}),
   };
 }
 

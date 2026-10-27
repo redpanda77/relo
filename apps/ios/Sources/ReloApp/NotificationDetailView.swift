@@ -19,30 +19,55 @@ struct NotificationDetailView: View {
             && !model.responseIsQueued(for: item.id) && !model.responseIsAccepted(for: item.id)
     }
     /// The item's row in the Now summary: the server's state for it.
-    private var nowItem: NowItem? { model.nowSummary?.allItems.first { $0.notificationId == currentItem.id } }
+    private var nowItem: NowItem? { model.nowItemsByNotificationID[currentItem.id] }
     /// Stale only when the server says so (the item's owner state in the Now summary), never by the local clock.
     private var stale: Bool { nowItem?.owner.state == .stale }
     /// A sealed item this iPhone could not open says why, instead of an empty body.
     private var messageText: String? { currentItem.content?.body ?? presentation.subtitle ?? currentItem.unreadableLine }
-    /// Where and when, below the work itself. The header already says source, project and session, so the
-    /// facts hold only what it does not; when it started, how long it took and its updates read as one fact.
-    private var detailFacts: [ReloFact] {
+    /// Where it came from and when, below the work itself: the harness and its session, the project and topic,
+    /// the computer, then the time. Each row says what it is with an icon, so the card reads at a glance.
+    private var aboutRows: [ReloAboutRow] {
         let context = InboxHierarchyProjection.context(for: currentItem)
         let row = HistoryRowProjection.row(currentItem, now: model.attentionDate)
-        var facts: [ReloFact] = []
+        var rows: [ReloAboutRow] = []
         if let interaction = currentItem.interaction, interaction.state == .pending {
-            facts.append(ReloFact(label: "Respond by", value: interaction.expiresAt.formatted(date: .omitted, time: .shortened)))
+            rows.append(.init(symbol: "clock.badge.exclamationmark", label: "Respond by",
+                              value: interaction.expiresAt.formatted(date: .omitted, time: .shortened)))
         }
-        if let task = context?.taskTitle, !task.isEmpty, task != presentation.title { facts.append(ReloFact(label: "Task", value: task)) }
+        rows.append(.init(symbol: row.source.systemImageName, label: "From", value: row.source.name))
+        if let session = context?.threadName, !session.isEmpty, session != presentation.title {
+            rows.append(.init(symbol: "bubble.left.and.text.bubble.right", label: "Session", value: session))
+        }
+        if let project = row.project {
+            rows.append(.init(symbol: "folder.fill", label: "Project", value: project.name,
+                              tint: ReloProjectPalette.color(for: project, fallback: .reloSecondaryText)))
+        }
+        if let topic = row.topic, !topic.isEmpty, topic != context?.threadName {
+            rows.append(.init(symbol: "number", label: "Topic", value: topic))
+        }
+        if let task = context?.taskTitle, !task.isEmpty, task != presentation.title {
+            rows.append(.init(symbol: "checklist", label: "Task", value: task))
+        }
         if let computer = context?.computer ?? row.origin, !computer.isEmpty {
-            facts.append(ReloFact(label: "Computer", value: computer, isComputer: true))
+            rows.append(.init(symbol: model.computerIcon(forOrigin: computer).systemImageName, label: "Computer", value: computer))
         }
-        var ran = [(row.startedAt ?? currentItem.createdAt).formatted(date: .abbreviated, time: .shortened)]
-        if let duration = row.duration { ran.append("took \(ReloDuration.format(duration))") }
-        if let updates = row.updates, updates > 1 { ran.append("\(updates) updates") }
-        facts.append(ReloFact(label: "Started", value: ran.joined(separator: " · ")))
-        if currentItem.kind != .liveActivity { facts.append(ReloFact(label: "Type", value: row.type)) }
-        return facts
+        if currentItem.kind == .liveActivity {
+            var ran = [Self.when(row.startedAt ?? currentItem.createdAt)]
+            if let duration = row.duration { ran.append("took \(ReloDuration.format(duration))") }
+            if let updates = row.updates, updates > 1 { ran.append("\(updates) updates") }
+            rows.append(.init(symbol: "clock", label: "Started", value: ran.joined(separator: " · ")))
+        } else {
+            rows.append(.init(symbol: "clock", label: "Sent", value: Self.when(currentItem.createdAt)))
+        }
+        return rows
+    }
+
+    /// Today and yesterday by name, else the date: "Today, 10:29 PM".
+    private static func when(_ date: Date) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(date) { return "Today, \(time)" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday, \(time)" }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private var asksNow: Bool { currentItem.interaction?.state == .pending }
@@ -76,21 +101,33 @@ struct NotificationDetailView: View {
             .lazy.compactMap { $0 }.first { $0.plan != nil }
     }
 
+    /// What this phone opened of the item's work, its newest copy first. The plan is the work's current one, and this
+    /// item's own text may predate its later rounds: a History event of round 17 drawing round 18 read "Not readable".
+    private var workText: ReloWork.TextBook {
+        let own = currentItem.work ?? currentItem.activity?.work
+        guard let id = own?.id else { return ReloWork.TextBook(newestFirst: own.map { [$0] } ?? []) }
+        let copies = (model.items + model.historyItems)
+            .filter { ($0.work ?? $0.activity?.work)?.id == id }
+            .sorted { $0.createdAt > $1.createdAt }
+            .compactMap { $0.work ?? $0.activity?.work }
+        return ReloWork.TextBook(newestFirst: copies + [own].compactMap { $0 })
+    }
+
     /// The plan's steps with their text resolved: the server's label, else the one opened from the sealed
-    /// text by step id, else the one this phone already showed, else "Step n". Nil without a whole plan.
+    /// text by step id (the work's newest copy on this phone), else the one this phone already showed, else
+    /// "Step n". Nil without a whole plan.
     private var planEntries: [PlanOutline.Entry]? {
         guard let plan = planDigest?.plan else { return nil }
-        let work = currentItem.work ?? currentItem.activity?.work
+        let text = workText
         // The card's own window of steps, by plan position: the labels this phone already opened.
         let shown = presentation.timelineSteps(for: currentItem)
         let before = presentation.stepWindow.before
-        let details = Dictionary((work?.steps ?? []).compactMap { step in step.detail.map { (step.id, $0) } },
-                                 uniquingKeysWith: { first, _ in first })
+        let details = text.details
         return plan.enumerated().map { index, step in
             let placeholder = "Step \(index + 1)"
             let windowLabel = shown.indices.contains(index - before) ? shown[index - before].label : nil
             let opened = step.label.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
-                ?? work?.steps.first { $0.id == step.id }?.label.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
+                ?? text.labels[step.id]
                 ?? windowLabel.flatMap { ReloSealedCards.isPlaceholderStep($0) ? nil : $0 }
             // A label this phone cannot open is not "Step n": the row says so (U8).
             let label = opened ?? placeholder
@@ -109,14 +146,8 @@ struct NotificationDetailView: View {
     /// The plan as rounds and nested steps; round titles and outcomes the server withheld come from the sealed text.
     private var planOutline: PlanOutline? {
         guard let entries = planEntries else { return nil }
-        let work = currentItem.work ?? currentItem.activity?.work
-        var titles: [Int: String] = [:], outcomes: [Int: String] = [:]
-        for phase in work?.phases ?? [] {
-            guard phase.id.hasPrefix("r"), let n = Int(phase.id.dropFirst()) else { continue }
-            if let title = phase.title { titles[n] = title }
-            if let outcome = phase.outcome { outcomes[n] = outcome }
-        }
-        return PlanOutline.make(entries: entries, rounds: planDigest?.rounds, titles: titles, outcomes: outcomes)
+        let text = workText
+        return PlanOutline.make(entries: entries, rounds: planDigest?.rounds, titles: text.titles, outcomes: text.outcomes)
     }
 
     /// The work's whole plan when the server sent it (the card carries only a window of a long one),
@@ -163,22 +194,7 @@ struct NotificationDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous))
                 }
                 if let url = currentItem.validatedDestinationURL {
-                    Link(destination: url) {
-                        HStack(spacing: 10) {
-                            let link = ReloDestinationLabel(url: url)
-                            Image(systemName: link.symbol).font(.subheadline.weight(.semibold))
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(link.title).font(.subheadline.weight(.semibold))
-                                Text(link.detail).font(.caption)
-                                    .foregroundStyle(Color.reloSecondaryText).lineLimit(1)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right").font(.caption.weight(.bold))
-                        }
-                        .foregroundStyle(Color.reloInteractive)
-                        .padding(ReloLayout.rowInset).frame(minHeight: 44)
-                        .background { RoundedRectangle(cornerRadius: ReloLayout.nestedRadius(), style: .continuous).fill(Color.reloInteractive.opacity(0.10)) }
-                    }
+                    ReloLinkTile(url: url)
                 }
             }
             .padding(ReloLayout.cardInset)
@@ -211,16 +227,9 @@ struct NotificationDetailView: View {
                 if nowItem?.question?.standing == .missed {
                     CardNote(NowScreenModel.lateAnswerNote, symbol: "clock.badge.xmark").reloEntrance(2)
                 }
-                if currentItem.kind != .liveActivity {
-                    ReloDetailSection(title: "Delivery") {
-                        ReloDeliveryTimelineView(timeline: .make(currentItem))
-                    }
+                // How it was delivered is the server's business: the owner sees where it came from.
+                ReloDetailSection(title: "About") { ReloAboutList(rows: aboutRows) }
                     .reloEntrance(3)
-                }
-                ReloDetailSection(title: "Details") {
-                    ReloFacts(facts: detailFacts, computerIcon: model.computerIcon(forOrigin: detailFacts.first { $0.isComputer }?.value))
-                }
-                .reloEntrance(4)
                 if endedHere {
                     EndWorkSection(model: model, target: EndWorkTarget(id: currentItem.id, title: presentation.title), ended: true)
                         .reloEntrance(5)
@@ -268,6 +277,46 @@ struct NotificationDetailView: View {
                 symbol: "trash", actionTitle: "Remove notification",
                 action: { await model.withdrawNotification(currentItem.id) })
         }
+    }
+}
+
+/// One line of the About card: an icon, what the line is, and its value.
+struct ReloAboutRow: Identifiable {
+    let symbol: String
+    let label: String
+    let value: String
+    var tint: Color? = nil
+    var id: String { label }
+}
+
+struct ReloAboutList: View {
+    let rows: [ReloAboutRow]
+    @ScaledMetric(relativeTo: .subheadline) private var iconWidth: CGFloat = 22
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Image(systemName: row.symbol)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(row.tint ?? Color.reloSecondaryText)
+                        .frame(width: iconWidth)
+                        .accessibilityHidden(true)
+                    Text(row.label).font(.subheadline).foregroundStyle(Color.reloSecondaryText)
+                    Spacer(minLength: 12)
+                    Text(row.value).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(.vertical, 10)
+                .accessibilityElement(children: .combine)
+                if index < rows.count - 1 {
+                    Divider().overlay(Color.white.opacity(0.06)).padding(.leading, iconWidth + 12)
+                }
+            }
+        }
+        .padding(.vertical, -6)
     }
 }
 

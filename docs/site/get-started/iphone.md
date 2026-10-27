@@ -13,6 +13,14 @@ also holds the keys that open your content, so it is the one device that can rea
 You build the app yourself in Xcode with your own Apple team, and give your server an Apple push key so
 it can wake the phone.
 
+## What you need
+
+- **A Mac with Xcode,** to build the app.
+- **An Apple Developer membership,** for your Team ID and the App IDs.
+- **An Apple push key** (a `.p8` file), so your server can wake the phone.
+- **Your server, reachable from the phone,** at an address the iPhone can open. A `localhost` address
+  does not work.
+
 ## Build and install
 
 <ol class="docs-steps">
@@ -56,12 +64,21 @@ straight back to the app. (**Create account** is for a new account on a server t
 **Allow notifications** when asked, and leave Live Activities on. The phone registers with the server
 and creates its encryption keys.
 
-The computer you connected in [step 2](/docs/get-started/cli) needs nothing from you here: it joined
-before any phone, so it needs no approval. A computer you add from now on does, unless this iPhone made
-its code: tap **Approve** on the request the phone shows. If your account has no computer yet, the app opens **Connect a computer** once,
-with the same one line. Later, **Settings → Devices → Add a computer** opens it again, and **Settings →
-Devices → Sign in a computer** approves a computer that ran `relo auth login` (scan its QR code or type
-the code, and pick the number the terminal shows). See [Connect a computer](/docs/guides/servers).
+</li>
+<li>
+
+**Approve computers.** The computer you connected in [step 2](/docs/get-started/cli) needs nothing from
+you here: it joined before any phone, so it needs no approval. A computer you add from now on does,
+unless this iPhone made its code: tap **Approve** on the request the phone shows.
+
+</li>
+<li>
+
+**Add more computers when you want to.** If your account has no computer yet, the app opens **Connect a
+computer** once, with the same one line. Later, **Settings → Devices → Add a computer** opens it again.
+**Settings → Devices → Sign in a computer** approves a computer that ran `relo auth login`: scan its QR
+code or type the code, and pick the number the terminal shows. See
+[Connect a computer](/docs/guides/servers).
 
 </li>
 </ol>

@@ -7,7 +7,7 @@ import test from "node:test";
 
 // X.4: tests can never reach the developer's real global npm prefix (where the owner's relo lives).
 test("npm's global prefix inside tests is a temporary folder", () => {
-  const prefix = execFileSync("npm", ["prefix", "--global"], { encoding: "utf8" }).trim();
+  const prefix = execFileSync("npm", ["prefix", "--global"], { encoding: "utf8", shell: process.platform === "win32" }).trim();
   assert.ok(prefix.startsWith(tmpdir()) || prefix.startsWith("/private" + tmpdir()), `global prefix is ${prefix}`);
 });
 
@@ -18,7 +18,7 @@ test("every CLI test file imports the hermetic environment before anything else"
   const files = readdirSync(directory).filter((name) => name.endsWith(".test.mjs"));
   assert.ok(files.length > 10);
   const missing = files.filter((name) => {
-    const first = readFileSync(new URL(name, directory), "utf8").split("\n").find((line) => /^import\b/u.test(line));
+    const first = readFileSync(new URL(name, directory), "utf8").split(/\r?\n/u).find((line) => /^import\b/u.test(line));
     return first !== 'import "./hermetic-env.mjs";';
   });
   assert.deepEqual(missing, []);

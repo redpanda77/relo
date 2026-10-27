@@ -391,3 +391,37 @@ test("the spoken name rides every sealed card and the self copy, so a later upda
   assert.equal(selfCopyText(work).name, "Notch redesign");
   assert.equal("name" in workCardText({ ...work, spokenName: undefined }), false);
 });
+
+test("a work with an empty rounds list still seals its step labels as the first round", () => {
+  const work = { goal: "Ship it", plan: { rounds: [], steps: [{ id: "s1", label: "Build it", state: "current" }, { id: "s2", label: "Test it", state: "open" }] } };
+  const text = workCardText(work);
+  assert.deepEqual(text.phases?.[0]?.steps.map((step) => step.label), ["Build it", "Test it"]);
+});
+
+// A long work: steps ride only with the newest 3 rounds (FACTS.work.planRoundsWithSteps); older rounds keep title and outcome.
+const longWork = () => {
+  const rounds = [1, 2, 3, 4, 5, 6].map((n) => ({ n, state: n === 6 ? "open" : "closed", title: `Request ${n}`, ...(n === 6 ? {} : { outcome: `Delivered ${n} ${"x".repeat(200)}` }) }));
+  const steps = rounds.map((r) => ({ id: `s${r.n}`, label: `Step of ${r.n}`, state: r.n === 6 ? "current" : "done", round: r.n }));
+  return { goal: "G", plan: { version: 1, next: 7, steps, rounds } };
+};
+
+test("a 6-round plan's sealed text has steps only in the newest 3 phases, and titles and outcomes in all", () => {
+  const { phases } = workCardText(longWork());
+  assert.equal(phases.length, 6);
+  assert.deepEqual(phases.map((p) => Boolean(p.steps?.length)), [false, false, false, true, true, true]);
+  assert.ok(phases.slice(0, 5).every((p) => p.title && p.outcome));
+});
+
+test("the echo shows at most 5 closed-round lines, an earlier-rounds line and clipped outcomes", () => {
+  const work = { id: "wrk_12345678", lifecycle: "open", ...longWork() };
+  work.plan.rounds.splice(5, 0, ...[7, 8].map((n) => ({ n, state: "closed", title: `Extra ${n}`, outcome: "o" })));
+  const lines = renderEcho({ work }).split("\n");
+  assert.equal(lines.filter((l) => l.startsWith("  [✓] Round")).length, 5);
+  assert.equal(lines.filter((l) => /… 2 earlier rounds/u.test(l)).length, 1);
+  assert.ok(lines.every((l) => l.length < 200));
+});
+
+test("a step refusal lists only the open round's steps", () => {
+  const work = longWork();
+  assert.throws(() => applyChange(work.plan, { step: "no such" }, { labelsKnown: true }), (error) => /s6 Step of 6/u.test(error.state ?? "") && !/s1 /u.test(error.state ?? ""));
+});

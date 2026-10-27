@@ -16,6 +16,10 @@ export interface InboxService {
   markNotificationRead?(notificationId: string): Promise<void>
   markAllNotificationsRead?(): Promise<void>
   withdrawNotification?(notificationId: string): Promise<void>
+  /** The owner ends a work that is not moving (`act_…` card id or `wrk_…`); a moving one is refused with `work_running`. */
+  endWork?(workId: string): Promise<void>
+  /** The owner dismisses a missed question (`int_…`): it no longer needs them, and a late answer is refused. */
+  dismissMissedQuestion?(interactionId: string): Promise<void>
   reconcileDelivery?(
     deliveryId: string,
     action: "mark_accepted" | "retry" | "cancel"
@@ -69,6 +73,19 @@ export function createHttpInboxService(): InboxService {
     async withdrawNotification(notificationId) {
       await jsonRequest(
         `/api/account/notifications/${encodeURIComponent(notificationId)}/withdraw`,
+        { method: "POST" }
+      )
+    },
+    async endWork(workId) {
+      await jsonRequest(`/api/dashboard/works/${encodeURIComponent(workId)}/end`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+    },
+    async dismissMissedQuestion(interactionId) {
+      await jsonRequest(
+        `/api/dashboard/questions/${encodeURIComponent(interactionId)}/dismiss`,
         { method: "POST" }
       )
     },

@@ -11,6 +11,7 @@ vi.mock("@/app/dashboard-route-loader", () => routes)
 import { renderPageSkeleton } from "../../../server/src/web/dashboard-skeleton"
 import { NowDeck } from "@/components/organisms/now-deck"
 import { PageTitle, SplitPage } from "@/components/page"
+import { headerVars } from "@/lib/now-header"
 import { orbMotion } from "@/lib/orb-theme"
 import { nowCounts } from "@/features/inbox/now-model"
 import { InboxView } from "@/features/inbox/inbox-view"
@@ -33,14 +34,14 @@ const KEY_NODES = [
   ".orb-stage-painted",
   ".now-deck-centre",
   ".now-deck-centre-number > span",
-  ".now-deck-instruments",
+  ".now-wash",
+  ".now-wash > i",
+  ".now-hud",
+  ".now-hud-frame",
   ".now-deck-readouts",
   "[data-readout]",
   "[data-readout] > span:first-child",
   "[data-readout] > span:last-child",
-  // Beside the work (1100px+) the deck column also carries its sentence.
-  ".now-deck-more",
-  ".now-deck-sentence",
 ]
 
 const classesOf = (root: ParentNode, selector: string) =>
@@ -68,13 +69,12 @@ describe("the server skeleton and React's Now", () => {
             heading={<PageTitle title="Now" />}
             today={0}
             sessions={counts.sessionsWorking}
+            sessionRows={summary.sessions.sessions}
             waiting={counts.waitingOnYou}
             running={counts.running}
             needsYou={counts.needsYou}
             motion={orbMotion(summary, false)}
             arcs={[]}
-            sentence="One sentence"
-            layout="split"
           />
         }
       >
@@ -94,9 +94,15 @@ describe("the server skeleton and React's Now", () => {
         node.hasAttribute("data-lit"),
       ])
     expect(readouts(server)).toEqual(readouts(container))
-    expect(readouts(server).map(([label]) => label)).toEqual(["Sessions", "Waiting", "Running", "Needs you"])
+    expect(readouts(server).map(([label]) => label)).toEqual(["Needs you", "Your turn", "Running", "Sessions"])
     const centre = (root: ParentNode) => [root.querySelector("[data-hud-centre]")?.getAttribute("data-hud-centre"), root.querySelector(".hud-number")?.textContent]
     expect(centre(server)).toEqual(centre(container))
+    // The header's look is one table on both sides: the same variables on the deck.
+    const deckVar = (root: ParentNode, name: string) => (root.querySelector(".now-deck") as HTMLElement).style.getPropertyValue(name).replace(/\s+/g, "")
+    for (const [name, value] of Object.entries(headerVars("needs"))) {
+      expect(deckVar(container, name), name).toBe(value.replace(/\s+/g, ""))
+      expect(deckVar(server, name), name).toBe(deckVar(container, name))
+    }
   })
 
   it("lay the body out as React's: the open sections in order, then Since you looked and its rows", () => {
@@ -120,19 +126,17 @@ describe("the server skeleton and React's Now", () => {
     const ours = server.querySelector('.split-page-body > [data-now-slot="sinceYouLooked"]')!
     const theirs = container.querySelector('.split-page-body > [data-now-slot="sinceYouLooked"]')!
     expect(ours.className).toBe(theirs.className)
-    // The block's own spacing, and the sentence's line box (text-sm) before its rows.
+    // The block's own spacing, then its caption (the server's sentence is screen-reader-only in React).
     const [ourSection, theirSection] = [ours.firstElementChild!, theirs.firstElementChild!]
     expect(ourSection.tagName).toBe(theirSection.tagName)
     expect(classesOf(ours, ":scope > section")).toEqual(classesOf(theirs, ":scope > section"))
-    const [ourLine, theirLine] = [ourSection.firstElementChild!, theirSection.firstElementChild!]
-    expect(ourLine.tagName).toBe(theirLine.tagName)
-    expect(ourLine.classList.contains("text-sm")).toBe(true)
-    expect(theirLine.classList.contains("text-sm")).toBe(true)
+    expect(ourSection.firstElementChild!.classList.contains("loading-heading")).toBe(true)
+    expect(theirSection.firstElementChild!.textContent).toContain("Since you looked")
     // Then one frosted list, as many rows as React shows there (loading.css keeps one on a phone).
-    const [ourList, theirList] = [ourSection.children[1]!, theirSection.children[1]!]
+    const [ourList, theirList] = [ourSection.querySelector(":scope > .glass")!, theirSection.querySelector(".glass")!]
     expect(ourList.classList.contains("glass") && theirList.classList.contains("glass")).toBe(true)
-    expect(ourList.querySelectorAll(".loading-work-row")).toHaveLength(Math.min(3, summary.recent.length))
-    expect(theirList.children).toHaveLength(Math.min(3, summary.recent.length))
+    expect(ourList.querySelectorAll(".loading-work-row")).toHaveLength(Math.min(4, summary.recent.length))
+    expect(theirList.querySelectorAll(".settled-row")).toHaveLength(Math.min(4, summary.recent.length))
     // The open sections and Since you looked in React's order, each open one a section caption over its cards.
     const slots = (root: ParentNode) =>
       [...root.querySelectorAll(".split-page-body > .now-block")].map((node) => node.getAttribute("data-now-slot"))

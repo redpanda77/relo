@@ -222,7 +222,6 @@ export function setupLandingMotion(
         onComplete: () => gsap.set(".landing-line", { overflow: "visible" }),
       })
       .from(".hero-sub", { opacity: 0, y: 24, duration: 1.2 }, "<0.5")
-      // The row moves, not the buttons: their own x/y belong to the magnetic hover.
       .from(".hero-cta", { opacity: 0, y: 20, duration: 1 }, "<0.15")
       .from(".landing-chip", { opacity: 0, scale: 0.85, y: 24, duration: 1.2, stagger: 0.18, ease: "back.out(1.4)" }, "<0.2")
     gsap.utils.toArray<HTMLElement>(".landing-chip").forEach((chip, index) => {
@@ -267,23 +266,6 @@ export function setupLandingMotion(
       const resume = () => gsap.to(drift, { timeScale: 1, duration: 0.6 })
       listen(track, "pointerenter", slow)
       listen(track, "pointerleave", resume)
-    }
-
-    // Primary actions lean toward the pointer.
-    if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
-      gsap.utils.toArray<HTMLElement>(".magnetic").forEach((button) => {
-        const x = gsap.quickTo(button, "x", { duration: 0.5, ease: "power3.out" })
-        const y = gsap.quickTo(button, "y", { duration: 0.5, ease: "power3.out" })
-        listen(button, "pointermove", (event) => {
-          const box = button.getBoundingClientRect()
-          x((event.clientX - box.left - box.width / 2) * 0.25)
-          y((event.clientY - box.top - box.height / 2) * 0.35)
-        })
-        listen(button, "pointerleave", () => {
-          x(0)
-          y(0)
-        })
-      })
     }
 
     liveDemo(root)

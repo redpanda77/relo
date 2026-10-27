@@ -112,8 +112,8 @@ test("handoff: the echo gives the handle and the owner line; the pending file is
   assert.deepEqual(pc.srv.calls.at(-1).body, { next: { readable: "Handing off: Wire the CLI verb" } });
   const file = pc.pendingFile();
   assert.ok(file, "pending file written");
-  assert.equal(statSync(file).mode & 0o777, 0o600);
-  assert.equal(statSync(pc.handoffDir).mode & 0o777, 0o700);
+  if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(pc.handoffDir).mode & 0o777, 0o700);
   const pending = JSON.parse(readFileSync(file, "utf8"));
   assert.deepEqual(Object.keys(pending).sort(), ["copy", "createdAt", "expiresAt", "fromSession", "goal", "handle", "next", "round", "status", "v", "workId", "writtenAt"]);
   assert.equal(pending.handle, handle);

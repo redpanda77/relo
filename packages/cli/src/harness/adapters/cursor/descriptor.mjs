@@ -6,6 +6,7 @@ export default Object.freeze({
   aliases: [],
   detect: (env) => Boolean(env.CURSOR_AGENT?.trim()),
   config: { home: ".cursor" },
+  installation: { binaries: ["cursor", "cursor-agent"], apps: ["Cursor.app"], folder: { ignore: ["mcp.json", "skills"] } },
   skills: "skills",
   mcp: { format: "json", key: "mcpServers", stdioType: true, launch: "absolute", global: "mcp.json" },
   mcpClient: /^cursor/iu,

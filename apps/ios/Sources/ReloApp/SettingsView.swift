@@ -5,7 +5,6 @@ struct SettingsView: View {
     @Bindable var model: AppModel
     @AppStorage(ReloHistoryPreferences.retentionKey) private var retentionRaw = HistoryRetention.standard.rawValue
     @AppStorage(ReloHistoryPreferences.clearedAtKey) private var clearedAt: Double = 0
-    @AppStorage(ReloSessionUsagePreferences.showKey) private var showsUsage = false
     @State private var confirmsClear = false
     @State private var showsSecurity = false
     var body: some View {
@@ -63,14 +62,6 @@ struct SettingsView: View {
                 Text(clearedAt > 0
                      ? "Cleared \(Date(timeIntervalSince1970: clearedAt).formatted(.relative(presentation: .named))). Hidden on this iPhone only; the Relo dashboard keeps everything."
                      : "Older notifications are hidden on this iPhone only; the Relo dashboard keeps everything. Requests waiting for you always stay.")
-            }
-            .listRowBackground(ReloListRowBackground())
-            Section {
-                Toggle(isOn: $showsUsage) {
-                    ReloSettingLabel(title: "Show context and cost", symbol: "gauge.with.dots.needle.50percent", color: .reloIndigo)
-                }
-            } header: { Text("Sessions") } footer: {
-                Text("On sessions in Now: how much context each agent has used and, from a terminal's status line, what the session has cost. Needs the optimize depth on that computer.")
             }
             .listRowBackground(ReloListRowBackground())
             Section {

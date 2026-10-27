@@ -6,7 +6,7 @@ import { generateToken,hashToken } from "./auth.js";
 import { bootstrapOwner } from "./bootstrap.js";
 import { createDatabase,type Database } from "./db.js";
 import { migrate } from "./migrate.js";
-import { carriesCardText } from "./end-to-end-policy.js";
+import { carriesCardText,endToEndPolicy } from "./end-to-end-policy.js";
 
 const b64 = (length: number) => randomBytes(length).toString("base64url");
 const envelope = (devices: string[],kind: string) => ({
@@ -22,6 +22,27 @@ describe("card text detection",() => {
       expect(carriesCardText({ [field]: "x" })).toBe(true);
     }
     expect(carriesCardText({ detail: null })).toBe(false);
+  });
+});
+
+describe("automatic encryption counts phones only (plan 16)",() => {
+  const fake = (row: { choice: boolean | null; phones_with_keys: boolean }) => {
+    const queries: string[] = [];
+    return { queries,db: { query: async (sql: string) => { queries.push(sql); return { rows: [row] }; } } as any };
+  };
+  test("Relo for Mac's own keys never make encryption required",async () => {
+    const { db,queries } = fake({ choice: null,phones_with_keys: false });
+    expect(await endToEndPolicy(db,"p")).toEqual({ required: false,mode: "auto" });
+    expect(queries[0]).toContain("NOT ('owner_overview'=ANY(d.capabilities))");
+  });
+  test("a local install never requires it, whatever the account says",async () => {
+    const previous = process.env.RELO_LOCAL_MODE;
+    process.env.RELO_LOCAL_MODE = "1";
+    try {
+      expect(await endToEndPolicy(fake({ choice: true,phones_with_keys: true }).db,"p")).toEqual({ required: false,mode: "off" });
+    } finally {
+      if (previous === undefined) delete process.env.RELO_LOCAL_MODE; else process.env.RELO_LOCAL_MODE = previous;
+    }
   });
 });
 
@@ -57,6 +78,46 @@ suite("require end-to-end encryption (E6.1)",() => {
       [id,hashToken(credential)]);
     return { id,publicId: `dev_${id}`,credential };
   }
+
+  async function mac() {
+    const id = (await db.query<{ id: string }>(`INSERT INTO devices(principal_id,stable_device_id,installation_id,name,bundle_identifier,
+      app_version,app_build,os_version,apns_environment,notification_authorization,live_activity_authorization,capabilities)
+      VALUES ($1,$2,$3,'Mac','com.example.relo.mac','1','1','26','sandbox','authorized','authorized',ARRAY['owner_overview']) RETURNING id`,
+      [principalId,randomUUID(),randomUUID()])).rows[0]!.id;
+    const credential = generateToken();
+    await db.query("INSERT INTO device_credentials(device_id,token_hash,scopes) VALUES ($1,$2,ARRAY['device:self','inbox:read'])",
+      [id,hashToken(credential)]);
+    return { id,credential };
+  }
+
+  test("Relo for Mac (an owner device) may require encryption or return to automatic, never turn it off; a phone may not set it",async () => {
+    const device = await mac();
+    const phoneDevice = await phone();
+    expect((await request("PUT","/api/end-to-end/policy",{ required: true },device.credential))).toEqual({ status: 200,body: { required: true,mode: "on" } });
+    expect((await request("PUT","/api/end-to-end/policy",{ required: false },device.credential))).toEqual({ status: 403,body: { error: "turn_off_in_dashboard" } });
+    expect((await request("PUT","/api/end-to-end/policy",{ required: null },device.credential))).toEqual({ status: 200,body: { required: false,mode: "auto" } });
+    expect((await request("PUT","/api/end-to-end/policy",{ required: "yes" },device.credential)).status).toBe(400);
+    expect((await request("PUT","/api/end-to-end/policy",{ required: true },phoneDevice.credential)).status).toBe(403);
+  });
+
+  test("a local install refuses to set it (409 local_install) and its health names the instance",async () => {
+    const device = await mac();
+    const previous = { ...process.env };
+    process.env.RELO_LOCAL_MODE = "1"; process.env.RELO_LOCAL_INSTANCE = "inst_test"; process.env.RELO_RELEASE_IDENTITY = "1.2.3";
+    try {
+      for (const token of [owner,device.credential]) {
+        expect(await request("PUT","/api/end-to-end/policy",{ required: true },token)).toEqual({ status: 409,body: { error: "local_install" } });
+      }
+      expect((await request("GET","/api/end-to-end/policy",undefined,owner)).body).toEqual({ required: false,mode: "off" });
+      const ready = await app.request("/health/ready");
+      expect(await ready.json()).toEqual({ status: "ok",release: "1.2.3",instance: "inst_test" });
+    } finally {
+      for (const key of ["RELO_LOCAL_MODE","RELO_LOCAL_INSTANCE","RELO_RELEASE_IDENTITY"]) {
+        if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key];
+      }
+    }
+    expect(await (await app.request("/health/ready")).json()).toEqual({ status: "ok" });
+  });
 
   test("off by default; once on, readable CLI content is refused and sealed content is accepted",async () => {
     const device = await phone();

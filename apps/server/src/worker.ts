@@ -189,7 +189,7 @@ if (config.APNS_MODE === "disabled") {
     releaseIdentity: config.RELO_RELEASE_IDENTITY,
     retentionHours: config.RELO_CONTENT_RETENTION_HOURS ?? null,
   });
-  await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
+  await writeFile(config.RELO_WORKER_READY_FILE, new Date().toISOString());
   const disabledDerived = createDerivedWorker(db,"disabled");
   while (!stopping) {
     await recordWorkerHeartbeat(db,{
@@ -246,7 +246,7 @@ if (config.APNS_MODE === "disabled") {
       releaseIdentity: config.RELO_RELEASE_IDENTITY,
       retentionHours: config.RELO_CONTENT_RETENTION_HOURS ?? null,
     });
-    await writeFile("/tmp/relo-worker-ready", new Date().toISOString());
+    await writeFile(config.RELO_WORKER_READY_FILE, new Date().toISOString());
     let maintenanceFailure: unknown;
     const derived = createDerivedWorker(db,config.APNS_MODE,notificationContentCipher);
     let derivedNextAt: Date | null = null;

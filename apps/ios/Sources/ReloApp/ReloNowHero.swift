@@ -1,8 +1,10 @@
 import ReloCore
 import SwiftUI
 
-/// The Now deck, edge to edge: the particle sphere in the middle colored by what today's work meant, an instrument ring with each running task's
-/// progress, four corner readouts, one sentence, and a footer that says where the data stands. Touching the sphere sends a ripple through all of it.
+/// The Now deck, edge to edge: the particle sphere in the middle, an instrument ring with each running task's
+/// progress, a gauge ring with four readouts docked on it (needs you, your turn, running, sessions), the sessions as
+/// satellites on an outer orbit and the machines beneath; the title row above carries where the data stands, at its
+/// trailing end. The lead state washes the top of the screen in its colour. Touching the sphere sends a ripple through all of it.
 /// Its height never changes with the numbers it shows.
 struct ReloNowHero: View {
     let summary: InboxTodaySummary
@@ -15,10 +17,12 @@ struct ReloNowHero: View {
     var sessionsWorking: [ReloHoloTask] = []
     /// Work waiting on the owner (the Waiting on you fold), never in SESSIONS.
     var waitingOnYou = 0
-    /// Today's work by meaning (colors the sphere, the dust and the legend).
+    /// The sessions at work, by phase, machine and harness: the satellites and the machines line.
+    var sessions: [ReloHUDSession] = []
+    /// Machines with no session at work (idle or ended sessions only): listed dim on the machines line.
+    var idleMachines: [String] = []
+    /// Today's work by meaning (colors the sphere and the dust).
     var mix = NowMix(counts: [:])
-    /// "4h 12m" of agent work today, shown at the footer's trailing edge.
-    var agentTime: String? = nil
     var sync: ReloDeckFooter.Sync = .syncing
     var pendingResponses = 0
     var connectionTrouble: String? = nil
@@ -30,6 +34,9 @@ struct ReloNowHero: View {
     /// Pull-to-sync: the title prompts and the sphere swells as the page is pulled.
     var pull: ReloPullTracker? = nil
     var refreshing = false
+    /// Captures only: forces the header's lead (the connecting state needs a booting director, which a gallery
+    /// cannot make). `nil` in the app.
+    var leadOverride: ReloHUDLead? = nil
     private var phase: ReloDeckDirector.Phase { director?.phase ?? .live }
     private var level: Int { director?.revealed ?? 6 }
     private var trace: CGFloat { director?.ringTrace ?? 1 }
@@ -42,92 +49,124 @@ struct ReloNowHero: View {
     @State private var boosted = false
     @State private var boostTask: Task<Void, Never>?
     private var fps: Double { boosted ? 60 : 30 }
-    private let stageHeight: CGFloat = 330
-    @ScaledMetric(relativeTo: .largeTitle) private var countSize: CGFloat = 64
+    /// The gauge ring the readouts dock on, and the orbit the satellites ride.
+    private let gaugeRadius: CGFloat = 128
+    private let orbitRadius: CGFloat = 164
+    /// The satellites' canvas is the orbit plus 20 pt each side, which holds the parked ring's full swell; the
+    /// stage is exactly that tall, so nothing at the top or bottom of the header clips.
+    private var satelliteSide: CGFloat { orbitRadius * 2 + 40 }
+    private var stageHeight: CGFloat { satelliteSide }
+    /// How far the stage rises under the title row: the canvas's transparent margin is free to overlap it.
+    private let stageLift: CGFloat = 14
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// Which live state the centre is showing when both are live; it alternates.
-    @State private var focus = 0
+    @Environment(\.reloMotionPaused) private var motionPaused
 
     /// Live cards.
     private var running: Int { tasks.count }
     /// Sessions working now.
-    private var sessionCount: Int { sessionsWorking.count }
-    /// No card is live but sessions are working: the centre and the ring show the sessions.
+    private var sessionCount: Int { max(sessions.count, sessionsWorking.count) }
+    /// No card is live but sessions are working: the ring shows the sessions.
     private var sessionsLead: Bool { running == 0 && sessionCount > 0 }
     /// The ring's arcs: the live cards, or the working sessions when no card is live.
     private var ringTasks: [ReloHoloTask] { sessionsLead ? sessionsWorking : tasks }
+    private var offline: Bool { if case .offline = sync { true } else { false } }
 
-    /// Everything live right now, most urgent first. The centre walks through these.
-    private var live: [ReloSignalState] {
-        var states: [ReloSignalState] = []
-        if let needsYou, needsYou > 0 { states.append(.needsYou) }
-        if running > 0 || sessionCount > 0 { states.append(.running) }
-        return states
-    }
-
+    /// The orb's state, as it always was: needs you over anything live, else calm. The owner's turn is an ask too.
     private var state: ReloSignalState {
-        live.isEmpty ? .clear : live[focus % live.count]
+        if (needsYou ?? 0) > 0 || waitingOnYou > 0 { return .needsYou }
+        return running > 0 || sessionCount > 0 ? .running : .clear
     }
 
-    /// The centre shows what matters most right now; when nothing is live, how today went.
-    private var readout: (value: String, label: String) {
-        if let greeting = director?.greeting { return ("relo", greeting) }
-        // Until the director hands over, the lens keeps the wordmark: no flash of the live count.
-        if phase != .live { return ("relo", director?.linking == true ? "LINKING" : "CONNECTING") }
-        guard let needsYou else { return ("–", "CHECKING") }
-        switch state {
-        case .needsYou: return (needsYou.formatted(), "NEEDS YOU")
-        case .running: return sessionsLead ? (sessionCount.formatted(), "SESSIONS") : (running.formatted(), "RUNNING")
-        case .clear: return (summary.total.formatted(), "TODAY")
+    /// What the header leads with: the system layer when the counts can't be trusted, else the first true state.
+    private var lead: ReloHUDLead {
+        if let leadOverride { return leadOverride }
+        if phase != .live || director?.greeting != nil { return .connecting }
+        if offline { return .offline }
+        guard let needsYou else { return .checking }
+        if needsYou > 0 { return .needsYou }
+        if waitingOnYou > 0 { return .yourTurn }
+        if running > 0 { return .running }
+        return sessionCount > 0 ? .quiet : .clear
+    }
+
+    /// The centre: the lead's count still (it never alternates), or the wordmark when there is nothing to count.
+    private var readout: (value: String?, label: String) {
+        if let greeting = director?.greeting { return (nil, greeting) }
+        switch lead {
+        case .connecting: return (nil, director?.linking == true ? "LINKING" : "CONNECTING")
+        case .offline: return (nil, "OFFLINE")
+        case .checking: return ("–", "CHECKING")
+        case .needsYou: return ((needsYou ?? 0).formatted(), "NEEDS YOU")
+        case .yourTurn: return (waitingOnYou.formatted(), "YOUR TURN")
+        case .running: return (running.formatted(), "RUNNING")
+        case .quiet: return (sessionCount.formatted(), "SESSIONS")
+        case .clear: return (nil, "ALL CLEAR")
         }
+    }
+
+    /// The satellites: the sessions as reported, or quiet ones standing in when only a count is known.
+    private var satellites: [ReloHUDSession] {
+        sessions.isEmpty ? sessionsWorking.map { ReloHUDSession(id: $0.id, phase: .quiet) } : sessions
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // The page's title, in the deck's own voice rather than a navigation bar band.
-            ReloPullTitle(pull: pull, refreshing: refreshing, accent: ReloHoloTheme.accent(for: state))
-                .padding(.top, topInset + 4)
-                .accessibilityLabel("Now").accessibilityAddTraits(.isHeader)
+            // The page's title, in the deck's own voice rather than a navigation bar band, with where the data
+            // stands at its trailing end.
+            HStack(spacing: 8) {
+                ReloPullTitle(pull: pull, refreshing: refreshing, accent: lead.accent)
+                    .accessibilityLabel("Now").accessibilityAddTraits(.isHeader)
+                ReloDeckFooter(sync: sync, pendingResponses: pendingResponses,
+                               trouble: connectionTrouble, showConnection: showConnection)
+            }
+            .frame(height: 14)
+            .padding(.horizontal, ReloLayout.screenInset)
+            .padding(.top, topInset + 4)
+            .zIndex(1)
             ZStack {
-                ReloPullStretch(pull: pull) {
-                    ReloPlasmaOrb(state: state, mix: mix, wave: waves.last,
-                                  waveOffset: CGPoint(x: width / 2 - 150, y: stageTop + stageHeight / 2 - 150),
-                                  framesPerSecond: fps)
-                        .frame(width: 300, height: 300)
-                    ReloSignalOrb(state: state, emissionTrigger: summary.total, mix: mix, waves: waves,
-                                  waveOffset: CGPoint(x: width / 2 - 165, y: stageTop + stageHeight / 2 - 165), sparse: true,
-                                  framesPerSecond: fps)
-                        .frame(width: 330, height: 330)
-                        .opacity(0.75)
+                if lead == .needsYou && !reduceMotion {
+                    ReloNeedsPulse(diameter: 186, color: lead.accent)
                 }
+                ReloPullStretch(pull: pull) {
+                    orb
+                }
+                .saturation(offline ? 0.12 : 1)
+                .brightness(offline ? -0.4 : 0)
+                .animation(.smooth(duration: 1.2), value: offline)
+                // Offline the orb is still: its clocks hold their frame.
+                .environment(\.reloMotionPaused, offline || motionPaused)
                 ReloHoloRing(state: state, tasks: ringTasks, pulse: summary.total, finished: summary.finished, framesPerSecond: fps)
-                    .frame(width: 286, height: 286)
+                    .frame(width: 256, height: 256)
                     // Booting, the ring draws itself around the sphere over a faint outline of itself.
                     .mask { if trace < 1 { ReloRingTrace(progress: trace) } else { Rectangle() } }
-                    .background { if trace < 1 { Circle().stroke(Color.white.opacity(0.08), lineWidth: 1).frame(width: 282, height: 282) } }
-                leaders
+                    .background { if trace < 1 { Circle().stroke(Color.white.opacity(0.08), lineWidth: 1).frame(width: 252, height: 252) } }
+                ReloGaugeRing(gauges: gauges, radius: gaugeRadius)
+                    .frame(width: gaugeRadius * 2 + 12, height: gaugeRadius * 2 + 12)
+                    .opacity(level >= 1 ? 1 : 0)
+                ReloSatellites(sessions: satellites, radius: orbitRadius, frozen: offline || reduceMotion)
+                    .frame(width: satelliteSide, height: satelliteSide)
                     .opacity(level >= 6 ? 1 : 0)
-                centre
+                ReloCentreReadout(value: readout.value, label: readout.label, lead: lead)
+                    .frame(width: 180)
                     .opacity(director?.badge == nil ? 1 : 0)
                     .animation(.smooth(duration: 0.3), value: director?.badge == nil)
                 if let badge = director?.badge {
-                    ReloHUDBadge(badge: badge, color: badge.warning ? ReloHoloTheme.amber : ReloHoloTheme.accent(for: state))
+                    ReloHUDBadge(badge: badge, color: badge.warning ? ReloHoloTheme.amber : lead.accent)
                         .id(badge.id)
                         .transition(.opacity)
                 }
-                corners.padding(.horizontal, ReloLayout.screenInset)
+                tags
             }
             .frame(maxWidth: .infinity)
             .frame(height: stageHeight)
-            ReloDeckFooter(sync: sync, pendingResponses: pendingResponses, agentTime: agentTime,
-                           trouble: connectionTrouble, showConnection: showConnection)
+            .padding(.top, -stageLift)
+            ReloFleetLegend(fleet: ReloFleetMachine.fleet(sessions, idle: idleMachines), frozen: offline)
                 .padding(.horizontal, ReloLayout.screenInset)
-                .padding(.top, 8)
+                .opacity(level >= 6 ? 1 : 0)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
-        .background(alignment: .top) { deckBackground }
+        .background(alignment: .top) { ReloStateWash(lead: lead, center: CGPoint(x: width / 2, y: orbCenter.y)) }
         .background { GeometryReader { proxy in Color.clear
             .onAppear { width = proxy.size.width }
             .onChange(of: proxy.size.width) { _, new in width = new } } }
@@ -144,28 +183,71 @@ struct ReloNowHero: View {
         .modifier(ReloDeckEffects(director: director, armed: armed) { strength in
             addWave(at: orbCenter, strength: strength)
         })
-        .onChange(of: state) { _, _ in boost(for: 1.6) }
+        .onChange(of: lead) { _, _ in boost(for: 1.6) }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.5), value: summary.total)
-        // With both a request and running work, the centre alternates between them.
-        .task(id: live.count) {
-            focus = 0
-            guard live.count > 1, !reduceMotion else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3.6))
-                withAnimation(.smooth(duration: 0.7)) { focus += 1 }
-            }
-        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Today")
-        .accessibilityValue("\(headline). \(summary.total) today, \(running) running, \(sessionsPhrase(sessionCount)), \(waitingOnYou) waiting on you, "
+        .accessibilityValue("\(headline). \(running) running, \(sessionsPhrase(sessionCount)), \(waitingOnYou) waiting on you, "
             + "\(needsYou.map { "\($0) need you" } ?? "requests still being checked"). \(detail)")
     }
 
-    /// The stage starts below the status bar and the title line.
-    private var stageTop: CGFloat { topInset + 22 }
+    /// The sphere and the dust field around it.
+    private var orb: some View {
+        ZStack {
+            ReloPlasmaOrb(state: state, mix: mix, wave: waves.last,
+                          waveOffset: CGPoint(x: width / 2 - 150, y: stageTop + stageHeight / 2 - 150),
+                          framesPerSecond: fps)
+                .frame(width: 300, height: 300)
+            ReloSignalOrb(state: state, emissionTrigger: summary.total, mix: mix, waves: waves,
+                          waveOffset: CGPoint(x: width / 2 - 165, y: stageTop + stageHeight / 2 - 165), sparse: true,
+                          framesPerSecond: fps)
+                .frame(width: 330, height: 330)
+                .opacity(0.75)
+        }
+    }
+
+    /// The stage starts below the status bar and the title row, less the lift.
+    private var stageTop: CGFloat { topInset + 22 - stageLift }
     private var orbCenter: CGPoint { CGPoint(x: width / 2, y: stageTop + stageHeight / 2) }
-    private var stageCenter: CGPoint { CGPoint(x: width / 2, y: stageHeight / 2) }
+
+    /// The four gauges: how full each readout is, lit only when it counts something.
+    private var gauges: [ReloHUDSlot: ReloGaugeRing.Gauge] {
+        // Connecting, no count is known yet: every gauge is unlit.
+        if lead == .connecting { return [:] }
+        let progress = tasks.compactMap(\.progress)
+        let runFill = progress.isEmpty ? 0.5 : progress.reduce(0, +) / Double(progress.count)
+        return [
+            .needsYou: .init(fill: Double(needsYou ?? 0) / 5, lit: (needsYou ?? 0) > 0, dimmed: offline),
+            .yourTurn: .init(fill: Double(waitingOnYou) / 5, lit: waitingOnYou > 0, dimmed: offline),
+            .running: .init(fill: runFill, lit: running > 0, dimmed: offline),
+            .sessions: .init(fill: Double(sessionCount) / 6, lit: sessionCount > 0, dimmed: offline),
+        ]
+    }
+
+    /// The readouts, each docked where its gauge meets the ring: the leading ones end at the ring, the trailing
+    /// ones start at it, so the number always sits nearest the instrument.
+    private var tags: some View {
+        // Connecting, all four read "–" and stay unlit and dashed.
+        let unknown = lead == .connecting
+        let values: [ReloHUDSlot: (String, Bool)] = unknown ? [:] : [
+            .needsYou: (needsYou.map { $0.formatted() } ?? "–", (needsYou ?? 0) > 0),
+            .yourTurn: (waitingOnYou.formatted(), waitingOnYou > 0),
+            .running: (running.formatted(), running > 0),
+            .sessions: (sessionCount.formatted(), sessionCount > 0),
+        ]
+        return ZStack {
+            ForEach(ReloHUDSlot.allCases, id: \.self) { slot in
+                let angle = slot.angle * .pi / 180
+                let dock = CGPoint(x: width / 2 + cos(angle) * (gaugeRadius + 6), y: stageHeight / 2 + sin(angle) * (gaugeRadius + 6))
+                let value = values[slot] ?? ("–", false)
+                ReloDockedTag(slot: slot, value: value.0, lit: value.1 && !offline, dimmed: offline && value.1)
+                    .frame(width: 180, alignment: slot.leading ? .trailing : .leading)
+                    .position(x: slot.leading ? dock.x + 16 - 90 : dock.x - 16 + 90, y: dock.y)
+                    .modifier(ReloBootIn(on: level >= 2 + slot.rawValue, corner: CGPoint(x: slot.leading ? 1 : -1, y: slot.angle > 180 ? 1 : -1)))
+            }
+        }
+        .frame(width: width, height: stageHeight)
+    }
 
     /// Draw at 60 fps for the next few seconds, while motion is fast.
     private func boost(for seconds: Double = 2.8) {
@@ -183,105 +265,10 @@ struct ReloNowHero: View {
         waves = waves.filter { now.timeIntervalSince($0.at) < 2.6 }.suffix(7) + [ReloOrbWave(origin: point, at: now, strength: strength)]
     }
 
-    /// Full-width light behind the sphere in the state's color, falling to ink at the edges.
-    private var deckBackground: some View {
-        // The glow is a circle centred on the sphere that fades to nothing above (under a pull)
-        // and below, so the deck never shows where it ends.
-        RadialGradient(colors: [ReloHoloTheme.accent(for: state).opacity(0.16),
-                                ReloHoloTheme.accent(for: state).opacity(0.05), .clear],
-                       center: .center, startRadius: 40, endRadius: 360)
-            // The whole circle, never cut to the deck's width: in landscape the deck is half
-            // the screen, and a width-clipped glow showed as a lit box around it.
-            .frame(width: max(width, 760), height: 760)
-            .offset(y: orbCenter.y - 380)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.9), value: state)
-            .allowsHitTesting(false)
-    }
-
-    /// Four fixed corner readouts, so a number never moves; the one the centre shows lights up.
-    private var corners: some View {
-        let asks = needsYou.map { $0.formatted() } ?? "–"
-        return VStack {
-            HStack(alignment: .top) {
-                // How many sessions are working leads the deck; the work waiting on you sits beside it.
-                ReloHUDModule(corner: .topLeading, index: "01", label: "SESSIONS", value: sessionCount.formatted(),
-                              color: ReloHoloTheme.sessions, lit: sessionCount > 0, focused: state == .running && sessionsLead,
-                              gauge: .items(sessionCount), buildStart: director?.moduleBuilds[2])
-                    .modifier(ReloBootIn(on: level >= 2, corner: CGPoint(x: 1, y: 1)))
-                Spacer(minLength: 0)
-                ReloHUDModule(corner: .topTrailing, index: "02", label: "WAITING", value: waitingOnYou.formatted(),
-                              color: ReloHoloTheme.color(.attention), lit: waitingOnYou > 0, focused: false,
-                              gauge: .items(waitingOnYou), buildStart: director?.moduleBuilds[3])
-                    .modifier(ReloBootIn(on: level >= 3, corner: CGPoint(x: -1, y: 1)))
-            }
-            Spacer(minLength: 0)
-            HStack(alignment: .bottom) {
-                ReloHUDModule(corner: .bottomLeading, index: "03", label: "RUNNING", value: running.formatted(),
-                              color: ReloHoloTheme.color(.running), lit: running > 0, focused: state == .running && !sessionsLead,
-                              gauge: .items(running), buildStart: director?.moduleBuilds[5])
-                    .modifier(ReloBootIn(on: level >= 5, corner: CGPoint(x: 1, y: -1)))
-                Spacer(minLength: 0)
-                ReloHUDModule(corner: .bottomTrailing, index: "04", label: "NEEDS YOU", value: asks,
-                              color: ReloHoloTheme.color(.needsYou), lit: (needsYou ?? 0) > 0,
-                              focused: state == .needsYou, gauge: .items(needsYou ?? 0), buildStart: director?.moduleBuilds[4])
-                    .modifier(ReloBootIn(on: level >= 4, corner: CGPoint(x: -1, y: -1)))
-            }
-        }
-        .padding(.vertical, 6)
-    }
-
-    /// Leaders from each module's gauge to the ring, so the corners read as one instrument.
-    private var leaders: some View {
-        let inset = ReloLayout.screenInset
-        let near: CGFloat = inset + 82, far = width - inset - 82
-        let topY: CGFloat = 66, bottomY = stageHeight - 12
-        return ReloHUDLeaders(center: stageCenter, ringRadius: 141, anchors: [
-            (.topLeading, CGPoint(x: near, y: topY), ReloHoloTheme.sessions, sessionCount > 0, sessionCount),
-            (.topTrailing, CGPoint(x: far, y: topY), ReloHoloTheme.color(.attention), waitingOnYou > 0, waitingOnYou),
-            (.bottomLeading, CGPoint(x: near, y: bottomY), ReloHoloTheme.color(.running), running > 0, running),
-            (.bottomTrailing, CGPoint(x: far, y: bottomY), ReloHoloTheme.color(.needsYou), (needsYou ?? 0) > 0, needsYou ?? 0),
-        ])
-    }
-
-    /// The count over the sphere's dark lens, with a status line whose dot breathes while live.
-    private var centre: some View {
-        let accent = needsYou == nil ? Color.reloSecondaryText
-            : state == .running && sessionsLead ? ReloHoloTheme.sessions : ReloHoloTheme.accent(for: state)
-        let isLive = state != .clear && needsYou != nil
-        let colors = ReloHoloTheme.colors(for: state)
-        return VStack(spacing: 2) {
-            // While something is live the count breathes and its light drifts through the state's colors.
-            ReloMotionClock(live: isLive, framesPerSecond: 30, still: 0) { time in
-                let wave = isLive ? (sin(time * (state == .needsYou ? 3.4 : 2.2)) + 1) / 2 : 0
-                Text(readout.value)
-                    .font(.system(size: countSize, weight: .light, design: .rounded))
-                    .tracking(-1)
-                    .foregroundStyle(isLive
-                        ? AnyShapeStyle(LinearGradient(colors: [.white, colors[Int(time * 0.5) % 3 + 1]],
-                                                       startPoint: .top, endPoint: .bottom))
-                        : AnyShapeStyle(Color.white))
-                    .shadow(color: accent.opacity(0.4 + 0.45 * wave), radius: 10 + 12 * wave)
-                    .scaleEffect(1 + 0.03 * wave)
-                    .lineLimit(1).minimumScaleFactor(0.4)
-            }
-            .contentTransition(.numericText())
-            .animation(reduceMotion ? nil : .smooth(duration: 0.5), value: readout.value)
-            .id(readout.label)
-            .transition(.reloSoftSwap)
-            HStack(spacing: 6) {
-                ReloStatusDot(color: accent, live: state != .clear || needsYou == nil)
-                Text(readout.label)
-                    .font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(2)
-                    .foregroundStyle(accent)
-            }
-            .lineLimit(1).minimumScaleFactor(0.6)
-        }
-        .frame(width: 160)
-    }
-
     private var headline: String {
         guard let needsYou else { return "Checking requests…" }
         if needsYou > 0 { return needsYou == 1 ? "1 request needs you" : "\(needsYou) requests need you" }
+        if waitingOnYou > 0 { return waitingOnYou == 1 ? "1 session waits for your reply" : "\(waitingOnYou) sessions wait for your reply" }
         if running > 0 { return running == 1 ? "1 task running" : "\(running) tasks running" }
         if sessionCount > 0 { return sessionsPhrase(sessionCount) }
         return "All clear"
@@ -299,30 +286,13 @@ struct ReloNowHero: View {
             let waiting = needsYou == 1 ? "A request is waiting for your answer below" : "Requests are waiting for your answer below"
             return running > 0 || sessionCount > 0 ? "\(waiting), and work is still running." : "\(waiting)."
         }
+        if waitingOnYou > 0 { return "A session finished its turn and waits for you." }
         if running > 0 { return running == 1 ? "One task is running. Its progress is on the ring." : "\(running) tasks are running. Their progress is on the ring." }
         if sessionCount > 0 {
-            return sessionCount == 1 ? "A session is working without a card. It circles the ring."
-                : "\(sessionCount) sessions are working without a card. They circle the ring."
+            return sessionCount == 1 ? "A session is working without a card. It circles the orbit."
+                : "\(sessionCount) sessions are working without a card. They circle the orbit."
         }
-        if summary.total == 0 { return "New work from your sessions and scripts arrives here." }
         return "All clear. Nothing needs you right now."
-    }
-}
-
-/// A small status light: steady when idle, breathing while something is live.
-private struct ReloStatusDot: View {
-    let color: Color
-    let live: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var lit = false
-
-    var body: some View {
-        Circle().fill(color).frame(width: 6, height: 6)
-            .background { Circle().fill(color.opacity(0.5)).frame(width: 12, height: 12).blur(radius: 3)
-                .opacity(live && lit ? 1 : 0.35) }
-            .opacity(live && !lit ? 0.55 : 1)
-            .onAppear { if live && !reduceMotion { withAnimation(.easeInOut(duration: 1.1).repeatForever()) { lit = true } } }
-            .accessibilityHidden(true)
     }
 }
 
@@ -406,14 +376,14 @@ private struct ReloPullTitle: View {
         let text = refreshing || (pull?.released ?? false) ? "SYNCING"
             : armed ? "RELEASE TO SYNC" : distance > 18 ? "PULL TO SYNC" : "RELO · NOW"
         Text(text)
-            .font(.system(.caption2, design: .monospaced).weight(.semibold)).tracking(3)
-            .foregroundStyle(text == "RELO · NOW" ? Color.reloSecondaryText : accent)
+            .font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(2.4)
+            .foregroundStyle(text == "RELO · NOW" ? Color(red: 0x98 / 255, green: 0xA2 / 255, blue: 0xB6 / 255) : accent)
             .lineLimit(1)
             .contentTransition(.opacity)
             .animation(.smooth(duration: 0.25), value: text)
             // A fixed box: the words change while the page is being pulled, and a title that
             // changed width re-laid out the scrolled content mid-bounce.
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .sensoryFeedback(.impact(weight: .light, intensity: 0.7), trigger: pull?.armings ?? 0)
     }
 }

@@ -830,10 +830,14 @@ final class ChoiceQuestionContractTests: XCTestCase {
         XCTAssertNil(history.items[1].interaction)
         XCTAssertEqual(history.items[2].interaction?.kind, .yesNo)
 
-        // A known kind that breaks its own contract is still refused, as before.
+        // A known kind that breaks its own contract (a choice without options) costs only that interaction:
+        // one such item in the snapshot once failed the whole sync and the inbox read as offline.
         let broken = #"{"id":"int_abcdefghijkl","kind":"choice","prompt":"Which?","state":"pending","expiresAt":"2027-01-15T12:10:00Z","respondedAt":null}"#
-        let invalid = #"{"items":[\#(inboxItem(broken))],"cursor":null,"hasMore":false,"serverTime":"2027-01-15T12:00:01Z"}"#
-        XCTAssertThrowsError(try ReloWireJSON.decoder().decode(InboxPage.self, from: Data(invalid.utf8)))
+        let mixed = #"{"items":[\#(inboxItem(broken)),\#(inboxItem(known, id: "ntf_cdefghijklmn"))]}"#
+        let snapshot = try ReloWireJSON.decoder().decode(InboxSnapshot.self, from: Data(mixed.utf8))
+        XCTAssertEqual(snapshot.items.map(\.id), ["ntf_abcdefghijkl", "ntf_cdefghijklmn"])
+        XCTAssertNil(snapshot.items[0].interaction)
+        XCTAssertEqual(snapshot.items[1].interaction?.kind, .yesNo)
     }
 
     func testOptionRulesFollowTheWireSpecification() {

@@ -6,7 +6,8 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { constants } from "node:os";
-import { basename } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, delimiter, extname, isAbsolute, join } from "node:path";
 import { workSealer } from "../crypto/seal-work.mjs";
 import { UsageError } from "../shared/errors.mjs";
 import { getAuthenticated } from "../shared/login.mjs";
@@ -18,7 +19,8 @@ import { restoreFromSelfCopy, loadSelfKey } from "../crypto/self-copy.mjs";
 import { producerPathKey, resolveProducer } from "./producer.mjs";
 import { leaseSeconds, scriptRequests } from "./work.mjs";
 
-const FORWARDED = ["SIGINT", "SIGTERM"];
+const FINISH_BUDGET_MS = 6_000;
+const FORWARDED =["SIGINT", "SIGTERM"];
 const USAGE = "relo run [--goal TEXT] [--plan A,B] -- COMMAND [ARGS...]";
 
 /** "4s", "1m 5s", "2h 3m": the time a run took, for the outcome. */
@@ -35,8 +37,29 @@ export function formatDuration(milliseconds) {
  * as an argument must not reach a card). The content filter has the last word on the name.
  */
 export function defaultGoal(command) {
-  const name = basename(String(command[0] ?? "")).slice(0, 40);
+  const name = basename(String(command[0] ?? "")).replace(/\.(exe|cmd|bat|com)$/iu, "").slice(0, 40);
   try { return checkText("goal", `Run ${name}`, { words: false }); } catch { return "Run a command"; }
+}
+
+/**
+ * What to spawn for `argv`. Executables are spawned directly. On Windows, `npm` and other tools installed as
+ * .cmd/.bat shims cannot be spawned without a shell (ENOENT, or EINVAL since the 2024 Node fix), so such a
+ * command runs through cmd.exe with each argument quoted, the way a person typing it in a shell would.
+ */
+export function launchTarget(argv, { platform = process.platform, env = process.env, exists = existsSync } = {}) {
+  const [command, ...args] = argv;
+  if (platform !== "win32") return { command, args, options: {} };
+  const extensions = String(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const folders = isAbsolute(command) || /[\\/]/u.test(command) ? [""] : String(env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean);
+  const names = extname(command) ? [command] : [command, ...extensions.map((extension) => command + extension)];
+  let found;
+  for (const folder of folders) {
+    found = names.map((name) => (folder ? join(folder, name) : name)).find((path) => extname(path) && exists(path));
+    if (found) break;
+  }
+  if (!found || !/\.(cmd|bat)$/iu.test(found)) return { command: found ?? command, args, options: {} };
+  const quote = (value) => (/^[\w@%+=:,./\\-]+$/u.test(value) ? value : `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`);
+  return { command: env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", `"${[found, ...args].map(quote).join(" ")}"`], options: { windowsVerbatimArguments: true } };
 }
 
 /** The producer key: --producer, RELO_SESSION, else one of this run's own (so two runs never share a work). */
@@ -131,7 +154,8 @@ export async function runScriptRun(command) {
     };
     for (const [signal, handler] of handlers) signals.on(signal, handler);
     try {
-      child = spawn(argv[0], argv.slice(1), { stdio: "inherit", env: dependencies.env ?? process.env });
+      const target = launchTarget(argv, { env: dependencies.env ?? process.env });
+      child = spawn(target.command, target.args, { stdio: "inherit", env: dependencies.env ?? process.env, ...target.options });
     } catch (error) {
       note(dependencies, `relo run: cannot start ${basename(argv[0])} (${error?.code ?? "error"})`);
       done({ code: error?.code === "EACCES" ? 126 : 127, spawnFailed: true });
@@ -156,7 +180,13 @@ export async function runScriptRun(command) {
     : classify({ ...outcome, elapsed: Date.now() - startedAt });
   // Give a slow start a moment to land so the finish can follow it; never hold the exit code for long.
   await Promise.race([cardReady, new Promise((resolve) => setTimeout(resolve, 5000).unref?.())]);
-  if (lane) await finishRun({ lane, client, producer, work, ended, dependencies, idempotencyKey });
+  // The finish is bounded too: a server that never answers must not hold the command's exit code for 30 s.
+  if (lane) {
+    await Promise.race([
+      finishRun({ lane, client, producer, work, ended, dependencies, idempotencyKey }),
+      new Promise((resolve) => setTimeout(() => { note(dependencies, `Relo: the server did not answer, so this run's result (${ended.outcome}) may not be on your phone.`); resolve(); }, FINISH_BUDGET_MS).unref?.()),
+    ]);
+  }
   const exit = dependencies.exit ?? ((code) => process.exit(code));
   const data = { ok: ended.result !== "failed", producer, result: ended.result, outcome: ended.outcome };
   // Relo prints nothing of its own: the command's output is the output, and its exit code is ours.

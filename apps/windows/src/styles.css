@@ -1,0 +1,51 @@
+@import "tailwindcss";
+@import "./relo/ui/relo-ui.css";
+
+/* Tokens copied from apps/dashboard/src/index.css (ink canvas, foreground, slate, amber, hairline). */
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #08080d;
+  --color-foreground: #f3f3f7;
+  --color-muted-foreground: #94a3b8;
+  --color-now-amber: #fbbf24;
+  --color-now-slate: #94a3b8;
+  --color-hairline: rgb(255 255 255 / 0.08);
+}
+
+/* The window is transparent and click-through outside the notch: nothing may paint behind it. */
+html,
+body,
+#root {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+  font-family: var(--font-sans);
+  color: var(--color-foreground);
+}
+
+/* Keyboard focus: a visible ring on anything focusable in the notch window (Z03). */
+:is(button, a, [tabindex], select, input, textarea):focus-visible {
+  outline: 2px solid color-mix(in srgb, #8b7cff 70%, white);
+  outline-offset: 2px;
+}
+
+/* The app's Reduce Motion setting (the OS setting is each file's prefers-reduced-motion block). */
+html[data-reduce-motion] *,
+html[data-reduce-motion] *::before,
+html[data-reduce-motion] *::after {
+  animation: none !important;
+}
+
+/* Forced colors (Windows High Contrast): text and rings in system colours (Z05). */
+@media (forced-colors: active) {
+  html,
+  body,
+  #root {
+    color: CanvasText;
+  }
+  :is(button, a, [tabindex], select, input, textarea):focus-visible {
+    outline: 3px solid Highlight;
+  }
+}

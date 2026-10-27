@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relo Setup</title>
+<style>
+  /* Relo's own look (apps/windows/src/settings/onboarding/aurora.css, ReloAurora.swift): near black with slow light in indigo,
+     coral and mint, the app icon at the middle. 420 x 300, no frame: the page is the window, rounded by its own corners. */
+  :root {
+    --ink: rgb(8 8 14);
+    --text: #f3f3f7;
+    --soft: rgb(255 255 255 / 0.6);
+    --violet: #8b7cff;
+    --coral: #ff7a66;
+    --mint: #34d399;
+    --cyan: #5ce1ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; cursor: default;
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text); }
+  body.preview { background: #2a2a30; padding: 0; }
+  .card { position: fixed; inset: 0; border-radius: 20px; background: var(--ink); overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08); container-type: size; }
+  .aurora i { position: absolute; left: 50%; top: 50%; border-radius: 50%; filter: blur(64px); opacity: .5;
+    animation: drift 11s ease-in-out infinite alternate; }
+  .aurora i:nth-child(1) { width: 380px; height: 380px; margin: -190px 0 0 -190px; background: var(--violet); --x0: -150px; --y0: -120px; --x1: -60px; --y1: -150px; }
+  .aurora i:nth-child(2) { width: 300px; height: 300px; margin: -150px 0 0 -150px; background: var(--coral); --x0: 150px; --y0: 110px; --x1: 80px; --y1: 70px; opacity: .38; }
+  .aurora i:nth-child(3) { width: 260px; height: 260px; margin: -130px 0 0 -130px; background: var(--mint); --x0: -140px; --y0: 120px; --x1: -50px; --y1: 150px; opacity: .3; }
+  .aurora i { transform: translate(var(--x0), var(--y0)); }
+  @keyframes drift { to { transform: translate(var(--x1), var(--y1)); } }
+  .vignette { position: absolute; inset: 0; background: radial-gradient(circle at 50% 42%, transparent 20%, rgb(0 0 0 / .6) 100%); }
+
+  main { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; padding: 0 36px; text-align: center; }
+  .mark { position: relative; width: 112px; height: 112px; margin-bottom: 26px; }
+  .mark img { position: absolute; inset: 14px; width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 8px 30px rgb(0 0 0 / .5); }
+  /* The ring: a soft conic light that turns around the icon, calm, while Relo is being put in place. */
+  .ring { position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0 18%, var(--violet) 48%, var(--cyan) 78%, transparent 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+    animation: spin 1.6s linear infinite; filter: drop-shadow(0 0 6px rgb(139 124 255 / .55)); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .opening .ring { animation-duration: 1s; }
+  .failed .ring, .done .ring { animation: none; background: none; box-shadow: inset 0 0 0 2px rgb(255 122 102 / .0); }
+  .failed .ring { background: conic-gradient(var(--coral), var(--coral)); }
+  .done .ring { background: conic-gradient(var(--mint), var(--mint)); }
+  .failed .mark img { opacity: .6; }
+
+  h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: .1px; line-height: 1.3; }
+  p { margin: 8px 0 0; font-size: 13px; line-height: 1.45; color: var(--soft); min-height: 19px; max-width: 320px; }
+  .buttons { display: none; gap: 10px; margin-top: 22px; }
+  .failed .buttons { display: flex; }
+  button { font: inherit; font-size: 13px; font-weight: 600; border-radius: 999px; padding: 9px 22px; cursor: pointer; border: 1px solid rgb(255 255 255 / .18);
+    background: transparent; color: var(--text); }
+  button:hover { background: rgb(255 255 255 / .08); }
+  button.primary { background: var(--text); color: var(--ink); border-color: transparent; }
+  button.primary:hover { background: #fff; }
+  button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .aurora i, .ring { animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="vignette" aria-hidden="true"></div>
+  <main aria-live="polite">
+    <div class="mark"><div class="ring"></div><img alt="Relo" src="data:image/png;base64,__ICON__"></div>
+    <h1 id="title">Installing Relo&hellip;</h1>
+    <p id="line"></p>
+    <div class="buttons">
+      <button class="primary" id="retry" type="button">Try again</button>
+      <button id="close" type="button">Close</button>
+    </div>
+  </main>
+</div>
+<script>
+  // The program calls setState(state, headline, line) as the install moves on; the hash picks a state to look at in a browser
+  // (#failed, #opening, #updating, #installing; add ",preview" for a grey backdrop behind the rounded corners).
+  const card = document.getElementById("card");
+  const title = document.getElementById("title");
+  const line = document.getElementById("line");
+  const post = (m) => { try { window.ipc.postMessage(m); } catch (_) {} };
+  const WORDS = {
+    installing: ["Installing Relo…", ""],
+    updating: ["Updating Relo…", ""],
+    opening: ["Opening Relo…", ""],
+    done: ["Relo is installed", "Find it in your Start menu."],
+    failed: ["Relo couldn’t finish installing", "Check that you have some free space and try again."],
+  };
+  window.setState = (state, head, small) => {
+    const w = WORDS[state] || WORDS.installing;
+    card.className = "card " + state;
+    title.textContent = head || w[0];
+    line.textContent = small === undefined ? w[1] : small;
+  };
+  document.getElementById("retry").addEventListener("click", () => post("retry"));
+  document.getElementById("close").addEventListener("click", () => post("close"));
+  document.addEventListener("mousedown", (e) => { if (e.button === 0 && !e.target.closest("button")) post("drag"); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") post("close"); });
+  const hash = location.hash.replace("#", "").split(",");
+  if (hash.includes("preview")) document.body.classList.add("preview");
+  window.setState(WORDS[hash[0]] ? hash[0] : "installing");
+</script>
+</body>
+</html>

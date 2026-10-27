@@ -23,8 +23,11 @@ extension EnvironmentValues {
 
 /// One clock for every authored effect. It ticks only while the view is on screen (and not
 /// scrolled away), the app is active, the device is cool, and the person has not asked for less
-/// motion or power; otherwise it holds `still`, which renders the same frame every time.
-/// Effects are slow, so 30 fps is the default: half the work of 60 with no visible loss.
+/// motion or power; otherwise it holds the frame it last showed (`still` before it first ticks).
+/// Time carries on from where it stopped, so nothing jumps when the clock resumes.
+/// Appearance is tracked on one container that never changes: on a Group the modifiers went to each
+/// copy (ticking and still), whose onAppear and onDisappear raced and could leave the clock stopped
+/// for good. A fresh TimelineView starts each time it ticks: one created paused never resumed.
 struct ReloMotionClock<Content: View>: View {
     var live = true
     var framesPerSecond: Double = 30
@@ -36,19 +39,38 @@ struct ReloMotionClock<Content: View>: View {
     @Environment(\.reloMotionPaused) private var paused
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @State private var hot = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
+    /// Time shown when the clock last stopped, and when it started again (nil while stopped).
+    @State private var held: TimeInterval?
+    @State private var resumedAt: Date?
 
     private var ticking: Bool {
         live && visible && !paused && scenePhase == .active && !reduceMotion && !lowPower && !hot
     }
 
+    private func time(at date: Date) -> TimeInterval {
+        let base = held ?? still
+        guard let resumedAt else { return base }
+        return base + max(0, date.timeIntervalSince(resumedAt))
+    }
+
     var body: some View {
-        Group {
+        ZStack {
             if ticking {
                 TimelineView(.animation(minimumInterval: 1 / framesPerSecond)) { timeline in
-                    content(still + timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3_600))
+                    content(time(at: timeline.date))
                 }
             } else {
-                content(still)
+                content(time(at: .now))
+            }
+        }
+        .onChange(of: ticking, initial: true) { _, now in
+            if now {
+                if resumedAt == nil { resumedAt = .now }
+            } else if resumedAt != nil {
+                // Out of view or in the background: hold this frame. Asked for less motion (or the
+                // effect is switched off): back to the authored still frame.
+                held = live && !reduceMotion && !lowPower && !hot ? time(at: .now) : nil
+                resumedAt = nil
             }
         }
         .onAppear { visible = true }
@@ -405,5 +427,32 @@ struct ReloSignalOrb: View {
         }
         if live { relay(progress: (time / 5.5).truncatingRemainder(dividingBy: 1), strength: 0.28 * energy) }
         if let emittedAt { relay(progress: Date.now.timeIntervalSince(emittedAt) / 1.9, strength: 0.95) }
+    }
+}
+
+/// Drives a repeating animation through a flag that only runs while it can be seen: the app is active, the surface
+/// is not paused (off its tab or scrolled away) and Reduce Motion is off. Otherwise the flag rests at false with no
+/// animation, which also ends the loop, so a card on a background tab costs nothing to render.
+private struct ReloLoopingFlag: ViewModifier {
+    let animation: Animation
+    @Binding var flag: Bool
+    let enabled: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reloMotionPaused) private var paused
+
+    private var running: Bool { enabled && scenePhase == .active && !reduceMotion && !paused }
+
+    func body(content: Content) -> some View {
+        content.onChange(of: running, initial: true) { _, on in
+            if on { withAnimation(animation) { flag = true } } else { withAnimation(nil) { flag = false } }
+        }
+    }
+}
+
+extension View {
+    /// `flag` flips to true under `animation` (a repeating one) while the surface is live, and rests at false otherwise.
+    func reloLoop(_ animation: Animation, flag: Binding<Bool>, enabled: Bool = true) -> some View {
+        modifier(ReloLoopingFlag(animation: animation, flag: flag, enabled: enabled))
     }
 }

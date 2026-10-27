@@ -72,6 +72,8 @@ your phones, like card text.
 | Harness | Levels | Where Relo writes |
 | --- | --- | --- |
 | Claude Code | `off`, `presence`, `approvals` (and each with the subagent nudge at `optimize`) | user settings, or with `--project` the personal `.claude/settings.local.json` |
+| Codex | `off`, `presence` | user only: `~/.codex/hooks.json`. Codex runs a hook only once you trusted it: after setup, type `/hooks` in Codex and trust Relo's |
+| Antigravity | `off`, `presence` | user only: the named hook `relo` in `~/.gemini/config/hooks.json` |
 | Gemini CLI | `off`, `presence` | user settings only |
 | OpenCode | `off`, `presence`, `approvals` | user only: `~/.config/opencode/relo-hooks.json` and Relo's plugin, `plugins/relo.js` |
 

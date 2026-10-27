@@ -1,0 +1,34 @@
+{
+  "serverTime": "2026-10-14T10:00:00.000Z",
+  "sinceYouLooked": {
+    "since": "2026-10-14T06:40:00.000Z",
+    "finished": 0,
+    "failed": 0,
+    "waitingOnYou": 0,
+    "stoppedWithoutFinishing": 0,
+    "needsYou": 0
+  },
+  "needsYou": [],
+  "recent": [],
+  "waitingOnYou": [],
+  "running": [],
+  "quiet": [],
+  "paused": [],
+  "folds": {
+    "waitingOnYou": 0,
+    "quiet": 0,
+    "paused": 0
+  },
+  "lockScreen": {
+    "cards": [],
+    "needsYouCount": 0,
+    "focus": null
+  },
+  "sessions": {
+    "sessions": [],
+    "folds": {
+      "idle": 0
+    }
+  },
+  "refreshAt": null
+}

@@ -15,14 +15,19 @@ extension Color {
     /// State colors (`--status-*`): needs you, running, done.
     static let reloSignalCoral = Color(reloHex: 0xFF7A66)
     static let reloSignalIndigo = Color(reloHex: 0x8B7CFF)
+    /// The Now palette, literal here because the widget cannot see `ReloHoloTheme`: needs you orange, your turn
+    /// amber, running cyan.
+    static let reloStateOrange = Color(reloHex: 0xFF8A3D)
+    static let reloStateAmber = Color(reloHex: 0xFBBF24)
+    static let reloStateCyan = Color(reloHex: 0x5CE1FF)
     static let reloDone = Color(reloHex: 0x34D399)
     static let reloInfo = Color(reloHex: 0x94A3B8)
     static let reloWarning = Color(reloHex: 0xFBBF24)
 }
 
 /// The one table of how a piece of work stands: its words, symbol and color. History, the detail page, Now,
-/// the Lock Screen and message kinds all read it, so "Running" is the same indigo wherever it appears.
-/// Coral asks for the owner, indigo moves, green is done, amber stopped short, red failed, slate is quiet.
+/// the Lock Screen and message kinds all read it, so "Running" is the same cyan wherever it appears.
+/// Orange asks for the owner, amber is your turn, cyan moves, green is done, amber stopped short, red failed, slate is quiet.
 struct ReloStateStyle: Equatable, Sendable {
     let label: String
     let color: Color
@@ -36,15 +41,15 @@ struct ReloStateStyle: Equatable, Sendable {
 
     // MARK: Named states
 
-    static let running = ReloStateStyle(label: "Running", color: .reloSignalIndigo, symbol: "waveform")
+    static let running = ReloStateStyle(label: "Running", color: .reloStateCyan, symbol: "waveform")
     static let done = ReloStateStyle(label: "Done", color: .reloDone, symbol: "checkmark")
     static let failed = ReloStateStyle(label: "Failed", color: .reloErrorText, symbol: "xmark.octagon.fill")
     static let dropped = ReloStateStyle(label: "Dropped", color: .reloWarning, symbol: "stop.fill")
     static let leftUnfinished = ReloStateStyle(label: "Left unfinished", color: .reloWarning, symbol: "exclamationmark.triangle.fill")
-    static let needsYou = ReloStateStyle(label: "Needs you", color: .reloSignalCoral, symbol: "exclamationmark.bubble.fill")
-    static let yourTurn = ReloStateStyle(label: "Your turn", color: .reloSignalCoral, symbol: "hand.raised.fill")
-    static let missed = ReloStateStyle(label: "Missed", color: .reloSignalCoral, symbol: "clock.badge.xmark")
-    static let permission = ReloStateStyle(label: "Permission", color: .reloSignalCoral, symbol: "lock.shield.fill")
+    static let needsYou = ReloStateStyle(label: "Needs you", color: .reloStateOrange, symbol: "exclamationmark.bubble.fill")
+    static let yourTurn = ReloStateStyle(label: "Your turn", color: .reloStateAmber, symbol: "hand.raised.fill")
+    static let missed = ReloStateStyle(label: "Missed", color: .reloStateOrange, symbol: "clock.badge.xmark")
+    static let permission = ReloStateStyle(label: "Permission", color: .reloStateOrange, symbol: "lock.shield.fill")
     static let quiet = ReloStateStyle(label: "Quiet", color: .reloInfo, symbol: "moon.zzz")
     static let stoppedResponding = ReloStateStyle(label: "Stopped responding", color: .reloInfo, symbol: "pause.circle")
     static let noSignal = ReloStateStyle(label: "No signal", color: .reloInfo, symbol: "antenna.radiowaves.left.and.right.slash")

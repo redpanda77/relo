@@ -53,7 +53,7 @@ Signed in, `/` and `/sign-in` redirect to `/dashboard`. Retired paths (`/dashboa
 3. `state`, `services` and a feature's own `*-service.ts` own decoding, fetching, polling, pending operations, and recoverable errors.
 4. `components/organisms`, `molecules`, and `atoms` contain reusable product presentation below the feature boundary; they import feature types only. `components/page.tsx` holds the page templates (`Page`, `SplitPage`) and the frosted `List`/`Row`.
 5. `components/ui` contains generated shadcn/ui source and imports no feature code.
-6. `lib` contains small deterministic primitives (status-to-tone mapping, formatting, the day-to-core mapping in `orb-theme.ts`), the Relo core's three.js scene (`orb-scene.ts`, only ever loaded as its own chunk), and the browser's end-to-end encryption (`lib/e2ee`).
+6. `lib` contains small deterministic primitives (status-to-tone mapping, formatting, the day-to-core mapping in `orb-theme.ts`), the Relo core's three.js scene (`orb-scene.ts`, only ever loaded as its own chunk), and the browser's link to its keys (`lib/e2ee`; the cryptography is `packages/owner-crypto`, shared with the Windows app).
 
 Dependencies point down this list. Presentation components do not read bootstrap JSON, query the database, or infer lifecycle truth. Bootstrap and API shapes come from `@relo/notification-contracts`; each feature's `types.ts` re-exports them.
 

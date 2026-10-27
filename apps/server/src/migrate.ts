@@ -20,9 +20,10 @@ export async function migrate(db: Database, directory = migrationsDirectory): Pr
       )
     `);
     const files = (await readdir(directory)).filter((file) => file.endsWith(".sql")).sort();
+    // One read of what is applied (the advisory lock keeps another migrator from changing it meanwhile).
+    const applied = new Set((await lock.query<{ version: string }>("SELECT version FROM schema_migrations")).rows.map((row) => row.version));
     for (const file of files) {
-      const exists = await lock.query("SELECT 1 FROM schema_migrations WHERE version = $1", [file]);
-      if (exists.rowCount) continue;
+      if (applied.has(file)) continue;
       const client = await db.connect();
       try {
         await client.query("BEGIN");

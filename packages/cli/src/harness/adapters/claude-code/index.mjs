@@ -6,9 +6,9 @@
 // and transcript paths are never read. The exceptions are the transcript's token usage (contextTokens: a count only) and is `background`, a boolean computed here from the
 // tool name and its run_in_background flag; neither leaves this function.
 // No network here: adapters map events and render outcomes; the core owns state and transport.
-import { harnessPath, projectPath } from "../../paths.mjs";
+import { absolutePath, harnessPath, projectPath } from "../../paths.mjs";
 import descriptor from "./descriptor.mjs";
-import { claudeContextTokens, claudeResolveTitle, claudeSessionName } from "./session-name.mjs";
+import { claudeContextTokens, claudeInterruptedSince, claudeResolveTitle, claudeSessionName } from "./session-name.mjs";
 import { EVENT_ORDER, HOOK_LEVELS, WAITING_NOTIFICATIONS, wantedEntries } from "./levels.mjs";
 
 const ROLE_EVENTS = { remind: "Stop", restore: "SessionStart", turn: "UserPromptSubmit", guard: "PreToolUse" };
@@ -47,6 +47,8 @@ export default Object.freeze({
   id: descriptor.id,
   label: descriptor.label,
   aliases: descriptor.aliases,
+  /** Records the status line's plan limits for `relo usage`; loaded only when the line carries them. */
+  recordUsage: async (input, dependencies) => (await import("./usage-record.mjs")).recordClaudeUsage({ input, dependencies }),
   /** Whether a process command line is Claude Code itself (the liveness check records the nearest such ancestor). */
   harnessProcess: (command) => descriptor.processPattern.test(String(command)),
 
@@ -55,13 +57,25 @@ export default Object.freeze({
     UserPromptSubmit: "prompt",
     PreToolUse: "tool_start",
     PostToolUse: "tool_end",
+    PostToolUseFailure: "tool_end",
     Notification: "wait",
     Stop: "stop",
+    StopFailure: "stop",
     SessionEnd: "end",
     SubagentStart: "subagent_start",
     SubagentStop: "subagent_stop",
     PreCompact: "compact",
   }),
+
+  /**
+   * Stop does not run when the owner interrupts, so the other signals count: a tool failure flagged `is_interrupt` is a
+   * stop (not for a subagent's tool), and the idle prompt (~60 s after Claude finished with no input) is an `idle`.
+   */
+  refine: (event, input) => {
+    if (event === "wait" && input.notification_type === "idle_prompt") return "idle";
+    if (event === "tool_end" && input.hook_event_name === "PostToolUseFailure" && input.is_interrupt === true && input.agent_id === undefined) return "stop";
+    return undefined;
+  },
 
   /** Only a prompt that blocks on the owner is a wait (the installed matcher filters too). */
   accept: (event, input) => event !== "wait" || WAITING_NOTIFICATIONS.includes(input.notification_type),
@@ -77,8 +91,8 @@ export default Object.freeze({
    * the terminal session has. `titlePath` / `titleMissAt` are what the caller kept from last time; the returned
    * `cache` is what to keep now (local state only). { title?, cache }; synchronous.
    */
-  resolveTitle: (input, { env, home, titlePath, titleMissAt, now } = {}) =>
-    claudeResolveTitle({ sessionId: input.session_id, env, home, cwd: input.cwd, titlePath, titleMissAt, now }),
+  resolveTitle: (input, { env, home, titlePath, titleMissAt, nameCache, now } = {}) =>
+    claudeResolveTitle({ sessionId: input.session_id, env, home, cwd: input.cwd, titlePath, titleMissAt, nameCache, now }),
 
   /**
    * The titles the Claude desktop app shows in its sidebar: Map of session id → { title, cwd? }, read locally and
@@ -92,6 +106,12 @@ export default Object.freeze({
    * count leaves this function (the status line does not run in the desktop app, hooks do).
    */
   contextTokens: (input) => claudeContextTokens(input.transcript_path),
+
+  /** The session's transcript file (kept in local observed state only, for `interrupted`); undefined when the payload has none. */
+  transcriptPath: (input) => absolutePath(input.transcript_path),
+
+  /** Whether the transcript ends in the owner's interrupt, newer than `since` (ms). A boolean; nothing is read into state. */
+  interrupted: ({ path, since }) => claudeInterruptedSince(path, since),
 
   identity: (input) => ({
     id: input.session_id,

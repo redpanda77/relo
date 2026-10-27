@@ -9,6 +9,7 @@ import { preserveActivePresentationPolicy } from "../presentation-policy.js";
 import { PresentationRuntimeError,assertAccountPresentationAssets } from "../presentation-runtime.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
 import { NativeOccurrenceError,assertNativeStartChronology } from "../relevance/native-occurrence.js";
+import { overviewReaderIds } from "../owner-overview.js";
 import { createActivityCommands,storeSealedCard,eligibleDevices,replaceBlockingTaskActivities,serializeTaskActivity } from "./runtime.js";
 import { activityReplay,completeActiveCardReuse,replayStoredStart,replayedOperation } from "./start-store.js";
 import type { ActivityStartRow } from "./start-types.js";
@@ -86,7 +87,9 @@ export async function startCredentialActivity(db:Database,actor:Extract<Activity
         ? await lockOriginGenerationSlot<ActivityStartRow>(client,auth.principalId,originHash)
         : null;
       const devices = await eligibleDevices(client,auth.principalId,requestedIds);
-      if (requestedIds && devices.length !== requestedIds.length) {
+      // A named owner overview device (the Mac) is a valid recipient, never a card target (owner-overview.ts).
+      const namedReaders = requestedIds ? await overviewReaderIds(client,auth.principalId,requestedIds) : [];
+      if (requestedIds && devices.length+namedReaders.length !== requestedIds.length) {
         await transaction.rollback();
         return startRejected({error: "invalid_device_selection"},"invalid");
       }

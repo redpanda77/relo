@@ -29,7 +29,7 @@ async function readIfPresent(path) {
  */
 export async function planLevelFile(path, agent, level, launch = {}) {
   const current = await readIfPresent(path);
-  const plan = planLevel(path, current, level, ADAPTERS[agent]);
+  const plan = planLevel(path, current, level, ADAPTERS[agent], launch);
   const runner = ADAPTERS[agent].install.runner?.(path);
   if (runner) {
     const wanted = level === "off" ? undefined : runner.content(launch);
@@ -62,7 +62,7 @@ export function findHooks({ env, home, cwd }) {
     try {
       const settings = JSON.parse(readFileSync(candidate.path, "utf8").replace(/^﻿/u, ""));
       const order = ADAPTERS[candidate.agent].install.eventOrder;
-      const events = Object.keys(reloGroups(settings ?? {}))
+      const events = Object.keys(reloGroups(settings ?? {}, ADAPTERS[candidate.agent]))
         .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
       if (events.length > 0) found.push({ ...candidate, events, settings });
     } catch { /* absent or not plain JSON */ }

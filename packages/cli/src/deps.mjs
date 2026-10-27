@@ -4,10 +4,14 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { dirname } from "node:path";
 import { detectCaller } from "./caller.mjs";
 import { entrypointOf, hookDependencies } from "./hook-deps.mjs";
 import { configRevision, removeConfig, switchProfile } from "./shared/config.mjs";
 import { UsageError } from "./shared/errors.mjs";
+
+// A real process (not a test, which injects its own env or sets RELO_NO_BACKGROUND_FLUSH).
+const realProcess = (overrides) => overrides.env === undefined && process.env.RELO_NO_BACKGROUND_FLUSH !== "1";
 import { detectIdentityDefaults, detectOrigin } from "./shared/identity.mjs";
 
 export function createDependencies(overrides = {}) {
@@ -30,6 +34,8 @@ export function createDependencies(overrides = {}) {
     prepareNotificationCommand: overrides.prepareNotificationCommand
       ?? (async (...args) => (await import("./messages/notification-journal.mjs")).prepareNotificationCommand(...args)),
     activityCaptureDirectory: overrides.activityCaptureDirectory,
+    // `relo usage`'s I/O (fetch, run, post) for tests; absent in production, where the readers use their own.
+    usageIo: overrides.usageIo,
     switchProfile: overrides.switchProfile ?? switchProfile,
     removeConfig: overrides.removeConfig ?? ((path, options) => removeConfig(path, { profile: dependencies.profile, ...options })),
     // Asks the person at the terminal; only commands a person must confirm (relo keys verify) use it.
@@ -72,10 +78,21 @@ export function createDependencies(overrides = {}) {
     entrypoint: entrypointOf(overrides),
     openBrowser: overrides.openBrowser ?? (async (...args) => (await import("./owner/auth.mjs")).openBrowser(...args)),
     openMacApp: overrides.openMacApp ?? (async (...args) => (await import("./owner/auth.mjs")).openMacApp(...args)),
+    openWindowsApp: overrides.openWindowsApp ?? (async (...args) => (await import("./owner/auth.mjs")).openWindowsApp(...args)),
+    // Windows folder ACLs (shared/private-dir.mjs): `relo setup` restricts the Relo folders to this user, `relo doctor` inspects
+    // the config folder. Real only in a real process (a test injects its own, or gets none).
+    secureDirectories: overrides.secureDirectories ?? (realProcess(overrides)
+      ? async () => (await import("./shared/private-dir.mjs")).restrictDefaultDirectories({ env: process.env })
+      : async () => ({})),
+    configAcl: overrides.configAcl ?? (realProcess(overrides)
+      ? async () => (await import("./shared/private-dir.mjs")).inspectConfigAcl(dirname(dependencies.configPath()), { env: process.env })
+      : async () => undefined),
     stderr: overrides.stderr ?? (() => {}),
     stderrIsTTY: overrides.stderrIsTTY ?? false,
     platform: overrides.platform ?? process.platform,
     uid: overrides.uid ?? process.getuid?.(),
+    // Relo for Mac's install facts for `relo doctor` (owner/local-doctor.mjs); tests stub them.
+    localFacts: overrides.localFacts,
     runPermissionCommand: overrides.runPermissionCommand,
     beforePermissionCommit: overrides.beforePermissionCommit,
     fetchImpl: overrides.fetchImpl ?? globalThis.fetch,

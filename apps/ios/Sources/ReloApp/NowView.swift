@@ -42,24 +42,66 @@ struct NowView: View {
         return metadata.serverTime
     }
 
+    /// Remembers the last derivation and what it was made from. A class that is not observed: it only holds values,
+    /// so reading it in the body never invalidates the screen. Without it every body (and every scroll-driven redraw)
+    /// projected the whole history and the summary again.
+    @MainActor
+    final class DerivedCache {
+        struct Key: Equatable {
+            var history: [InboxItem]
+            var clearedAt: Double
+            var summary: NowSummary?
+            /// Time moves the derivation on by the minute; only the summary-less fallback reads the clock itself.
+            var minute: Int
+        }
+        struct SummaryKey: Equatable {
+            var derived: Key
+            var items: [InboxItem]
+            var attention: InboxAttentionProjection.Snapshot
+        }
+        var derivedKey: Key?
+        var derived: Derived?
+        var summaryKey: SummaryKey?
+        var summary: InboxTodaySummary?
+    }
+    @State private var derivedCache = DerivedCache()
+
+    private var derivedKey: DerivedCache.Key {
+        DerivedCache.Key(history: model.historyItems, clearedAt: clearedAt, summary: model.nowSummary,
+                         minute: Int(model.attentionDate.timeIntervalSince1970 / 60))
+    }
+
     private func derive() -> Derived {
+        let key = derivedKey
+        if derivedCache.derivedKey == key, let derived = derivedCache.derived { return derived }
         let now = model.attentionDate
         let history = visibleHistory
-        return Derived(
-            rows: HistoryRowProjection.rows(InboxHistoryProjection.collapsedActivities(history), events: history, now: now),
+        let derived = Derived(
+            rows: HistoryRowProjection.rows(InboxHistoryProjection.readable(history), events: history, now: now),
             now: model.nowSummary.map(NowScreenInput.init(summary:))
                 ?? NowScreenInput(serverTime: model.currentTime, sinceYouLooked: nil))
+        derivedCache.derivedKey = key
+        derivedCache.derived = derived
+        return derived
+    }
+
+    /// Today's count for the hero, from the history and the live items: the heaviest part of the deck's snapshot,
+    /// so it is made again only when its inputs change.
+    private func todaySummary(_ derived: Derived) -> InboxTodaySummary {
+        let key = DerivedCache.SummaryKey(derived: derivedKey, items: model.items, attention: model.attention)
+        if derivedCache.summaryKey == key, let summary = derivedCache.summary { return summary }
+        let summary = InboxTodaySummary.make(items: visibleHistory + model.items, attention: model.attention,
+                                             now: model.attentionDate)
+            .counting(TodayActivity.settled(rows: derived.rows, now: model.attentionDate).rows.count)
+        derivedCache.summaryKey = key
+        derivedCache.summary = summary
+        return summary
     }
 
     /// Today's finished work by meaning plus what is live, for the sphere's colors and the legend.
     private func todayMix(_ derived: Derived, needsYou: Int) -> NowMix {
         let start = Calendar.current.startOfDay(for: model.attentionDate)
         return NowMix.make(today: derived.rows.filter { $0.at >= start }, needsYou: needsYou, running: derived.now.running.count)
-    }
-
-    /// "4h 12m" of agent work today, nil when there is none worth naming.
-    private func agentTimeToday(_ derived: Derived) -> String? {
-        HistoryRowProjection.agentTimeLabel(HistoryRowProjection.agentTimeToday(derived.rows, now: model.attentionDate))
     }
 
     private var deckSync: ReloDeckFooter.Sync {
@@ -79,8 +121,10 @@ struct NowView: View {
             tasks: shown.tasks,
             sessionsWorking: shown.sessionsWorking,
             waitingOnYou: shown.waitingOnYou,
+            sessions: shown.sessions,
+            // Machines whose sessions are all idle or ended: the header's machines line lists them dim.
+            idleMachines: derived.now.sessions.filter { $0.phase == .idle || $0.phase == .ended }.compactMap(\.computer),
             mix: shown.mix,
-            agentTime: agentTimeToday(derived),
             // While an answer is in flight its card says "Sending…"; the deck counts only answers left waiting.
             sync: deckSync, pendingResponses: model.respondingNotificationID == nil ? model.pendingResponseCount : 0,
             connectionTrouble: connectionTrouble, topInset: topInset,
@@ -148,13 +192,14 @@ struct NowView: View {
             .containerRelativeFrame(.horizontal) { width, _ in width * 0.5 }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    DeviceAccessNeedsYouRow(model: model)
+                    NowSystemSection(model: model, showConnection: { sheet = .connection })
                     CurrentAttentionView(model: model, input: derived.now, offline: isOffline,
                                          viewHistory: { tab = .history })
                 }
                 .padding(.horizontal, ReloLayout.screenInset)
                 .padding(.top, 20).padding(.bottom, 24)
             }
+            .scrollIndicators(.hidden)
             .refreshable { _ = await model.refresh() }
         }
         .onAppear { deckVisible = true }
@@ -184,7 +229,7 @@ struct NowView: View {
                     }
                     .environment(\.reloMotionPaused, !deckVisible)
                 VStack(alignment: .leading, spacing: 32) {
-                    DeviceAccessNeedsYouRow(model: model)
+                    NowSystemSection(model: model, showConnection: { sheet = .connection })
                     CurrentAttentionView(model: model, input: derived.now, offline: isOffline,
                                          viewHistory: { tab = .history })
                 }
@@ -195,6 +240,7 @@ struct NowView: View {
         // The deck is the header: no navigation bar band over it; it runs under the status bar.
         .modifier(ReloOverscrollReader { trackPull($0) })
         .ignoresSafeArea(.container, edges: .top)
+        .scrollIndicators(.hidden)
         .background { GeometryReader { proxy in Color.clear
             .onAppear { topInset = proxy.safeAreaInsets.top }
             .onChange(of: proxy.safeAreaInsets.top) { _, new in topInset = new } } }
@@ -222,15 +268,14 @@ struct NowView: View {
         let found = moments(derived, needsMe: screen.needsMe)
         return .init(
             // A clear resets today's count too: the hero only counts what is still shown.
-            summary: InboxTodaySummary.make(items: visibleHistory + model.items, attention: model.attention,
-                                            now: model.attentionDate)
-                .counting(TodayActivity.settled(rows: derived.rows, now: model.attentionDate).rows.count),
+            summary: todaySummary(derived),
             needsYou: screen.actionableCount,
             // RUNNING is the live cards only (the Live now section); the agents running now are
             // their own count (AGENTS, the Agents section), never added to it.
             tasks: live.map { item in ReloHoloTask(id: item.id, progress: item.steps.map { Double($0.done) / Double(max($0.total, 1)) }) },
             sessionsWorking: derived.now.sessions.filter { $0.phase == .working }
                 .map { ReloHoloTask(id: "session-\($0.id)", progress: nil) },
+            sessions: derived.now.sessions.compactMap { ReloHUDSession.make($0, movingWork: Set(live.map(\.id))) },
             waitingOnYou: derived.now.waitingOnYou.count,
             mix: todayMix(derived, needsYou: screen.actionableCount ?? screen.needsMe.count),
             moments: found.ids, looking: found.looking)
@@ -290,7 +335,15 @@ struct NowView: View {
     /// A connection problem worth naming in the deck (sign-in needed, account disabled...).
     private var connectionTrouble: String? {
         model.requiresReauthentication ? "SIGN IN AGAIN"
-            : model.accountState == .disabled ? "ACCOUNT DISABLED" : nil
+            : model.accountState == .disabled ? "ACCOUNT DISABLED"
+            : isUnreadable ? "CAN\u{2019}T READ SERVER" : nil
+    }
+
+    /// The server answered but its answer couldn't be read (too large, or a shape this build doesn't know): the
+    /// network is fine, so the deck must not say offline (27 Oct: an oversized sync read as "Offline" all morning).
+    private var isUnreadable: Bool {
+        guard isOffline, model.currentState?.connection != .offline else { return false }
+        return nowController.isUnreadable || model.syncUnreadable
     }
 
     private var isUpdating: Bool { model.connectionStatus.updating }
@@ -307,6 +360,10 @@ struct NowView: View {
             return .init(title: "Account needs attention", detail: "Open your dashboard to recover access.",
                          symbol: "person.crop.circle.badge.exclamationmark", tint: attention,
                          actionTitle: "Open dashboard") { UIApplication.shared.open(model.dashboardURL) }
+        } else if isUnreadable {
+            return .init(title: "Relo can\u{2019}t read the server", detail: "The server answered, but this app couldn\u{2019}t read it; an update may be needed. Showing what was saved at the last sync.",
+                         symbol: "exclamationmark.icloud", tint: attention,
+                         actionTitle: "Try again") { Task { _ = await model.refresh() } }
         } else if isOffline {
             return .init(title: "You're offline", detail: model.lastSyncedAt == nil
                             ? "No saved activity yet. Connect to load Now." : "Showing what was saved at the last sync.",
@@ -433,6 +490,8 @@ private struct ReloDeckBottomKey: PreferenceKey {
         var tasks: [ReloHoloTask]
         /// The sessions working now, a count of their own.
         var sessionsWorking: [ReloHoloTask] = []
+        /// The sessions at work by phase, machine and harness (the deck's satellites and machines line).
+        var sessions: [ReloHUDSession] = []
         /// Work waiting on the owner (the Waiting on you fold).
         var waitingOnYou = 0
         var mix: NowMix
@@ -844,6 +903,8 @@ private struct ReloDeckBottomKey: PreferenceKey {
 @Observable
 final class NowSummaryController {
     private(set) var isOffline = false
+    /// The last fetch reached the server but couldn't read its answer: shown as unreadable, not offline.
+    private(set) var isUnreadable = false
     @ObservationIgnored private var since: Date?
     @ObservationIgnored private var visibleSince: Date?
     @ObservationIgnored private var wakeTask: Task<Void, Never>?
@@ -873,11 +934,15 @@ final class NowSummaryController {
     }
 
     /// A summary as the server sent it, decoded with names and opened on this phone: session names
-    /// first (they teach the name book), then each row's card and question.
-    private func opened(_ data: Data, source: HTTPNowSource) throws -> NowSummary {
-        try source.decode(data)
-            .openingSessionNames(sealed.opener)
-            .openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser)
+    /// first (they teach the name book), then each row's card and question. Off the main actor: the
+    /// decode and the opens (Keychain, crypto) run every fetch and must never hold up a frame.
+    private func opened(_ data: Data, source: HTTPNowSource) async throws -> NowSummary {
+        let sealed = self.sealed
+        return try await Task.detached(priority: .userInitiated) {
+            try source.decode(data)
+                .openingSessionNames(sealed.opener)
+                .openingSealed(sealed.displayOpener, diagnose: sealed.diagnoser)
+        }.value
     }
 
     /// Now came on screen in an active scene: capture `since` for this session and load the cache.
@@ -887,8 +952,13 @@ final class NowSummaryController {
         since = UserDefaults.standard.object(forKey: Self.lookedKey(scope)) as? Date
         // v1 held opened text; it is gone for good.
         if let old = Self.cacheURL(scope, version: 1) { try? FileManager.default.removeItem(at: old) }
-        if model.nowSummary == nil, let url = Self.cacheURL(scope), let data = try? Data(contentsOf: url),
-           let summary = try? opened(data, source: source(model, token: credential.accessToken)) {
+        guard model.nowSummary == nil, let url = Self.cacheURL(scope) else { return }
+        let source = source(model, token: credential.accessToken)
+        Task { [weak self] in
+            // Read and open off the main actor; a fetch that landed meanwhile is fresher and is kept.
+            guard let self, let data = try? await Task.detached(operation: { try Data(contentsOf: url) }).value,
+                  let summary = try? await self.opened(data, source: source),
+                  model.nowSummary == nil, Self.scopeKey(model) == scope else { return }
             model.receiveNowSummary(summary)
         }
     }
@@ -929,17 +999,19 @@ final class NowSummaryController {
         do {
             // A clock change can put `since` past the server's time; the server clamps it too.
             let data = try await source.fetchNowData(since: since.map { min($0, model.currentTime) })
-            let summary = try opened(data, source: source)
+            let summary = try await opened(data, source: source)
             guard Self.scopeKey(model) == scope else { return }
             model.receiveNowSummary(summary)
             isOffline = false
+            isUnreadable = false
             if let url = Self.cacheURL(scope) {
                 try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             }
         } catch is CancellationError {
         } catch {
-            // Keep the cached summary; Now shows the offline banner.
+            // Keep the cached summary; Now shows it as last known, and names an unreadable answer as such.
             isOffline = true
+            isUnreadable = (error as? InboxRemoteError) == .incompatibleResponse
         }
     }
 

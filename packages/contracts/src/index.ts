@@ -14,6 +14,7 @@ export * from "./works.js";
 export * from "./card-line.js";
 export * from "./sealed.js";
 export * from "./orb-palette.js";
+export * from "./history.js";
 export * from "./scopes.js";
 export * from "./facts.js";
 export * from "./origin.js";
@@ -302,6 +303,8 @@ export const inboxItemSchema = z
     }).strict().nullable().default(null),
     readAt: isoTimestampSchema.nullable().default(null),
     withdrawnAt: isoTimestampSchema.nullable().default(null),
+    /** A work's outcome notification: the card of the round it reports, which History shows instead. */
+    outcomeOf: z.string().regex(/^act_[0-9a-f-]{36}$/i).optional(),
     result: z.string().nullable(),
     deliveryState: deliveryStateSchema.nullable(),
     apnsAcceptedAt: isoTimestampSchema.nullable(),
@@ -538,6 +541,8 @@ export const deliverySummarySchema = z
     eligibleDevices: z.number().int().min(0),
     durableCommands: z.number().int().min(0),
     apnsJobs: z.number().int().min(0),
+    // Relo for Mac devices that show it without a push (an account whose only device is the Mac).
+    readers: z.number().int().min(0).optional(),
   })
   .strict();
 
@@ -604,6 +609,8 @@ export type TaskLiveActivity = z.infer<typeof taskLiveActivitySchema>;
 export type LiveActivityResolveRequest = z.infer<typeof liveActivityResolveRequestSchema>;
 export type LiveActivityResolveResponse = z.infer<typeof liveActivityResolveResponseSchema>;
 
+const workPublicIdSchema = z.string().regex(/^wrk_[0-9a-f-]{36}$/);
+
 /** History is an authoritative bounded repair window, never current action authority. */
 export const inboxHistorySummarySchema = inboxItemSchema.omit({
   detail: true, content: true, liveActivity: true, interaction: true, privacy: true, deliveryState: true,
@@ -639,6 +646,8 @@ export const inboxHistorySummarySchema = inboxItemSchema.omit({
     /** The work's whole plan (skipped steps omitted); the card carries only a window of a long one.
      *  Labels are null for sealed or private work (the phone opens them by step id). */
     plan: z.array(planDigestStepSchema).max(120).nullable().optional(),
+    /** The work's public id; its plan, rounds and newest card text then live once in the snapshot's `works`. */
+    workId: workPublicIdSchema.optional(),
     /** The plan's rounds (absent without them); title and outcome are absent for sealed or private work. */
     rounds: z.array(planDigestRoundSchema).max(60).nullable().optional(),
     /** The closed last round's outcome of a readable open work (the "Your turn" text). */
@@ -651,11 +660,29 @@ export const inboxHistorySummarySchema = inboxItemSchema.omit({
     currentUntil: isoTimestampSchema.nullable(), actionExpiresAt: isoTimestampSchema.nullable(),
     freshUntil: isoTimestampSchema.nullable(), deliverUntil: isoTimestampSchema,
   }).strict().nullable(),
-  /** End-to-end sealed text for this phone; title and summaries are placeholders until opened. */
-  sealed: z.object({ alert: z.unknown().nullable(),content: z.unknown() }).nullable().optional(),
+  /**
+   * End-to-end sealed text for this phone; title and summaries are placeholders until opened. Strict: a key this schema
+   * does not name was silently stripped (the work's newest text, `plan`, never reached the phone until 27 Oct).
+   */
+  sealed: z.object({
+    alert: z.unknown().nullable(),
+    /** The shared content inline (older iPhone builds), or `contentRef` into the snapshot's `envelopes`. */
+    content: z.unknown().optional(),
+    contentRef: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+    /** The work's newest card text, when it differs from this event's own (inline for older builds). */
+    plan: z.unknown().optional(),
+  }).strict().nullable().optional(),
 }).strict();
 export const inboxSnapshotResponseSchema = z.object({
   items: z.array(inboxHistorySummarySchema).max(250),
+  /** Each distinct sealed content envelope once, keyed by the md5 of its jsonb text; items point to it by `sealed.contentRef`. */
+  envelopes: z.record(z.string().regex(/^[0-9a-f]{32}$/),z.unknown()).optional(),
+  /** Each work's plan digest and newest sealed card text, once, keyed by `wrk_…`; events point to it by `activity.workId`. */
+  works: z.record(workPublicIdSchema,z.object({
+    plan: z.array(planDigestStepSchema).max(120).optional(),
+    rounds: z.array(planDigestRoundSchema).max(60).optional(),
+    sealed: z.record(z.string(),z.unknown()).optional(),
+  }).strict()).optional(),
   total: z.number().int().nonnegative(), serverTime: isoTimestampSchema,
   readWatermark: z.string().max(512).nullable(),
   unread: z.object({ account: z.number().int().nonnegative(), projects: z.record(z.string(), z.number().int().nonnegative()) }).strict(),
@@ -670,3 +697,4 @@ export const inboxReadItemsResponseSchema = z.object({
   unread: z.object({account: z.number().int().nonnegative(), projects: z.record(z.string(),z.number().int().nonnegative())}).strict(),
 }).strict().refine(value=>new Set(value.results.map(item=>item.notificationId)).size===value.results.length);
 export type InboxReadItemsResponse = z.infer<typeof inboxReadItemsResponseSchema>;
+export * from "./mobile-sign-in.js";

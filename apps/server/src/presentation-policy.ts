@@ -71,7 +71,7 @@ type ActivityPresentationInput = {
   detail?: string | null | undefined;
   progress?: number | null | undefined;
   progressLabel?: string | null | undefined;
-  steps?: { labels: string[];current: number;before?: number | undefined;after?: number | undefined;plan?: PlanProgressWire | undefined } | undefined;
+  steps?: { labels: string[];ids?: string[] | undefined;current: number;states?: Array<"done" | "current" | "pending"> | undefined;before?: number | undefined;after?: number | undefined;plan?: PlanProgressWire | undefined } | undefined;
   symbol?: "terminal" | "code" | "build" | "success" | "warning" | undefined;
   style?: "standard" | "ring" | "hero" | "terminal" | "steps" | undefined;
   privacy?: "standard" | "private" | undefined;
@@ -297,8 +297,11 @@ function semanticStepsPresentation(
   const stepComponent: LiveActivityPresentation["components"][number] = {
     id: "named_steps",type: "steps",colorRole: "thread",
     items: steps.labels.map((label,index) => ({
-      id: `step_${index+1}`,label,
-      state: index+1 < steps.current ? "complete" : index+1 === steps.current ? "current" : "pending",
+      // The plan's own step id when the card names it (a phone opens sealed labels by it), else positional.
+      id: steps.ids?.[index] ?? `step_${index+1}`,label,
+      state: steps.states?.[index] !== undefined
+        ? (steps.states[index] === "done" ? "complete" : steps.states[index]!)
+        : index+1 < steps.current ? "complete" : index+1 === steps.current ? "current" : "pending",
     })),
     ...(steps.before ? { before: steps.before } : {}),
     ...(steps.after ? { after: steps.after } : {}),

@@ -8,10 +8,11 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { classify, defaultGoal, formatDuration } from "../src/script/run.mjs";
 
-const BIN = new URL("../bin/relo.mjs", import.meta.url).pathname;
+const BIN = fileURLToPath(new URL("../bin/relo.mjs", import.meta.url));
 const TOKEN = `klb_${"x".repeat(44)}`;
 
 /** A producer server: start answers 201 with a work, finish is recorded. `drop` makes a route hang up. */
@@ -99,7 +100,8 @@ test("exit 3 finishes the work as failed and relo exits 3", async () => {
   assert.equal(run.stdout.length, 0, "relo prints nothing of its own");
 });
 
-test("a command killed by a signal is failed: Stopped by SIGNAL", async () => {
+const SIGNALS = { skip: process.platform === "win32" && "POSIX signals: Windows has no process signals (kill is a hard stop), so these exit codes cannot be produced" };
+test("a command killed by a signal is failed: Stopped by SIGNAL", SIGNALS, async () => {
   const server = await fakeServer();
   const run = await launch(node("process.kill(process.pid, 'SIGKILL')"), { url: server.url }).done;
   server.close();
@@ -109,7 +111,7 @@ test("a command killed by a signal is failed: Stopped by SIGNAL", async () => {
   assert.match(finish.body.outcome.readable, /^Stopped by SIGKILL after /u);
 });
 
-test("SIGINT is forwarded to the command and the work is dropped", async () => {
+test("SIGINT is forwarded to the command and the work is dropped", SIGNALS, async () => {
   const server = await fakeServer();
   const { child, done } = launch(node("console.log('ready'); setInterval(() => {}, 1000)"), { url: server.url });
   await new Promise((resolve) => { child.stdout.on("data", (chunk) => { if (String(chunk).includes("ready")) resolve(); }); });
@@ -122,7 +124,7 @@ test("SIGINT is forwarded to the command and the work is dropped", async () => {
   assert.match(finish.body.outcome.readable, /^Stopped by Ctrl-C/u);
 });
 
-test("SIGTERM is forwarded to the command, which ends failed", async () => {
+test("SIGTERM is forwarded to the command, which ends failed", SIGNALS, async () => {
   const server = await fakeServer();
   const { child, done } = launch(node("console.log('ready'); setInterval(() => {}, 1000)"), { url: server.url });
   await new Promise((resolve) => { child.stdout.on("data", (chunk) => { if (String(chunk).includes("ready")) resolve(); }); });

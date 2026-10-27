@@ -7,7 +7,7 @@ import type { persistedPresentationColumns } from "../presentation-runtime.js";
 import type { SubjectTransaction } from "../relevance/commands.js";
 import type { ActivityActor,ActivityCommand,ActivityCommandResult,ActivityRow } from "./types.js";
 
-const deliverySchema=z.object({eligibleDevices:z.number().int().nonnegative(),durableCommands:z.number().int().nonnegative(),apnsJobs:z.number().int().nonnegative()}).strict();
+const deliverySchema=z.object({eligibleDevices:z.number().int().nonnegative(),durableCommands:z.number().int().nonnegative(),apnsJobs:z.number().int().nonnegative(),readers:z.number().int().nonnegative().optional()}).strict();
 export function activityOwner(actor: ActivityActor) {
   return {principalId:actor.principalId,credentialId:actor.kind==="credential"?actor.credentialId:null,
     serviceId:actor.kind==="service"?actor.serviceId:null};

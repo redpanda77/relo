@@ -65,6 +65,7 @@ export function validateActivityWaitResponse(value, expected) {
       eligibleDevices: delivery.eligibleDevices,
       durableCommands: delivery.durableCommands,
       apnsJobs: delivery.apnsJobs,
+      ...(Number.isInteger(delivery.readers) ? { readers: delivery.readers } : {}),
     },
     queued: value.queued,
     deliveryMode: value.deliveryMode,

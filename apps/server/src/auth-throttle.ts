@@ -15,6 +15,8 @@ import { authorizationRateLimitBuckets, limitedAcrossBuckets } from "./device-au
 const LIMITS = {
   "sign-up": { client: 5, global: 30 },
   "sign-in": { client: 10, global: 120 },
+  // An app waiting for approval polls every half minute or so; the ticket is a 256-bit secret, this only bounds noise.
+  "mobile-pending": { client: 30, global: 600 },
 } as const;
 const WINDOW_MS = 60_000;
 const attempts = new Map<string, number[]>();

@@ -3,9 +3,10 @@
 // an event; it only reads the canonical shape below.
 import { createHash } from "node:crypto";
 import { sessionId, sessionKey } from "../../shared/session-key.mjs";
+import { absolutePath } from "../paths.mjs";
 
 export const CANONICAL_EVENTS = Object.freeze([
-  "start", "prompt", "tool_start", "tool_end", "wait", "stop", "end", "subagent_start", "subagent_stop", "compact",
+  "start", "prompt", "tool_start", "tool_end", "wait", "stop", "idle", "end", "subagent_start", "subagent_stop", "compact",
 ]);
 
 /** How a session (re)started, when the harness says so. Anything else is dropped. */
@@ -29,7 +30,11 @@ const text = (value) => (typeof value === "string" && value.trim() && value.leng
  */
 export function normalize({ adapter, input, named }) {
   const raw = input && typeof input === "object" && !Array.isArray(input) ? input : {};
-  const native = typeof raw.hook_event_name === "string" ? adapter.events[raw.hook_event_name] : undefined;
+  const mapped = typeof raw.hook_event_name === "string" ? adapter.events[raw.hook_event_name] : undefined;
+  // The adapter may sharpen the mapped event from a boolean or a type of the payload (an interrupted tool is a stop;
+  // an idle prompt is an `idle`): it returns a canonical event name or undefined.
+  const refined = mapped === undefined ? undefined : adapter.refine?.(mapped, raw);
+  const native = CANONICAL_EVENTS.includes(refined) ? refined : mapped;
   const event = native ?? (CANONICAL_EVENTS.includes(named) ? named : undefined);
   if (!event) return { drop: "unknown_event" };
   const fields = adapter.identity(raw) ?? {};
@@ -42,7 +47,7 @@ export function normalize({ adapter, input, named }) {
   const source = START_SOURCES.includes(fields.source) ? fields.source : undefined;
   // Why a session ended: only `clear` matters (its work is handed off); anything else is just "other".
   const reason = event === "end" && typeof fields.reason === "string" && fields.reason ? (fields.reason === "clear" ? "clear" : "other") : undefined;
-  const cwd = typeof fields.cwd === "string" && fields.cwd.startsWith("/") && fields.cwd.length <= 4096 ? fields.cwd : undefined;
+  const cwd = absolutePath(fields.cwd);
   return {
     event,
     harness: adapter.id,

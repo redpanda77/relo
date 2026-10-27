@@ -1,7 +1,7 @@
 // What an agent reads back: one compact JSON line per command, and each error exactly once.
 // `--full` prints the whole server envelope instead. printOutcome and printFailure are the whole output
 // contract; nothing else in the CLI decides what goes to stdout or stderr.
-import { ApiError, AuthError, NetworkError, TerminalInteractionError, normalizeError } from "./errors.mjs";
+import { ApiError, AuthError, NO_PHONE_ENCRYPTION_HINT, NetworkError, TerminalInteractionError, normalizeError, LOCAL_RELINK } from "./errors.mjs";
 import { WorkRefusal, refusalText } from "../work/refusal.mjs";
 import { LOGIN_SCOPES } from "./scopes.generated.mjs";
 
@@ -65,6 +65,7 @@ function doctorFields(data) {
   return {
     ok: data?.ok === true,
     ready: data?.ready === true,
+    ...(data?.receives ? { receives: data.receives } : {}),
     ...(data?.next ? { next: data.next } : {}),
     ...(data?.privacy ? { privacy: data.privacy } : {}),
     ...(problems.length === 0 ? {} : {
@@ -72,7 +73,7 @@ function doctorFields(data) {
         state: check?.state ?? check?.error,
         // A login `next.run` is the one sign-in instruction; a second login hint would compete with it.
         hint: data?.next?.step === "login" && (name === "localConfig" || name === "auth") ? undefined : name === "auth" && check?.state === "activity_evidence_scope_missing"
-          ? "Missing devices:read: relo auth login" : DOCTOR_HINTS[name],
+          ? "Missing devices:read: relo auth login" : check?.hint ?? DOCTOR_HINTS[name],
       })])),
     }),
     ...(advice.length === 0 ? {} : {
@@ -94,6 +95,8 @@ function authFields(data) {
     expiresAt: credential?.expiresAt,
     source: data?.credentialSource === "environment" ? "RELO_TOKEN" : undefined,
     profile: data?.profile,
+    local: data?.local,
+    join: data?.join,
     missingScopes: missing.length > 0 ? missing : undefined,
     hint: missing.length > 0 ? "Sign in again to get every permission: relo auth login" : undefined,
   });
@@ -194,13 +197,16 @@ export function compactData(command, data) {
       if (data?.state === "pending") return present({ state: "pending", url: data.url, code: data.code, qr: data.qr, next: data.next });
       return authFields(data);
     case "test":
-      return present({ verified: data?.verified === true, already: data?.already === true ? true : undefined });
+      return present({ verified: data?.verified === true, already: data?.already === true ? true : undefined,
+        state: data?.pending === true ? "pending" : undefined, waiting: data?.waiting, next: data?.pending === true ? data?.next : undefined });
     case "auth.logout":
       return present({
         revoked: data?.revoked,
         credentialsRemoved: data?.credentialsRemoved,
         alreadyLoggedOut: data?.alreadyLoggedOut === true ? true : undefined,
         revocationError: data?.revocationError,
+        profile: data?.profile,
+        activeProfile: data?.profile === undefined ? undefined : data?.activeProfile ?? null,
       });
     case "services.list":
       return { services: (Array.isArray(data?.services) ? data.services : []).map(serviceRow) };
@@ -235,9 +241,10 @@ export function compactData(command, data) {
       // Unchanged rows stay behind --full: the line says what changed, what was skipped and what is next.
       const rows = (list) => (Array.isArray(list) && list.length ? list : undefined);
       // setup leads with its depth; --show reads, so it has the installed harnesses (and `would` for --level) instead of rows.
-      return present({ depth: data?.depth, show: data?.show === true ? true : undefined, harnesses: data?.harnesses, would: data?.would,
+      return present({ depth: data?.depth, show: data?.show === true ? true : undefined, harnesses: data?.harnesses, levels: data?.levels, would: data?.would,
         changed: data?.show ? undefined : data?.changed ?? [], unchanged: data?.unchanged?.length, skipped: rows(data?.skipped), errors: rows(data?.errors), next: data?.next,
-        harnessCredential: data?.harnessCredential, block: data?.block, join: data?.join, dryRun: data?.dryRun === true ? true : undefined });
+        ownerSteps: rows(data?.ownerSteps),
+        harnessCredential: data?.harnessCredential, block: data?.block, join: data?.join, path: data?.path, dryRun: data?.dryRun === true ? true : undefined });
     }
     case "sessions":
       return present({ sessions: (Array.isArray(data?.sessions) ? data.sessions : []).map(sessionRow),
@@ -271,6 +278,7 @@ export function compactData(command, data) {
     case "account":
     case "project":
     case "voice":
+    case "usage":
       return { ...data };
     case "update":
       return present({ ...data });
@@ -290,7 +298,9 @@ const START_HINT = "Start a new one: relo work start --goal …";
 const NOUN = { activity: "card", interaction: "question", ask: "question", notify: "notification" };
 
 /** Server codes in plain English, with the next command to try. Anything unlisted passes through. */
-function friendly(error, group) {
+function friendly(error, group, local = false) {
+  // A local account is linked by Relo for Mac, never signed in by a link, and nothing on it is encrypted.
+  const relink = LOCAL_RELINK;
   const wait = error.details?.retryAfterSeconds;
   const noun = NOUN[group] ?? "item";
   switch (error.code) {
@@ -301,7 +311,7 @@ function friendly(error, group) {
     case "END_TO_END_REQUIRED":
     case "end_to_end_required":
       return { message: "This account requires end-to-end encryption and this computer could not seal the content.",
-        hint: "Verify a phone: relo keys status, then relo keys verify DEVICE_ID (a person at a terminal)" };
+        hint: local ? relink : NO_PHONE_ENCRYPTION_HINT };
     case "SESSIONS_UNSUPPORTED":
       return { message: error.message };
     case "ACTIVITY_TERMINAL":
@@ -324,17 +334,17 @@ function friendly(error, group) {
     case "ACCOUNT_DISABLED":
       return { message: "The server admin turned off this account's access.", hint: "Retrying will not help; ask the server admin." };
     case "CREDENTIAL_REVOKED":
-      return { message: "This login was revoked.", hint: "Retrying will not help. Sign in again only if the owner wants it back: relo auth login" };
+      return { message: "This login was revoked.", hint: local ? relink : "Retrying will not help. Sign in again only if the owner wants it back: relo auth login" };
     case "LOGIN_EXPIRED":
-      return { message: "This login expired.", hint: "Sign in again: relo auth login" };
+      return { message: "This login expired.", hint: local ? relink : "Sign in again: relo auth login" };
     case "UNAUTHORIZED":
     case "REAUTHENTICATION_REQUIRED":
     case "PRINCIPAL_CREDENTIAL_REQUIRED":
-      return { message: "Relo did not accept this login.", hint: "Sign in again: relo auth login" };
+      return { message: "Relo did not accept this login.", hint: local ? relink : "Sign in again: relo auth login" };
     case "FORBIDDEN":
-      return { message: "This login is not allowed to do that.", hint: "Sign in again to get every permission: relo auth login" };
+      return { message: "This login is not allowed to do that.", hint: local ? relink : "Sign in again to get every permission: relo auth login" };
     case "CONFIG_NOT_FOUND":
-      return { message: "Not signed in to Relo.", hint: "Run: relo auth login --api-url https://YOUR-RELO-SERVER" };
+      return { message: "Not signed in to Relo.", hint: local ? relink : "Run: relo auth login --api-url https://YOUR-RELO-SERVER" };
     case "NETWORK_ERROR":
       return { message: `Cannot reach the Relo server (${error.message})${error.details?.retried ? "; retried once" : ""}. This is usually transient.`,
         hint: error.details?.idempotencyKey
@@ -374,8 +384,8 @@ function compactDetails(error) {
   return Object.keys(kept).length > 0 ? kept : undefined;
 }
 
-function errorLine(error, { full, group }) {
-  const replaced = friendly(error, group);
+function errorLine(error, { full, group, local = false }) {
+  const replaced = friendly(error, group, local);
   const hint = error.details?.hint ?? replaced.hint;
   const { hint: _hint, ...rest } = error.details ?? {};
   const details = full ? (Object.keys(rest).length > 0 ? rest : undefined) : compactDetails({ details: rest });
@@ -440,13 +450,13 @@ export function printOutcome(output, mode, { stdout, stderr }) {
  * Prints a failure once and returns its exit code. A refusal (Refused / State / Next) prints its three
  * lines, piped too, unless --json. Any other error is one JSON line when structured, else text on stderr.
  */
-export function printFailure(cause, mode, { stdout, stderr }, group) {
+export function printFailure(cause, mode, { stdout, stderr }, group, { local = false } = {}) {
   if (cause instanceof WorkRefusal) {
     stdout(mode.json ? JSON.stringify({ ok: false, error: { code: cause.code, message: `Refused: ${cause.what}.`, state: cause.state, next: cause.next } }) : refusalText(cause));
     return cause.exitCode;
   }
   const error = normalizeError(cause);
-  const line = errorLine(error, { full: mode.full, group });
+  const line = errorLine(error, { full: mode.full, group, local });
   if (mode.structured) stdout(JSON.stringify(line));
   else stderr(errorText(line));
   return error.exitCode;

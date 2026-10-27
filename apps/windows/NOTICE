@@ -1,0 +1,11 @@
+Relo for Windows
+Required Notice: Copyright 2026 Relo contributors.
+
+This directory (the Tauri app, the ReloServer.exe launcher and their tests) is Relo's own code, written for Windows
+and licensed under the PolyForm Noncommercial License 1.0.0 (LICENSE here, the same text as the repository's). No source
+from boring.notch (GPL-3.0, apps/notch) or Nectar (GPL-3.0) is in it; THIRD_PARTY.md lists everything else it adapts
+or links, with its licence.
+
+The installer also carries Node.js (MIT, NODE-LICENSE in the payload), PostgreSQL (PostgreSQL License) and the npm
+dependencies of the Relo server and CLI; scripts/release/windows-server-payload.mjs writes their licence texts into the
+payload next to them.

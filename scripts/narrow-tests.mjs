@@ -23,7 +23,7 @@ export const SUITES = {
 };
 const MODULE = /\.(ts|tsx|mts|js|mjs)$/u;
 // Where modules live that a test's import graph can reach (the scan for data-file readers stays inside them).
-const SOURCES = /^(apps\/server\/src|apps\/dashboard\/src|packages\/cli\/(src|test)|packages\/contracts\/src)\/.*\.(ts|tsx|mts|js|mjs)$/u;
+const SOURCES = /^(apps\/server\/src|apps\/dashboard\/src|packages\/cli\/(src|test)|packages\/contracts\/src|packages\/owner-crypto\/src)\/.*\.(ts|tsx|mts|js|mjs)$/u;
 // Everything depends on these: the whole suite runs.
 const EVERYTHING = [
   /^apps\/server\/migrations\//u,

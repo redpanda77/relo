@@ -27,7 +27,7 @@ export function sourceFromClient(name) {
   return HARNESSES.find((harness) => harness.mcpClient?.test(clean))?.label ?? clean;
 }
 
-const RULES = "Relo shows your work as one live card on the owner's iPhone. ";
+const RULES = "Relo shows your work as one live card on the owner's iPhone or Mac. ";
 const CARD_TEXT = "Never put secrets, tokens, absolute paths, commands or raw output in card text.";
 
 /**
@@ -111,7 +111,7 @@ const TOOL_SPECS = [
   },
   {
     name: "relo_ask", title: "Ask the owner", command: "ask", hints: WRITE,
-    description: RULES + "Ask the owner an approval or yes/no question on their phone and WAIT for the answer (up to 5 minutes; no shell timeout applies). "
+    description: RULES + "Ask the owner an approval or yes/no question on their iPhone or Mac and WAIT for the answer (up to 5 minutes; no shell timeout applies). "
       + "Ask only when the work depends on the answer; one line of at most 120 characters, one exact action, self-contained (the CLI refuses longer). "
       + "Only an `approval` question that returns state `approved` is permission to proceed. A yes/no answer is never permission. "
       + "Denied, no, expired, timeout, canceled or any error all mean NO: do not act. State `timeout` means the question is still open: call relo_interaction_wait with its id.",
@@ -346,7 +346,7 @@ export async function serveMcp({ input, output, run, version, env = process.env,
           protocolVersion: SUPPORTED_PROTOCOLS.includes(requested) ? requested : SUPPORTED_PROTOCOLS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "relo", title: "Relo", version },
-          instructions: "Relo puts your work on the owner's iPhone. Use the relo_work_* tools for work longer than a couple of minutes, "
+          instructions: "Relo puts your work on the owner's iPhone or Mac. Use the relo_work_* tools for work longer than a couple of minutes, "
             + "relo_ask before risky actions (only an approved approval question is permission), relo_notify rarely for finished outcomes.",
         });
       }

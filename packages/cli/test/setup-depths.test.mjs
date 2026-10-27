@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { tildeText } from "./posix-path.mjs";
 import { run } from "../src/cli.mjs";
 import { DEPTHS, blockModules, renderBlock, renderBlockText } from "../src/install/block.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
@@ -14,7 +15,7 @@ import { cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 async function cli(argv, dependencies, io = {}) {
   const stdout = [];
-  const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false, ...io }, dependencies);
+  const exitCode = await run(argv, { stdout: (line) => stdout.push(tildeText(line)), stderr: () => {}, stdoutIsTTY: false, ...io }, dependencies);
   const json = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
   return { exitCode, stdout, line: stdout[0] ? json(stdout[0]) : undefined };
 }
@@ -48,7 +49,7 @@ test("each depth installs its modules, the skill (not at notify) and the hook se
     assert.equal(existsSync(box.settings), hooks !== "off", `${level}: hooks`);
     assert.equal(hookSet(out.line), hooks);
     const skipped = (out.line.skipped ?? []).filter((row) => row.kind === "hooks");
-    assert.deepEqual(skipped.map((row) => [row.harness, row.reason]), hooks === "off" ? [] : [["codex", "no hooks for this harness"]], level);
+    assert.deepEqual(skipped.map((row) => [row.harness, row.reason]), [], `${level}: every harness here has hooks`);
   }
 });
 
@@ -58,7 +59,7 @@ test("the result leads with the depth and one line per harness; optimize names i
   const text = out.stdout.join("\n");
   assert.equal(text.split("\n")[0], "Set up: optimize (approvals on)");
   assert.match(text, /Claude Code +instructions: reporting planning continuity efficiency · skill · hooks: approvals/u);
-  assert.match(text, /Codex +instructions: reporting planning continuity efficiency · skill · no hooks for this harness/u);
+  assert.match(text, /Codex +instructions: reporting planning continuity efficiency · skill · hooks: presence/u);
   assert.doesNotMatch(text, /later release/u);
   assert.match(text, /Claude Code .*hooks: approvals \+ subagent nudge · status line · agents: relo-explore, relo-worker/u);
   assert.match(text, /^Changed$/mu);
@@ -175,12 +176,12 @@ test("--show writes nothing: the installed depth per harness, then the block", a
   const claude = out.line.harnesses.find((row) => row.harness === "claude-code");
   assert.deepEqual([claude.level, claude.modules, claude.hooks, claude.approvals, claude.skill], ["guide", DEPTHS.guide, "approvals", true, "current"]);
   const codex = out.line.harnesses.find((row) => row.harness === "codex");
-  assert.deepEqual([codex.level, codex.hooks, codex.hooksAvailable], ["guide", "off", false]);
+  assert.deepEqual([codex.level, codex.hooks, codex.hooksAvailable], ["guide", "presence", true]);
   assert.equal(out.line.block, renderBlockText(DEPTHS.guide));
   assert.equal(out.line.would, undefined);
   const human = await box.run(["setup", "--show"], {}, { stdoutIsTTY: true });
   assert.match(human.stdout.join("\n"), /Claude Code +guide \[reporting planning continuity\] · skill current · hooks: approvals/u);
-  assert.match(human.stdout.join("\n"), /Codex +guide .* · no hooks for this harness/u);
+  assert.match(human.stdout.join("\n"), /Codex +guide .* · hooks: presence/u);
   // With --level: what that depth would install, and its block.
   const would = await box.run(["setup", "--show", "--level", "optimize"]);
   assert.deepEqual(would.line.would, { level: "optimize", modules: DEPTHS.optimize, skill: true, hooks: "approvals", approvals: true,

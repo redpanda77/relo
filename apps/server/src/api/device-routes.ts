@@ -18,6 +18,7 @@ import { endToEndPolicy,setEndToEndRequired } from "../end-to-end-policy.js";
 import { revokeDeviceCredentials } from "../credentials/device.js";
 import { decideDeviceAuthorization,describeDeviceAuthorization } from "../device-authorization.js";
 import { approveComputer,approveComputerSchema,listApprovers } from "../computer-approvals.js";
+import { ownerOverviewSql } from "../owner-overview.js";
 import { wakeAccountStreams } from "../computer-invites.js";
 import { revokeLogin } from "../credentials/login.js";
 
@@ -44,7 +45,7 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
       `WITH scoped AS MATERIALIZED (
          SELECT id,name,installation_id,bundle_identifier,app_version,app_build,
            os_version,model,is_simulator,apns_environment,notification_authorization,
-           live_activity_authorization,last_seen_at,registered_at,
+           live_activity_authorization,last_seen_at,registered_at,${ownerOverviewSql("devices")} AS owner_overview,
            to_char(registered_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS registered_at_cursor
          FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
        ), metadata AS (
@@ -261,8 +262,14 @@ export function registerDeviceRoutes(app: Hono, shared: ApiRouteContext): void {
 
   app.put("/api/end-to-end/policy", async (context) => {
     const auth = context.get("auth");
-    // The owner's own computer may tighten the policy; a CI token, made for a pipeline, may not.
-    if (auth.credentialKind !== "principal" || !auth.credentialId || auth.loginKind === "ci-token") return context.json({ error: "cli_credential_required" },403);
+    // The owner's own computer may tighten the policy, and so may Relo for Mac (an owner overview device, never a
+    // phone); a CI token, made for a pipeline, and a phone's credential may not.
+    const ownerDevice = auth.credentialKind === "device" && auth.ownerOverview === true;
+    if (!ownerDevice && (auth.credentialKind !== "principal" || !auth.credentialId || auth.loginKind === "ci-token")) {
+      return context.json({ error: "cli_credential_required" },403);
+    }
+    // A local install never encrypts: nothing leaves the Mac, so there is nothing to require.
+    if (process.env.RELO_LOCAL_MODE === "1") return context.json({ error: "local_install" },409);
     const body = await context.req.json().catch(() => null) as { required?: unknown } | null;
     if (!body || !(typeof body.required === "boolean" || body.required === null) || Object.keys(body).length !== 1) {
       return context.json({ error: "invalid_request" },400);

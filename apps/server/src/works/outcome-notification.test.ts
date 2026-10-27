@@ -6,6 +6,8 @@ import { createDatabase,type Database } from "../db.js";
 import { ordinaryInterruptionLevel } from "../delivery-serialization.js";
 import { publicId } from "../ids.js";
 import { migrate } from "../migrate.js";
+import { loadCurrentState } from "../current-state.js";
+import { inboxActivityJoinSql,inboxActivityProjectionSql,inboxItemResource } from "../api/resources.js";
 import { caller,CONTEXT,OWNER_TOKEN,resetOwner,SECRET,SESSION_A,startWork } from "./works-fixture.js";
 
 /** The outcome notification (plan 14, 2a): one per delivered round or finished work; levels passive, passive, active, none. */
@@ -54,6 +56,30 @@ suite("work outcome notification",() => {
     expect(rows[0]).toMatchObject({ title: "Ship works",payload: expect.objectContaining({ interruptionLevel: "passive" }),jobs: 1 });
     expect(rows[0].body).toBe("Round one shipped");
     expect(rows[0].idempotency_key).toMatch(/^outcome:[0-9a-f-]{36}:1$/);
+  });
+
+  test("the current inbox names the card an outcome reports, so a device showing that card skips the notice",async () => {
+    const work = await startWork(call);
+    expect((await call("POST","/api/session/works/current/deliver",{ outcome: { readable: "Round one shipped" } })).status).toBe(200);
+    const [outcome] = await outcomes();
+    const card = (await db.query("SELECT id FROM live_activities WHERE work_id=$1",[work.id.slice(4)])).rows[0];
+    const principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner'")).rows[0].id;
+    const items = (await loadCurrentState(db,{ principalId,deviceId },{ limit: 50 })).items as any[];
+    expect(items.find((item) => item.notificationId === `ntf_${outcome.id}`)).toMatchObject({ kind: "notice",outcomeOf: `act_${card.id}` });
+    expect(items.filter((item) => item.outcomeOf !== undefined)).toHaveLength(1);
+  });
+
+  test("History names the card an outcome reports, so the round shows once",async () => {
+    const work = await startWork(call);
+    expect((await call("POST","/api/session/works/current/deliver",{ outcome: { readable: "Round one shipped" } })).status).toBe(200);
+    const [outcome] = await outcomes();
+    const card = (await db.query("SELECT id FROM live_activities WHERE work_id=$1",[work.id.slice(4)])).rows[0];
+    const rows = (await db.query(`SELECT e.*,${inboxActivityProjectionSql},
+        to_char(e.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_iso
+      FROM notification_events e ${inboxActivityJoinSql} WHERE e.id=$1 OR e.kind='live_activity'`,[outcome.id])).rows;
+    const resources = rows.map((row) => inboxItemResource(row,{},undefined));
+    expect(resources.find((item) => item.id === `ntf_${outcome.id}`)).toMatchObject({ outcomeOf: `act_${card.id}` });
+    expect(resources.filter((item) => "outcomeOf" in item)).toHaveLength(1);
   });
 
   test("finish finished is passive, a finish right after the same round's delivery adds nothing",async () => {

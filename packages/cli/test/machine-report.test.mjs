@@ -56,7 +56,7 @@ test("the report describes what setup installed per tool, and a tool that is her
   const codex = report.harnesses.find((harness) => harness.id === "codex");
   assert.equal(codex.detected, true);
   assert.equal(codex.instructions, "set");
-  assert.equal(codex.hooks, "off");
+  assert.equal(codex.hooks, "presence", "guide installs Codex's hooks too");
   assert.deepEqual([codex.level, codex.modules], ["guide", ["reporting", "planning", "continuity"]]);
   const cursor = report.harnesses.find((harness) => harness.id === "cursor");
   assert.equal(cursor?.detected ?? false, false);

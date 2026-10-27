@@ -85,7 +85,7 @@ async function connectedNotice({ dependencies, computerName, loginId }) {
  * now, whatever the throttle says), the connected notice and the summary. `outcome` is what setup returned.
  * Returns { lines, data } for the output. A failing check is listed, not thrown: the login and the setup are done.
  */
-export async function joinSummary({ joined, apiUrl, dependencies, outcome }) {
+export async function joinSummary({ joined, apiUrl, dependencies, outcome, local = false, setup = true }) {
   const check = await quietSelfCheck(dependencies)
     .catch((error) => ({ ok: false, failing: [{ name: "selfCheck", state: String(error?.code ?? "failed") }] }));
   const report = await Promise.resolve(dependencies.sendMachineReport?.({ force: true })).catch(() => ({ sent: false, reason: "failed" }));
@@ -96,17 +96,24 @@ export async function joinSummary({ joined, apiUrl, dependencies, outcome }) {
   const lines = [
     ...(joined.left ? [`Switched from ${joined.left.name ? `${joined.left.name} on ` : ""}${joined.left.server}.`] : []),
     `Computer: ${joined.clientName}`,
+    ...(joined.profile ? [`Profile: ${joined.profile} (now the active sign-in; relo auth switch NAME changes it)`] : []),
     `Server: ${hostOf(apiUrl)}`,
-    `Level: ${level}${joined.setup.approvals ? " (approvals from your phone)" : ""}`,
-    `Agents set up: ${agents.setUp.length ? named(agents.setUp) : "none"}`,
-    ...(agents.notSetUp.length ? [`Found, not set up: ${named(agents.notSetUp)}`,
+    `Level: ${level}${joined.setup.approvals ? ` ${local ? "(answers in the notch)" : "(approvals from your phone)"}` : ""}`,
+    `Agents set up: ${!setup ? "not set up (--no-setup)" : agents.setUp.length ? named(agents.setUp) : "none"}`,
+    ...(setup && agents.notSetUp.length ? [`Found, not set up: ${named(agents.notSetUp)}`,
       ...agents.notSetUp.map((id) => `  relo setup --agent ${id}`)] : []),
     check.ok ? "Self-check: passed" : "Self-check: failed",
     ...check.failing.map((row) => `  ${row.name}: ${row.state}`),
-    ...(joined.mac === "signed-in" ? ["Relo for Mac: opened in the notch, signing itself in. Approve this Mac on your iPhone to read private work there."]
+    ...(local ? [joined.mac ? "Relo for Mac: it shows your cards and questions in the notch." : "Open Relo for Mac; it shows your cards and questions in the notch."]
+      : joined.mac === "signed-in" ? ["Relo for Mac: opened in the notch, signing itself in. Approve this Mac on your iPhone to read private work there."]
       : joined.mac === "opened" ? ["Relo for Mac: open in the notch; sign in from its menu bar icon."]
-      : joined.mac === "not-opened" ? ["Relo for Mac: installed in ~/Applications; open it to sign in."] : []),
-    ...(notice === "no-phone" ? ["Install the Relo iPhone app to get notifications."] : []),
+      : joined.mac === "not-opened" ? ["Relo for Mac: installed in ~/Applications; open it to sign in."]
+      : joined.windows === "signed-in" ? ["Relo for Windows: opened in the notch, signing itself in. Approve this computer on your iPhone to read private work there."]
+      : joined.windows === "opened" ? ["Relo for Windows: open in the notch; sign in from its tray icon."]
+      : joined.windows === "not-opened" ? ["Relo for Windows: installed; open it from the Start menu to sign in."] : []),
+    ...(notice === "no-phone" && !local ? [joined.mac ? "The Relo notch on this Mac shows your cards and questions. The iPhone app is optional."
+      : joined.windows ? "The Relo notch on this computer shows your cards and questions. The iPhone app is optional."
+      : "Install the Relo iPhone app to get notifications."] : []),
     ...(report?.reason === "failed" ? ["The report to the server did not go through; it is sent again with the next command."] : []),
   ];
   const restart = Array.isArray(outcome?.data?.next) ? outcome.data.next.filter((step) => /^Restart /u.test(step)) : [];
@@ -115,7 +122,9 @@ export async function joinSummary({ joined, apiUrl, dependencies, outcome }) {
     data: {
       computer: joined.clientName, server: apiUrl, level, approvals: joined.setup.approvals,
       ...(joined.left ? { left: joined.left } : {}),
-      agents: { setUp: agents.setUp, notSetUp: agents.notSetUp }, ...(joined.mac ? { macApp: joined.mac } : {}),
+      ...(joined.profile ? { profile: joined.profile } : {}),
+      agents: { setUp: agents.setUp, notSetUp: agents.notSetUp, ...(setup ? {} : { skipped: true }) }, ...(joined.mac ? { macApp: joined.mac } : {}), ...(joined.windows ? { windowsApp: joined.windows } : {}),
+      ...(joined.macAppSignInCode ? { macAppSignInCode: joined.macAppSignInCode } : {}),
       selfCheck: check, notice, reported: report?.sent === true,
     },
   };

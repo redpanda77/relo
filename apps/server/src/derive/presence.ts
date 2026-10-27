@@ -63,6 +63,9 @@ export function presence(observed: ObservedSession,now: number): Presence {
 /** The session ended (time-independent); for evidence that asks only that. */
 export const hasEnded = (observed: ObservedSession): boolean => observed.phase === "ended";
 
+/** A Sessions view row that is working (the island counts each such session without a card as a satellite). */
+export const isWorkingRow = (row: { phase: string | null }): boolean => row.phase === "working";
+
 /** The declared side of one session, as the rules below need it. */
 export type DeclaredSide = { lastDeclaredAt: number | null; waitingSince: number | null };
 

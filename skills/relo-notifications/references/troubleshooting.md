@@ -4,7 +4,8 @@ Always keep credentials and sensitive payloads out of diagnostics.
 
 ## Authentication or scope failure
 
-Run `relo auth status`. If the credential is absent, invalid, or lacks a required scope, stop and
+On a local account (`checks.local` in doctor) there is no onboarding: ask the owner to open Relo for Mac.
+Otherwise run `relo auth status`. If the credential is absent, invalid, or lacks a required scope, stop and
 ask the user to complete browser-approved onboarding. Never accept, reveal, generate, transfer, or
 SSH-copy a token as a workaround.
 
@@ -75,7 +76,7 @@ The app syncs accepted history after reconnecting.
 
 ## No durable command
 
-Exit `7` means no durable device command was enqueued. Inspect safe device readiness with
+Exit `7` means nothing could show it (no phone and no Mac): no durable device command was enqueued. Inspect safe device readiness with
 `devices list --json`, which enumerates every page and fails on expired or malformed cursors. Verify
 explicit target ownership and status, and retry only after correcting
 the prerequisite. Do not claim delivery and do not allow a protected action.
@@ -97,8 +98,9 @@ Without a close match the hint lists the command's flags; `relo help all` shows 
 ## Doctor says `ready:false`
 
 `relo doctor` is cheap (no phone pings; it writes only a 24h cache of the latest CLI release) and prints `{"ok","ready","next":{"step","run","why"}}`.
-Run `next.run` for the first unmet step, in this order, and ask the owner at most once per step:
-`login` (signed in and server reachable), `phone` (a phone with Live Activities on: `relo devices list`),
+Run `next.run` for the first unmet step, in this order, and ask the owner at most once per step.
+On a local account (`checks.local`; Relo for Mac running on its own) never run `relo auth login` and do not ask for a phone or encryption: a `mac` step means "open Relo for Mac; it links this Mac again".
+`login` (signed in and server reachable), `phone` (a phone with Live Activities on, or a linked Relo for Mac: `relo devices list`),
 `test` (`relo test`, once). A healthy but unready setup exits `0`; real failures keep their exit codes.
 `next.step` `skill` is a warning only (`ready` stays `true`): the skill is missing or not at the CLI's version,
 the owner reinstalls it, see [install.md](install.md). A `warnings.update` of `behind` means a newer CLI release exists. A CLI from the install script updates itself; when a relo reply says the CLI is behind your server's, run `relo update`. Whether an
@@ -114,7 +116,7 @@ owner has not approved yet: run `--wait` again. "The sign-in link expired" means
 
 ## The phone test failed (`relo test`)
 
-`relo test` shows a short card and asks "Can you see this card on your iPhone?". Exit `5` (no), exit `4` (state
+`relo test` shows a short card and asks "Can you see this card on your iPhone?" ("in your Mac's notch?" on a local account: open Relo for Mac, check it is linked in `relo devices list`, then `relo test --again`; no phone or Live Activities involved). Exit `5` (no), exit `4` (state
 `timeout`: no answer; run `relo test` again, it resumes the same question) or exit `7` (no phone could show it)
 mean: on the iPhone, iOS Settings > Relo > Live Activities is on and the Relo app is signed in to this server;
 then `relo devices list` shows the phone with `liveActivities:true`, then `relo test --again`. A phone that
@@ -162,6 +164,8 @@ When APNs is disabled, history and durable commands may still be testable, but p
 Live Activity behavior remain unverified.
 
 ## A note says a phone is waiting for approval
+
+(Never on a local account: nothing there is encrypted, so no keys or approvals exist.)
 
 End-to-end encryption notes name the phone and what to do, e.g. "iPhone Air (Simulator) is waiting
 for approval: run `relo keys approve iphone-air`, approve it on your iPhone 17 Pro …". Your command

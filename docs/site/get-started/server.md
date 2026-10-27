@@ -10,6 +10,22 @@ One server for everything you connect: it keeps the clock, combines every source
 delivers to your phone and checks every credential. It is yours, and it never reads your content. It
 runs as one Docker Compose stack: PostgreSQL, the API and a delivery worker.
 
+## What you need
+
+- **A server host:** Linux or macOS with Git, OpenSSL and Docker. It can be the computer you work on, a
+  home server or a cloud machine.
+- **An address for it** that your iPhone and every computer can reach, over HTTPS. A localhost trial
+  works for this computer and Relo for Mac only; the iPhone needs an address it can reach. For that trial,
+  `http://localhost:8180` is enough.
+- **A browser** for the owner account and the Dashboard.
+- **For the iPhone, later:** a Mac with Xcode, an Apple Developer Program membership and an Apple push
+  key. [Add your iPhone](/docs/get-started/iphone) lists them. The server and your computers work
+  without them.
+
+Prefer to let your agent do this? [Set up with your agent](/docs/get-started/with-an-agent) connects
+each computer for you, and [Start from nothing with your agent](/docs/get-started/from-scratch) runs the
+server too.
+
 ## Set it up
 
 <ol class="docs-steps">
@@ -29,8 +45,9 @@ cd relo
 origin for the browser, the iPhone and every computer that runs the CLI. It must be:
 
 - reachable from all of them, and
-- HTTPS, served by something in front of Relo so the API stays on loopback. The iPhone app accepts
-  plain `http` only for a local or private address, which suits a trial.
+- HTTPS, served by something in front of Relo (a proxy or tunnel), so Relo itself is reachable only from
+  the server. The iPhone app accepts plain `http` only for a local or private address, which suits a
+  trial.
 
 Common choices: a tunnel or reverse proxy to `http://127.0.0.1:8180` (Cloudflare Tunnel, Caddy, nginx,
 Traefik) on your own domain such as `https://relo.example.com`, a private overlay network such as
@@ -53,14 +70,12 @@ Then open `deploy/.env` and set:
 ```dotenv
 RELO_APP_URL=https://relo.example.com
 RELO_BIND_ADDRESS=127.0.0.1
-# behind a proxy: the header it overwrites with the client address, e.g. cf-connecting-ip
-RELO_CLIENT_IP_HEADER=
 # delete ended content after this many hours (10 is the default promise; empty keeps it)
 RELO_CONTENT_RETENTION_HOURS=10
 ```
 
-Set `RELO_APP_URL` before you create the owner account. Without `RELO_CLIENT_IP_HEADER` behind a proxy,
-every request looks like it comes from the proxy and sign-in limits become one shared limit.
+Set `RELO_APP_URL` before you create the owner account. Behind a proxy, also set
+`RELO_CLIENT_IP_HEADER`; see [Advanced](#advanced).
 
 </li>
 <li>
@@ -72,9 +87,8 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 curl --fail http://127.0.0.1:8180/health/ready
 ```
 
-The first start creates the database, applies migrations, creates a restricted runtime role and starts
-the API and the worker. Push delivery stays off until [step 3](/docs/get-started/iphone). If something
-fails:
+The first start creates the database and starts the API and the worker. Push delivery stays off until
+you add your iPhone. If something fails:
 
 ```sh title="On the server"
 docker compose --env-file deploy/.env -f deploy/compose.yaml ps
@@ -109,3 +123,14 @@ even though the iPhone comes later.
 Keep registration **Closed** or **Approval** (Account → Server accounts), and read
 [Hardening your server](/docs/guides/hardening).
 :::
+
+## Advanced
+
+Details you can skip on a first run.
+
+- **Docker Compose v2** is required. `docker compose version` should print a v2 number.
+- **First start.** It creates the database, applies the migrations and creates a restricted runtime role
+  that the API and the worker use, so they never run with the database owner's rights.
+- **`RELO_CLIENT_IP_HEADER`.** Behind a proxy, set it in `deploy/.env` to the header your proxy overwrites
+  with the client address, for example `cf-connecting-ip`. Without it, every request looks like it comes
+  from the proxy and the sign-in limits become one shared limit.

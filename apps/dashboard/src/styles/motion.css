@@ -312,7 +312,6 @@
   .more-sheet,
   .more-sheet-group,
   .more-sheet-profile,
-  .split-page-body .now-fold:not(.now-fold-inline),
   .project-index > li {
     border-color: rgb(255 255 255 / 0.24) !important;
     background: var(--surface) !important;

@@ -5,6 +5,7 @@ import { ensureTrust, strictFor, strictSource, trustedPhones, trustedPhonesLabel
 import { isSimulator, matchPhones, modelName, phoneHandle, phoneLabel } from "../crypto/device-names.mjs";
 import { assertNoExtra, validateDeviceId } from "../shared/validate.mjs";
 import { result } from "../shared/outcome.mjs";
+import { isLocalAccount } from "./local-doctor.mjs";
 
 const USAGE = "Usage: relo keys status | relo keys approve PHONE [--yes] | relo keys remove PHONE | relo keys verify DEVICE_ID"
   + " | relo keys forget DEVICE_ID | relo keys rotate | relo keys require on|auto|off | relo keys strict on|off|auto";
@@ -116,6 +117,12 @@ export async function runKeysCommand(command) {
   const { options, group, action, rest, dependencies, client, config } = command;
   if (group !== "keys") return undefined;
   const apiUrl = config.apiUrl;
+
+  // A local account runs on this Mac alone: no keys are made, published or pinned.
+  if (isLocalAccount(config)) {
+    const text = "This Mac runs Relo on its own: nothing leaves it, so nothing is encrypted.";
+    return { ...result("keys", { local: true, encrypted: false, message: text }, { message: text }), text };
+  }
 
   if (action === "status") {
     assertNoExtra(rest, 0, USAGE);

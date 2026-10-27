@@ -283,7 +283,7 @@ suite("Relo API persistence boundaries", () => {
     expect((await first.json() as any).queued).toBe(1);
     const replayBody = await replay.json() as any;
     expect(replayBody.replayed).toBe(true);
-    expect(replayBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
+    expect(replayBody.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     expect(changed.status).toBe(409);
     expect((await db.query("SELECT count(*)::int AS count FROM notification_events")).rows[0].count).toBe(1);
     expect((await db.query("SELECT count(*)::int AS count FROM delivery_jobs")).rows[0].count).toBe(1);
@@ -692,13 +692,13 @@ suite("Relo API persistence boundaries", () => {
       body: JSON.stringify({ sourceName: "Codex", title: "Generated key", body: "No client key" }),
     });
     expect(notification.status).toBe(201);
-    expect((await notification.json() as any).delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
+    expect((await notification.json() as any).delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     const interaction = await request("/api/interactions",ownerOneToken,{
       method: "POST",
       body: JSON.stringify({ title: "Generated key", prompt: "Continue?", type: "approval" }),
     });
     expect(interaction.status).toBe(201);
-    expect((await interaction.json() as any).delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
+    expect((await interaction.json() as any).delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     const keys = (await db.query<{ idempotency_key: string }>(
       "SELECT idempotency_key FROM notification_events ORDER BY created_at",
     )).rows.map((row) => row.idempotency_key);
@@ -837,7 +837,7 @@ suite("Relo API persistence boundaries", () => {
     });
     expect(created.status).toBe(201);
     const body = await created.json() as any;
-    expect(body.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 2 });
+    expect(body.delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: 2 });
     const [firstInbox,secondInbox] = await Promise.all([
       request("/api/inbox/history?limit=100",first.credential).then((response) => response.json() as Promise<any>),
       request("/api/inbox/history?limit=100",second.credential).then((response) => response.json() as Promise<any>),
@@ -1217,7 +1217,7 @@ suite("Relo API persistence boundaries", () => {
     });
     const sentBody = await sent.json() as any;
     expect(sentBody.queued).toBe(0);
-    expect(sentBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
+    expect(sentBody.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
     const inbox = await request("/api/inbox/history?limit=100", phone.credential);
     expect(inbox.status).toBe(200);
     const page = await inbox.json() as any;
@@ -1395,7 +1395,7 @@ suite("Relo API persistence boundaries", () => {
         deviceIds: [offline.deviceId],
       }),
     });
-    expect((await targeted.json() as any).delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
+    expect((await targeted.json() as any).delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
     expect((await (await request("/api/inbox/history?limit=100",offline.credential)).json() as any).items).toHaveLength(1);
     expect((await (await request("/api/inbox/history?limit=100",other.credential)).json() as any).items).toHaveLength(0);
 
@@ -1406,7 +1406,7 @@ suite("Relo API persistence boundaries", () => {
         sourceName: "Codex", title: "Everyone", body: "Broadcast",
       }),
     });
-    expect((await broadcast.json() as any).delivery).toEqual({ eligibleDevices: 2, durableCommands: 1, apnsJobs: 1 });
+    expect((await broadcast.json() as any).delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 1, apnsJobs: 1 });
     expect((await (await request("/api/inbox/history?limit=100",offline.credential)).json() as any).items).toHaveLength(2);
     expect((await (await request("/api/inbox/history?limit=100",other.credential)).json() as any).items).toHaveLength(1);
 
@@ -1417,7 +1417,7 @@ suite("Relo API persistence boundaries", () => {
       }),
     });
     const interactionBody = await interaction.json() as any;
-    expect(interactionBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
+    expect(interactionBody.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 0 });
     const otherInbox = await (await request("/api/inbox/history?limit=100",other.credential)).json() as any;
     expect(otherInbox.items.some((item: any) => item.id === interactionBody.eventId)).toBe(false);
     const answered = await request(`/api/notifications/${interactionBody.eventId}/interactions`,offline.credential,{
@@ -1524,7 +1524,7 @@ suite("Relo API persistence boundaries", () => {
     expect(startedBody.activity.context).toMatchObject({ computer: "MacBook", account: "work" });
     const snapshotBody = await (await request("/api/inbox/snapshot", phone.credential)).json() as any;
     expect(snapshotBody.items.some((item: any) => item.context?.computer === "MacBook" && item.context?.account === "work")).toBe(true);
-    expect(startedBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
+    expect(startedBody.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     const startReplay = await request("/api/live-activities", ownerOneToken, {
       method: "POST", headers: { "idempotency-key": "activity-start-12345678" }, body: startBody,
     });
@@ -1568,7 +1568,7 @@ suite("Relo API persistence boundaries", () => {
     });
     const updatedBody = await updated.json() as any;
     expect(updatedBody.activity.sequence).toBe(1);
-    expect(updatedBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
+    expect(updatedBody.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     const activeRecovery = await request("/api/inbox/live-activities/active", phone.credential);
     expect(activeRecovery.status).toBe(200);
     expect(await activeRecovery.json()).toMatchObject({ activities: [{
@@ -1614,7 +1614,7 @@ suite("Relo API persistence boundaries", () => {
     });
     const endedBody = await ended.json() as any;
     expect(endedBody.activity.state).toBe("ended");
-    expect(endedBody.delivery).toEqual({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
+    expect(endedBody.delivery).toMatchObject({ eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 });
     const endReplay = await request(`/api/live-activities/${activityId}/end`, ownerOneToken, {
       method: "POST", headers: { "idempotency-key": "activity-end-12345678" },
       body: JSON.stringify({ status: "Done" }),
@@ -1727,7 +1727,7 @@ suite("Relo API persistence boundaries", () => {
     });
     expect(started.status).toBe(201);
     const startBody = await started.json() as any;
-    expect(startBody.delivery).toEqual({ eligibleDevices: 1,durableCommands: 1,apnsJobs: 1 });
+    expect(startBody.delivery).toMatchObject({ eligibleDevices: 1,durableCommands: 1,apnsJobs: 1 });
     // Required project/topic context owns the identity; every other supplied field persists as sent.
     const persisted = { ...presentation,identity: expect.objectContaining({ direct: false,
       project: expect.objectContaining({ label: "Release" }),thread: expect.objectContaining({ label: "Deploys" }) }) };
@@ -1954,7 +1954,7 @@ suite("Relo API persistence boundaries", () => {
       method: "POST", headers: { "idempotency-key": "two-device-start-12345678" }, body: startBody,
     },apnsMode);
     const startedBody = await started.json() as any;
-    expect(startedBody.delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: expectedApnsJobs });
+    expect(startedBody.delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: expectedApnsJobs });
     const activityId = startedBody.activity.id;
 
     await db.query("UPDATE devices SET live_activity_authorization='denied' WHERE id=$1",[
@@ -1964,12 +1964,12 @@ suite("Relo API persistence boundaries", () => {
     const updated = await request(`/api/live-activities/${activityId}`,ownerOneToken,{
       method: "PATCH", headers: { "idempotency-key": "two-device-update-12345678" }, body: updateBody,
     },apnsMode);
-    expect((await updated.json() as any).delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: expectedApnsJobs });
+    expect((await updated.json() as any).delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: expectedApnsJobs });
     const endBody = JSON.stringify({ status: "Done", dismissAfterSeconds: 10 });
     const ended = await request(`/api/live-activities/${activityId}/end`,ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "two-device-end-12345678" }, body: endBody,
     },apnsMode);
-    expect((await ended.json() as any).delivery).toEqual({ eligibleDevices: 2, durableCommands: 2, apnsJobs: expectedApnsJobs });
+    expect((await ended.json() as any).delivery).toMatchObject({ eligibleDevices: 2, durableCommands: 2, apnsJobs: expectedApnsJobs });
 
     const replayedStart = await request("/api/live-activities",ownerOneToken,{
       method: "POST", headers: { "idempotency-key": "two-device-start-12345678" }, body: startBody,

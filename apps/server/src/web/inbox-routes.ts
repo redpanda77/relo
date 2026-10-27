@@ -8,6 +8,7 @@ DeliveryReconciliationError,
 reconcileDeliveryJob,
 } from "../delivery-reconciliation.js";
 import { internalId,publicId } from "../ids.js";
+import { dismissMissedQuestion } from "../interactions/dismiss.js";
 import { withdrawNotification } from "../notifications/commands.js";
 import { endWorkForOwner } from "../works/end-route.js";
 import { getOwnerAccount } from "./owner-account.js";
@@ -24,6 +25,15 @@ export function registerInboxActionRoutes(app: Hono, shared: WebRouteContext): v
     try { raw = await context.req.json(); } catch { raw = {}; }
     const result = await endWorkForOwner(db,apnsMode,account.principalId,context.req.param("workId") ?? "",raw);
     return context.json(result.body,result.status);
+  });
+  // The owner dismisses a missed question (spec 6.2), the Dashboard's twin of the phone's dismiss: it no longer needs them.
+  app.post("/api/dashboard/questions/:interactionId/dismiss", async (context) => {
+    const account = await dashboardMutationAccount(context);
+    if (account instanceof Response) return account;
+    const interactionId = internalId("int",context.req.param("interactionId") ?? "");
+    if (!interactionId) return context.json({ error: "not_found" },404);
+    const result = await dismissMissedQuestion(db,{ principalId: account.principalId,interactionId,deviceId: null });
+    return result.kind === "not_found" ? context.json({ error: "not_found" },404) : context.json({ dismissed: true });
   });
   app.post("/api/dashboard/deliveries/:deliveryId/reconcile", async (context) => {
     const account = await dashboardMutationAccount(context);

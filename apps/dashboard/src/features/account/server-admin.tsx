@@ -202,9 +202,7 @@ export function ServerAdminCard({
               {modes.map((option) => (
                 <label
                   key={option.value}
-                  className={`flex cursor-pointer flex-col gap-1 rounded-xl border p-3 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring ${
-                    mode === option.value ? "border-[var(--hairline-strong)] bg-[var(--control-fill)]" : "hover:bg-white/[0.03]"
-                  }`}
+                  className="choice-card flex cursor-pointer flex-col gap-1 p-3 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring"
                 >
                   <span className="flex items-center gap-2 font-medium">
                     <input

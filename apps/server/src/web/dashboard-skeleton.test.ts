@@ -36,7 +36,7 @@ describe("the server's first frame",() => {
   test("Now shows the server's real numbers and paints the core in today's colours",() => {
     const deck = nowDeckModel(nowBootstrap,now);
     // The four readouts are the server's live counts: sessions working, waiting on you, running, needs you.
-    expect(deck).toMatchObject({ sessions: 2,waiting: 2,running: 1,needsYou: 2,state: "needsYou",centre: { label: "Needs you",value: 2 },recent: 4 });
+    expect(deck).toMatchObject({ sessions: 2,waiting: 2,running: 1,needsYou: 2,sessionsLive: 2,state: "needsYou",header: "needs",centre: { label: "Needs you",value: 2 },recent: 4 });
     // Failed (2) is today's biggest other meaning: it lights the needs-you ramp's peaks.
     expect(deck.colors).toEqual(deckColors({ done: 1,failed: 2,needsYou: 2,running: 1 },"needsYou"));
     expect(deck.colors[2]).toBe("#f43f5e");
@@ -45,18 +45,19 @@ describe("the server's first frame",() => {
     expect(html).toContain('<h1 class="page-title">Now</h1>');
     expect(html).toContain('class="orb-stage now-deck-stage" data-orb-stage="loading"');
     expect(html).toContain("--orb-1:#ff8a3d;--orb-2:#ff6b57;--orb-3:#f43f5e");
-    expect([...html.matchAll(/data-readout="([^"]+)"/g)].map((match) => match[1])).toEqual(["Sessions","Waiting","Running","Needs you"]);
-    for (const [label,value] of [["Sessions",2],["Waiting",2],["Running",1],["Needs you",2]] as const)
+    expect([...html.matchAll(/data-readout="([^"]+)"/g)].map((match) => match[1])).toEqual(["Needs you","Your turn","Running","Sessions"]);
+    for (const [label,value] of [["Needs you",2],["Your turn",2],["Running",1],["Sessions",2]] as const)
       expect(html).toMatch(new RegExp(`data-readout="${label}"[^]*?class="readout-value numeral[^"]*"[^>]*>${value}<`));
     expect(html).not.toContain('data-readout="Today"');
     // The body as React's: the open sections in order, each a caption over its cards, then Since you
-    // looked (three rows; "Show 1 more" past three, and past one on a phone); Sessions in the rail.
+    // looked (four rows; "Show n more" past four, and past one on a phone); Sessions in the rail.
     expect(html).toMatch(/data-skeleton-body[^>]*><div class="now-block" data-now-slot="needsYou">/);
-    expect(html).toContain('<div class="now-block" data-now-slot="sinceYouLooked"><section class="space-y-3" data-skeleton-since><p class="text-sm loading-since">');
-    expect(html.match(/class="loading-work-row"/g)).toHaveLength(3);
-    expect(html).toContain('class="now-more loading-more" data-wide data-phone');
+    expect(html).toContain('<div class="now-block" data-now-slot="sinceYouLooked"><section class="now-section now-since space-y-2.5" data-skeleton-since><p class="micro loading-heading">');
+    expect(html.match(/class="loading-work-row"/g)).toHaveLength(4);
+    expect(html).toContain('class="now-more loading-more" data-phone');
+    expect(html).not.toContain('data-wide');
     expect([...html.matchAll(/class="now-block" data-now-slot="([^"]+)"/g)].map((match) => match[1])).toEqual(["needsYou","waitingOnYou","running","sinceYouLooked"]);
-    expect(html).toContain('<section class="now-running now-section space-y-3">');
+    expect(html).toContain('<section class="now-running now-section space-y-2.5">');
     expect(html).toContain('<aside class="now-rail loading-sessions" aria-hidden="true">');
     expect(html.match(/class="loading-session-row"/g)).toHaveLength(3);
     expect(html).toContain('<main id="main-content" aria-busy="true"');
@@ -72,16 +73,16 @@ describe("the server's first frame",() => {
     expect(settings).toEqual(["/dashboard/account","/dashboard/testing","/docs"]);
   });
 
-  test("only quiet work paints the running ramp desaturated, as the deck does; the centre does not breathe",() => {
+  test("only quiet work paints the running ramp desaturated, as the deck does",() => {
     const deck = nowDeckModel({ kind: "inbox-overview",now: { needsYou: [],running: [{ owner: { state: "stale" } }],quiet: [],sessions: { sessions: [] } } },now);
-    expect(deck).toMatchObject({ state: "running",centre: { label: "Running",value: 1 },live: false });
+    expect(deck).toMatchObject({ state: "running",centre: { label: "Running",value: 1 } });
     expect(deck.colors).toEqual(deckColors({ running: 1 },"running",{ quiet: true }));
     expect(deck.colors[0]).not.toBe("#5ce1ff");
   });
 
   test("no rows when nothing is open, and the core is clear",() => {
     const deck = nowDeckModel({ kind: "inbox-overview",now: { needsYou: [],running: [],recent: [] } },now);
-    expect(deck).toMatchObject({ state: "clear",sections: [],centre: { label: "Today",value: null } });
+    expect(deck).toMatchObject({ state: "clear",sections: [],centre: { label: "All clear",value: null } });
     const html = renderPageSkeleton({ kind: "inbox-overview",now: { needsYou: [],running: [],recent: [] } },{ now })!;
     expect(html).not.toContain("loading-work-row");
     expect(html).not.toContain("loading-more");
@@ -90,13 +91,15 @@ describe("the server's first frame",() => {
 
   test("working sessions without live cards are the centre, as on the iPhone",() => {
     const deck = nowDeckModel({ kind: "inbox-overview",now: { needsYou: [],running: [],quiet: [],sessions: { sessions: [{ phase: "working",workId: null }] } } },now);
-    expect(deck).toMatchObject({ sessions: 1,centre: { state: "running",label: "Sessions",value: 1 },live: true });
+    expect(deck).toMatchObject({ sessions: 1,centre: { header: "running",label: "Sessions",value: 1 } });
   });
 
-  test("a clear core's count is Today's, so the first frame holds its place instead of a number",() => {
+  test("a clear core shows the wordmark and ALL CLEAR (Today's count is the browser's, and no longer shown)",() => {
     const html = renderPageSkeleton({ ...nowBootstrap,approvalRequests: [],now: { needsYou: [],running: [],recent: [] } },{ now })!;
-    expect(html).toContain('data-hud-centre="Today"');
-    expect(html).toMatch(/class="hud-number[^"]*"[^>]*><span class="skeleton loading-centre-slot"><\/span><\/span>/);
+    expect(html).toContain('data-hud-centre="All clear"');
+    expect(html).toContain('<span class="hud-wordmark">relo</span>');
+    expect(html).not.toContain("hud-number");
+    expect(html).toContain('data-header="clear"');
     expect(html).not.toContain('class="loading-row"');
   });
 

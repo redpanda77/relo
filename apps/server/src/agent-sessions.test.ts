@@ -307,7 +307,7 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
         "SELECT column_name FROM information_schema.columns WHERE table_name='agent_sessions'")).rows.map((column) => column.column_name);
       // The snapshot and its labels, nothing per event.
       expect(columns.sort()).toEqual(["account","computer","context_pct","context_tokens","cost_usd","created_at","harness","heartbeat_at","id","last_seen_at","open_tool_since","phase",
-        "phase_since","principal_id","project","sealed_names","seq","session_hash","started_at","updated_at"]);
+        "phase_since","principal_id","project","sealed_names","seq","session_hash","started_at","title","updated_at"]);
       const tables = (await db.query<{ table_name: string }>(
         "SELECT table_name FROM information_schema.tables WHERE table_name ~ '(session|hook).*event'")).rows;
       expect(tables).toEqual([]);
@@ -506,6 +506,17 @@ suite("Agent sessions: observed snapshots, read model and retention",() => {
       expect((await loadNowSummary(db,principalId,undefined,undefined)).sessions.sessions[0]!.sealedNames).toBeUndefined();
       const read = await request("GET","/api/agent-sessions");
       expect(read.body.sessions[0].sealedNames).toBeUndefined();
+    });
+
+    test("a readable session title is stored, kept by a later snapshot without one, and returned on the row and its card",async () => {
+      expect((await snapshot({ phase: "working",title: "Fix the login bug" })).status).toBe(200);
+      expect((await snapshot({ phase: "working",title: "bad\ntitle" })).status).toBe(400);
+      expect((await snapshot({ phase: "working" })).status).toBe(200);
+      expect((await db.query("SELECT title FROM agent_sessions WHERE session_hash=$1",[S1])).rows[0].title).toBe("Fix the login bug");
+      const now = await loadNowSummary(db,principalId,undefined,undefined);
+      expect(now.sessions.sessions[0]!.title).toBe("Fix the login bug");
+      expect((await snapshot({ phase: "working",title: "Renamed" })).status).toBe(200);
+      expect((await loadNowSummary(db,principalId,undefined,undefined)).sessions.sessions[0]!.title).toBe("Renamed");
     });
 
     test("another account never sees the sessions",async () => {

@@ -4,8 +4,9 @@ import { lockAccountLifecycle } from "../account-lifecycle.js";
 import { accountBackoff,authAttemptLimited,isKnownDevice,recordSignInFailure,recordSignInSuccess } from "../auth-throttle.js";
 import { apnsTransportTruth } from "../delivery-observability.js";
 import {
-  createAccountPrincipal,isServerAdmin,registrationMode,requestAccountApproval,signInRefusal,
+  claimBootstrappedOwner,createAccountPrincipal,isServerAdmin,registrationMode,requestAccountApproval,signInRefusal,
 } from "../server-accounts.js";
+import { pendingSignInRedirect } from "../mobile-sign-in.js";
 import type { WebRouteContext } from "./route-context.js";
 
 /** Owner sign-up and sign-in, the session, delivery status and account deletion. */
@@ -68,13 +69,7 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
         await createAccountPrincipal(client,payload.user.id,{ approved: mode === "open" });
       } else {
         // The first person claims the bootstrapped account and administers the server.
-        const mapping = await client.query(
-          `INSERT INTO account_identities(principal_id,provider,subject,server_admin,approved_at)
-           SELECT id,'better-auth',$2,true,now() FROM owner_principals WHERE handle=$1 AND disabled_at IS NULL
-           ON CONFLICT DO NOTHING RETURNING principal_id`,
-          [bootstrapOwnerHandle,payload.user.id],
-        );
-        if (!mapping.rowCount) {
+        if (!await claimBootstrappedOwner(client,bootstrapOwnerHandle,payload.user.id)) {
           await client.query("DELETE FROM auth.users WHERE id=$1",[payload.user.id]);
           await client.query("COMMIT");
           return context.json({ error: "owner_not_bootstrapped" },503);
@@ -91,7 +86,9 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
           // The request stays pending in the Dashboard even when the phone cannot be asked.
           console.error("account request approval failed",{ message: error instanceof Error ? error.message : "unknown" });
         }
-        return context.json({ status: "approval_pending" },202);
+        // Inside an app's browser sign-in the browser goes back to the app with a ticket it can poll.
+        const redirect = await pendingSignInRedirect(db,context.req.raw.headers,payload.user.id);
+        return context.json(redirect ? { status: "approval_pending",redirect } : { status: "approval_pending" },202);
       }
       await client.query("COMMIT");
       return authResponse;
@@ -123,11 +120,11 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
     const payload = await response.clone().json().catch(() => null) as { user?: { id?: string }; twoFactorRedirect?: boolean } | null;
     // The password was right and the account has two-step sign-in: no session yet, the code comes next.
     if (payload?.twoFactorRedirect === true) return response;
-    return finishSignIn(response,payload?.user?.id,email);
+    return finishSignIn(response,payload?.user?.id,email,context.req.raw.headers);
   });
 
   /** A signed-in response for an account the server still allows; otherwise its sessions are removed. */
-  async function finishSignIn(response: Response,userId: string | undefined,email: string): Promise<Response> {
+  async function finishSignIn(response: Response,userId: string | undefined,email: string,headers: Headers): Promise<Response> {
     const refusal = userId ? await signInRefusal(db,userId) : "account_disabled";
     if (!refusal) {
       const signedIn = new Response(response.body,response);
@@ -135,7 +132,8 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
       return signedIn;
     }
     if (userId) await db.query("DELETE FROM auth.sessions WHERE user_id=$1",[userId]);
-    return Response.json({ error: refusal },{ status: 403 });
+    const redirect = refusal === "approval_pending" && userId ? await pendingSignInRedirect(db,headers,userId) : null;
+    return Response.json(redirect ? { error: refusal,redirect } : { error: refusal },{ status: 403 });
   }
 
   // The second step of a two-step sign-in (docs/HARDENING.md, gap 1): the same limits and account checks.
@@ -146,7 +144,7 @@ export function registerAccountRoutes(app: Hono, shared: WebRouteContext): void 
       const response = await accountAuth.handler(context.req.raw);
       if (!response.ok) return response;
       const payload = await response.clone().json().catch(() => null) as { user?: { id?: string; email?: string } } | null;
-      return finishSignIn(response,payload?.user?.id,payload?.user?.email ?? "");
+      return finishSignIn(response,payload?.user?.id,payload?.user?.email ?? "",context.req.raw.headers);
     });
   }
 

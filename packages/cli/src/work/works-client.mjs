@@ -1,7 +1,7 @@
 // Typed calls for /api/session/works (plan 04 §0.4). Identity travels as headers set from the typed caller,
 // never from a flag. Uses the configured client's URL, token and fetch.
 import { randomUUID } from "node:crypto";
-import { ApiError, EXIT, NetworkError } from "../shared/errors.mjs";
+import { ApiError, EXIT, NO_PHONE_ENCRYPTION_HINT, NetworkError, LOCAL_RELINK } from "../shared/errors.mjs";
 import { WorkRefusal } from "./refusal.mjs";
 
 export function newIdempotencyKey() {
@@ -23,7 +23,7 @@ const NEXT = {
   labels_sealed: "relo work update --step s3",
   idempotency_key_required: "the same command again",
   idempotency_conflict: "the same command again",
-  end_to_end_required: "relo keys status   (open Relo on the iPhone, then retry)",
+  end_to_end_required: NO_PHONE_ENCRYPTION_HINT,
   session_key_required: "relo doctor",
   owner_only: "relo state",
   plan_invalid: "relo state --sync",
@@ -38,7 +38,7 @@ const NEXT = {
   handoff_finished: 'relo work start --goal "…"   (that work is already finished)',
 };
 
-function serverRefusal(payload, status, method, path) {
+function serverRefusal(payload, status, method, path, local = false) {
   // A 429 says when to come back; the declared lane queues the write and the outbox waits that long.
   const wait = Number.isFinite(payload?.retryAfterSeconds) ? { retryAfterSeconds: payload.retryAfterSeconds } : {};
   const raw = typeof payload?.error === "string" ? payload.error : payload?.error?.code;
@@ -46,10 +46,11 @@ function serverRefusal(payload, status, method, path) {
   if (raw && Object.hasOwn(NEXT, raw)) {
     const refusal = new WorkRefusal(raw.toUpperCase(), {
       // Readable text reaches the server only when this computer has no phone to seal for.
-      what: raw === "end_to_end_required" ? "this account requires end-to-end encryption and this computer has no trusted phone with a current key to seal for"
+      what: raw === "end_to_end_required" ? (local ? "this server asked for end-to-end encryption, which a local account never uses"
+        : "this account requires end-to-end encryption and this computer has no trusted phone with a current key to seal for")
         : String(message).replace(/\.$/u, ""),
       state: raw === "not_found" ? "no such work in this session" : "nothing changed on the server",
-      next: NEXT[raw],
+      next: raw === "end_to_end_required" && local ? LOCAL_RELINK : NEXT[raw],
       exitCode: status >= 500 ? EXIT.API : EXIT.USAGE,
       details: { status, view: payload?.work ?? payload?.state, ...wait },
     });
@@ -91,7 +92,7 @@ export function worksClient(client, { sessionKey, harness }) {
       if (response.status === 404 && path === "/api/session/works" && method === "POST" && !payload?.error) {
         throw new WorkRefusal("SERVER_TOO_OLD", { what: "this Relo server is older than relo work (server 0.18.0 or newer is needed)", state: "nothing was sent", next: "relo doctor", exitCode: 1 });
       }
-      throw serverRefusal(payload, response.status, method, path);
+      throw serverRefusal(payload, response.status, method, path, client.local === true);
     }
     return payload;
   }

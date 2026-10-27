@@ -31,9 +31,17 @@ const labels: Record<EncryptionMode, string> = {
   off: "Off",
 }
 
-function summary(policy: EncryptionPolicy): string {
+/** "Automatic" turns on only once an iPhone has published its keys, so a not-yet-required Automatic means no iPhone yet. */
+function noIphoneYet(policy: EncryptionPolicy): boolean | null {
+  return policy.mode === "auto" ? !policy.required : null
+}
+
+function summary(policy: EncryptionPolicy, noIphone: boolean): string {
   if (policy.mode === "off") return "Off: computers may send readable text the server can see."
-  if (policy.mode === "on") return "On: computers must seal text so only your phone and linked browsers can read it."
+  if (policy.mode === "on")
+    return `On: computers must seal text so only your phone and linked browsers can read it.${
+      noIphone ? " No iPhone yet: cards will open only on Relo for Mac until you add one." : ""
+    }`
   return policy.required
     ? "On, because your iPhone has published its encryption keys: computers must seal text."
     : "Turns on as soon as your iPhone publishes its encryption keys."
@@ -50,11 +58,13 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [confirmOff, setConfirmOff] = useState(false)
+  // Whether no iPhone has published keys, known while the setting is Automatic and remembered across the change to Always.
+  const [noIphone, setNoIphone] = useState(false)
 
   useEffect(() => {
     let active = true
     service.load().then(
-      (loaded) => { if (active) { if (loaded) setPolicy(loaded); else setUnavailable(true) } },
+      (loaded) => { if (active) { if (loaded) { setPolicy(loaded); setNoIphone((known) => noIphoneYet(loaded) ?? known) } else setUnavailable(true) } },
       // Not loaded (offline, or a server without it): the card stays out of the way.
       () => { if (active) setUnavailable(true) },
     )
@@ -65,7 +75,9 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
     setSaving(true)
     setError("")
     try {
-      setPolicy(await service.save(mode))
+      const saved = await service.save(mode)
+      setNoIphone((known) => noIphoneYet(saved) ?? known)
+      setPolicy(saved)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save the encryption setting.")
     } finally {
@@ -103,10 +115,10 @@ export function EncryptionPolicyCard({ service = httpService }: { service?: Encr
       <CardContent className="grid gap-3">
         {policy ? (
           <p className="text-sm text-muted-foreground" role="status">
-            <CrossfadeText>{summary(policy)}</CrossfadeText>
+            <CrossfadeText>{summary(policy, noIphone)}</CrossfadeText>
           </p>
         ) : null}
-        <OperationStatus error={error || null} />
+        <OperationStatus card error={error || null} />
       </CardContent>
       ) : null}
       <AlertDialog open={confirmOff} onOpenChange={setConfirmOff}>

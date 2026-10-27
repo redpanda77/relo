@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { checkText } from "../src/work/content-filter.mjs";
-import { checkSpoken, outcomeGist, questionGist, saidGist, SPOKEN_KINDS, spokenLine } from "../src/work/spoken.mjs";
+import { checkSpoken, cleanSpoken, outcomeGist, questionGist, saidGist, SPOKEN_KINDS, spokenLine } from "../src/work/spoken.mjs";
 
 const checked = (field, text, flag) => checkSpoken(field, checkText(field, text, { flag }), flag);
 
@@ -29,6 +29,12 @@ test("every golden line starts with a kind word, fits one breath and carries no 
     assert.doesNotMatch(line, /\d+\.\d+|\b[0-9a-f]{7,}\b|\/|\(/u, line);
     assert.match(line, /[.?]$/u, line);
   }
+});
+
+test("a file path is spoken as its last name, POSIX or Windows", () => {
+  assert.equal(cleanSpoken("Edited ~/code/app/src/main.mjs"), "Edited main.mjs");
+  assert.equal(cleanSpoken("Edited C:\\Users\\me\\code\\main.mjs"), "Edited main.mjs");
+  assert.equal(cleanSpoken("Saved ~\\.claude\\agents\\relo-worker.md"), "Saved relo-worker.md");
 });
 
 test("long and noisy outcomes still give a short line", () => {

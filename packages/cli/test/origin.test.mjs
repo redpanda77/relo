@@ -33,3 +33,10 @@ test("strict mode defaults on for a public server and off on a private network; 
   assert.equal(strictSource({}), "address");
   assert.equal(strictSource({ strict: false }), "set");
 });
+
+test("a loopback server that is not local (an SSH tunnel) is unknown: strict by default, like a public one", async () => {
+  const { strictFor, strictNoticeText } = await import("../src/crypto/trust.mjs");
+  for (const url of ["http://127.0.0.1:8187", "http://localhost:8187", "http://[::1]:8187"]) assert.equal(strictFor({}, url), true, url);
+  assert.equal(strictFor({ strict: false }, "http://127.0.0.1:8187"), false, "the owner's choice still wins");
+  assert.match(strictNoticeText("http://127.0.0.1:8187"), /loopback address that is not this Mac's own Relo/u);
+});

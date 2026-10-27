@@ -6,7 +6,7 @@ import { requireScope } from "../auth.js";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
 import { loadOwnerStateInputs } from "../derive/load.js";
-import { buildNowSummary } from "../derive/now-summary.js";
+import { buildNowSummary,islandCounts,type IslandCounts } from "../derive/now-summary.js";
 import { deriveOwnerState } from "../derive/owner-state.js";
 import type { LoadedWork } from "../derive/load.js";
 import { sealedNoticeSchema,type SealedEnvelope } from "../sealed-content.js";
@@ -33,7 +33,7 @@ export function registerNowRoutes(app: Hono,shared: ApiRouteContext): void {
  * whole account's Now, like the Dashboard, yet still gets only the envelopes it is a recipient of.
  */
 export async function loadNowSummary(db: Pick<Database,"query">,principalId: string,deviceId: string | undefined,
-  sinceParam: string | undefined,options: { ownerOverview?: boolean | undefined } = {}): Promise<NowSummary> {
+  sinceParam: string | undefined,options: { ownerOverview?: boolean | undefined; light?: boolean } = {}): Promise<NowSummary> {
   const clock = await db.query<{ now: Date; sessions: any[] }>(
     `SELECT statement_timestamp() AS now,${agentSessionRowsSql("$1::uuid")} AS sessions`,[principalId]);
   const now = clock.rows[0]?.now ?? new Date();
@@ -42,11 +42,14 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
   const floor = now.valueOf() - OWNER_STATE_TIMING.historySeconds * 1000;
   const since = new Date(Math.min(now.valueOf(),Math.max(floor,sinceParam ? Date.parse(sinceParam) : floor)));
 
-  const works = await loadOwnerStateInputs(db,principalId,"visible",now,{ deviceId,ownerOverview: options.ownerOverview });
+  const works = await loadOwnerStateInputs(db,principalId,"visible",now,{ deviceId,ownerOverview: options.ownerOverview },
+    { light: options.light === true });
+  const workById = new Map(works.map((work) => [work.id,work]));
   const sessionIdByKey = new Map<string,string>(sessionRows.map((row) => [row.session_hash,publicId("ags",row.id)]));
   // A card keeps its session's sealed name after the session ends (it leaves the Sessions view, not the card).
   const namesByKey = new Map<string,unknown>(deviceId === undefined ? []
     : sessionRows.filter((row) => row.sealed_names).map((row) => [row.session_hash,row.sealed_names]));
+  const titleByKey = new Map<string,string>(sessionRows.filter((row) => row.title).map((row) => [row.session_hash,row.title]));
   const items: NowItem[] = works.map((work) => ({
     id: work.id,
     title: work.title,
@@ -54,12 +57,14 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
     sourceName: work.sourceName,
     ...(work.computerIcon ? { computerIcon: work.computerIcon } : {}),
     project: work.project,
+    ...(work.projectSlot === null ? {} : { projectSlot: work.projectSlot }),
     steps: work.steps,
     progress: work.planProgress,
     ...(work.planDigest ?? {}),
     producer: work.producer,
     sessionId: work.sessionKey ? sessionIdByKey.get(work.sessionKey) ?? null : null,
     ...(work.sessionKey && namesByKey.has(work.sessionKey) ? { sessionNames: namesByKey.get(work.sessionKey) } : {}),
+    ...(work.sessionKey && titleByKey.has(work.sessionKey) ? { sessionTitle: titleByKey.get(work.sessionKey) } : {}),
     notificationId: work.notificationId,
     startedAt: work.startedAt.toISOString(),
     declaredAt: work.declaredAt.toISOString(),
@@ -69,7 +74,14 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
     ...phoneEnvelopes(work,deviceId),
   }));
 
-  const hooked = sessionsViewRows(sessionRows,now,{ withSealedNames: deviceId !== undefined });
+  // The newest readable card goal of each session names a session that has no name of its own.
+  const goalByKey = new Map<string,string>();
+  for (const work of [...works].sort((a,b) => b.declaredAt.valueOf() - a.declaredAt.valueOf())) {
+    // Only a readable card's goal: a sealed card's server title is a placeholder, a private one says "Private activity".
+    if (work.producer !== "agent_session" || !work.sessionKey || !work.title || work.sealed || work.title === "Private activity") continue;
+    if (!goalByKey.has(work.sessionKey)) goalByKey.set(work.sessionKey,work.title);
+  }
+  const hooked = sessionsViewRows(sessionRows,now,{ withSealedNames: deviceId !== undefined,goalByKey });
   const reported = new Set<string>(sessionRows.map((row) => row.session_hash));
   // A hookless session gets a row only while it has a live work (never show trash).
   const hookless = hooklessSessionRows(works.flatMap((work) => work.producer === "agent_session" && work.sessionKey && work.workOpen
@@ -78,10 +90,15 @@ export async function loadNowSummary(db: Pick<Database,"query">,principalId: str
       ...(work.computerIcon ? { computerIcon: work.computerIcon } : {}) }] : []),reported,now);
   // Work items name their hookless session row too.
   for (const row of hookless) {
-    const key = works.find((work) => work.id === row.id)?.sessionKey;
-    for (const item of items) if (item.sessionId === null && key && works.find((work) => work.id === item.id)?.sessionKey === key) item.sessionId = row.id;
+    const key = workById.get(row.id)?.sessionKey;
+    for (const item of items) if (item.sessionId === null && key && workById.get(item.id)?.sessionKey === key) item.sessionId = row.id;
   }
   return buildNowSummary({ now,since,items,sessions: [...hooked,...hookless] });
+}
+
+/** The account's island counts at this moment, from the same Now every client reads (without plans, which counts never use). */
+export async function loadIslandCounts(db: Pick<Database,"query">,principalId: string): Promise<IslandCounts> {
+  return islandCounts(await loadNowSummary(db,principalId,undefined,undefined,{ light: true }));
 }
 
 /**

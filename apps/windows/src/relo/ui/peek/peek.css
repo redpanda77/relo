@@ -1,0 +1,88 @@
+/* The expanded closed notch (peek): the pill, the card and the notice (ReloClosedActivity.swift, ReloOrbitWings.swift
+   ReloArrival / ReloOpenLight). Each piece rises 6 px and fades in on an ease-out of 0.35 s, `--d` seconds after the opening. */
+
+.pk {
+  position: relative;
+  width: 440px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 18px 14px;
+  text-align: left;
+}
+.pk[data-pill] { padding-bottom: 12px; }
+
+/* The state's light, painted behind the content out to the notch's own edge (the notch pads its content by 14). */
+.pk-light {
+  position: absolute;
+  inset: 0 -14px 0 -14px;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 0 0 24px 24px;
+  --tone: #8b7cff;
+}
+.pk-light::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 120% at 50% 112%, color-mix(in srgb, var(--tone) 40%, transparent), color-mix(in srgb, var(--tone) 17%, transparent) 35%, color-mix(in srgb, var(--tone) 3.5%, transparent) 70%, transparent 100%);
+  opacity: 0;
+  animation: pk-rise 0.55s cubic-bezier(0, 0, 0.58, 1) 0.6s forwards, var(--idle, none);
+}
+.pk-light[data-kind="needs"]   { --tone: #ff7a66; --idle: pk-breathe-needs 3.6s ease-in-out 1.15s infinite; }
+.pk-light[data-kind="turn"]    { --tone: #ff7a66; --idle: pk-breathe-turn 4.2s ease-in-out 1.15s infinite; }
+.pk-light[data-kind="running"] { --tone: #8b7cff; --idle: pk-breathe-running 3.5s ease-in-out 1.15s infinite; }
+.pk-light[data-kind="started"] { --tone: #8b7cff; }
+.pk-light[data-kind="failed"]  { --tone: #f87171; --idle: pk-fail 1.4s ease-out 0.6s both; }
+.pk-light[data-kind="done"]    { --tone: #34d399; --idle: pk-done 1.2s ease-out 1.1s both; }
+@keyframes pk-rise { to { opacity: 0.55; } }
+@keyframes pk-breathe-needs { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+@keyframes pk-breathe-turn { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
+@keyframes pk-breathe-running { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.75; } }
+@keyframes pk-fail { from { opacity: 1; } to { opacity: 0.45; } }
+@keyframes pk-done { from { opacity: 1; } to { opacity: 0.5; } }
+
+.pk-in {
+  opacity: 0;
+  animation: pk-in 0.35s cubic-bezier(0, 0, 0.58, 1) var(--d, 0s) forwards;
+}
+@keyframes pk-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* The badge's own arrival: a question drops in, your turn slides in from the wing, a failure shakes once, a start rises. */
+.pk-badge { opacity: 0; display: flex; flex: none; animation: var(--badge, pk-in) 0.45s cubic-bezier(0.34, 1.4, 0.64, 1) 0.1s forwards; }
+.pk-badge[data-kind="needs"]   { --badge: pk-drop; }
+.pk-badge[data-kind="turn"]    { --badge: pk-slide; }
+.pk-badge[data-kind="failed"]  { --badge: pk-shake; }
+.pk-badge[data-kind="started"] { --badge: pk-in; }
+@keyframes pk-drop { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pk-slide { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes pk-shake {
+  0% { opacity: 0; transform: translateX(0); }
+  15% { opacity: 1; transform: translateX(2px); }
+  35% { transform: translateX(-1.6px); }
+  55% { transform: translateX(1px); }
+  80%, 100% { opacity: 1; transform: translateX(0); }
+}
+
+/* The plan bar inside the card: a start draws it in from the left, a finish sweeps it full. */
+.pk-bar[data-kind="started"] { animation: pk-draw 0.8s cubic-bezier(0.42, 0, 0.58, 1) 0.3s both; }
+.pk-bar[data-kind="done"] { animation: pk-draw 0.9s cubic-bezier(0.42, 0, 0.58, 1) 0.2s both; }
+@keyframes pk-draw { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+.pk-title { font-size: 13.5px; font-weight: 600; line-height: 1.25; color: #fff; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.pk-line { font-size: 11px; line-height: 1.3; color: rgb(255 255 255 / 0.6); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--lines, 1); line-clamp: var(--lines, 1); }
+.pk-top { display: flex; align-items: center; gap: 6px; justify-content: space-between; min-width: 0; }
+/* The origin gives way to the badge: it shortens with an ellipsis, the badge never leaves the card. */
+.pk-top > .pk-in, .pk-top > .pk-source { min-width: 0; flex: 0 1 auto; }
+.pk-top > :not(.pk-in):not(.pk-source) { flex: none; }
+.pk-meta { font-size: 10px; color: rgb(255 255 255 / 0.4); font-variant-numeric: tabular-nums; }
+.pk-floor { display: flex; justify-content: flex-end; margin-top: 6px; transform-origin: right center; }
+.pk-source { font-size: 10.5px; font-weight: 600; color: rgb(255 255 255 / 0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pk-in, .pk-badge, .pk-bar { animation: none; opacity: 1; transform: none; clip-path: none; }
+  .pk-light::before { animation: none; opacity: 0.6; }
+}
+.pk[data-reduced] .pk-in, .pk[data-reduced] .pk-badge, .pk[data-reduced] .pk-bar { animation: none; opacity: 1; transform: none; clip-path: none; }
+.pk[data-reduced] .pk-light::before { animation: none; opacity: 0.6; }

@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { deliveryEvidenceItemSchema } from "../delivery-evidence.js"
 import { absenceSchema,nowSummarySchema } from "../owner-state.js"
+import { historyEndingSchema,historyKindSchema } from "../history.js"
 
 const nullableDate = z.string().nullable()
 
@@ -130,6 +131,8 @@ const notificationSummarySchema = z.object({
   originThreadId: z.string().nullable(),
   activity: activitySummarySchema.nullable(),
   question: questionSchema.nullable().optional(),
+  /** What a History row means, classified by the server (history.ts); History lists settled rows only. */
+  historySignal: historyEndingSchema.optional(),
   resources: z.object({
     source: z.object({
       id: z.string(),
@@ -228,14 +231,12 @@ export const notificationHistorySchema = z.object({
     path: z.string(),
     page: z.number(),
     /**
-     * History's filters, applied on the server across every page. Kinds and states are the owner's
+     * History's filters, applied on the server across every page. Kinds and endings are the owner's
      * words (as on the iPhone); `q` searches only readable fields (sealed items match by source).
      */
     filters: z.object({
-      kind: z.enum(["message", "decision", "live_activity", "response"]).nullable(),
-      state: z
-        .enum(["running", "done", "failed", "stopped", "answered", "missed"])
-        .nullable(),
+      kind: historyKindSchema.nullable(),
+      ending: historyEndingSchema.nullable(),
       project: z.string().nullable(),
       source: z.string().nullable().default(null),
       computer: z.string().nullable().default(null),
@@ -253,6 +254,11 @@ export const notificationHistorySchema = z.object({
     byProject: z.array(z.object({ project: z.string(), count: z.number() })),
   }).optional(),
   notifications: z.array(notificationSummarySchema),
+  /**
+   * The settled rows of the last 36 hours, unfiltered, by when and what they mean: the browser cuts its own
+   * calendar day from them for the Today panel, so its counts cover every page, not only the one shown.
+   */
+  recent: z.array(z.object({ at: z.string(), signal: historyEndingSchema })).max(2000).default([]),
   pagination: paginationSchema,
   namesFrom: namesFromSchema,
 })

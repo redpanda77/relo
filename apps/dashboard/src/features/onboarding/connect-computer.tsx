@@ -2,6 +2,7 @@ import type { ComputerInviteStatus } from "@relo/notification-contracts"
 import { Check, Loader2 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
+import { SECTION_CAPTION_CLASS } from "@/components/list"
 import { CopyButton } from "@/components/molecules/copy-button"
 import { Notice } from "@/components/molecules/notice"
 import { OperationStatus } from "@/components/molecules/operation-status"
@@ -20,6 +21,7 @@ import {
   STATUS_POLL_MS,
   agentPrompt,
   bindingMatches,
+  guessShell,
   lastInvite,
   madeInvite,
   newBind,
@@ -29,6 +31,7 @@ import {
   SETUP_AGENTS,
   type ComputerInvite,
   type ConnectService,
+  type ShellFamily,
 } from "@/features/onboarding/connect-service"
 
 const httpService = createHttpConnectService()
@@ -151,8 +154,10 @@ function Wizard({
   const [way, setWay] = useState<Way>(resumed?.way ?? "command")
   const [level, setLevel] = useState(resumed?.level ?? "track")
   const [approvals, setApprovals] = useState(resumed?.approvals ?? false)
-  // Relo for Mac (the notch) comes along by default; the install script skips it on anything but a Mac.
-  const [macApp, setMacApp] = useState(resumed?.macApp ?? true)
+  // Relo's desktop app (Relo for Mac, Relo for Windows: the notch) comes along by default; the install script skips it where there is none.
+  const [desktopApp, setDesktopApp] = useState(resumed?.desktopApp ?? true)
+  // Which command the code screen shows: the shell of the computer being added.
+  const [shell, setShell] = useState<ShellFamily>(guessShell)
   const [pickAgents, setPickAgents] = useState(resumed?.agents != null)
   const [picked, setPicked] = useState<string[]>(resumed?.agents ?? [])
   const [typedCode, setTypedCode] = useState("")
@@ -250,13 +255,13 @@ function Wizard({
     try {
       const bind = newBind()
       const agents = pickAgents && picked.length ? SETUP_AGENTS.filter((id) => picked.includes(id)) : undefined
-      const made = withBind(await service.invite({ level, approvals, macApp, ...(agents ? { agents } : {}) }), bind)
-      const madePrompt = agentPrompt(window.location.origin, made.code, level, made.macApp === true)
+      const made = withBind(await service.invite({ level, approvals, desktopApp, ...(agents ? { agents } : {}) }), bind)
+      const madePrompt = agentPrompt(window.location.origin, made.code, level, made.desktopApp)
       bindRef.current = bind
       checkedKey.current = null
       setKeyCheck(null)
       rememberInvite(made.inviteId)
-      rememberMade({ invite: made, prompt: madePrompt, bind, way: way === "agent" ? "agent" : "command", level, approvals, agents: agents ?? null, macApp })
+      rememberMade({ invite: made, prompt: madePrompt, bind, way: way === "agent" ? "agent" : "command", level, approvals, agents: agents ?? null, desktopApp })
       setInvite(made)
       setPrompt(madePrompt)
       setInviteId(made.inviteId)
@@ -287,7 +292,7 @@ function Wizard({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="grid gap-1 pr-8">
-        <p className="micro" aria-hidden="true">Step {stepNumber} of {STAGES.length}</p>
+        <p className={SECTION_CAPTION_CLASS} aria-hidden="true">Step {stepNumber} of {STAGES.length}</p>
         <DialogTitle className="text-xl font-semibold tracking-tight">{TITLES[stage]}</DialogTitle>
         <DialogDescription className="sr-only">Connect a computer to your Relo account in {STAGES.length} steps.</DialogDescription>
       </header>
@@ -302,7 +307,7 @@ function Wizard({
                 ["agent", "Let my agent do it", "Paste one message into Claude Code, Codex, OpenCode or another agent on the computer."],
                 ["code", "My computer shows a code", "Use this when the computer ran relo auth login and shows a code."],
               ] as const).map(([value, title, help]) => (
-                <label key={value} className="flex min-h-14 cursor-pointer items-start gap-3 rounded-xl border border-border p-3.5 has-[:checked]:border-[var(--neon-violet,currentColor)] has-[:checked]:bg-muted/50">
+                <label key={value} className="choice-card flex min-h-14 cursor-pointer items-start gap-3 p-3.5">
                   <input type="radio" name="connect-way" className="mt-1" checked={way === value} onChange={() => setWay(value)} />
                   <span className="grid gap-0.5">
                     <span className="font-medium">{title}</span>
@@ -336,7 +341,7 @@ function Wizard({
                     {LEVELS.map((item) => <NativeSelectOption key={item.value} value={item.value}>{item.label}: {item.help}</NativeSelectOption>)}
                   </NativeSelect>
                 </div>
-                <details className="group rounded-xl border border-border p-3.5">
+                <details className="choice-card group p-3.5">
                   <summary className="min-h-6 cursor-pointer font-medium">Options</summary>
                   <div className="mt-3 grid gap-4">
                     <label className="flex min-h-11 cursor-pointer items-center gap-3 text-[15px]">
@@ -344,8 +349,8 @@ function Wizard({
                       Ask permission on my iPhone too
                     </label>
                     <label className="flex min-h-11 cursor-pointer items-center gap-3 text-[15px]">
-                      <input type="checkbox" checked={macApp} onChange={(event) => setMacApp(event.target.checked)} />
-                      On a Mac, also install Relo for Mac in the notch
+                      <input type="checkbox" checked={desktopApp} onChange={(event) => setDesktopApp(event.target.checked)} />
+                      Also install the Relo app there (Relo for Mac or Relo for Windows, in the notch)
                     </label>
                     <fieldset className="grid gap-2">
                       <legend className="mb-1 text-sm font-medium">Agents to set up</legend>
@@ -384,8 +389,16 @@ function Wizard({
           <>
             {invite && !expired && (way === "command" || showCommand) ? (
               <div className="grid gap-2">
-                <p className="text-sm text-muted-foreground">Paste this into a terminal on the computer. It works once, for 30 minutes.</p>
-                <CopyLine text={invite.command} label="Copy command" />
+                <div role="group" aria-label="The computer's system" className="flex gap-2">
+                  {([["posix", "macOS or Linux"], ["windows", "Windows"]] as const).map(([value, label]) => (
+                    <Button key={value} type="button" size="sm" variant={shell === value ? "default" : "outline"} aria-pressed={shell === value}
+                      className="min-h-11 sm:min-h-8" onClick={() => setShell(value)}>{label}</Button>
+                  ))}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Paste this into {shell === "windows" ? "PowerShell" : "a terminal"} on the computer. It works once, for 30 minutes.
+                </p>
+                <CopyLine text={invite.commands[shell]} label="Copy command" />
               </div>
             ) : null}
             {invite && !expired && way === "agent" && !showCommand ? (
@@ -393,7 +406,7 @@ function Wizard({
                 <p className="text-sm text-muted-foreground">
                   Paste this into your agent on that computer. It may ask your permission to run the command; allow it.
                 </p>
-                <CopyLine text={prompt ?? agentPrompt(window.location.origin, invite.code, level, invite.macApp === true)} label="Copy prompt" />
+                <CopyLine text={prompt ?? agentPrompt(window.location.origin, invite.code, level, invite.desktopApp)} label="Copy prompt" />
               </div>
             ) : null}
             {invite && !expired && way === "agent" && stalled && !showCommand && !computer ? (
@@ -482,7 +495,7 @@ function Wizard({
         {stage === "apps" ? (
           <ul className="grid gap-3 text-[15px]">
             <li><b>Relo for iPhone</b> shows your cards on the Lock Screen and asks you before anything risky.</li>
-            <li><b>Relo for Mac</b> puts the same status in the notch, always in view.</li>
+            <li><b>Relo for Mac</b> and <b>Relo for Windows</b> put the same status in the notch, always in view.</li>
           </ul>
         ) : null}
       </div>

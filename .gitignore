@@ -75,3 +75,7 @@ apps/ios/Config/Signing.local.xcconfig
 /AGENTS.md
 /CLAUDE.md
 /docs/internal/
+
+# Relo for Windows build outputs and updater keys (never commit a private key)
+apps/windows/src-tauri/binaries/
+*.key

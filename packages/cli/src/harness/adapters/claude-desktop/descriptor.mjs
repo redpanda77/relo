@@ -10,6 +10,7 @@ export default Object.freeze({
     at: ({ env, home, platform }) => platform === "darwin" ? join(home, "Library", "Application Support", "Claude")
       : platform === "win32" && env.APPDATA?.trim() ? join(env.APPDATA.trim(), "Claude") : undefined,
   },
+  installation: { apps: ["Claude.app"], folder: { ignore: ["claude_desktop_config.json"] } },
   mcp: { format: "json", key: "mcpServers", launch: "absolute", global: "claude_desktop_config.json" },
   mcpClient: /^claude/iu,
 });

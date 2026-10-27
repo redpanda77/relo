@@ -42,6 +42,20 @@ default `track`).
   signed in, with no browser sign-in. Your iPhone then asks once to approve this Mac's keys, as it
   does for the computer. A server with no Mac app to hand out (every public image) says so and skips it.
 
+  **On Windows,** pick **Windows** in the wizard and paste the PowerShell line instead:
+
+  ```powershell
+  & ([scriptblock]::Create((irm https://relo.example.com/install.ps1))) rci_…
+  ```
+
+  It does the same for your user alone, with no administrator prompt: Node.js 22 if needed (the official zip,
+  checked against its checksums) in `%LOCALAPPDATA%\Relo\node`, this server's CLI (checked against its digest)
+  in `%LOCALAPPDATA%\Relo\cli`, a `relo.cmd` launcher in `%LOCALAPPDATA%\Relo\bin` that names both by path,
+  and that folder on your user `PATH`. With the app option on, the line ends in `-WindowsApp`: it also installs
+  **Relo for Windows** (checked against its digest) and opens it in the notch already signed in. A server with no
+  Windows app to hand out says so and skips it. Without a code, `irm https://relo.example.com/install.ps1 | iex`
+  installs the CLI only.
+
 - **Let my agent do it.** Paste a prompt into Claude Code, Codex or another agent on that computer:
 
   ```text

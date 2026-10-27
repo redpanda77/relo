@@ -4,8 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { DevicesSection } from "@/features/devices/devices-section"
 import type { DeviceRow, DevicesService, DevicesView } from "@/features/devices/devices-service"
 import type { BrowserLink, BrowserLinkState } from "@/lib/e2ee/browser-link"
-import { approveDeviceSigningInput, verifyBytes } from "@/lib/e2ee/envelope"
-import { fromB64u } from "@/lib/e2ee/bytes"
+import { approveDeviceSigningInput, fromB64u, verifyBytes } from "@relo/owner-crypto"
 
 const seen = new Date(Date.now() - 5 * 60_000).toISOString()
 const pendingKey = "B".repeat(87)
@@ -60,7 +59,7 @@ describe("DevicesSection", () => {
     render(<DevicesSection accountId="acct_1" service={service} link={link} />)
 
     const phones = await screen.findByRole("list", { name: "Phones" })
-    expect(within(phones).getByText("Owner iPhone").closest("li")).toHaveTextContent("iPhone 18 Pro Max · seen 5 minutes ago")
+    expect(within(phones).getByText("Owner iPhone").closest("li")).toHaveTextContent("iPhone 18 Pro Max · Last seen 5 minutes ago")
     expect(within(phones).getByText("Owner iPhone").closest("li")).toHaveTextContent("Can read your encrypted cards")
     expect(within(phones).getByText("iPhone Air").closest("li")).toHaveTextContent("Simulator")
     expect(within(phones).getByText("Test iPad").closest("li")).toHaveTextContent("Waiting for approval")

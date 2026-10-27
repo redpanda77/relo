@@ -2,7 +2,7 @@
 // and the status line's "sent" bookkeeping.
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { runStatusline } from "../src/harness/entry.mjs";
@@ -66,9 +66,11 @@ test("Stop and PostToolUse hooks send contextTokens from the transcript, gated, 
   assert.equal(first.contextPct, 30, "the status line's percent is kept");
   const count = box.sent.length;
   writeFileSync(transcript, `${assistant(50_000)}\n${assistant(52_000)}\n`);
+  box.clock += 25_000; // past the transcript read throttle
   await box.event("PostToolUse", "tool-end", { transcript_path: transcript, tool_use_id: "t2", tool_name: "Read" });
   assert.equal(box.sent.length, count, "2K tokens (4%) is under both steps: nothing sent");
   writeFileSync(transcript, `${assistant(52_000)}\n${assistant(56_000)}\n`);
+  box.clock += 25_000;
   await box.event("PostToolUse", "tool-end", { transcript_path: transcript, tool_use_id: "t3", tool_name: "Read" });
   assert.equal(box.sent.length, count + 1, "6K tokens (12%) is over 5%");
   assert.equal(box.sent.at(-1).contextTokens, 56_000);
@@ -76,6 +78,26 @@ test("Stop and PostToolUse hooks send contextTokens from the transcript, gated, 
   await box.event("Stop", "stop", { transcript_path: transcript });
   assert.equal(box.sent.at(-1).phase, "stopped", "a phase change carries the latest reading");
   assert.deepEqual([box.sent.at(-1).contextTokens, box.sent.at(-1).contextPct, box.sent.at(-1).costUsd], [56_500, 30, 2]);
+});
+
+test("the transcript tail is read at most once per throttle window per session", async () => {
+  const box = await hookBox();
+  const transcript = join(box.state, "session.jsonl");
+  writeFileSync(transcript, `${assistant(50_000)}\n`);
+  await box.event("SessionStart", "start", { source: "startup", transcript_path: transcript });
+  await box.event("PostToolUse", "tool-end", { transcript_path: transcript, tool_use_id: "t1", tool_name: "Read" });
+  assert.equal(box.sent.at(-1).contextTokens, 50_000);
+  // 4 s later the transcript holds 90K, but the tail was read 4 s ago: the next event does not read it again
+  writeFileSync(transcript, `${assistant(90_000)}\n`);
+  box.clock += 3_000;
+  await box.event("PostToolUse", "tool-end", { transcript_path: transcript, tool_use_id: "t2", tool_name: "Read" });
+  const folder = join(box.state, "observed");
+  const state = JSON.parse(readFileSync(join(folder, readdirSync(folder).find((name) => name.endsWith(".json") && !name.startsWith("."))), "utf8"));
+  assert.equal(state.contextTokens, 50_000, "the throttled event kept the earlier reading");
+  assert.equal(Number.isFinite(state.contextReadAt), true);
+  box.clock += 25_000;
+  await box.event("PostToolUse", "tool-end", { transcript_path: transcript, tool_use_id: "t3", tool_name: "Read" });
+  assert.equal(box.sent.at(-1).contextTokens, 90_000, "past the window it reads again");
 });
 
 test("the status line marks a reading sent only when it was queued (not when no session or not signed in)", async () => {

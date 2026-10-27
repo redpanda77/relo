@@ -7,7 +7,7 @@
 // Hooks write observed state only: they never create, change or end work, cards or questions. The
 // adapter reads only the native fields it maps; prompts, tool input/output and transcript paths are
 // dropped unread. Nothing else is printed, and the caller exits 0 whatever happens.
-import { adapterFor } from "./adapters/index.mjs";
+import { loadAdapter } from "./adapters/load.mjs";
 import { EVENT_COMMANDS } from "./core/events.mjs";
 import { processHook } from "./core/process.mjs";
 import { HARNESS_ROLES, runHarnessRole } from "./core/roles.mjs";
@@ -45,7 +45,7 @@ function hookArguments(argv) {
 
 /** One hook event or role. Silent by design: the result is for tests; the process prints nothing else. */
 async function runHookEvent({ name, agent, dependencies }) {
-  const adapter = adapterFor(agent);
+  const adapter = await loadAdapter(agent);
   if (!adapter) return { queued: false, reason: "unknown_harness" };
   const input = await readInput(dependencies);
   if (HARNESS_ROLES.includes(name)) return runHarnessRole({ adapter, role: name, input, dependencies });
@@ -87,7 +87,7 @@ export async function runStatusline(overrides = {}) {
   try {
     const dependencies = hookDependencies(overrides);
     const { runStatusline: run } = await import("./core/statusline.mjs");
-    await run({ adapter: adapterFor("claude-code"), raw: await readRawStdin(overrides), dependencies, write: overrides.write ?? ((bytes) => process.stdout.write(bytes)) });
+    await run({ adapter: await loadAdapter("claude-code"), raw: await readRawStdin(overrides), dependencies, write: overrides.write ?? ((bytes) => process.stdout.write(bytes)) });
   } catch { /* the status line is never failed by Relo */ }
   return 0;
 }
@@ -100,6 +100,7 @@ export async function runStatusline(overrides = {}) {
 export async function endProcessSessions({ pid }, overrides = {}) {
   try {
     const { endSessionsOfProcess } = await import("./core/sweep.mjs");
+    const { adapterFor } = await import("./adapters/index.mjs");
     return await endSessionsOfProcess({ pid, dependencies: hookDependencies(overrides), adapterFor });
   } catch { return []; }
 }
@@ -108,6 +109,7 @@ export async function endProcessSessions({ pid }, overrides = {}) {
 export async function sweepSessions(overrides = {}, records) {
   try {
     const { sweepGoneSessions } = await import("./core/sweep.mjs");
+    const { adapterFor } = await import("./adapters/index.mjs");
     return await sweepGoneSessions({ dependencies: hookDependencies(overrides), adapterFor, startFlusher: true, records });
   } catch { return []; }
 }
@@ -116,6 +118,7 @@ export async function sweepSessions(overrides = {}, records) {
 export async function heartbeatSessions({ pid }, overrides = {}, records) {
   try {
     const { heartbeatSessionsOfProcess } = await import("./core/sweep.mjs");
+    const { adapterFor } = await import("./adapters/index.mjs");
     return await heartbeatSessionsOfProcess({ pid, dependencies: hookDependencies(overrides), adapterFor, records });
   } catch { return []; }
 }

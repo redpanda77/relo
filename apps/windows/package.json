@@ -1,0 +1,40 @@
+{
+  "name": "@relo/windows",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri",
+    "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "pretypecheck": "pnpm --filter @relo/notification-contracts build && pnpm --filter @relo/owner-client build",
+    "pretest": "pnpm --filter @relo/notification-contracts build && pnpm --filter @relo/owner-client build",
+    "prebuild": "pnpm --filter @relo/notification-contracts build && pnpm --filter @relo/owner-client build"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@relo/notification-contracts": "workspace:*",
+    "@relo/owner-client": "workspace:*",
+    "@relo/owner-crypto": "workspace:*",
+    "@tailwindcss/vite": "^4",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-http": "^2.8.3",
+    "motion": "^13.0.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tailwindcss": "^4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^24",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6",
+    "typescript": "~6",
+    "vite": "^8",
+    "vitest": "^3.2.7"
+  }
+}

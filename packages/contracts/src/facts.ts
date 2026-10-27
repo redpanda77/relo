@@ -1,6 +1,6 @@
 import { OWNER_STATE_TIMING } from "./owner-state.js";
 import {
-  WORK_DETAIL_MAX, WORK_GOAL_MAX, WORK_LABEL_MAX, WORK_OUTCOME_MAX, WORK_PLAN_MAX_DEPTH, WORK_PLAN_MAX_NODES, WORK_PLAN_MAX_STEPS, WORK_STATUS_MAX, WORK_WAITING_MAX,
+  PLAN_ROUNDS_WITH_STEPS, WORK_DETAIL_MAX, WORK_GOAL_MAX, WORK_LABEL_MAX, WORK_OUTCOME_MAX, WORK_PLAN_MAX_DEPTH, WORK_PLAN_MAX_NODES, WORK_PLAN_MAX_STEPS, WORK_STATUS_MAX, WORK_WAITING_MAX,
 } from "./works.js";
 
 /**
@@ -63,6 +63,8 @@ export const FACTS = {
     planMaxSteps: WORK_PLAN_MAX_STEPS,
     planMaxNodes: WORK_PLAN_MAX_NODES,
     planMaxDepth: WORK_PLAN_MAX_DEPTH,
+    /** Rounds whose steps are kept and sent: the newest ones (the open round and the two before it); older rounds keep only their entry. */
+    planRoundsWithSteps: PLAN_ROUNDS_WITH_STEPS,
     detailMax: WORK_DETAIL_MAX,
   },
   lease: {
@@ -137,6 +139,7 @@ export const FACT_UNITS: Record<string, FactUnit> = {
   "work.planMaxSteps": "count",
   "work.planMaxNodes": "count",
   "work.planMaxDepth": "count",
+  "work.planRoundsWithSteps": "count",
   "work.detailMax": "characters",
   "lease.minSeconds": "seconds",
   "lease.maxSeconds": "seconds",

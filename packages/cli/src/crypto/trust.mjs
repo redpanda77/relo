@@ -11,15 +11,19 @@ import { ensureIdentity, keyStorePath, saveKeyStore, trustKey } from "./keystore
 import { isOwnerOverview, isSimulator, phoneHandle, phoneLabel } from "./device-names.mjs";
 import { createHash, createHmac } from "node:crypto";
 import { isPublicOrigin } from "../shared/origin.generated.mjs";
+import { isLoopbackApiUrl } from "../shared/config.mjs";
+import { readDeviceKeys, writeDeviceKeys } from "./device-keys-cache.mjs";
 
 /**
  * Strict mode for a server (plan 10 B3): the owner's choice when they made one (`relo keys strict on|off`),
  * otherwise on for a server on a public address and off for one on a private network (the shared origin rule).
+ * A loopback address is not "private network" here: a local account never reaches this (it never seals), so a
+ * loopback server that is not local is an SSH tunnel to a remote server, which is unknown and defaults strict.
  * The CLI is where it is enforced: a compromised server cannot turn it off.
  */
 export function strictFor(store, apiUrl) {
   if (store?.strict === true || store?.strict === false) return store.strict;
-  return typeof apiUrl === "string" && isPublicOrigin(apiUrl);
+  return typeof apiUrl === "string" && (isPublicOrigin(apiUrl) || isLoopbackApiUrl(apiUrl));
 }
 
 /** Whether strict mode comes from the owner's choice or from the server's address. */
@@ -39,7 +43,8 @@ export function strictNoticeText(apiUrl) {
   try {
     origin = new URL(apiUrl).origin;
   } catch {}
-  return `Strict mode is on because ${origin} is a public address: a changed phone key needs \`relo keys verify\`,`
+  const why = isLoopbackApiUrl(apiUrl) ? "a loopback address that is not this Mac's own Relo (a tunnel to another server?)" : "a public address";
+  return `Strict mode is on because ${origin} is ${why}: a changed phone key needs \`relo keys verify\`,`
     + " and linked browsers can't approve phones or answer. Turn it off with `relo keys strict off`.";
 }
 
@@ -65,11 +70,25 @@ export const LINK_DAYS = 14;
 export const isPhoneId = (id) => typeof id === "string" && id.startsWith("dev_");
 export const isBrowserId = (id) => typeof id === "string" && id.startsWith("brw_");
 
-/** Phones pinned for this server, excluding ones waiting for a person (and linked browsers). */
+/**
+ * Phones pinned for this server, excluding ones waiting for a person, linked browsers and Relo for Mac (an owner
+ * overview device: it reads cards but is never the phone that commits this computer to encryption, as on the
+ * server, end-to-end-policy.ts). A Mac-only account stays readable until a real phone is trusted.
+ */
 export function trustedPhones(store, apiUrl) {
   return Object.entries(store.trusted)
     .filter(([key, entry]) => key.startsWith(`${apiUrl}|`) && entry.level !== "pending" && entry.kind !== "browser"
-      && isPhoneId(entry.deviceId))
+      && entry.ownerOverview !== true && isPhoneId(entry.deviceId))
+    .map(([, entry]) => entry);
+}
+
+/**
+ * Every phone pinned for this server at any level, waiting ones included (never browsers or Relo for Mac).
+ * A phone in this list is the one a sealed command must reach: nothing may stand in for it.
+ */
+export function pinnedPhones(store, apiUrl) {
+  return Object.entries(store.trusted)
+    .filter(([key, entry]) => key.startsWith(`${apiUrl}|`) && entry.kind !== "browser" && entry.ownerOverview !== true && isPhoneId(entry.deviceId))
     .map(([, entry]) => entry);
 }
 
@@ -238,7 +257,13 @@ export async function ensureTrust({ client, config, dependencies, details = fals
     store.published[config.apiUrl] = marker;
     changed = true;
   }
-  const listing = await client.listDeviceKeys();
+  // The seal path reuses a listing fetched in the last minute; the keys commands (`details`) always ask the server.
+  const scope = `${config.apiUrl}|${marker}`;
+  let listing = details ? undefined : await readDeviceKeys(dependencies, scope);
+  if (!listing) {
+    listing = await client.listDeviceKeys();
+    if (!details && Array.isArray(listing?.devices)) await writeDeviceKeys(dependencies, scope, listing);
+  }
   if (!Array.isArray(listing?.devices)) throw Object.assign(new Error("the key directory returned no device list"), { code: "E2EE_UNAVAILABLE" });
   const devices = await withDeviceDetails(client, store, config.apiUrl, listing.devices, { always: details });
   const now = new Date(dependencies.now?.() ?? Date.now()).toISOString();

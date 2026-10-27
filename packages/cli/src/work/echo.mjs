@@ -39,27 +39,38 @@ export function stateLine(work, parked = []) {
   return parked.length ? `${line}; parked: ${parked.length}` : line;
 }
 
-export function ownerSees(work, now = new Date(), disposition) {
+/**
+ * What the owner sees for this work. `notch` is an account whose only screen is Relo for Mac (a local account, or
+ * one with no phone): the words name the notch, never the Lock Screen or Now.
+ */
+export function ownerSees(work, now = new Date(), disposition, notch = false) {
   if (!work) return "Owner sees: (unknown: run relo state --sync)";
   const derived = work.owner?.state ?? work.owner?.kind ?? work.owner;
+  // The notch is Relo for Mac on a Mac and Relo for Windows on a PC: name the machine only where it is a Mac.
+  const notchName = process.platform === "darwin" ? "your Mac's notch" : "the Relo notch";
+  const screen = notch ? `in ${notchName}` : "on the Lock Screen";
+  const none = notch ? `nothing in ${notchName}` : "nothing on the Lock Screen";
   if (work.lifecycle === "finished" || work.result) {
     const result = work.result ?? "finished";
     if (result === "failed") return `Owner sees: the final card for 60 min and an alert: ${q(work.outcome)}`;
-    if (result === "dropped") return `Owner sees: nothing on the Lock Screen; History: ${q(work.outcome)}`;
+    if (result === "dropped") return `Owner sees: ${none}; History: ${q(work.outcome)}`;
     return `Owner sees: the final card for 15 min and one notification: ${q(work.outcome)}`;
   }
   if (isDelivered(work)) {
     const round = lastRound(work.plan);
     return disposition === "delivered"
       ? `Owner sees: the round's final card and one quiet notification: ${q(round.outcome ?? work.outcome)}; then it's the owner's turn`
-      : `Owner sees: round ${round.n} delivered${round.outcome ? `: ${q(round.outcome)}` : ""}; it's the owner's turn (Now)`;
+      : `Owner sees: round ${round.n} delivered${round.outcome ? `: ${q(round.outcome)}` : ""}; it's the owner's turn${notch ? "" : " (Now)"}`;
   }
-  if (work.lifecycle === "paused" || derived === "paused") return `Owner sees: nothing on the Lock Screen; Now › Paused${planLine({ ...work, lifecycle: "paused" }) ? ` (${q(planLine({ ...work, lifecycle: "paused" }))})` : ""}`;
-  if (derived === "needs_you") return "Owner sees: your question on top of the Lock Screen, as a time-sensitive alert";
+  if (work.lifecycle === "paused" || derived === "paused") {
+    const plan = planLine({ ...work, lifecycle: "paused" });
+    return `Owner sees: ${none}${notch ? "" : "; Now › Paused"}${plan ? ` (${q(plan)})` : ""}`;
+  }
+  if (derived === "needs_you") return notch ? "Owner sees: the notch opens with your question" : "Owner sees: your question on top of the Lock Screen, as a time-sensitive alert";
   if (derived === "stale") return `Owner sees: the card dimmed since ${hhmm(work.owner?.since, now)} (no update for 20 min); any update brightens it`;
-  if (derived === "no_signal" || derived === "stopped_responding") return "Owner sees: nothing on the Lock Screen (no update for 60 min); Now › Quiet. Any update brings the card back";
-  if (work.waiting) return `Owner sees: on the Lock Screen, ${q(`Waiting on ${waitingText(work.waiting)}`)}`;
-  return `Owner sees: on the Lock Screen, ${q(cardLine(work))}`;
+  if (derived === "no_signal" || derived === "stopped_responding") return `Owner sees: ${none} (no update for 60 min)${notch ? "" : "; Now › Quiet"}. Any update brings the card back`;
+  if (work.waiting) return `Owner sees: ${screen}, ${q(`Waiting on ${waitingText(work.waiting)}`)}`;
+  return `Owner sees: ${screen}, ${q(cardLine(work))}`;
 }
 
 function questionLine(question, now) {
@@ -98,10 +109,15 @@ const roundName = (round, goal) => {
   return `Round ${round.n}${title ? ` ${q(shorten(String(title), 40))}` : ""}`;
 };
 
+const MAX_CLOSED_LINES = 5;
+
 function stepLines(plan, goal) {
   const lines = [];
   // Closed rounds fold to one line each: the round, its title and what it delivered.
-  for (const round of plan?.rounds ?? []) if (round.state === "closed") lines.push(`  [✓] ${roundName(round, goal)}${round.outcome ? `: ${round.outcome}` : ""}`);
+  // Only the newest few: a long work has dozens, and each line is repeated in the agent's context on every command.
+  const closed = (plan?.rounds ?? []).filter((round) => round.state === "closed");
+  if (closed.length > MAX_CLOSED_LINES) lines.push(`  … ${closed.length - MAX_CLOSED_LINES} earlier rounds`);
+  for (const round of closed.slice(-MAX_CLOSED_LINES)) lines.push(`  [✓] ${roundName(round, goal)}${round.outcome ? `: ${shorten(String(round.outcome), 120)}` : ""}`);
   const open = openRound(plan);
   const steps = open && plan?.rounds ? (plan.steps ?? []).filter((s) => roundOf(s) === open.n) : open || !plan?.rounds ? plan?.steps ?? [] : [];
   const nested = (plan?.rounds?.length ?? 0) >= 2 && open;
@@ -156,7 +172,7 @@ export function refusedEarlier(refusal, now = new Date()) {
   return `Refused earlier: ${refusal.what} (relo work ${refusal.verb}, ${hhmm(refusal.at, now)}). The card is still open. Next: ${refusal.next ?? `relo work ${refusal.verb} --outcome "…"`}`;
 }
 
-export function renderEcho({ work, parked = [], disposition, notes = [], handle, dryRun = false, queued = false, lane, pendingRefusal, now = new Date(), handoffLine, ownerLine, nextOverride, saysLine }) {
+export function renderEcho({ work, parked = [], disposition, notes = [], handle, dryRun = false, queued = false, lane, pendingRefusal, now = new Date(), handoffLine, ownerLine, nextOverride, saysLine, notch = false }) {
   const lines = [];
   if (pendingRefusal) lines.push(refusedEarlier(pendingRefusal, now));
   if (dryRun) lines.push("Dry run: nothing was sent.");
@@ -178,7 +194,7 @@ export function renderEcho({ work, parked = [], disposition, notes = [], handle,
   if (queued) lines.push(QUEUED_LINE);
   lines.push(...laneLines(lane, now));
   if (handoffLine) lines.push(handoffLine);
-  if (work) lines.push(ownerLine ? ownerLine : dryRun ? "Owner sees: (not computed in a dry run)" : queued ? "Owner sees: the last change Relo received; this one shows once it is sent" : ownerSees(work, now, disposition));
+  if (work) lines.push(ownerLine ? ownerLine : dryRun ? "Owner sees: (not computed in a dry run)" : queued ? "Owner sees: the last change Relo received; this one shows once it is sent" : ownerSees(work, now, disposition, notch));
   // ADR 0015: the line Relo for Mac says for this deliver or finish, so the producer hears what it wrote.
   if (saysLine) lines.push(`Mac says: ${saysLine}`);
   const question = work ? questionLine(work.question, now) : undefined;

@@ -26,8 +26,10 @@ export const currentSubjectProjectionSchema = z.object({
       icon: z.string(),revision: z.number().int().positive() }),
     conversationId: z.string().nullable(),workItemId: z.string().nullable(),
   }).nullable(),
+  /** A work's outcome notification: the card (`act_…`) whose finish it reports, which already says it where shown. */
+  outcomeOf: z.string().optional(),
   /** End-to-end sealed text for this phone (opened on the phone; the fields above are placeholders). */
-  sealed: z.object({ alert: z.unknown().nullable(),content: z.unknown() }).nullable().optional(),
+  sealed: z.object({ alert: z.unknown().nullable(),content: z.unknown().optional(),contentRef: z.string().regex(/^[0-9a-f]{32}$/).optional(),plan: z.unknown().nullable().optional() }).nullable().optional(),
 }).strict();
 export const retiredSubjectSchema = z.object({
   subjectId: currentSubjectIdSchema,

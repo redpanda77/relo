@@ -1,8 +1,8 @@
 ---
 name: relo-notifications
-description: Show the owner your work live on their iPhone (Lock Screen and Dynamic Island card via self-hosted Relo) and ask approval or yes/no questions on it. Use whenever work will take more than a minute or two, whenever you need the owner's go-ahead or a yes/no, and when the user says "keep me posted", "show progress on my phone", "ping me when it's done", "ask me before you deploy", or "let me know", even without saying Relo. Also use to check, authenticate, or update Relo.
+description: Show the owner your work live on their iPhone (Lock Screen card) or Mac notch (self-hosted Relo, or Relo for Mac) and ask approval or yes/no questions on it. Use whenever work will take more than a minute or two, whenever you need the owner's go-ahead or a yes/no, and when the user says "keep me posted", "show progress on my phone", "ping me when it's done", "ask me before you deploy", or "let me know", even without saying Relo. Also use to check, authenticate, or update Relo.
 ---
-# Relo: your work on the owner's iPhone
+# Relo: your work on the owner's iPhone or Mac
 
 ```bash
 relo work start --goal "Fix the login crash" --spoken-name "Login crash" --plan "Reproduce the crash,Find the cause,Choose the fix"
@@ -18,7 +18,7 @@ relo work start --goal "Polish 20 chapters" --progress 3/20 --new
 **The work** is the tool: one goal, its plan, status and outcome, shown while it matters. Only the
 **goal** is yours (as the owner would name it).
 **One open work per session**: a repeat start continues it and says so; another goal is
-`start --new` (the old one is parked: `relo work resume`). **A goal has rounds**: `deliver`
+`start --new` (old one parked: `relo work resume`). **A goal has rounds**: `deliver`
 closes the request you just did (the owner's turn, one quiet notification, the work stays open); it is
 refused while top-level steps are open (an owner check mid-plan is `ask` or `--waiting`). A new request is
 `start --round "<the request>"` and carries unfinished steps; an answer or "go on" continues the plan.
@@ -26,7 +26,7 @@ Scripts: `--producer KEY` or `RELO_SESSION=<id>`.
 No session id (Gemini, Cursor): pass `start`'s handle as `--work <handle>`. The deliver or
 finish outcome is the buzz. `relo notify "…"` is a rare buzz outside work. Never a question, never progress.
 
-**Isolation**: the CLI takes your session from the harness; you see only your own work. **Subagents run no relo commands**: count them in one step. **Queued**: unsent changes go with your next command.
+**Isolation**: you see only your own work. **Subagents run no relo commands**: count them in one step. **Queued**: unsent changes go with your next command.
 
 ## Keep the work honest
 Every command prints the plan (`[x]` done, `[>]` current, `[ ]` open, `[-]` skipped), `Owner sees: …`, `Next: …`; after compaction: `relo state`.
@@ -40,22 +40,23 @@ Every command prints the plan (`[x]` done, `[>]` current, `[ ]` open, `[-]` skip
    `--spoken-name` 2-4 words, `--say` what happened (≤20 words, failure ≤12), an ask's 1st sentence.
 4. A job outlives your turn: `--waiting "the deploy"`. Away: `relo work pause --status "…"`, `resume`.
 5. `deliver --outcome` when a request is done (`--drop-rest` skips open steps); `finish --outcome` once, when the
-   goal is done (`--failed` or `--dropped` if not). A refusal repeats on every echo.
+   goal is done (`--failed` or `--dropped` if not).
    Run each relo command alone and read it whole: never `>/dev/null`, `tail`, `head` or `grep`, nor chain it.
 6. Context past 60% or before `/clear`: `handoff --next "…"`, then `start --from <handle>` in a fresh session.
-7. Ask only when the work depends on it: one line ≤120 chars; why in `--detail`.
+7. Ask only when the work depends on it: one line ≤120 chars.
 
 ## First run
-Only after an auth or no-phone error, or `relo doctor` says `ready:false`: run `next.run` of the first unmet `next.step`; ask the owner once per step:
+Only after an auth or no-phone error, or `relo doctor` says `ready:false`: run `next.run` of the first unmet `next.step`; ask the owner once per step.
+On `checks.local`: no `relo auth login`, no phone; Relo for Mac runs it (open it if not linked).
 - `login`: `relo auth login` prints `{state:"pending",url,qr}`; show the owner both (qr in a code
   block), then run `relo auth login --wait` (exit `4`: again).
 - `phone`: the owner signs in to the Relo app and allows Live Activities. `test`: run `relo test` once.
-- Never re-ask a finished step. `relo setup` (`--level`, `--mcp`) only if the owner asks.
-  See [install](references/install.md). Skill and block: `relo setup`.
+- `relo setup` (`--level`, `--mcp`) only if the owner asks.
+  See [install](references/install.md), [verify](references/verify.md). Skill and block: `relo setup`.
 
 ## Exit codes
 `0` ok · `1` server · `2` usage or refused · `3` auth · `4` still open (`relo interaction wait ID`) ·
-`5` owner said no · `6` network (retry) · `7` no phone got it · `8` closed unanswered: do not act.
+`5` owner said no · `6` network (retry) · `7` nothing could show it: no phone, no Mac · `8` closed unanswered: do not act.
 
 ## Non-negotiable safety
 - A permission may proceed only after an `approval` question returns state `approved`.
@@ -69,4 +70,4 @@ Only after an auth or no-phone error, or `relo doctor` says `ready:false`: run `
 
 More: [security](references/security.md) (before anything sensitive), [cards](references/cards.md),
 [cli](references/cli.md), [troubleshooting](references/troubleshooting.md),
-[services](references/services.md), [install](references/install.md), [efficiency](references/efficiency.md).
+[services](references/services.md), [efficiency](references/efficiency.md).

@@ -121,7 +121,7 @@ test("while it runs, the MCP server drives the throttled liveness sweep, and the
   assert.deepEqual(box.sent.filter((body) => body.phase === "ended").map((body) => body.endReason), ["gone", "gone"]);
 });
 
-test("a hangup does not end the MCP server before its leave: SIGHUP is ignored while it serves, EOF ends it", async () => {
+test("a hangup does not end the MCP server before its leave: SIGHUP is ignored while it serves, EOF ends it", { skip: process.platform === "win32" && "POSIX signals: Windows has no SIGHUP, and child.kill(SIGHUP) terminates the process outright" }, async () => {
   // In process: the handler exists exactly while serving.
   const box = await twoHarnesses();
   await resolveAll(box);

@@ -21,6 +21,10 @@ const WARNING_STATES = new Set([
   "waiting",
 ])
 
+/** Waiting on the owner or on a pause: the amber warning (yellow is offline only). */
+const AMBER_STATES = new Set(["your turn", "your_turn", "waiting", "paused"])
+const SLATE_STATES = new Set(["quiet", "idle"])
+
 const DANGER_STATES = new Set([
   "canceled",
   "cancelled",
@@ -57,7 +61,7 @@ export function semanticStatusTone(value: string): SemanticStatusTone {
  * failed, violet messages, neutral for everything quiet.
  */
 export type NeonTone =
-  "mint" | "cyan" | "orange" | "yellow" | "red" | "violet" | "neutral"
+  "mint" | "cyan" | "orange" | "amber" | "yellow" | "slate" | "red" | "violet" | "neutral"
 
 const NEON_BY_SEMANTIC: Record<SemanticStatusTone, NeonTone> = {
   success: "mint",
@@ -77,6 +81,8 @@ export function neonTone(tone: SemanticStatusTone): NeonTone {
 export function toneFor(state: string): NeonTone {
   const value = state.toLowerCase()
   if (value === "running" || value === "live") return "cyan"
+  if (AMBER_STATES.has(value)) return "amber"
+  if (SLATE_STATES.has(value)) return "slate"
   if (value === "needs_you" || value === "needs you" || value === "awaiting_response") return "orange"
   return neonTone(semanticStatusTone(value))
 }

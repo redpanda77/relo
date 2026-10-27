@@ -286,7 +286,14 @@ export const inboxActivityProjectionSql = `activity.id AS activity_summary_id,
   notification_content.body_ciphertext AS body_ciphertext,
   notification_content.body_format AS body_format,
   notification_content.body_bytes AS body_bytes,
-  notification_content.content_sha256 AS content_sha256`;
+  notification_content.content_sha256 AS content_sha256,
+  -- A work's outcome notification names the card of the round it reports (the work's card from before it), so
+  -- History shows that round once (works/outcome-notification.ts).
+  (SELECT 'act_'||card.id::text FROM live_activities card
+    WHERE card.principal_id=e.principal_id AND card.created_at<=e.created_at
+      AND card.work_id=CASE WHEN e.payload#>>'{workOutcome,workId}' ~ '^wrk_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN substring(e.payload#>>'{workOutcome,workId}' from 5)::uuid END
+    ORDER BY card.created_at DESC LIMIT 1) AS outcome_card_id`;
 
 export const inboxActivityJoinSql = `LEFT JOIN live_activities activity
   ON activity.principal_id=e.principal_id
@@ -364,6 +371,7 @@ export function inboxItemResource(
       ),sealedForDevice({ sealed: row.activity_sealed },auth.deviceId ? publicId("dev",auth.deviceId) : undefined))
       : null,
     activitySummary,
+    ...(row.outcome_card_id ? { outcomeOf: row.outcome_card_id } : {}),
     context: activitySummary?.context ?? inboxContext(row.payload),
     resources,
     interaction: row.interaction_id ? {
@@ -443,6 +451,8 @@ export function deviceInventoryResource(row: any) {
     notificationAuthorization: row.notification_authorization,
     liveActivityAuthorization: row.live_activity_authorization,
     lastSeenAt: row.last_seen_at, registeredAt: row.registered_at,
+    // Relo for Mac (owner overview): a reader of the account, never a target; a computer asks for it here when no keys are published (local accounts).
+    ...(row.owner_overview ? { ownerOverview: true } : {}),
   };
 }
 

@@ -34,7 +34,7 @@ test("plan complete → R1 text exactly; once per state change; again after a ne
   const state = file({ plan: { steps: steps("done", "skipped") } });
   const first = remind({ event: {}, now: NOW, state });
   assert.equal(first.context,
-    `Relo: every step of "Ship it" is done, but this round is still open on the owner's Lock Screen. If it is done and nothing is left: relo work finish --outcome "<what was achieved>". If this request is done and more of the goal is to come: relo work deliver --outcome "<what was delivered>". If more is needed now: relo work update --add "<next step>". If none of these, end your turn; this note will not repeat until the work changes.`);
+    `Relo: every step of "Ship it" is done, but this round is still open on the owner's screen. If it is done and nothing is left: relo work finish --outcome "<what was achieved>". If this request is done and more of the goal is to come: relo work deliver --outcome "<what was delivered>". If more is needed now: relo work update --add "<next step>". If none of these, end your turn; this note will not repeat until the work changes.`);
   assert.equal(remind({ event: {}, now: NOW, state, bookkeeping: { reminded: first.reminded } }), undefined);
   const rewritten = { ...state, writtenAt: iso(NOW - 1000) };
   assert.ok(remind({ event: {}, now: NOW, state: rewritten, bookkeeping: { reminded: first.reminded } }));
@@ -130,7 +130,7 @@ test("R0: a pending refusal is chased first, ignores freshness, and repeats only
   const first = remind({ event: {}, now: NOW, state });
   assert.equal(first.reminded.kind, "R0");
   assert.equal(first.context,
-    `Relo: your relo work deliver was refused (--outcome is 230 characters; the limit is 200) and "Ship it" is still open on the owner's Lock Screen. Fix it: relo work deliver --outcome "Rotated every key…". If you no longer need it, end your turn; this note will not repeat until the work changes.`);
+    `Relo: your relo work deliver was refused (--outcome is 230 characters; the limit is 200) and "Ship it" is still open on the owner's screen. Fix it: relo work deliver --outcome "Rotated every key…". If you no longer need it, end your turn; this note will not repeat until the work changes.`);
   assert.equal(remind({ event: {}, now: NOW, state, bookkeeping: { reminded: first.reminded } }), undefined, "once per refusal");
   const again = remind({ event: {}, now: NOW, state: { ...state, pendingRefusal: { ...refusal, at: iso(NOW - 1000) } }, bookkeeping: { reminded: first.reminded } });
   assert.equal(again.reminded.kind, "R0", "a new refusal reminds again");

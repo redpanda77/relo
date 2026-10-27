@@ -58,6 +58,7 @@
 		1DAD14BE38E5F7EC6E4BA6AF /* ReloDeviceApproval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5448D49A39B47C6B294BDF /* ReloDeviceApproval.swift */; };
 		1E78E3D5B262E4EE66013688 /* ReloWireJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBAE29D817CE665C90348296 /* ReloWireJSON.swift */; };
 		1E923E685DB764962BD2C7A2 /* ReloConnectionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17154AF6D83D220015B4162D /* ReloConnectionStatus.swift */; };
+		1E9EF73D189280FAB5E9AE42 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E7C83E9A7167C9D2D88A8AD /* AppleSignIn.swift */; };
 		1FDA8AB307B04B8AC61D3AF0 /* CurrentPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA886F6D2C5D4333BA3275E /* CurrentPresentation.swift */; };
 		1FDFE0475E3AE6BFA3506B6D /* ReloStateStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 527DA75A565D04525AD2E383 /* ReloStateStyle.swift */; };
 		1FE432BCF102C3D115E166F1 /* ImmutablePresentationAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */; };
@@ -208,6 +209,7 @@
 		747D341E837DA862561E226B /* E2EEBrowserLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEDBFB1A45D330850F38C49B /* E2EEBrowserLinkTests.swift */; };
 		74AC3FF36719F9F60178CFB0 /* CardAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850C79B05C20658CD9BB39E7 /* CardAction.swift */; };
 		75A567F327980C80DF9973E0 /* ReloRuntime.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 27669C5ED949CECD6AA93739 /* ReloRuntime.framework */; };
+		761A291D2CB5E7B3B354E595 /* AppleSignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5DBCFD0A174D1F2A0E8BB5D /* AppleSignInTests.swift */; };
 		769FAEC0438D42FD7C95CD5C /* RuntimeServerOrigin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5282D153EEA6AABAF1FD4C6 /* RuntimeServerOrigin.swift */; };
 		76D6363EC520730F324B6CE6 /* PresentationWatchCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE8FBF35A3797C3C710C1F0 /* PresentationWatchCard.swift */; };
 		770CD1F318834B06DA87F5FC /* ReloCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; };
@@ -284,6 +286,7 @@
 		967B5A48DE49517742030FDB /* HistoryRetention.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E3C0199EE01FA3031DEC84 /* HistoryRetention.swift */; };
 		96A1BF1CD1C9399CC9832788 /* ImmutablePresentationAssetCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9926FEB991951F4683C45D7 /* ImmutablePresentationAssetCache.swift */; };
 		96D55CBBB63EBE7C9E03CB71 /* KeychainDeviceCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 030F1A7BCA2E65AF64B0BAEF /* KeychainDeviceCredentialStore.swift */; };
+		96DA082D60905C982680571E /* KnownHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C35A6EFF53ED87130780EF /* KnownHarnessTests.swift */; };
 		9715F473AB434DB2F634237D /* CurrentCachePorts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55994090919CE415CF60BF86 /* CurrentCachePorts.swift */; };
 		978CA7663F360025E46535ED /* TodayLegend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B0C000CFB0CDB7FCA87612C /* TodayLegend.swift */; };
 		97D074A3605EA6F29FD20A74 /* ComputerMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069BFB2FC5AD7E421E045F2D /* ComputerMark.swift */; };
@@ -380,7 +383,6 @@
 		C4B001896D40D4C37CA553F9 /* NotificationMediaPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F944165B77738CE9B5C48BBE /* NotificationMediaPolicy.swift */; };
 		C4B95C6490060C8ADA7400DD /* ScopedMaintenanceCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1795001F3D80BBC0FB6DFFAB /* ScopedMaintenanceCoordinatorTests.swift */; };
 		C5284ADB5E5231616AD63160 /* ReloTransport.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1FE641F94F29E9EE5BAE172C /* ReloTransport.framework */; };
-		C5400A6424B7E53AD9CF3037 /* NotificationDeliveryTimelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F50DFC3A1CAF76F583EDE2 /* NotificationDeliveryTimelineTests.swift */; };
 		C602F076A285FE7B99EDE1D8 /* E2EEKeychainStores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8791045AD46F984946F85F98 /* E2EEKeychainStores.swift */; };
 		C68CA324F47642E12F6B0E80 /* ReloCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2D0E7DF9B84A5EA49B1A1C6C /* ReloCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		C6A5225EE2FF9C6102B4E4DF /* BundleModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7949738CA04B42B7332502 /* BundleModule.swift */; };
@@ -390,7 +392,6 @@
 		C93E212AE311A1295FC2A595 /* InboxHistoryRetention.swift in Sources */ = {isa = PBXBuildFile; fileRef = 811EB010C5DB8A5175D54E6E /* InboxHistoryRetention.swift */; };
 		CA51D91BDDC94759B373D102 /* ReloTransport.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1FE641F94F29E9EE5BAE172C /* ReloTransport.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		CA7F834F5664A959047491DB /* ReloPersistence.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E3447BFDEB55CDEF3138218A /* ReloPersistence.framework */; };
-		CA85BA06B9370E29D255286F /* NotificationDeliveryTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63C5CDF87084693B1161A7F /* NotificationDeliveryTimeline.swift */; };
 		CB184ECA9BDA88D4776AFAD8 /* ReloPlasmaOrb.metal in Sources */ = {isa = PBXBuildFile; fileRef = 39DB85CA6D02655D2B416C36 /* ReloPlasmaOrb.metal */; };
 		CB8BDB3ED7B815EFFADC0C99 /* LiveActivityTokenRegistrationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28826853542F2D6F612C3AC7 /* LiveActivityTokenRegistrationModels.swift */; };
 		CD29F7EFCD028591A973BA14 /* ReloThemeContrastTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB846100F0C58B02BCB10844 /* ReloThemeContrastTests.swift */; };
@@ -926,7 +927,6 @@
 		25E3C0199EE01FA3031DEC84 /* HistoryRetention.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRetention.swift; sourceTree = "<group>"; };
 		268F99237DD73CBE5537F3BC /* PendingInventoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingInventoryControllerTests.swift; sourceTree = "<group>"; };
 		27669C5ED949CECD6AA93739 /* ReloRuntime.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ReloRuntime.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		27F50DFC3A1CAF76F583EDE2 /* NotificationDeliveryTimelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDeliveryTimelineTests.swift; sourceTree = "<group>"; };
 		27F7B698D3D438F5AD7041BC /* HistoryRepairTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryRepairTests.swift; sourceTree = "<group>"; };
 		28826853542F2D6F612C3AC7 /* LiveActivityTokenRegistrationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityTokenRegistrationModels.swift; sourceTree = "<group>"; };
 		2938644E78A7CFF180E279F0 /* InboxHistoryPagePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxHistoryPagePolicy.swift; sourceTree = "<group>"; };
@@ -1004,6 +1004,7 @@
 		596A95F8F66E0091819BA2A8 /* E2EEKeyRingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EEKeyRingTests.swift; sourceTree = "<group>"; };
 		5D6BF051F401AE79CFC2CE80 /* ReloLiveActivityReferenceFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloLiveActivityReferenceFixtures.swift; sourceTree = "<group>"; };
 		5D9EEDD760052EF536A3DEAD /* InMemoryProtectedActionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InMemoryProtectedActionStore.swift; sourceTree = "<group>"; };
+		5E7C83E9A7167C9D2D88A8AD /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		5FD4F87FAEAE4176761E3E17 /* ProtectedActionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtectedActionStore.swift; sourceTree = "<group>"; };
 		5FFB9421B92D8B83FD30BAC5 /* LiveActivityReferenceFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityReferenceFixtureTests.swift; sourceTree = "<group>"; };
 		6160A6ADD6E49007D05A008F /* LiveActivitySurfaceProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivitySurfaceProjection.swift; sourceTree = "<group>"; };
@@ -1101,7 +1102,6 @@
 		A4FCD848E1DF736716219DE8 /* ReloNowStatusLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloNowStatusLabel.swift; sourceTree = "<group>"; };
 		A503B8449C8F8E37436F145D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A61870D8158D5F0894950E32 /* HTTPBrowserLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPBrowserLinks.swift; sourceTree = "<group>"; };
-		A63C5CDF87084693B1161A7F /* NotificationDeliveryTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDeliveryTimeline.swift; sourceTree = "<group>"; };
 		A713156206EF022EA6BC6FAF /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		A732252D32832518563141AE /* PendingReadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingReadStore.swift; sourceTree = "<group>"; };
 		A75C64D92E43B777C25EC3C2 /* ReceiptCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptCoordinator.swift; sourceTree = "<group>"; };
@@ -1127,6 +1127,7 @@
 		B432DD68900FC531AC44B25B /* NotificationDeliverySummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationDeliverySummaryTests.swift; sourceTree = "<group>"; };
 		B4B0199D7C6B5505F584D8A0 /* ReceiptScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptScope.swift; sourceTree = "<group>"; };
 		B5282D153EEA6AABAF1FD4C6 /* RuntimeServerOrigin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeServerOrigin.swift; sourceTree = "<group>"; };
+		B5DBCFD0A174D1F2A0E8BB5D /* AppleSignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInTests.swift; sourceTree = "<group>"; };
 		B5E25CBA4C73F96499D35D86 /* ReloE2EE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloE2EE.swift; sourceTree = "<group>"; };
 		B6345909A599F465A4D68173 /* OriginAndAgentTimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OriginAndAgentTimeTests.swift; sourceTree = "<group>"; };
 		B694D289881A623C82DD4192 /* StoragePreflightSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoragePreflightSafetyTests.swift; sourceTree = "<group>"; };
@@ -1220,6 +1221,7 @@
 		F2906B40737B4C25BEF59C53 /* DeviceAccessModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceAccessModelTests.swift; sourceTree = "<group>"; };
 		F3232E3617F1FF99C9CE1AB3 /* ReloProjectPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReloProjectPalette.swift; sourceTree = "<group>"; };
 		F363E73F1FE8F2DADFA06247 /* PendingResponseSubmitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingResponseSubmitter.swift; sourceTree = "<group>"; };
+		F3C35A6EFF53ED87130780EF /* KnownHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownHarnessTests.swift; sourceTree = "<group>"; };
 		F40C0B813A93000EE86AD8F7 /* BackgroundLiveActivityTokenRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundLiveActivityTokenRegistrar.swift; sourceTree = "<group>"; };
 		F427F63BCA93DC456A86AF49 /* NotificationSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSelectionTests.swift; sourceTree = "<group>"; };
 		F4282F6185A6A80A51BC370E /* LiveActivityLedgerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityLedgerStore.swift; sourceTree = "<group>"; };
@@ -1486,6 +1488,7 @@
 			children = (
 				17E406D590EB0A56056753FB /* ActivityKitTimestamp.swift */,
 				658C8BECC835A8405A5435D9 /* ActivityKitTokenCodec.swift */,
+				5E7C83E9A7167C9D2D88A8AD /* AppleSignIn.swift */,
 				E74CAE6099BF7C806025DF50 /* BrowserSignIn.swift */,
 				BA3955539E69FCDD3705A7EA /* DeviceHealthProjection.swift */,
 				D9741462326178DDED9E6270 /* DeviceReadinessPolicy.swift */,
@@ -1549,6 +1552,7 @@
 				8BA0885893602F28202A35BE /* AccountScopedInboxCacheTests.swift */,
 				D4E4BD9BB9FFDAC7E5C603FE /* ActivityContextCodingTests.swift */,
 				520F5473584A93440484A533 /* ActivityOutcomeTests.swift */,
+				B5DBCFD0A174D1F2A0E8BB5D /* AppleSignInTests.swift */,
 				327040035744CFC5B11615B7 /* BrowserLinkRequestTests.swift */,
 				A1B766DA3ACD38C969311A1D /* BrowserSignInTests.swift */,
 				AE7949738CA04B42B7332502 /* BundleModule.swift */,
@@ -1592,6 +1596,7 @@
 				AF8B47E2740FB7FD532DBC54 /* InboxTodayHistoryIntegrationTests.swift */,
 				2238B143DCE9232E7A6993F2 /* InboxTodaySummaryTests.swift */,
 				0E759366E8978B5F0DCF1189 /* KeychainRegistrationAttemptStoreTests.swift */,
+				F3C35A6EFF53ED87130780EF /* KnownHarnessTests.swift */,
 				D3F0DFB8F4AA2C5ECF4042C1 /* LiveActivityAcknowledgementUploaderTests.swift */,
 				71F900619FD7194FC98FA61B /* LiveActivityDuplicatesTests.swift */,
 				66E94E5C1C8841CAB6E10984 /* LiveActivityOwnerContentTests.swift */,
@@ -1602,7 +1607,6 @@
 				9A079E25B49D3EB69C8FF945 /* MobileAPIClientTests.swift */,
 				41A15B37638A6DBECAD7C387 /* NotificationDecisionPersistenceTests.swift */,
 				B432DD68900FC531AC44B25B /* NotificationDeliverySummaryTests.swift */,
-				27F50DFC3A1CAF76F583EDE2 /* NotificationDeliveryTimelineTests.swift */,
 				73EF2CB82C2DD5E65B4A7FF4 /* NotificationMediaPolicyTests.swift */,
 				4B15B14070FD37632941B899 /* NowSignalTests.swift */,
 				C421AC164C2376A0A759825D /* OfflineRecoveryIntegrationTests.swift */,
@@ -1860,7 +1864,6 @@
 				6160A6ADD6E49007D05A008F /* LiveActivitySurfaceProjection.swift */,
 				EFF23088F540F46A29F2ABCF /* NotificationDecision.swift */,
 				019BB5B7D5639082A26B3600 /* NotificationDeliverySummary.swift */,
-				A63C5CDF87084693B1161A7F /* NotificationDeliveryTimeline.swift */,
 				F944165B77738CE9B5C48BBE /* NotificationMediaPolicy.swift */,
 				CAFABEC9E8B24DA6100C4C3D /* PendingDecisionCache.swift */,
 				E0AB15FE1D58AA9EB9240A96 /* PlanOutline.swift */,
@@ -2565,6 +2568,7 @@
 				B2BF740EE1D19E6E8B52B2AB /* AccountScopedInboxCacheTests.swift in Sources */,
 				9594B0CC9E28AB9D2E2E6CFC /* ActivityContextCodingTests.swift in Sources */,
 				12A7DAB19A7FE0500B1FEE23 /* ActivityOutcomeTests.swift in Sources */,
+				761A291D2CB5E7B3B354E595 /* AppleSignInTests.swift in Sources */,
 				7872AAA194717BE30BBDEF80 /* BrowserLinkRequestTests.swift in Sources */,
 				D342D84B3A28AF61CC813C72 /* BrowserSignInTests.swift in Sources */,
 				C6A5225EE2FF9C6102B4E4DF /* BundleModule.swift in Sources */,
@@ -2608,6 +2612,7 @@
 				8CD8F98542089AA3316EB955 /* InboxTodayHistoryIntegrationTests.swift in Sources */,
 				B08001D0E33A3D584E85888C /* InboxTodaySummaryTests.swift in Sources */,
 				43D74AEA729C97A6BD7AB7B4 /* KeychainRegistrationAttemptStoreTests.swift in Sources */,
+				96DA082D60905C982680571E /* KnownHarnessTests.swift in Sources */,
 				DCD02DC29F55E478386B6DCB /* LiveActivityAcknowledgementUploaderTests.swift in Sources */,
 				25575D50D115C040D48129DD /* LiveActivityDuplicatesTests.swift in Sources */,
 				396D1EFE4D7BB3F8B45C5414 /* LiveActivityOwnerContentTests.swift in Sources */,
@@ -2618,7 +2623,6 @@
 				9FAFEB36E78E6F30A4D147E0 /* MobileAPIClientTests.swift in Sources */,
 				86CAAB3BF3689E585981D593 /* NotificationDecisionPersistenceTests.swift in Sources */,
 				51F29C00B19334B18F3BF733 /* NotificationDeliverySummaryTests.swift in Sources */,
-				C5400A6424B7E53AD9CF3037 /* NotificationDeliveryTimelineTests.swift in Sources */,
 				818E95D4788B1E32AD5F6821 /* NotificationMediaPolicyTests.swift in Sources */,
 				147C9BA0C78332F92DA571CA /* NowSignalTests.swift in Sources */,
 				7343E9C72F855280B9443D97 /* OfflineRecoveryIntegrationTests.swift in Sources */,
@@ -2745,6 +2749,7 @@
 				2169189F6E43F1DC59F5081A /* ActivityKitTokenCodec.swift in Sources */,
 				27D6B7DE593FD73FAE33A6B1 /* ActivityModels.swift in Sources */,
 				E657853F4633823980ABB58E /* AgentSessionModels.swift in Sources */,
+				1E9EF73D189280FAB5E9AE42 /* AppleSignIn.swift in Sources */,
 				C04FCABDAFBBB13519C84802 /* BrowserSignIn.swift in Sources */,
 				53BEC079408CB0A4D33324CF /* CommandPorts.swift in Sources */,
 				495DA6ED36060221A85FA637 /* ComputerIcon.swift in Sources */,
@@ -2796,7 +2801,6 @@
 				58E457E10DDA84F5EE4EEBF9 /* MobileAPIClient.swift in Sources */,
 				2D2790DE030A89EBB4249E94 /* NotificationDecision.swift in Sources */,
 				930294114226FA33DA5EC9BB /* NotificationDeliverySummary.swift in Sources */,
-				CA85BA06B9370E29D255286F /* NotificationDeliveryTimeline.swift in Sources */,
 				33C8A4531C455CEF81E1AB28 /* NotificationDestinationPolicy.swift in Sources */,
 				6EC33E10A414FBB82DC90AC3 /* NotificationImagePolicy.swift in Sources */,
 				C4B001896D40D4C37CA553F9 /* NotificationMediaPolicy.swift in Sources */,
@@ -3492,7 +3496,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 104;
+				CURRENT_PROJECT_VERSION = 120;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -3506,7 +3510,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.10.41;
+				MARKETING_VERSION = 0.10.57;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -3665,7 +3669,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 104;
+				CURRENT_PROJECT_VERSION = 120;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -3685,7 +3689,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
-				MARKETING_VERSION = 0.10.41;
+				MARKETING_VERSION = 0.10.57;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

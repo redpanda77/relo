@@ -1,7 +1,7 @@
 import "./hermetic-env.mjs";
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireUpdateLock, ASK_MS, launcherManaged, maybeStartAutoUpdate, recordAutoUpdate, RETRY_MS, setUpdateMode, updateMode } from "../src/owner/auto-update.mjs";
@@ -91,6 +91,23 @@ test("the update mode: RELO_NO_UPDATE_CHECK, then RELO_UPDATES, then relo update
   assert.equal(updateMode({ home: b.home, env: { RELO_UPDATES: "auto", RELO_NO_UPDATE_CHECK: "1" } }), "off");
   setUpdateMode(b.home, "off");
   assert.equal(b.start(), false, "off starts nothing");
+});
+
+test("auto undoes managed (and ask) cleanly: the stored choice and the old version's state are gone, the next update starts", () => {
+  const b = box();
+  setUpdateMode(b.home, "managed");
+  assert.equal(updateMode({ home: b.home }), "managed");
+  assert.equal(b.start({ env: { RELO_UPDATES: "managed" } }), false, "managed starts nothing");
+  assert.equal(b.start({ now: NOW + 1 }), true, "a CLI outside the app (the install script's) is not managed by the stored mode");
+  rmSync(join(dataRoot(b.home), "auto-update.json"), { force: true });
+  recordAutoUpdate(b.home, { declined: true, asking: false, target: "0.17.41" });
+  setUpdateMode(b.home, "auto");
+  assert.equal(updateMode({ home: b.home }), "auto");
+  assert.equal(existsSync(join(dataRoot(b.home), "updates.json")), false, "auto is the default: nothing stored");
+  assert.equal(existsSync(join(dataRoot(b.home), "auto-update.json")), false, "no stale declined version");
+  assert.equal(b.start(), true, "the version the owner declined under ask starts now");
+  setUpdateMode(b.home, "auto"); // again: nothing to remove, no error
+  assert.equal(updateMode({ home: b.home }), "auto");
 });
 
 test("ask mode asks once per version: no second question while the phone may answer, none after a no", () => {

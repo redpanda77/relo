@@ -2,7 +2,7 @@ import type { ComputerInviteStatus } from "@relo/notification-contracts"
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { b64u } from "@/lib/e2ee/bytes"
+import { b64u } from "@relo/owner-crypto"
 import type { BrowserLink } from "@/lib/e2ee/browser-link"
 import { AddComputerControl, ConnectComputerDialog } from "@/features/onboarding/connect-computer"
 import { ConnectEntry } from "@/features/onboarding/connect-entry"
@@ -13,7 +13,11 @@ const ID = "cin_00000000-0000-0000-0000-000000000001"
 function made(code = "rci_abc"): ComputerInvite {
   return {
     inviteId: ID, code, command: `curl -fsSL https://relo.example/install.sh | sh -s -- ${code}`,
-    expiresAt: new Date(Date.now() + 1_800_000).toISOString(), level: "track", approvals: false, agents: null,
+    commands: {
+      posix: `curl -fsSL https://relo.example/install.sh | sh -s -- ${code}`,
+      windows: `& ([scriptblock]::Create((irm https://relo.example/install.ps1))) ${code}`,
+    },
+    expiresAt: new Date(Date.now() + 1_800_000).toISOString(), level: "track", approvals: false, agents: null, desktopApp: false,
   }
 }
 
@@ -60,10 +64,29 @@ describe("Connect a computer wizard", () => {
     expect(screen.getByRole("radio", { name: /I'll run a command/ })).toBeChecked()
     fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
     expect(await screen.findByText(/install\.sh \| sh -s -- rci_abc/)).toBeInTheDocument()
-    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: false, macApp: true })
+    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: false, desktopApp: true })
     expect(screen.getByRole("button", { name: /Copy command/ })).toBeInTheDocument()
     expect(screen.getByText("Waiting for your computer…")).toBeInTheDocument()
     expect(lastInvite()).toBe(ID)
+  })
+
+  it("shows the command for the computer's system: a shell line for macOS or Linux, PowerShell for Windows", async () => {
+    const { service } = fake()
+    await open(service)
+    fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
+    await screen.findByText("Waiting for your computer…")
+    const posix = screen.getByRole("button", { name: "macOS or Linux" })
+    const windows = screen.getByRole("button", { name: "Windows" })
+    // The first guess follows this browser's own system; either choice shows its command with the bind half of the code.
+    fireEvent.click(posix)
+    expect(posix).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByText(/install\.sh \| sh -s -- rci_abc\./)).toBeInTheDocument()
+    expect(screen.queryByText(/install\.ps1/)).not.toBeInTheDocument()
+    fireEvent.click(windows)
+    expect(windows).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByText(/irm https:\/\/relo\.example\/install\.ps1\)\)\) rci_abc\./)).toBeInTheDocument()
+    expect(screen.queryByText(/install\.sh/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Paste this into PowerShell/)).toBeInTheDocument()
   })
 
   it("moves through connected, agents and test as the status changes", async () => {
@@ -72,7 +95,7 @@ describe("Connect a computer wizard", () => {
     fireEvent.change(screen.getByLabelText("How much Relo does there"), { target: { value: "guide" } })
     fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
     await screen.findByText("Waiting for your computer…")
-    expect(service.invite).toHaveBeenCalledWith({ level: "guide", approvals: false, macApp: true })
+    expect(service.invite).toHaveBeenCalledWith({ level: "guide", approvals: false, desktopApp: true })
 
     set(status("key_published", buildBox()))
     expect(await screen.findByText(/connected · CLI 0\.17\.40/)).toBeInTheDocument()
@@ -315,7 +338,7 @@ describe("Approval, restart hint, options, resume and typed code", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Amp" }))
     fireEvent.click(screen.getByRole("button", { name: "Make the command" }))
     await screen.findByText("Waiting for your computer…")
-    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: true, macApp: true, agents: ["claude-code", "codex", "amp"] })
+    expect(service.invite).toHaveBeenCalledWith({ level: "track", approvals: true, desktopApp: true, agents: ["claude-code", "codex", "amp"] })
   })
 
   it("Resume reopens on the same command, still waiting", async () => {

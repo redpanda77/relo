@@ -41,13 +41,13 @@ final class CardLayoutTests: XCTestCase {
     }
 
     func testCardsStayCompactInAList() throws {
-        // Header, title, status, progress (bar and step line), the question line, footer and the insets: about 170 pt. A layout that reserves
-        // another layout's height (the History gap) lands far past the ceiling.
+        // Header, title, status, progress (bar and step line), the question panel (its own inset, with 12 pt above it),
+        // footer and the insets: about 205 pt. A layout that reserves another layout's height (the History gap) lands far past the ceiling.
         let card = try cellHeight(workCard(surface: .listCell) {
             CardDecisionLine(prompt: "Publish Relo 0.17.50 to the public GitHub repo with every release asset?",
                              answer: "You approved", tint: .reloDone, at: Date(timeIntervalSince1970: 1_800_000_000))
         })
-        XCTAssertLessThan(card, 195, "a History card with a question must be its rows and insets, nothing more")
+        XCTAssertLessThan(card, 215, "a History card with a question must be its rows and insets, nothing more")
         XCTAssertLessThan(try cellHeight(workCard(surface: .listCell) { EmptyView() }), 160)
     }
 

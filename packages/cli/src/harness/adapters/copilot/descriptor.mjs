@@ -5,6 +5,7 @@ export default Object.freeze({
   label: "GitHub Copilot",
   aliases: ["github-copilot", "copilot-cli"],
   config: { variable: "COPILOT_HOME", home: ".copilot" },
+  installation: { binaries: ["copilot"], folder: { ignore: ["copilot-instructions.md", "skills"] } },
   instructions: { global: "copilot-instructions.md" },
   skills: "skills",
 });

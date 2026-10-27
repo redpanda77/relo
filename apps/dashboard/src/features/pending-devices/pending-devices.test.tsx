@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
@@ -31,15 +31,28 @@ afterEach(() => {
 })
 
 describe("PendingDevicesNotice", () => {
-  it("shows each pending device with where to approve it", async () => {
+  it("shows each pending device as a system card with Review and Deny", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ devices: [device] }))
     render(<PendingDevicesNotice />)
 
     const notice = await screen.findByRole("status", { name: "New devices waiting for approval" })
-    expect(notice).toHaveTextContent("Test iPad (iPad Pro 11-inch (M4)) wants to read your Relo cards, signed in 5 minutes ago.")
-    expect(notice).toHaveTextContent("Approve or decline it in Devices or in Relo on your iPhone → Settings → Devices.")
-    expect(screen.getByRole("link", { name: "Approve or decline it in Devices" })).toHaveAttribute("href", "/dashboard/account#devices")
+    expect(notice).toHaveTextContent("NEW DEVICE")
+    expect(notice).toHaveTextContent("Test iPad wants to join")
+    expect(notice).toHaveTextContent(/Asked at \d{1,2}:\d{2}/)
+    expect(screen.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/dashboard/account#devices")
+    expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledWith(PENDING_DEVICES_PATH, expect.objectContaining({ credentials: "same-origin" }))
+  })
+
+  it("declines a device from the card", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      String(input).endsWith("/revoke") ? json({}) : json({ devices: [device] })
+    )
+    render(<PendingDevicesNotice />)
+    await screen.findByText(/Test iPad wants to join/)
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }))
+    await waitFor(() => expect(screen.queryByText(/Test iPad wants to join/)).toBeNull())
+    expect(fetchMock).toHaveBeenCalledWith("/api/dashboard/devices/dev_new/revoke", expect.objectContaining({ method: "POST" }))
   })
 
   it("renders nothing when the list is empty", async () => {

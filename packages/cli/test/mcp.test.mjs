@@ -246,6 +246,7 @@ test("client names map to source names", () => {
   assert.equal(sourceFromClient("cursor-vscode"), "Cursor");
   assert.equal(sourceFromClient("codex-mcp-client"), "Codex");
   assert.equal(sourceFromClient("gemini-cli-mcp-client"), "Gemini CLI");
+  assert.equal(sourceFromClient("antigravity"), "Antigravity");
   assert.equal(sourceFromClient("Some Tool"), "Some Tool");
   assert.equal(sourceFromClient(undefined), undefined);
 });

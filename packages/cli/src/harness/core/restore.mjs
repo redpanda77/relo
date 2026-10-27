@@ -53,7 +53,7 @@ function compose(state, now, maxRounds) {
   const at = Date.parse(state.writtenAt);
   const stale = Number.isFinite(at) && now - at > T_RETIRE_MS;
   const when = Number.isFinite(at) ? hhmm(at) : "unknown";
-  const lines = [`Relo: this session has ${open ? "open" : "parked"} work (as of ${when}${stale ? ", possibly out of date: relo state --sync" : ""}; Relo keeps it on the owner's Lock Screen).`];
+  const lines = [`Relo: this session has ${open ? "open" : "parked"} work (as of ${when}${stale ? ", possibly out of date: relo state --sync" : ""}; Relo keeps it on the owner's screen).`];
   const rounds = open?.plan?.rounds;
   const delivered = rounds?.[rounds.length - 1]?.state === "closed";
   if (open) {

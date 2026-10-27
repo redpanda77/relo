@@ -2,8 +2,9 @@ import type { Hono } from "hono";
 import { FACTS,isPublicOrigin } from "@relo/notification-contracts";
 import { contentPolicy } from "./content-policy.js";
 import type { Database } from "./db.js";
+import { ownerOverviewSql } from "./owner-overview.js";
 
-const CURRENT_SCHEMA = "0130_computer_invite_mac_app.sql";
+const CURRENT_SCHEMA = "0135_now_lookup_indexes.sql";
 const WORKER_STALE_AFTER_MS = 30_000;
 
 type ApnsMode = "disabled" | "production" | "sandbox";
@@ -53,10 +54,11 @@ export async function readDoctorSnapshot(
     db.query<RuntimeComponentRow>(
       "SELECT release_identity,started_at,last_heartbeat_at,details FROM runtime_components WHERE component='worker'",
     ),
-    db.query<{ active: string; notifications: string; live_activities: string }>(
+    db.query<{ active: string; notifications: string; live_activities: string; owner_overview: string }>(
       `SELECT count(*)::text AS active,
          count(*) FILTER (WHERE notification_authorization='authorized')::text AS notifications,
-         count(*) FILTER (WHERE live_activity_authorization='authorized')::text AS live_activities
+         count(*) FILTER (WHERE live_activity_authorization='authorized')::text AS live_activities,
+         count(*) FILTER (WHERE ${ownerOverviewSql("devices")})::text AS owner_overview
        FROM devices WHERE principal_id=$1 AND revoked_at IS NULL`,
       [input.principalId],
     ),
@@ -75,6 +77,9 @@ export async function readDoctorSnapshot(
   const activeDevices = Number(devices.rows[0]?.active ?? 0);
   const notificationDevices = Number(devices.rows[0]?.notifications ?? 0);
   const liveActivityDevices = Number(devices.rows[0]?.live_activities ?? 0);
+  const overviewDevices = Number(devices.rows[0]?.owner_overview ?? 0);
+  // Local mode (plan 16): an account whose only device is Relo for Mac reads everything there, with no phone to notify.
+  const macOnly = overviewDevices > 0 && activeDevices === overviewDevices;
   const workerDetails = workerRow?.details ?? {};
   const apnsState = input.apnsMode === "disabled"
     ? "disabled"
@@ -100,8 +105,9 @@ export async function readDoctorSnapshot(
       mode: input.apnsMode,
     },
     devices: {
-      ok: activeDevices > 0 && notificationDevices > 0,
+      ok: (activeDevices > 0 && notificationDevices > 0) || macOnly,
       active: activeDevices,
+      ownerOverview: overviewDevices,
       notificationAuthorized: notificationDevices,
       liveActivityAuthorized: liveActivityDevices,
     },

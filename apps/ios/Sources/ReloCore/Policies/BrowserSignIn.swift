@@ -76,12 +76,12 @@ public struct BrowserSignIn: Equatable, Sendable {
         #endif
     }
 
-    private static func randomToken() -> String {
+    static func randomToken() -> String {
         var generator = SystemRandomNumberGenerator()
         return base64URL(Data((0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }))
     }
 
-    private static func base64URL(_ data: Data) -> String {
+    static func base64URL(_ data: Data) -> String {
         data.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")

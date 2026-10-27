@@ -107,7 +107,7 @@ SELECT page.*,to_char(page.sort_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.U
  project.palette_ordinal,project.icon AS project_icon,project.revision AS project_revision,
  COALESCE(a.conversation_id,e.conversation_id) AS conversation_id,COALESCE(a.work_item_id,e.work_item_id) AS work_item_id,
  COALESCE(a.sealed,e.payload->'sealed') AS sealed,
- request_detail.options AS interaction_options
+ request_detail.options AS interaction_options,outcome_card.id AS outcome_card_id
 FROM metadata CROSS JOIN clock LEFT JOIN page ON true
 LEFT JOIN notification_events e ON e.id=page.event_id
 LEFT JOIN live_activities a ON a.id=page.activity_id
@@ -115,6 +115,12 @@ LEFT JOIN notification_contents content ON content.notification_event_id=e.id
 LEFT JOIN interaction_requests request_detail ON request_detail.id=page.interaction_id
 LEFT JOIN resource_sources source ON source.id=COALESCE(a.source_resource_id,e.source_resource_id)
 LEFT JOIN resource_projects project ON project.id=COALESCE(a.project_resource_id,e.project_resource_id)
+-- A work's outcome notification names its card (the work's latest), so a device showing that card as finished
+-- does not also show the notification as a notice (works/outcome-notification.ts).
+LEFT JOIN LATERAL (SELECT 'act_'||card.id::text AS id FROM live_activities card
+  WHERE card.work_id=CASE WHEN e.payload#>>'{workOutcome,workId}' ~ '^wrk_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      THEN substring(e.payload#>>'{workOutcome,workId}' from 5)::uuid END AND card.principal_id=e.principal_id
+  ORDER BY card.created_at DESC LIMIT 1) outcome_card ON true
 ORDER BY page.sort_at DESC,page.subject_id`;
 
 type CurrentRow = {
@@ -127,7 +133,7 @@ type CurrentRow = {
  activity_status: string | null;activity_progress: number | null;activity_generation: number;activity_sequence: string;
  source_id: string | null;source_kind: string;source_name: string;project_id: string | null;project_name: string;
  project_direct: boolean;palette_ordinal: string;project_icon: string;project_revision: string;conversation_id: string | null;work_item_id: string | null;
- sealed: unknown;
+ sealed: unknown;outcome_card_id: string | null;
 };
 
 function projection(row: CurrentRow & {subject_id:string},devicePublicId?: string): CurrentSubjectProjection {
@@ -149,6 +155,7 @@ function projection(row: CurrentRow & {subject_id:string},devicePublicId?: strin
     project:{id:`prj_${row.project_id}`,name:row.project_name,isDirect:row.project_direct,palette:{slot:palette%12,generation:Math.floor(palette/12)},icon:row.project_icon,revision:Number(row.project_revision)},
     conversationId:row.conversation_id?`cnv_${row.conversation_id}`:null,workItemId:row.work_item_id?`wrk_${row.work_item_id}`:null,
   }:null,
+  ...(row.outcome_card_id?{outcomeOf:row.outcome_card_id}:{}),
  };
 }
 

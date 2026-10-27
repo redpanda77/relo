@@ -129,7 +129,7 @@ describe("Connections", () => {
   it("states phone readiness in words and keeps removal explicit", () => {
     render(<ConnectionsFeature bootstrap={overview()} service={api} />)
     expect(screen.getByText("Owner iPhone")).toBeTruthy()
-    expect(screen.getByText("Live Activities off")).toBeTruthy()
+    expect(screen.getByText(/Live Activities off/)).toBeTruthy()
     expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy()
     expect(api.revokePhone).not.toHaveBeenCalled()
   })

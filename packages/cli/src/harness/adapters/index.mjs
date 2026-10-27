@@ -1,10 +1,12 @@
 // The built-in harness adapters, by id. Adding a harness is adding a module here; nothing in the core
 // changes (ADR 0008 principle 12).
+import antigravity from "./antigravity/index.mjs";
 import claudeCode from "./claude-code/index.mjs";
+import codex from "./codex/index.mjs";
 import gemini from "./gemini/index.mjs";
 import opencode from "./opencode/index.mjs";
 
-export const ADAPTERS = Object.freeze({ [claudeCode.id]: claudeCode, [gemini.id]: gemini, [opencode.id]: opencode });
+export const ADAPTERS = Object.freeze({ [claudeCode.id]: claudeCode, [codex.id]: codex, [antigravity.id]: antigravity, [gemini.id]: gemini, [opencode.id]: opencode });
 const DEFAULT_ADAPTER = claudeCode.id;
 export const ADAPTER_IDS = Object.freeze(Object.keys(ADAPTERS));
 

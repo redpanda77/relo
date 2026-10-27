@@ -69,23 +69,21 @@ public struct HTTPCurrentStateSource: CurrentStateSource {
         return request
     }
 
+    /// Memory guard only: a declared or actual body over the cap is not a current-state reply.
+    static let maxBodyBytes = 4_194_304
+
+    static func checkSize(expected: Int64, actual: Int) throws {
+        guard expected <= Int64(maxBodyBytes), actual <= maxBodyBytes else { throw InboxRemoteError.incompatibleResponse }
+    }
+
     private func fetch<Value: Decodable>(path: String, query: [URLQueryItem]) async throws -> Value {
         try Task.checkCancellation()
         let request = try request(path: path, query: query)
         do {
-            let (bytes, response) = try await session.bytes(for: request, delegate: CurrentRequestDelegate())
-            let task = bytes.task
-            defer { task.cancel() }
+            // One buffered read: iterating a JSON body byte by byte costs an async hop per byte.
+            let (data, response) = try await session.data(for: request, delegate: CurrentRequestDelegate())
             try validate(response, stream: false)
-            let data = try await withTaskCancellationHandler {
-                var data = Data()
-                for try await byte in bytes {
-                    try Task.checkCancellation()
-                    guard data.count < 1_048_576 else { throw InboxRemoteError.incompatibleResponse }
-                    data.append(byte)
-                }
-                return data
-            } onCancel: { task.cancel() }
+            try Self.checkSize(expected: response.expectedContentLength, actual: data.count)
             try Task.checkCancellation()
             let resolved = nameResolver?(data) ?? data
             do { return try ReloWireJSON.decoder().decode(Value.self, from: resolved) }

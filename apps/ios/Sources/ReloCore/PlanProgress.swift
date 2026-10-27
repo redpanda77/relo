@@ -180,28 +180,40 @@ public struct PlanBar: Equatable, Sendable {
     public let segments: [Segment]
 
     /// From the card's shown steps and the steps hidden around them; `fill` is the server's for the current step.
-    public static func make(steps: [LiveActivityPlanDisplay.Step], before: Int = 0, after: Int = 0, fill: Double?) -> PlanBar {
-        let shown = steps.filter { $0.state != .skipped }.map { step -> Segment in
+    /// With the server's own count (`progress`) the bar is laid out in the count's frame: the steps before the shown
+    /// ones are everything the total holds beyond the shown and the later hidden ones (a round that carries on earlier
+    /// rounds' finished steps counts them), so the lit segment is the caption's "Step N" and the done segments are `done`.
+    public static func make(steps: [LiveActivityPlanDisplay.Step], before: Int = 0, after: Int = 0,
+                            progress: PlanProgress? = nil, fill: Double?) -> PlanBar {
+        let live = steps.filter { $0.state != .skipped }
+        let shown = live.map { step -> Segment in
             switch step.state {
             case .done: Segment(state: .done, fill: 1)
             case .current: Segment(state: .current, fill: fill ?? 0)
             default: Segment(state: .open, fill: 0)
             }
         }
-        return PlanBar(segments: Array(repeating: Segment(state: .done, fill: 1), count: before) + shown
+        var hiddenBefore = before
+        if let progress, progress.total >= live.count + after {
+            hiddenBefore = progress.total - live.count - after
+        }
+        return PlanBar(segments: Array(repeating: Segment(state: .done, fill: 1), count: hiddenBefore) + shown
             + Array(repeating: Segment(state: .open, fill: 0), count: after))
     }
 
-    /// From the server's counts alone (a Now row): `done` finished, then the current segment, then the rest.
+    /// From the server's counts alone (a Now row): `done` finished steps, the current segment at `current`, the rest
+    /// not started. The done ones fill the segments around the current one, so the bar always shows `done` of them
+    /// (a step finished out of order does not cost a segment).
     public static func make(done: Int, total: Int, current: Int?, fill: Double?) -> PlanBar {
         let total = max(0, total)
         // No position from the server, no current segment: nothing is invented.
         let currentIndex = (current ?? 0) - 1
+        var remaining = max(0, done)
         return PlanBar(segments: (0..<total).map { index in
-            if done >= total { Segment(state: .done, fill: 1) }
-            else if index == currentIndex { Segment(state: .current, fill: fill ?? 0) }
-            else if index < done { Segment(state: .done, fill: 1) }
-            else { Segment(state: .open, fill: 0) }
+            if done >= total { return Segment(state: .done, fill: 1) }
+            if index == currentIndex { return Segment(state: .current, fill: fill ?? 0) }
+            if remaining > 0 { remaining -= 1; return Segment(state: .done, fill: 1) }
+            return Segment(state: .open, fill: 0)
         })
     }
 }

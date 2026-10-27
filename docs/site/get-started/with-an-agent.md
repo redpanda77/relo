@@ -74,6 +74,9 @@ curl -fsSL https://relo.example.com/install.sh | sh
 relo --version
 ```
 
+On Windows, in PowerShell: `irm https://relo.example.com/install.ps1 | iex` (the launcher is
+`%LOCALAPPDATA%\Relo\bin\relo.cmd`, and that folder joins your user `PATH`).
+
 The `relo` launcher goes in `~/.local/bin`; if that is not on this shell's `PATH` yet, call it as
 `~/.local/bin/relo` until a new shell starts.
 

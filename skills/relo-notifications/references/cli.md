@@ -141,7 +141,7 @@ Branch on the exit code, then run the `Next` command.
 | `4` | Still open: this command stopped waiting. Run `relo interaction wait ID` |
 | `5` | The owner denied or said no |
 | `6` | Network unreachable: retry the same command |
-| `7` | No phone could receive it |
+| `7` | Nothing could show it: no phone and no Mac |
 | `8` | Closed without an answer (expired, canceled): do not act |
 <!--/generated-->
 
@@ -223,7 +223,7 @@ relo notify "Nightly backup failed" --summary "Backup failed" --markdown --url "
 ## Readiness, devices and services
 
 - `relo doctor` is cheap (no phone pings; its only write is the 24h update-check cache). It checks the config, server and credential, then
-  names the first unmet step in `next` (sign in, a phone with Live Activities, the one-time `relo test`);
+  names the first unmet step in `next` (sign in, a phone with Live Activities or Relo for Mac, the one-time `relo test`);
   a missing or outdated skill, or a newer CLI release (`"warnings":{"update":{"state":"behind","latest","hint":"relo update"}}`), is a warning only. The instruction-file block is never a step.
   `relo auth login` in an agent context prints the link and returns; finish with `relo auth login --wait`;
   `relo auth status` shows who is signed in (`"source":"RELO_TOKEN"` when it came from the

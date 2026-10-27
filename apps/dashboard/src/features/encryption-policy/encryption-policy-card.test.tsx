@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { describe, expect, test, vi } from "vitest"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, test, vi } from "vitest"
 
 import { EncryptionPolicyCard } from "@/features/encryption-policy/encryption-policy-card"
 import type { EncryptionPolicyService } from "@/features/encryption-policy/encryption-policy-service"
+
+afterEach(cleanup)
 
 describe("EncryptionPolicyCard", () => {
   test("shows the account's setting and asks before turning encryption off", async () => {
@@ -24,6 +26,17 @@ describe("EncryptionPolicyCard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Turn off" }))
     await waitFor(() => expect(service.save).toHaveBeenCalledWith("off"))
     expect((await screen.findAllByText(/may send readable text/)).length).toBeGreaterThan(0)
+  })
+
+  test("choosing Always before any iPhone has published keys says cards open only on Relo for Mac", async () => {
+    const service: EncryptionPolicyService = {
+      load: vi.fn(async () => ({ required: false, mode: "auto" as const })),
+      save: vi.fn(async (mode) => ({ required: mode !== "off", mode })),
+    }
+    render(<EncryptionPolicyCard service={service} />)
+    expect(await screen.findByText(/Turns on as soon as your iPhone publishes/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("Require encryption"), { target: { value: "on" } })
+    expect((await screen.findAllByText(/No iPhone yet: cards will open only on Relo for Mac until you add one\./)).length).toBeGreaterThan(0)
   })
 
   test("renders nothing on a server without the setting", async () => {

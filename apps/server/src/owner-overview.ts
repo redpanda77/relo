@@ -34,3 +34,19 @@ export function readsAccount(reader: DeviceReader): boolean {
 
 /** SQL for "this device row is an owner overview device" (it never approves or holds back another device). */
 export const ownerOverviewSql = (alias: string) => `('${OWNER_OVERVIEW}'=ANY(${alias}.capabilities))`;
+
+type ReaderQueryable = { query: (text: string, values?: unknown[]) => Promise<{ rows: any[] }> };
+
+/**
+ * The account's active owner overview devices (limited to `ids` when given): the readers that show a
+ * card, question or notice from Now without being push targets. This is the one rule for "a reader
+ * exists": a question or notice is valid when an eligible phone or one of these will show it, and
+ * delivery (APNs work) still goes to phones only, whatever an explicit device list names.
+ */
+export async function overviewReaderIds(query: ReaderQueryable,principalId: string,ids: readonly string[] | null = null): Promise<string[]> {
+  const result = await query.query(
+    `SELECT d.id FROM devices d WHERE d.principal_id=$1 AND d.revoked_at IS NULL AND ${ownerOverviewSql("d")}
+       AND ($2::uuid[] IS NULL OR d.id=ANY($2::uuid[])) ORDER BY d.id`,
+    [principalId,ids]);
+  return result.rows.map((row) => String(row.id));
+}

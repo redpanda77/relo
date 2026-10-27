@@ -14,7 +14,7 @@ export function detectComputerName(env = process.env, probes = {}) {
   if ((probes.platform ?? process.platform) === "darwin") {
     try {
       const scutil = probes.scutil
-        ?? (() => execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8", timeout: 1_000, stdio: ["ignore", "pipe", "ignore"] }));
+        ?? (() => execFileSync("scutil", ["--get", "ComputerName"], { encoding: "utf8", timeout: 1_000, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }));
       const name = cleanLabel(scutil(), 120);
       if (name) return name;
     } catch {

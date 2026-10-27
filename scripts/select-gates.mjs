@@ -23,6 +23,7 @@ export const RULES = [
   [/^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|tsconfig\.base\.json|\.npmrc|\.gitignore|\.dockerignore)$/u, ALL],
   // Paths no gate reads: an app with its own tests, internal notes, decisions, contributor docs.
   [/^apps\/notch\//u, []],
+  [/^apps\/windows\//u, []],
   [/^apps\/ios\/(Tests\/[^/]+\/Fixtures|Sources\/ReloCore\/E2EE)\//u, [...SERVER, "cli"]],
   [/^apps\/ios\//u, []], // F.1 (always run) covers apps/ios/Sources
   [/^docs\/internal\/operations\/[^/]+\/compose\.yaml$/u, SERVER],
@@ -32,6 +33,11 @@ export const RULES = [
   [/^\.gitnexusrc$/u, []],
   // Product code.
   [/^(apps\/server|packages\/contracts|deploy|docs\/api)\//u, SERVER],
+  // The owner clients' shared E2EE code: the Dashboard bundles it from source (no build step of its own), so a change
+  // is a Dashboard change and, through the build the server serves, a server one.
+  [/^packages\/owner-crypto\//u, SERVER],
+  // The owner client builds on the contracts and has its own tests, run with the contracts gate; nothing reads it back.
+  [/^packages\/owner-client\//u, ["contracts"]],
   // Sounds, images and fonts: the Dashboard build and its tests read them; no server test does.
   [/^apps\/dashboard\/(src\/assets|public)\/.*\.(m4a|mp3|wav|png|jpe?g|webp|svg|ico|woff2?)$/u, ["dashboard"]],
   [/^apps\/dashboard\//u, SERVER],

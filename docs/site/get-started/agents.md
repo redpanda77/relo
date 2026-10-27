@@ -1,7 +1,7 @@
 ---
 title: Tell your agents
 nav: 5. Tell your agents
-summary: Every agent on this computer knows Relo from its first message, keeps its work current on your phone and asks before risky steps.
+summary: Every agent on this computer knows Relo from its first message, keeps its work current on your phone or in your Mac's notch and asks before risky steps.
 ---
 
 ## What you get
@@ -44,7 +44,7 @@ open before setup does not see them.
 **Ask for it.** In a new session, give the agent a task that takes more than a couple of minutes and
 say:
 
-> Use Relo to keep a live view of this task on my iPhone.
+> Use Relo to keep a live view of this task on my iPhone or Mac.
 
 The agent starts a work with a goal and a plan, updates it as it goes, asks with `relo ask` before a
 risky step and finishes with an outcome. `relo state` shows what its session has open.

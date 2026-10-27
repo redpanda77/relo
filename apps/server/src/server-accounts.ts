@@ -47,6 +47,20 @@ export async function setRegistrationMode(db: Database, mode: RegistrationMode):
     [z.enum(registrationModes).parse(mode)]);
 }
 
+/**
+ * The first person claims the bootstrapped account and administers the server (the Dashboard's first sign-up, and
+ * local mode's first start). False when the owner was never bootstrapped. Call inside the account-lifecycle lock.
+ */
+export async function claimBootstrappedOwner(db: Queryable, handle: string, subject: string): Promise<boolean> {
+  const mapping = await db.query(
+    `INSERT INTO account_identities(principal_id,provider,subject,server_admin,approved_at)
+     SELECT id,'better-auth',$2,true,now() FROM owner_principals WHERE handle=$1 AND disabled_at IS NULL
+     ON CONFLICT DO NOTHING RETURNING principal_id`,
+    [handle,subject],
+  );
+  return Boolean(mapping.rowCount);
+}
+
 export async function isServerAdmin(db: Queryable, subject: string): Promise<boolean> {
   const result = await db.query(
     `SELECT 1 FROM account_identities

@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { tildeText } from "./posix-path.mjs";
 import { run } from "../src/cli.mjs";
 import { runStatusline } from "../src/harness/entry.mjs";
 import claudeCode from "../src/harness/adapters/claude-code/index.mjs";
@@ -25,7 +26,7 @@ const KEY = sessionKey({ harness: "claude-code", id: SESSION_ID });
 
 async function cli(argv, dependencies, io = {}) {
   const stdout = [];
-  const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false, ...io }, dependencies);
+  const exitCode = await run(argv, { stdout: (line) => stdout.push(tildeText(line)), stderr: () => {}, stdoutIsTTY: false, ...io }, dependencies);
   const json = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
   return { exitCode, stdout, line: stdout[0] ? json(stdout[0]) : undefined };
 }
@@ -88,7 +89,7 @@ test("--dry-run writes nothing; --show names the extras installed and the extras
   const box = await sandbox({ settings: ownerText });
   const dry = await box.run(["setup", "--level", "optimize", "--dry-run"]);
   assert.equal(dry.exitCode, EXIT.OK);
-  assert.deepEqual(dry.line.changed.map((row) => row.kind).sort(), ["agent", "agent", "agent", "agent", "block", "block", "hooks", "skill", "skill", "statusline"]);
+  assert.deepEqual(dry.line.changed.map((row) => row.kind).sort(), ["agent", "agent", "agent", "agent", "block", "block", "hooks", "hooks", "skill", "skill", "statusline"]);
   assert.equal(readFileSync(box.settings, "utf8"), ownerText);
   assert.equal(existsSync(box.agents), false);
   assert.equal(existsSync(box.state), false);
@@ -277,7 +278,7 @@ test("the wrapper prints the previous command's output byte for byte, from the s
 });
 
 test("a failing, slow-to-start or missing previous command never fails the status line", async () => {
-  const fails = statuslineBox({ previous: "printf partial; exit 3" });
+  const fails = statuslineBox({ previous: "node -e \"process.stdout.write('partial');process.exit(3)\"" });
   const failed = await fails.run(reading());
   assert.equal(failed.code, 0);
   assert.equal(failed.bytes.toString(), "partial");

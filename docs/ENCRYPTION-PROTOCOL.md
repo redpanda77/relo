@@ -2,7 +2,7 @@
 
 The exact keys, message formats and signing inputs behind Relo's end-to-end encryption, for people who
 build or review Relo: the CLI (`packages/cli/src/crypto`), the server (`apps/server/src`), the iPhone
-app (`apps/ios/Sources/ReloCore/E2EE`) and the Dashboard (`apps/dashboard/src/lib/e2ee`). What the
+app (`apps/ios/Sources/ReloCore/E2EE`) and the owner clients' shared TypeScript (`packages/owner-crypto`, used by the Dashboard). What the
 protection means for you, and how to use it, is in [Encryption](site/concepts/encryption.md) (served at
 `/docs/concepts/encryption`). The decision is [ADR 0005](adr/0005-end-to-end-encrypted-content.md).
 
@@ -433,7 +433,7 @@ approval or `relo keys verify`/`approve`.
 
 A linked browser answers questions and approvals from the Dashboard, like the iPhone: the same
 buttons with the sender's own labels, the time left, one answer per question. Its own non-extractable
-identity key (`apps/dashboard/src/lib/e2ee/answer.ts`) signs exactly what the phone signs, with the
+identity key (`packages/owner-crypto/src/answer.ts`) signs exactly what the phone signs, with the
 browser's `brw_…` id as the answering device:
 
 ```

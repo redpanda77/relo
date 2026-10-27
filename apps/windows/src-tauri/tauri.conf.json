@@ -1,0 +1,106 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Relo",
+  "mainBinaryName": "Relo",
+  "version": "0.1.0",
+  "identifier": "com.example.relo.windows",
+  "build": {
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "notch",
+        "title": "Relo Notch",
+        "width": 680,
+        "height": 450,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "focus": false,
+        "focusable": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required",
+        "visible": false
+      },
+      {
+        "label": "settings",
+        "title": "Relo Settings",
+        "dragDropEnabled": false,
+        "url": "settings.html",
+        "width": 760,
+        "height": 520,
+        "minWidth": 640,
+        "minHeight": 440,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "resizable": true,
+        "theme": "Dark",
+        "skipTaskbar": false,
+        "focus": true,
+        "visible": false
+      },
+      {
+        "label": "home",
+        "title": "Relo",
+        "url": "home.html",
+        "width": 1060,
+        "height": 700,
+        "minWidth": 780,
+        "minHeight": 520,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "resizable": true,
+        "theme": "Dark",
+        "skipTaskbar": false,
+        "focus": true,
+        "visible": false
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "plugins": {
+    "deep-link": { "desktop": { "schemes": ["relo"] } },
+    "updater": {
+      "pubkey": "TODO_REPLACE_WITH_MINISIGN_PUBLIC_KEY",
+      "endpoints": []
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "publisher": "Relo",
+    "copyright": "Copyright (c) 2026 Relo",
+    "category": "Productivity",
+    "homepage": "https://github.com/redpanda77/relo",
+    "shortDescription": "Relo",
+    "longDescription": "Relo for Windows shows your agents' status, alerts and questions in a notch at the top of the screen.",
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "Relo",
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "uninstallerHeaderImage": "installer/header.bmp",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installerHooks": "installer-hooks.nsh",
+        "template": "installer/installer.nsi"
+      }
+    }
+  }
+}

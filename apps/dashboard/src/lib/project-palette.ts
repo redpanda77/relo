@@ -1,11 +1,10 @@
+import { PROJECT_PALETTE } from "@relo/notification-contracts"
+
 /**
- * Twelve project hues along the neon ramp, one per palette slot, so a project keeps one colour
- * everywhere (Projects, Now, History). The server stores only the slot.
+ * A project's colour by its palette slot, from the contracts' one table (`PROJECT_PALETTE`), so a project
+ * reads the same on the Dashboard, the iPhone, the Mac and the notch. The server stores only the slot.
  */
-export const PROJECT_COLORS = [
-  "#5CE1FF", "#8B7CFF", "#D65CF0", "#FF8A7A", "#34D399", "#FBBF24",
-  "#7DD3FC", "#A78BFA", "#F472B6", "#FDBA74", "#6EE7B7", "#FDE047",
-] as const
+export const PROJECT_COLORS = PROJECT_PALETTE
 
 export function projectColor(slot: number): string {
   const count = PROJECT_COLORS.length

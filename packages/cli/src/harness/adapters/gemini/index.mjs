@@ -4,6 +4,7 @@
 // No subagent or tool ids are documented. Sets: off and presence.
 // No network here: adapters map events and render outcomes; the core owns state and transport.
 import { harnessPath, projectPath } from "../../paths.mjs";
+import { reloCommand } from "../../core/launch.mjs";
 import descriptor from "./descriptor.mjs";
 
 const HOOK_LEVELS = Object.freeze(["off", "presence"]);
@@ -12,11 +13,11 @@ const EVENT_ORDER = Object.freeze(["SessionStart", "BeforeAgent", "AfterTool", "
 const COMMANDS = { SessionStart: "start", BeforeAgent: "prompt", AfterTool: "tool-end", Notification: "wait",
   PreCompress: "compact", AfterAgent: "stop", SessionEnd: "end" };
 
-function wantedEntries(level) {
+function wantedEntries(level, launch) {
   if (!HOOK_LEVELS.includes(level)) throw new Error(`unknown hook level ${level}`);
   if (level === "off") return {};
   return Object.fromEntries(EVENT_ORDER.map((event) => [event,
-    [{ hooks: [{ type: "command", command: `relo hook ${COMMANDS[event]} --agent gemini`, timeout: 5_000 }] }]]));
+    [{ hooks: [{ type: "command", command: reloCommand(`hook ${COMMANDS[event]} --agent gemini`, launch), timeout: 5_000 }] }]]));
 }
 
 export default Object.freeze({

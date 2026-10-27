@@ -2,12 +2,13 @@
 // folder set with `relo voice LEVEL --here`, then `relo voice LEVEL` (the default), then verbose.
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
 import { voiceNote, voiceSetting } from "../src/work/spoken.mjs";
 
-const REPO = "/home/sam/code/acme-app";
+const REPO = resolve("/home/sam/code/acme-app");
 
 async function cli(argv, dependencies) {
   const stdout = [];
@@ -23,8 +24,8 @@ test("the level comes from RELO_VOICE, then this place, then the default, then v
   const voices = { "*": "full", [REPO]: "off" };
   assert.deepEqual(voiceSetting({ env: {}, cwd: "/tmp/elsewhere", loadVoices: () => ({}) }), { level: "verbose", via: "default" });
   assert.equal(voiceSetting({ env: {}, cwd: "/tmp/elsewhere", loadVoices: () => voices }).level, "full");
-  assert.equal(voiceSetting({ env: {}, cwd: `${REPO}/src`, loadVoices: () => voices }).level, "off");
-  assert.deepEqual(voiceSetting({ env: { RELO_VOICE: "Brief" }, cwd: `${REPO}/src`, loadVoices: () => voices }), { level: "brief", via: "env" });
+  assert.equal(voiceSetting({ env: {}, cwd: resolve(REPO, "src"), loadVoices: () => voices }).level, "off");
+  assert.deepEqual(voiceSetting({ env: { RELO_VOICE: "Brief" }, cwd: resolve(REPO, "src"), loadVoices: () => voices }), { level: "brief", via: "env" });
   assert.equal(voiceSetting({ env: { RELO_VOICE: "loud" }, cwd: "/tmp", loadVoices: () => ({}) }).level, "verbose", "an unknown level is ignored");
 });
 

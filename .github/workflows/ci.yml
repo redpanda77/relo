@@ -103,3 +103,51 @@ jobs:
           name: relo-native-test-results
           path: ${{ runner.temp }}/relo-ios-build/*.xcresult
           if-no-files-found: warn
+
+  cli-windows:
+    name: CLI tests (Windows)
+    # Contributor CI for the public repository; this private checkout is gated locally.
+    if: github.repository == 'redpanda77/relo'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Before checkout: LF files, as in the published package (CRLF in the instruction-block sources would be
+      # written into users' CLAUDE.md files and break the byte-count tests).
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: CLI tests
+        working-directory: packages/cli
+        env:
+          RELO_GATES_DEFER_TIMING: "1"
+        run: |
+          node scripts/bundle-skill.mjs
+          node --import ./test/hermetic-env.mjs --test --test-timeout=120000
+      - name: CLI timing tests, alone
+        working-directory: packages/cli
+        run: |
+          node --import ./test/hermetic-env.mjs --test --test-timeout=120000 test/startup-budget.test.mjs test/harness-invariants.test.mjs
+
+  contracts-windows:
+    name: Contracts and owner-crypto tests (Windows)
+    if: github.repository == 'redpanda77/relo'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --global pnpm@11.20.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @relo/notification-contracts test
+      - run: pnpm --filter @relo/owner-crypto test
+      - run: pnpm --filter @relo/owner-client typecheck
+      - run: pnpm --filter @relo/owner-client test

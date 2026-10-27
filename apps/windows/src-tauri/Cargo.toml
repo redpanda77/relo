@@ -1,0 +1,112 @@
+[package]
+name = "relo-windows"
+version = "0.1.0"
+description = "Relo"
+authors = ["Relo"]
+homepage = "https://github.com/redpanda77/relo"
+repository = "https://github.com/redpanda77/relo"
+edition = "2021"
+publish = false
+
+# The installed program is Relo.exe: Task Manager, the taskbar, Start and Apps & features all show this name.
+[[bin]]
+name = "Relo"
+path = "src/main.rs"
+
+# Keep this crate out of any parent workspace.
+[workspace]
+
+# Phonon on the GPU through Vulkan (NVIDIA, AMD, Intel). Off by default because xn compiles its shaders with `glslc` at build
+# time (the Vulkan SDK, or shaderc) and the plain build must work without it. A release build that has glslc on PATH turns
+# it on (`--features gpu-vulkan`); at run time the loader is opened lazily, and a machine without a Vulkan driver, or a GPU that
+# fails, falls back to the CPU (voice/phonon.rs). CUDA is deliberately not offered: xn links it at build time (see below).
+[features]
+gpu-vulkan = ["ptts/vulkan"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-http = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk", "network"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+# Relo voice (src/voice): Phonon 31M through the vendor's own Rust runtime, played with rodio, model files fetched with ureq.
+ptts = { version = "=0.4.0", default-features = false, features = ["hf"] }
+# ptts sizes its CPU thread pool through xn (voice/phonon.rs caps it).
+xn = "0.2"
+rodio = { version = "0.21", default-features = false, features = ["playback"] }
+sha2 = "0.10"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+base64 = "0.22"
+# Lyrics (LRCLIB) and the YouTube Music desktop app API, off the UI thread. Same TLS stack as tauri-plugin-http.
+# Music keeps ureq 2 under its own name (voice uses ureq 3).
+ureq2 = { package = "ureq", version = "2", default-features = false, features = ["tls", "json"] }
+png = "0.18"
+# Local mode: the app's PKCE for its own sign-in (SHA-256, base64url, random bytes).
+getrandom = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
+  "Win32_Security",
+  "Win32_Security_Credentials",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Accessibility",
+  # Relo voice: system speech (WinRT), metered-connection check, microphone sessions (WASAPI).
+  "Foundation",
+  "Foundation_Collections",
+  "Media_SpeechSynthesis",
+  "Storage_Streams",
+  "Networking_Connectivity",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Media_Core",
+  "Win32_System_Threading",
+  "Win32_Media_KernelStreaming",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Media",
+  "Media_Control",
+  # shelf: OLE drag-and-drop, shell thumbnails, clipboard, share sheet, file picker
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_WinRT",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "ApplicationModel_DataTransfer",
+  "Storage",
+  "Win32_System_Power",
+  # session lock/unlock notifications (session.rs), thermal throttle counters (system/thermal.rs)
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Performance",
+] }
+webview2-com = "0.39"
+windows-core = "0.61"
+windows-core-062 = { package = "windows-core", version = "0.62" }
+windows-collections = "0.2"
+
+# `pnpm dev:app` is a dev build, where every dependency would compile at opt-level 0. Phonon's tensor kernels (ptts, xn and the
+# matrix-multiply crates under them) then run 10 to 50 times slower, so a spoken line renders slower than it plays (the sound
+# cuts out) and pins the CPU. Dependencies are optimised; the app's own code keeps the fast incremental dev build, and
+# dependencies are rebuilt only when their versions change.
+[profile.dev.package."*"]
+opt-level = 3

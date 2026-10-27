@@ -1,19 +1,13 @@
-import { ChevronLeft, Clock, Search, Send, X } from "lucide-react"
+import { ArrowUp, ChevronLeft, Search, Send, X } from "lucide-react"
 import { AnimatePresence, LazyMotion, m } from "motion/react"
 import { useEffect, useId, useState } from "react"
 
+import { HISTORY_ENDINGS, HISTORY_KINDS, historyEndingLabel } from "@relo/notification-contracts"
 import { SelectionIndicator } from "@/components/atoms/selection-indicator"
 import { Empty } from "@/components/list"
 import { Page } from "@/components/page"
-import { CardList, CardListItem } from "@/components/card"
-import { HistoryWorkCard } from "@/features/inbox/activity-card"
-import {
-  cardFor,
-  daySummary,
-  groupByDay,
-  historySegments,
-  type ActivityCard,
-} from "@/features/inbox/activity-model"
+import { historyDays, historyRow, todayPanel } from "@/features/inbox/history-model"
+import { HistoryDayBand, HistoryQuietGap, HistoryTimelineRow, HistoryTodayPanel } from "@/features/inbox/history-timeline"
 import { useDetailPanel } from "@/features/inbox/detail-panel"
 import type { NotificationHistory } from "@/features/inbox/types"
 import { displayName } from "@/lib/encrypted"
@@ -23,26 +17,12 @@ import { navigateDashboard } from "@/state/use-dashboard-route"
 
 type Filters = NotificationHistory["route"]["filters"]
 type Kind = NonNullable<Filters["kind"]>
-type State = NonNullable<Filters["state"]>
 
-/** The iPhone's kinds (ReloHistoryFilter): messages, decisions, work cards, your answers. */
-const KINDS: ReadonlyArray<readonly [Kind | "", string]> = [
-  ["", "All"],
-  ["message", "Messages"],
-  ["decision", "Decisions"],
-  ["live_activity", "Live Activities"],
-  ["response", "Responses"],
-]
+/** The iPhone's Show filter: everything, work, messages, decisions. */
+const KINDS: ReadonlyArray<readonly [Kind | "", string]> = [["", "All"], ...HISTORY_KINDS]
 
-/** States in the owner's words; the server maps each onto what is stored. */
-const STATES: ReadonlyArray<readonly [State, string]> = [
-  ["running", "Running"],
-  ["done", "Done"],
-  ["failed", "Failed"],
-  ["stopped", "Stopped"],
-  ["answered", "Answered"],
-  ["missed", "Missed"],
-]
+/** How it ended, in the iPhone's words (Done, Ended, Stopped, Messages). */
+const ENDINGS = HISTORY_ENDINGS.map((ending) => [ending, historyEndingLabel(ending, 2)] as const)
 
 const HISTORY = "/dashboard/inbox/notifications"
 
@@ -50,7 +30,7 @@ const HISTORY = "/dashboard/inbox/notifications"
 function hrefWith(filters: Filters, patch: Partial<Record<keyof Filters, string | null>>) {
   const next = { ...filters, ...patch }
   const query = new URLSearchParams()
-  for (const key of ["q", "kind", "state", "source", "project", "computer"] as const) {
+  for (const key of ["q", "kind", "ending", "source", "project", "computer"] as const) {
     const value = next[key]
     if (value) query.set(key, value)
   }
@@ -63,7 +43,12 @@ function navigateWith(filters: Filters, patch: Partial<Record<keyof Filters, str
 }
 
 function isFiltered(filters: Filters) {
-  return Boolean(filters.q || filters.kind || filters.state || filters.project || filters.source || filters.computer)
+  return Boolean(filters.ending || isNarrowed(filters))
+}
+
+/** Narrowed past a meaning: the Today panel steps aside for the filters that are on (the iPhone's `narrowed`). */
+function isNarrowed(filters: Filters) {
+  return Boolean(filters.q || filters.kind || filters.project || filters.source || filters.computer)
 }
 
 /**
@@ -225,11 +210,11 @@ function HistoryToolbar({ history }: { history: NotificationHistory }) {
           onChange={(computer) => navigateWith(filters, { computer })}
         />
         <MenuPill
-          label="State"
-          all="Any state"
-          value={filters.state}
-          options={STATES}
-          onChange={(state) => navigateWith(filters, { state })}
+          label="How it ended"
+          all="Any ending"
+          value={filters.ending}
+          options={ENDINGS}
+          onChange={(ending) => navigateWith(filters, { ending })}
         />
       </div>
     </div>
@@ -275,7 +260,25 @@ function HistoryFooter({ history }: { history: NotificationHistory }) {
 /** The page of results last shown, so a page that mounts for the next page rises in. */
 let lastPage: string | null = null
 
-/** History: every notification and Live Activity, newest first, filtered on the server. */
+/** Past this far down, a "Today ↑" button brings the top back (the iPhone's ScrolledAwayTracker). */
+const SCROLLED_AWAY = 900
+
+function useScrolledAway() {
+  const [away, setAway] = useState(false)
+  useEffect(() => {
+    const update = () => setAway(window.scrollY > SCROLLED_AWAY)
+    update()
+    window.addEventListener("scroll", update, { passive: true })
+    return () => window.removeEventListener("scroll", update)
+  }, [])
+  return away
+}
+
+/**
+ * History: what is over, newest first, filtered on the server; the iPhone's timeline. Today's panel heads it
+ * (its chips narrow the list to one meaning), each earlier day has a pinned band, and an hour or more between
+ * two rows shows as a quiet stretch of the rail.
+ */
 export function HistoryView({
   history,
   service,
@@ -286,15 +289,19 @@ export function HistoryView({
   const { open, sheet, openId } = useDetailPanel(service)
   // Display only: the page-load instant formats dates.
   const [now] = useState(() => Date.now())
-  const cards = history.notifications.map((notification) => cardFor(notification, now))
-  const openCard = (card: ActivityCard) =>
+  const rows = history.notifications.map((notification) => historyRow(notification, now))
+  const days = historyDays(rows, now)
+  const openRow = (card: (typeof rows)[number]["card"]) =>
     void open(card.id, { source: card.source, project: card.project, topic: card.topic, computer: card.origin })
   // A new page or filter: the old list fades out (120 ms) and the new one rises 8 px (180 ms).
   const reduced = usePrefersReducedMotion()
   const f = history.route.filters
   const filtered = isFiltered(f)
+  const narrowed = isNarrowed(f)
   const total = history.pagination.total
-  const pageKey = [history.pagination.page, f.kind, f.state, f.project, f.source, f.computer, f.q].join("|")
+  const today = todayPanel(history.recent, now)
+  const away = useScrolledAway()
+  const pageKey = [history.pagination.page, f.kind, f.ending, f.project, f.source, f.computer, f.q].join("|")
   const [arrives] = useState(() => lastPage !== null && lastPage !== pageKey)
   useEffect(() => {
     lastPage = pageKey
@@ -311,6 +318,9 @@ export function HistoryView({
       }
     >
       <div className="history">
+        {!narrowed && today.total ? (
+          <HistoryTodayPanel panel={today} selected={f.ending} hrefFor={(ending) => hrefWith(f, { ending })} />
+        ) : null}
         <HistoryToolbar history={history} />
         {filtered ? (
           <p className="history-matches" aria-live="polite">
@@ -325,55 +335,36 @@ export function HistoryView({
               animate={{ opacity: 1, y: 0, transition: { duration: DUR.fast, ease: EASE_OUT } }}
               exit={{ opacity: 0, transition: { duration: DUR.micro, ease: EASE_IN } }}
             >
-              {cards.length ? (
-                <ul aria-label="Activity" className="history-days">
-                  {groupByDay(cards, new Date(now)).map((group) => {
-                    const headingId = `history-day-${group.key}`
-                    const summary = daySummary(group.cards)
+              {rows.length ? (
+                <div aria-label="Activity" role="list" className="history-days">
+                  {days.map((day) => {
+                    const headingId = `history-day-${Number.isNaN(day.start) ? "earlier" : day.start}`
+                    // Today needs no band: the Today panel above already names it and counts it.
+                    const band = !day.isToday || narrowed || !today.total
                     return (
-                      <li key={group.key} className="history-day" aria-labelledby={headingId}>
-                        <div className="history-day-head">
-                          <h2 id={headingId} className="history-day-title">{group.label}</h2>
-                          {summary ? (
-                            <p className="history-day-counts">
-                              {summary.split(" · ").map((count) => (
-                                <span key={count}>{count}</span>
-                              ))}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="history-day-body">
-                          {historySegments(group.cards).map((segment) =>
-                            segment.kind === "live" ? (
-                              <HistoryWorkCard
-                                key={segment.card.id}
-                                card={segment.card}
-                                onOpen={() => openCard(segment.card)}
-                                open={openId === segment.card.id}
-                                showSource={!f.source}
-                                showProject={!f.project}
-                              />
-                            ) : (
-                              <CardList key={segment.cards[0]!.id} label={group.label}>
-                                {segment.cards.map((card) => (
-                                  <CardListItem key={card.id}>
-                                    <HistoryWorkCard
-                                      card={card}
-                                      onOpen={() => openCard(card)}
-                                      open={openId === card.id}
-                                      showSource={!f.source}
-                                      showProject={!f.project}
-                                    />
-                                  </CardListItem>
-                                ))}
-                              </CardList>
-                            )
-                          )}
-                        </div>
-                      </li>
+                      <section
+                        key={headingId}
+                        role="listitem"
+                        className="history-day"
+                        aria-labelledby={band ? headingId : undefined}
+                        aria-label={band ? undefined : "Today"}
+                      >
+                        {band ? <HistoryDayBand day={day} headingId={headingId} /> : null}
+                        <ul className="history-tl" aria-label={day.title}>
+                          {day.rows.map((row, index) => (
+                            <HistoryRowItem
+                              key={row.card.id}
+                              row={row}
+                              continues={index + 1 < day.rows.length}
+                              open={openId === row.card.id}
+                              onOpen={() => openRow(row.card)}
+                            />
+                          ))}
+                        </ul>
+                      </section>
                     )
                   })}
-                </ul>
+                </div>
               ) : filtered ? (
                 <Empty
                   icon={<Search />}
@@ -387,7 +378,7 @@ export function HistoryView({
                 />
               ) : (
                 <Empty
-                  icon={<Clock />}
+                  eyebrow="History"
                   title="No history yet"
                   description="Notifications and finished work from your sessions and scripts collect here."
                 />
@@ -397,7 +388,39 @@ export function HistoryView({
         </LazyMotion>
         <HistoryFooter history={history} />
       </div>
+      {away ? (
+        <button
+          type="button"
+          className="history-back-today"
+          aria-label="Back to today"
+          onClick={() => window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" })}
+        >
+          <ArrowUp className="size-4" aria-hidden="true" />
+          Today
+        </button>
+      ) : null}
       {sheet}
     </Page>
+  )
+}
+
+function HistoryRowItem({
+  row,
+  continues,
+  open,
+  onOpen,
+}: {
+  row: ReturnType<typeof historyDays>[number]["rows"][number]
+  continues: boolean
+  open: boolean
+  onOpen: () => void
+}) {
+  return (
+    <>
+      <li>
+        <HistoryTimelineRow row={row} dayHalf={row.dayHalf} continues={continues} open={open} onOpen={onOpen} />
+      </li>
+      {row.gapAfter ? <HistoryQuietGap text={row.gapAfter} /> : null}
+    </>
   )
 }

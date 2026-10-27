@@ -7,8 +7,10 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { EXIT, ReloError, UsageError } from "../shared/errors.mjs";
+import { renameWithRetry } from "../shared/atomic-write.mjs";
+import { cmdLauncherText, parseCmdLauncher, shLauncherText, windowsPaths } from "./windows-launcher.mjs";
 import { updateCheckDisabled } from "../shared/settings.mjs";
 import { dataRoot } from "../work/state-file.mjs";
 
@@ -243,6 +245,17 @@ function spawnNpm(args, { env = process.env, platform = process.platform } = {})
 /** The install script's launcher this CLI runs behind ({ path, node }), or undefined (an npm install, a checkout). */
 async function launcherInstall(dependencies) {
   const { home, entrypoint } = dependencies;
+  if (isWindows(dependencies)) {
+    const paths = windowsPaths({ home, env: dependencies.env });
+    if (!entrypoint || !resolve(entrypoint).toLowerCase().startsWith(`${resolve(paths.cli).toLowerCase()}${sep}`)) return undefined;
+    try {
+      const parsed = parseCmdLauncher(await readFile(paths.cmd, "utf8"));
+      // A relo.cmd the Windows app wrote is the app's to update; this path only follows its own.
+      return parsed && !parsed.managed && parsed.node && parsed.entry ? { path: paths.cmd, node: parsed.node, windows: paths } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   const root = resolve(join(dataRoot(home), "cli"));
   if (!entrypoint || !resolve(entrypoint).startsWith(`${root}${sep}`)) return undefined;
   const path = join(home, ".local", "bin", "relo");
@@ -255,20 +268,38 @@ async function launcherInstall(dependencies) {
   }
 }
 
+const isWindows = (dependencies) => (dependencies.platform ?? process.platform) === "win32";
+
+async function replaceWindowsFile(path, contents) {
+  const next = `${path}.${process.pid}.tmp`;
+  await writeFile(next, contents);
+  try { await renameWithRetry(next, path, { platform: "win32" }); } catch (error) { await rm(next, { force: true }).catch(() => {}); throw error; }
+}
+
 /** Unpacks a verified tarball beside the running version and points the launcher at it (no npm, no PATH). */
 async function installBehindLauncher(tarball, version, launcher, dependencies) {
-  const target = join(dataRoot(dependencies.home), "cli", version);
+  const target = launcher.windows ? join(launcher.windows.cli, version) : join(dataRoot(dependencies.home), "cli", version);
   const partial = `${target}.partial-${process.pid}`;
   await rm(partial, { recursive: true, force: true });
   await mkdir(partial, { recursive: true });
-  const untar = dependencies.runTar ?? ((args) => new Promise((done) => execFile("tar", args, (error) => done({ code: error ? 1 : 0 }))));
-  if ((await untar(["-xzf", tarball, "-C", partial, "--strip-components=1"]))?.code !== 0) {
+  // On Windows the system's bsdtar by full path: GNU tar (Git for Windows, often first on PATH) reads "C:" in -f as a
+  // remote host and mangles -C. The tarball stays relative to its folder all the same.
+  const tar = process.platform === "win32" ? join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
+  const untar = dependencies.runTar ?? ((args) => new Promise((done) => execFile(tar, args, { cwd: dirname(tarball), windowsHide: true }, (error) => done({ code: error ? 1 : 0 }))));
+  if ((await untar(["-xzf", basename(tarball), "-C", partial, "--strip-components=1"]))?.code !== 0) {
     await rm(partial, { recursive: true, force: true });
     throw new ReloError("The update could not be unpacked.", { code: "UPDATE_INSTALL_FAILED", details: { hint: "Relo is unchanged; try again." } });
   }
   await rm(target, { recursive: true, force: true });
-  await rename(partial, target);
+  await (launcher.windows ? renameWithRetry(partial, target, { platform: "win32" }) : rename(partial, target));
   const entry = join(target, "bin", "relo.mjs");
+  if (launcher.windows) {
+    // relo.cmd (and the Git Bash sibling, when there is one) swap in through a temp name; no chmod on Windows.
+    const sibling = await readFile(launcher.windows.sh, "utf8").then(() => true, () => false);
+    await replaceWindowsFile(launcher.path, cmdLauncherText(launcher.node, entry));
+    if (sibling) await replaceWindowsFile(launcher.windows.sh, shLauncherText(launcher.node, entry));
+    return;
+  }
   const next = `${launcher.path}.${process.pid}.tmp`;
   await writeFile(next, `#!/bin/sh\n# relo launcher: ${entry}\nexec "${launcher.node}" "${entry}" "$@"\n`);
   await chmod(next, 0o755);
@@ -308,7 +339,7 @@ async function refreshWithNewCli(dependencies) {
   }
   return new Promise((resolve) => {
     execFile(binary, ["setup", "--refresh", "--json"], {
-      env: { ...process.env, ...dependencies.env }, timeout: 60_000, maxBuffer: 1024 * 1024, shell: dependencies.platform === "win32",
+      env: { ...process.env, ...dependencies.env }, timeout: 60_000, maxBuffer: 1024 * 1024, shell: isWindows(dependencies),
     }, (error, stdout) => {
       try { resolve(error ? undefined : JSON.parse(String(stdout).trim().split("\n").at(-1))); } catch { resolve(undefined); }
     });

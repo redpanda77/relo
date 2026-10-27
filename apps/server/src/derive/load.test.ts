@@ -45,3 +45,23 @@ describe("Now items carry the whole plan so devices draw rounds and nested steps
     expect(shape.safeParse(planDigestOf(row())).success).toBe(true);
   });
 });
+
+describe("a long work's digest stays small: steps of the newest 3 rounds, the newest 60 rounds", () => {
+  const rounds = (count: number) => Array.from({ length: count },(_,i) => ({ n: i + 1,state: i + 1 === count ? "open" : "closed" }));
+  const steps = (count: number) => [{ id: "s0",state: "done",addedIn: 1,label: "No round" },
+    ...Array.from({ length: count },(_,i) => ({ id: `r${i + 1}`,state: "done",addedIn: i + 1,label: `Round ${i + 1}`,round: i + 1 }))];
+
+  test("six rounds keep all rounds and only the steps of rounds 4 to 6, plus steps without a round", () => {
+    const digest = planDigestOf(row({ work_plan: { v: 1,next: 9,steps: steps(6),rounds: rounds(6) } }));
+    expect(digest?.rounds?.map((round) => round.n)).toEqual([1,2,3,4,5,6]);
+    expect(digest?.plan.map((step) => step.id)).toEqual(["s0","r4","r5","r6"]);
+  });
+
+  test("seventy rounds keep the newest sixty, the current one included", () => {
+    const digest = planDigestOf(row({ work_plan: { v: 1,next: 9,steps: steps(70),rounds: rounds(70) } }));
+    expect(digest?.rounds).toHaveLength(60);
+    expect(digest?.rounds?.[0].n).toBe(11);
+    expect(digest?.rounds?.at(-1)?.n).toBe(70);
+    expect(digest?.plan.map((step) => step.id)).toEqual(["s0","r68","r69","r70"]);
+  });
+});

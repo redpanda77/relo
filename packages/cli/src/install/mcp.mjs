@@ -9,6 +9,7 @@ import { dirname } from "node:path";
 import { UsageError } from "../shared/errors.mjs";
 import { HARNESSES } from "../harness/catalog.mjs";
 import { harnessPath, projectPath } from "../harness/paths.mjs";
+import { entryNamesNewerCli } from "./versions.mjs";
 
 const MCP_SERVER_NAME = "relo";
 /** A question waits at most 5 minutes (+ margin): hosts whose default tool timeout is shorter must be told. */
@@ -113,6 +114,8 @@ function planJson(path, current, agent, entry, remove) {
     throw new UsageError(`${path} already has a "${MCP_SERVER_NAME}" MCP server that is not Relo's.`, { hint: "Rename or remove it first." });
   }
   if (existing !== undefined && JSON.stringify(existing) === JSON.stringify(entry)) return { action: "unchanged", entry };
+  // The entry names a newer relo than this one: leave it (two relo versions must not overwrite each other).
+  if (existing !== undefined && entryNamesNewerCli(existing, entry)) return { action: "unchanged", entry: existing, keptNewer: true };
   settings[key] ??= {};
   settings[key][MCP_SERVER_NAME] = existing === undefined ? entry : { ...existing, ...entry };
   return { action: current === undefined ? "created" : existing === undefined ? "added" : "updated", entry, content: render(settings, form) };
@@ -224,6 +227,7 @@ function planToml(path, current, agent, entry, remove) {
   const body = readToml(lines, range.start, range.end);
   if (!isReloEntry(body)) throw new UsageError(`${path} already has a [mcp_servers.relo] table that is not Relo's.`, { hint: "Rename or remove it first." });
   // Rewrite only Relo's own keys in place; anything else the owner added to the table stays.
+  if (entryNamesNewerCli(body, entry)) return { action: "unchanged", entry: body, keptNewer: true };
   const wanted = { command: tomlValue(entry.command), args: tomlValue(entry.args), tool_timeout_sec: tomlValue(entry.tool_timeout_sec) };
   const next = lines.slice();
   const current_ = readToml(lines, range.start, range.end);

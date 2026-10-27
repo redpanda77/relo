@@ -15,6 +15,8 @@
 !apps/server/fixtures/**
 !apps/server/mac/
 !apps/server/mac/**
+!apps/server/windows/
+!apps/server/windows/**
 !apps/server/migrations/
 !apps/server/migrations/**
 !apps/server/src/
@@ -27,6 +29,11 @@
 !packages/contracts/fixtures/**
 !packages/contracts/src/
 !packages/contracts/src/**
+!packages/owner-crypto/
+!packages/owner-crypto/package.json
+!packages/owner-crypto/tsconfig.json
+!packages/owner-crypto/src/
+!packages/owner-crypto/src/**
 !packages/cli/
 !packages/cli/**
 !skills/
@@ -43,6 +50,8 @@
 **/*.zip
 # Relo for Mac, as the deploy left it (apps/server/mac/README.md).
 !apps/server/mac/relo-mac.zip
+# Relo for Windows, likewise (apps/server/windows/README.md).
+!apps/server/windows/relo-windows.zip
 **/.build
 **/DerivedData
 **/coverage

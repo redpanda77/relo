@@ -5,6 +5,8 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { tildePosix } from "./posix-path.mjs";
+import { symlinkSkip } from "./symlink-support.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
 import { run } from "../src/cli.mjs";
 import { VERSION } from "../src/version.mjs";
@@ -16,7 +18,7 @@ const BLOCK = renderBlock(DEPTHS.track).join("\n");
 async function cli(argv, dependencies) {
   const stdout = [];
   const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, dependencies);
-  return { exitCode, line: stdout[0] ? JSON.parse(stdout[0]) : undefined };
+  return { exitCode, line: stdout[0] ? tildePosix(JSON.parse(stdout[0])) : undefined };
 }
 
 /** Every setup command runs against a throwaway home and working folder. */
@@ -67,7 +69,7 @@ test("relo setup writes the block and installs the skill for every harness found
 });
 
 test("--agent picks the harnesses, each into its documented files, with config-dir overrides", async () => {
-  const box = await sandbox({ agents: [] });
+  const box = await sandbox({ agents: [], installed: ["claude-code", "codex", "gemini", "opencode", "copilot", "amp"] });
   const env = { CLAUDE_CONFIG_DIR: join(box.home, "work-claude"), CODEX_HOME: join(box.home, "work-codex"), COPILOT_HOME: join(box.home, "cop") };
   const out = await box.run(["setup", "--agent", "claude-code", "--agent", "codex", "--agent", "gemini", "--agent", "opencode",
     "--agent", "copilot", "--agent", "amp"], { env });
@@ -83,13 +85,13 @@ test("--agent picks the harnesses, each into its documented files, with config-d
 });
 
 test("OpenCode gets its own AGENTS.md and reads the skill from Claude Code's or the shared folder", async () => {
-  const box = await sandbox({ agents: [] });
+  const box = await sandbox({ agents: [], installed: ["claude-code", "opencode"] });
   const out = await box.run(["setup", "--agent", "opencode", "--agent", "claude-code"]);
   assert.deepEqual(rows(out.line, "block").map((row) => row.file), ["~/.config/opencode/AGENTS.md", "~/.claude/CLAUDE.md"]);
   assert.deepEqual(rows(out.line, "skill").map((row) => row.file), ["~/.claude/skills"]);
   assert.deepEqual(out.line.skipped, [{ kind: "skill", harness: "opencode", reason: "reads the skill from ~/.claude/skills" }]);
   // OpenCode alone, with nothing to read, gets its own skill; OPENCODE_DISABLE_CLAUDE_CODE turns the reading off.
-  const fresh = await sandbox({ agents: [] });
+  const fresh = await sandbox({ agents: [], installed: ["claude-code", "opencode"] });
   assert.deepEqual(rows((await fresh.run(["setup", "--agent", "opencode", "--dry-run"])).line, "skill").map((row) => row.file), ["~/.config/opencode/skills"]);
   const off = await fresh.run(["setup", "--agent", "opencode", "--agent", "claude-code", "--dry-run"], { env: { OPENCODE_DISABLE_CLAUDE_CODE: "1" } });
   assert.deepEqual(rows(off.line, "skill").map((row) => row.file), ["~/.config/opencode/skills", "~/.claude/skills"]);
@@ -128,7 +130,7 @@ test("a keep marker freezes the block; markers inside a line do not count; an un
   assert.equal(broken.line.unchanged, 1, "the rest of the plan (the skill) still ran");
 });
 
-test("--project: the repository's own file, or AGENTS.md plus a CLAUDE.md that imports it; both with their own text is an error", async () => {
+test("--project: the repository's own file, or AGENTS.md plus a CLAUDE.md that imports it; both with their own text is an error", { skip: symlinkSkip }, async () => {
   const box = await sandbox({ agents: [".claude"] });
   await mkdir(join(box.cwd, ".git"));
   await mkdir(join(box.cwd, "packages", "app"), { recursive: true });
@@ -151,7 +153,7 @@ test("--project: the repository's own file, or AGENTS.md plus a CLAUDE.md that i
   assert.equal((await box.run(["setup", "--project"], deps)).exitCode, EXIT.OK, "a symlinked pair is one file");
 });
 
-test("--dry-run writes nothing and shows the block it would write; a symlinked file is written through", async () => {
+test("--dry-run writes nothing and shows the block it would write; a symlinked file is written through", { skip: symlinkSkip }, async () => {
   const box = await sandbox({ agents: [".claude"] });
   const dry = await box.run(["setup", "--dry-run"]);
   assert.equal(dry.line.dryRun, true);

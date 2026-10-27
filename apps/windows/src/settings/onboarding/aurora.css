@@ -1,0 +1,47 @@
+/* ReloAurora behind the onboarding (the Mac: OnboardingView ZStack). Copied from home.css (Aurora section), which also has
+   page-wide rules the Settings window must not take. Keep the two in step. */
+.aurora {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  container-type: size;
+  background: rgb(8 8 14);
+  pointer-events: none;
+}
+.aurora i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--s) * 100cqw);
+  height: calc(var(--s) * 100cqw);
+  margin: calc(var(--s) * -50cqw) 0 0 calc(var(--s) * -50cqw);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c) calc(var(--aurora-i) * 100%), transparent);
+  filter: blur(calc(var(--s) * 30cqw));
+  transform: translate(calc(var(--x0) * 100cqw), calc(var(--y0) * 100cqh));
+  animation: aurora-drift 11s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.aurora b {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at center, transparent calc(min(100cqw, 100cqh) * 0.2), rgb(0 0 0 / 0.6) calc(max(100cqw, 100cqh) * 0.85));
+}
+@keyframes aurora-drift {
+  to {
+    transform: translate(calc(var(--x1) * 100cqw), calc(var(--y1) * 100cqh));
+  }
+}
+html[data-reduce-motion] .aurora i {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aurora i {
+    animation: none !important;
+  }
+}
+@media (forced-colors: active) {
+  .aurora {
+    display: none;
+  }
+}

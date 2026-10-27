@@ -79,6 +79,7 @@ describe("dashboard React application delivery", () => {
       version: 1,
       kind: "auth",
       view: "form",
+      macApp: false, windowsApp: false,
       route: { path: "/", nextPath: "/dashboard" },
       mode: "sign-in",
       title: "Sign in to Relo",
@@ -143,7 +144,7 @@ describe("dashboard React application delivery", () => {
   test("the landing document carries a description for link previews; the form does not", () => {
     const indexHtml = `<!doctype html><html><head><title>Dashboard</title></head><body><div id="root"></div></body></html>`;
     const base: DashboardAuthBootstrap = {
-      version: 1, kind: "auth", view: "landing", route: { path: "/", nextPath: "/dashboard" },
+      version: 1, kind: "auth", view: "landing", macApp: false, windowsApp: false, route: { path: "/", nextPath: "/dashboard" },
       mode: "sign-in", registration: "closed", title: "Sign in to Relo", description: "x",
     };
     expect(renderDashboardAppDocumentFromIndex(indexHtml,base)).toContain('<meta name="description"');

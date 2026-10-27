@@ -97,6 +97,8 @@ public struct CurrentSubjectProjection: Codable, Equatable, Identifiable, Sendab
     public let interaction: CurrentDecision?
     public let activity: CurrentActivity?
     public let resources: InboxResourceLinks?
+    /// A work's outcome notification: the card (`act_…`) whose finish it reports.
+    public var outcomeOf: String? = nil
     /// End-to-end sealed text for this phone; title, summary and status are placeholders until opened.
     public var sealed: InboxSealedNotice? = nil
 

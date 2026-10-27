@@ -4,7 +4,7 @@ import {
   AudioWaveform,
   Check,
   CirclePause,
-  Hand,
+  CornerDownLeft,
   MessageCircleQuestion,
   MessageSquareReply,
   Moon,
@@ -24,7 +24,7 @@ import {
  */
 
 /** A card's meaning colour. `cyanQuiet` is running work that is quiet (cyan at 70%). */
-export type WorkTone = "cyan" | "cyanQuiet" | "yellow" | "orange" | "mint" | "red" | "neutral"
+export type WorkTone = "cyan" | "cyanQuiet" | "amber" | "yellow" | "orange" | "mint" | "red" | "neutral"
 
 export type WorkOutcome = { label: string; tone: WorkTone; icon: LucideIcon }
 
@@ -37,6 +37,7 @@ export function toneClass(tone: WorkTone): string {
 export const WORK_TONE_CSS: Record<WorkTone, string> = {
   cyan: "var(--neon-cyan)",
   cyanQuiet: "color-mix(in srgb, var(--neon-cyan) 70%, transparent)",
+  amber: "var(--now-amber)",
   yellow: "var(--neon-yellow)",
   orange: "var(--neon-orange)",
   mint: "var(--neon-mint)",
@@ -51,7 +52,7 @@ const OUTCOMES: Record<OwnerState, WorkOutcome> = {
   dropped: { label: "Dropped", tone: "yellow", icon: Square },
   left_unfinished: { label: "Left unfinished", tone: "yellow", icon: TriangleAlert },
   paused: { label: "Paused", tone: "neutral", icon: Pause },
-  waiting_on_you: { label: "Your turn", tone: "yellow", icon: Hand },
+  waiting_on_you: { label: "Your turn", tone: "amber", icon: CornerDownLeft },
   moving: { label: "Running", tone: "cyan", icon: AudioWaveform },
   working_quietly: { label: "Working quietly", tone: "cyanQuiet", icon: AudioWaveform },
   stopped_responding: { label: "Stopped responding", tone: "neutral", icon: CirclePause },

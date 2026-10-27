@@ -45,7 +45,7 @@ struct ReloIdentityHeader: View {
             CardHeader(origin: ReloCardOrigin(source: row.source.name, sourceSymbol: row.source.systemImageName,
                                               project: row.project?.name,
                                               projectColor: ReloProjectPalette.color(for: row.project, fallback: .reloSecondaryText),
-                                              topic: row.topic),
+                                              topic: row.topic, hasLink: item.validatedDestinationURL != nil),
                        corner: corner)
             Text(title)
                 .font(.title2.weight(.bold))

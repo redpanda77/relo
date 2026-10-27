@@ -1,3 +1,4 @@
+import Testing
 import XCTest
 @testable import ReloCore
 
@@ -110,5 +111,27 @@ final class InboxHierarchyProjectionTests: XCTestCase {
             context: context,
             resources: resources
         )
+    }
+}
+
+/// A project keeps one colour on every surface: the server's slot first, else the Dashboard's name hash.
+@Suite("Project palette")
+struct ProjectPaletteTests {
+    @Test("Twelve colours, the contracts' table; the server's slot picks one, wrapped into range")
+    func slots() {
+        #expect(ProjectPalette.hex.count == 12)
+        #expect(ProjectPalette.hex.first == 0x5CE1FF && ProjectPalette.hex.last == 0xFDE047)
+        #expect(ProjectPalette.slot(3, name: "relo") == 3)
+        #expect(ProjectPalette.slot(14, name: nil) == 2)
+    }
+
+    @Test("Without a slot the name hashes as the Dashboard's hashSlot does; nothing without a name")
+    func nameHash() {
+        // Values from the Dashboard's `hashSlot` (apps/dashboard/src/features/inbox/activity-model.ts).
+        #expect(ProjectPalette.slot(nil, name: "relo") == 2)
+        #expect(ProjectPalette.slot(nil, name: "HSKHarness") == 0)
+        #expect(ProjectPalette.slot(nil, name: "Écrire") == 4)
+        #expect(ProjectPalette.slot(nil, name: nil) == nil)
+        #expect(ProjectPalette.slot(nil, name: "") == nil)
     }
 }

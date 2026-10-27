@@ -62,14 +62,24 @@
   transition: border-color 160ms ease, background-color 160ms ease;
 }
 .ghost-cta:hover { border-color: rgb(255 255 255 / 0.28); background: rgb(255 255 255 / 0.08); }
-/* GSAP owns the transform of magnetic buttons; a CSS transform transition would fight it. */
-.landing .magnetic { transition-property: background-color, border-color, color; }
 .landing .capsule-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   padding: 0 28px;
+}
+
+/* ---------- Get Relo (hero and finale) ---------- */
+.get-relo-note { margin-top: 14px; font-size: 14px; color: var(--muted-foreground); }
+.get-relo-note + .get-relo-note { margin-top: 6px; }
+.get-relo-note a { color: var(--foreground); text-decoration: underline; text-underline-offset: 3px; display: inline-block; min-height: 24px; }
+.get-relo-center { display: flex; flex-direction: column; align-items: center; }
+.get-relo-center > div { justify-content: center; }
+@media (max-width: 639px) {
+  /* Phones: both buttons full width, notes at a readable size, stacked in the hand's reach. */
+  .get-relo-note { font-size: 15px; line-height: 1.45; }
+  .get-relo-center { align-items: stretch; text-align: center; }
 }
 
 /* ---------- Hero ---------- */

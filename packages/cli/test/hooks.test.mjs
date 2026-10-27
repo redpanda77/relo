@@ -6,11 +6,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { tildePosix } from "./posix-path.mjs";
 import { ReloApiClient } from "../src/shared/api-client.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
 import { run } from "../src/cli.mjs";
 import { setupWarnings } from "../src/owner/doctor.mjs";
-import { cardDependencies, fakeHome } from "./fake-cards.mjs";
+import { EVERY_HARNESS, cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 const SESSION_ID = "9f2c1c34-5c0e-4d63-8a3a-7f1d3bd2c001";
 const SECRET_PROMPT = "deploy to prod with password hunter2";
@@ -19,7 +20,7 @@ async function cli(argv, dependencies) {
   const stdout = [];
   const stderr = [];
   const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: (line) => stderr.push(line), stdoutIsTTY: false }, dependencies);
-  return { exitCode, stdout, stderr, line: stdout[0] ? JSON.parse(stdout[0]) : undefined };
+  return { exitCode, stdout, stderr, line: stdout[0] ? tildePosix(JSON.parse(stdout[0])) : undefined };
 }
 
 // ---- relo sessions --------------------------------------------------------------------------------
@@ -68,7 +69,7 @@ test("the API client sends ?phase= only when asked", async () => {
 
 // ---- relo setup --level guide|track (hooks: presence | off) ---------------------------------------------------
 
-const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "SubagentStart", "SubagentStop", "PreCompact", "Stop", "SessionEnd"];
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "SubagentStart", "SubagentStop", "PreCompact", "Stop", "StopFailure", "SessionEnd"];
 const PRESENCE_EVENTS = [...EVENTS].sort();
 const WAIT_MATCHER = "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input";
 const stringify = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -76,7 +77,7 @@ const stringify = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const reloGroup = (settings, event, role) => settings.hooks[event].filter((group) => group.hooks.some((hook) => hook.command === `relo hook ${role}`));
 
 async function setupBox(options) {
-  const home = await fakeHome({ agents: [], ...options });
+  const home = await fakeHome({ agents: [], installed: EVERY_HARNESS(), ...options });
   const cwd = await mkdtemp(join(tmpdir(), "relo-hooks-cwd-"));
   await mkdir(join(cwd, ".git"));
   const deps = { ...cardDependencies({}), home, cwd, env: {} };
@@ -91,7 +92,7 @@ const CLAUDE = ["setup", "--agent", "claude-code", "--level"];
 /** The hook set `relo setup --show` reports for Claude Code (what is installed, user level). */
 const shownHooks = async (box, extra) => (await box.run(["setup", "--agent", "claude-code", "--show"], extra)).line.harnesses[0].hooks;
 /** A reminders-only file, as the retired level wrote it: presence's entries without the session-phase commands. */
-const PHASE_ROLES = new Set(["start", "prompt", "tool-start", "tool-end", "wait", "subagent-start", "subagent-stop", "compact", "stop", "end"]);
+const PHASE_ROLES = new Set(["start", "prompt", "tool-start", "tool-end", "wait", "subagent-start", "subagent-stop", "compact", "stop", "idle", "end"]);
 const remindersOnly = (settings) => {
   for (const [event, groups] of Object.entries(settings.hooks)) {
     const kept = groups.map((group) => ({ ...group, hooks: group.hooks.filter((hook) => !PHASE_ROLES.has(hook.command.slice("relo hook ".length))) })).filter((group) => group.hooks.length);
@@ -113,6 +114,10 @@ test("--level guide writes one marked async entry per presence event into the us
     "only the tools that run long open a tool");
   assert.deepEqual(reloGroup(written, "Notification", "wait"), [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }],
     "only prompts that block on the owner run the hook");
+  // A user interrupt runs no Stop hook: a flagged tool failure, an API-error stop and the idle prompt carry it instead.
+  assert.deepEqual(reloGroup(written, "Notification", "idle"), [{ matcher: "idle_prompt", hooks: [{ type: "command", command: "relo hook idle", async: true }] }]);
+  assert.deepEqual(reloGroup(written, "PostToolUseFailure", "tool-end"), [{ hooks: [{ type: "command", command: "relo hook tool-end", async: true }] }]);
+  assert.deepEqual(reloGroup(written, "StopFailure", "stop"), [{ hooks: [{ type: "command", command: "relo hook stop", async: true }] }]);
   for (const [name, event] of [["SessionStart", "start"], ["UserPromptSubmit", "prompt"], ["Stop", "stop"], ["SubagentStart", "subagent-start"],
     ["SubagentStop", "subagent-stop"], ["PreCompact", "compact"]]) {
     assert.deepEqual(reloGroup(written, name, event), [{ hooks: [{ type: "command", command: `relo hook ${event}`, async: true }] }], `${name} never blocks the agent`);
@@ -156,7 +161,7 @@ test("--level guide keeps everything else, and --level track restores the file e
     "the other PostToolUse hook is still there, first");
   assert.equal(reloGroup(settings, "PostToolUse", "tool-end").length, 1);
   assert.deepEqual(settings.hooks.Notification, [{ hooks: [{ type: "command", command: "say done" }] },
-    { matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }], "the owner's own group is untouched");
+    { matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }, { matcher: "idle_prompt", hooks: [{ type: "command", command: "relo hook idle", async: true }] }], "the owner's own group is untouched");
   const removed = await box.run([...CLAUDE, "track"]);
   assert.deepEqual(hooks(removed.line), { kind: "hooks", harness: "claude-code", file: "~/.claude/settings.json", action: "removed", level: "off" });
   assert.equal(await readFile(box.global, "utf8"), original, "byte for byte");
@@ -214,10 +219,10 @@ test("setup refuses an unknown level or --hooks, says why a harness gets none, a
   const box = await setupBox();
   assert.equal((await box.run([...CLAUDE, "everything"])).exitCode, EXIT.USAGE);
   assert.equal((await box.run([...CLAUDE, "track", "--approvals", "on"])).exitCode, EXIT.USAGE, "approvals need guide or optimize");
-  const codex = await box.run(["setup", "--agent", "codex", "--level", "guide"]);
-  assert.equal(codex.exitCode, EXIT.OK);
-  assert.match(hooks(codex.line, "codex").reason, /^no hooks for this harness$/u);
-  const track = await box.run(["setup", "--agent", "codex", "--level", "track"]);
+  const amp = await box.run(["setup", "--agent", "amp", "--level", "guide"]);
+  assert.equal(amp.exitCode, EXIT.OK);
+  assert.match(hooks(amp.line, "amp").reason, /^no hooks for this harness$/u);
+  const track = await box.run(["setup", "--agent", "amp", "--level", "track"]);
   assert.equal((track.line.skipped ?? []).some((row) => row.kind === "hooks"), false, "a depth without hooks has no hooks row to explain");
   assert.equal(existsSync(box.global), false);
   await mkdir(join(box.home, ".claude"), { recursive: true });
@@ -237,6 +242,52 @@ test("Gemini CLI hooks go in its settings.json with millisecond timeouts and --a
   assert.match(hooks((await box.run(["setup", "--project", "--agent", "gemini", "--level", "guide"])).line, "gemini").reason, /no personal project settings file/u);
   await box.run(["setup", "--agent", "gemini", "--level", "track"]);
   assert.equal(existsSync(join(box.home, ".gemini", "settings.json")), false, "a file that held only Relo's hooks goes");
+});
+
+test("Codex hooks go in its hooks.json with second timeouts and --agent codex; presence or off only; no project file; others' hooks stay", async () => {
+  const box = await setupBox();
+  const file = join(box.home, ".codex", "hooks.json");
+  await mkdir(join(box.home, ".codex"), { recursive: true });
+  const theirs = { type: "command", command: "other-tool --source codex", timeout: 10 };
+  await writeFile(file, JSON.stringify({ description: "kept", hooks: { Stop: [{ hooks: [theirs] }] } }, null, 2));
+  const out = await box.run(["setup", "--agent", "codex", "--level", "guide", "--approvals", "on"]);
+  assert.deepEqual(hooks(out.line, "codex"), { kind: "hooks", harness: "codex", file: "~/.codex/hooks.json", action: "updated", level: "presence" });
+  const settings = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(settings.description, "kept");
+  assert.deepEqual(settings.hooks.Stop, [{ hooks: [theirs] }, { hooks: [{ type: "command", command: "relo hook stop --agent codex", timeout: 5, async: true }] }],
+    "Relo's group goes after everyone else's, so their positional trust keys stay");
+  assert.deepEqual(settings.hooks.PermissionRequest, [{ hooks: [{ type: "command", command: "relo hook wait --agent codex", timeout: 5, async: true }] }]);
+  assert.deepEqual(settings.hooks.SessionEnd, [{ hooks: [{ type: "command", command: "relo hook end --agent codex", timeout: 3 }] }], "SessionEnd runs synchronously, 3 s at most");
+  assert.deepEqual(settings.hooks.Interrupt, [{ hooks: [{ type: "command", command: "relo hook stop --agent codex", timeout: 3 }] }]);
+  assert.ok(out.line.next.some((line) => /type \/hooks and trust Relo's hooks/u.test(line)), "setup says how to trust them in Codex");
+  assert.deepEqual(out.line.ownerSteps, [{ harness: "codex", step: out.line.next.find((line) => line.includes("/hooks")) }], "and as data, for the Mac app");
+  const again = await box.run(["setup", "--agent", "codex", "--level", "guide"]);
+  assert.equal(again.line.next.some((line) => /\/hooks/u.test(line)), false, "nothing changed, nothing to trust");
+  assert.match(hooks((await box.run(["setup", "--project", "--agent", "codex", "--level", "guide"])).line, "codex").reason, /no personal project settings file/u);
+  await box.run(["setup", "--agent", "codex", "--level", "track"]);
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")).hooks, { Stop: [{ hooks: [theirs] }] }, "off removes only Relo's entries");
+});
+
+test("Antigravity hooks are one named hook, \"relo\", in ~/.gemini/config/hooks.json; others' named hooks stay", async () => {
+  const box = await setupBox();
+  const file = join(box.home, ".gemini", "config", "hooks.json");
+  await mkdir(join(box.home, ".gemini", "config"), { recursive: true });
+  const theirs = { "my-linter": { PreToolUse: [{ matcher: "run_command", hooks: [{ command: "lint" }] }], enabled: true } };
+  await writeFile(file, JSON.stringify(theirs, null, 2));
+  const out = await box.run(["setup", "--agent", "antigravity", "--level", "guide"]);
+  assert.deepEqual(hooks(out.line, "antigravity"), { kind: "hooks", harness: "antigravity", file: "~/.gemini/config/hooks.json", action: "updated", level: "presence" });
+  const written = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(written["my-linter"], theirs["my-linter"]);
+  assert.deepEqual(written.relo, {
+    SessionStart: [{ type: "command", command: "relo hook start --agent antigravity", timeout: 5 }],
+    PreInvocation: [{ type: "command", command: "relo hook prompt --agent antigravity", timeout: 5 }],
+    Stop: [{ type: "command", command: "relo hook stop --agent antigravity", timeout: 5 }],
+  }, "its non-tool events hold handlers, not groups");
+  assert.equal((await box.run(["setup", "--agent", "antigravity", "--level", "guide"])).line.changed.some((row) => row.kind === "hooks"), false, "running it again changes nothing");
+  const shown = await box.run(["setup", "--show"]);
+  assert.equal(shown.line.harnesses.find((row) => row.harness === "antigravity").hooks, "presence");
+  await box.run(["setup", "--agent", "antigravity", "--level", "track"]);
+  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), theirs, "off removes only Relo's named hook");
 });
 
 test("doctor reports installed hooks (where, level, events), flags what needs fixing, and never suggests adding them", async () => {
@@ -321,7 +372,7 @@ test("setup --level guide puts Relo's matcher on its own Notification group, nev
   } }));
   assert.equal(hooks((await box.run([...CLAUDE, "guide"])).line).action, "updated");
   const settings = JSON.parse(await readFile(box.global, "utf8"));
-  assert.deepEqual(settings.hooks.Notification, [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }]);
+  assert.deepEqual(settings.hooks.Notification, [{ matcher: WAIT_MATCHER, hooks: [{ type: "command", command: "relo hook wait", async: true }] }, { matcher: "idle_prompt", hooks: [{ type: "command", command: "relo hook idle", async: true }] }]);
   assert.deepEqual(settings.hooks.Stop[0], { matcher: "", hooks: [{ type: "command", command: "mine" }] }, "a shared group keeps the owner's matcher and hook");
   assert.equal(reloGroup(settings, "Stop", "stop").length, 1, "Relo's stop lives in its own group");
 });

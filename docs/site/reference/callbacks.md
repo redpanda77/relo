@@ -86,6 +86,6 @@ signature.
 
 A callback goes to a public `https://` address. A private address (where plain `http://` is also
 accepted) works only when the server admin allows private callbacks for your account
-([Accounts and administration](/docs/guides/accounts#limits-you-set)). The server's own loopback,
-link-local and metadata addresses are always refused. Relo resolves the host once and connects to
+([Accounts and administration](/docs/guides/accounts#limits-you-set)). Addresses that reach the
+server itself, link-local addresses and cloud metadata addresses are always refused. Relo resolves the host once and connects to
 that address, so a changing DNS answer cannot redirect it.

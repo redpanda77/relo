@@ -8,13 +8,13 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const FILES = readdirSync(SRC, { recursive: true }).filter((name) => name.endsWith(".mjs")).map((name) => join(SRC, name));
-const short = (file) => relative(SRC, file);
+const short = (file) => relative(SRC, file).split(sep).join("/");
 
 /** { specifier, names } per static import or re-export, and dynamic imports (names: undefined). */
 function importsOf(file) {

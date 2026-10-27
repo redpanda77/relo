@@ -9,6 +9,8 @@ they send you are readable only on your devices. The server you run, its databas
 Apple's push service carry the content without being able to read it, and they cannot forge it or
 your answers. It works automatically: nobody has to compare keys.
 
+Relo for Mac running on its own: nothing leaves the Mac, so nothing is encrypted and no phone is involved.
+
 ## Keys
 
 | Key | Where it lives | What it does |
@@ -118,6 +120,8 @@ questions, signed with its own key. The server delivers the Dashboard's code, so
 step below a phone in trust, as with WhatsApp Web: strict mode turns its approvals and answers off.
 
 ## Required encryption and strict mode
+
+Relo for Mac running on its own: nothing leaves the Mac, so nothing is encrypted and no phone is involved; none of this applies there.
 
 - **Required, automatically.** Once any active phone on your account has keys, your server refuses
   readable work text, questions and notifications from your computers. If a computer cannot seal, the

@@ -371,7 +371,9 @@ export function DashboardRouter({
     void navigate(failed.url, failed.mode, failed.restoreScrollY, failed.viaBack)
   }, [failed, navigate])
 
-  React.useEffect(() => {
+  // A layout effect: the listener is on in the same commit that shows "Can't reach your server", so a network that
+  // returns right after the alert appears is never missed (a passive effect left that gap; the reconnect test hit it).
+  React.useLayoutEffect(() => {
     if (!failed) return
     window.addEventListener("online", retry)
     return () => window.removeEventListener("online", retry)

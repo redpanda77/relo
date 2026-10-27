@@ -73,14 +73,18 @@ private struct PlanPulse: View {
     let size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.reloMotionPaused) private var paused
+    /// The ring loops only while it can be seen: the app is active and its surface is not paused.
+    private var running: Bool { !reduceMotion && scenePhase == .active && !paused }
     var body: some View {
         Circle().stroke(ReloHoloTheme.violet.opacity(reduceMotion ? 0.28 : (expanded ? 0 : 0.5)), lineWidth: 1)
             .frame(width: size, height: size)
             .scaleEffect(reduceMotion ? 1.35 : (expanded ? 1.9 : 1))
             // Scoped to the ring: a repeating `withAnimation` also caught the row's own moves and made the
             // mark drift whenever the plan above it changed height.
-            .animation(reduceMotion ? nil : .easeOut(duration: 1.8).repeatForever(autoreverses: false), value: expanded)
-            .onAppear { if !reduceMotion { expanded = true } }
+            .animation(running ? .easeOut(duration: 1.8).repeatForever(autoreverses: false) : nil, value: expanded)
+            .onChange(of: running, initial: true) { _, on in expanded = on }
     }
 }
 

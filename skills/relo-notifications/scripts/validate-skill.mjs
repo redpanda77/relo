@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const REQUIRED_REFERENCES = ["cards.md", "cli.md", "security.md", "services.md", "troubleshooting.md", "install.md", "efficiency.md"];
+export const REQUIRED_REFERENCES = ["cards.md", "cli.md", "security.md", "services.md", "troubleshooting.md", "install.md", "efficiency.md", "verify.md"];
 const MAX_SKILL_LINES = 100;
 // Guidance that must stay in SKILL.md itself, not only in a reference.
 const REQUIRED_GUIDANCE = [

@@ -51,7 +51,7 @@ a question. The computer decides this, not the server, so a compromised server c
 </li>
 <li>
 
-**Keep the API on loopback.** `RELO_BIND_ADDRESS=127.0.0.1`, reached only through your tunnel or
+**Keep the API reachable only from the server itself.** `RELO_BIND_ADDRESS=127.0.0.1`, reached only through your tunnel or
 proxy.
 
 </li>

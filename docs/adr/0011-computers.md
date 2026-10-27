@@ -93,7 +93,7 @@ approve", then Pending, Applied, Failed with a reason, or "Refused: not signed b
 ### Signing input
 
 A new input next to the answer input in `packages/cli/src/crypto/e2ee.mjs`, mirrored in the Dashboard
-(`lib/e2ee/envelope.ts`) and iOS (`ReloCore/E2EE/`):
+(`packages/owner-crypto/src/envelope.ts`) and iOS (`ReloCore/E2EE/`):
 
 ```
 relo.e2e.v1 settings

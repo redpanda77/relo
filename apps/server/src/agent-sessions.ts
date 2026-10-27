@@ -76,8 +76,8 @@ async function upsertSnapshot(
      ),
      applied AS (
        INSERT INTO agent_sessions(principal_id,session_hash,harness,computer,account,project,sealed_names,
-         phase,phase_since,last_seen_at,open_tool_since,seq,started_at,context_pct,cost_usd,context_tokens,heartbeat_at)
-       SELECT $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::text,$7::jsonb,$8::text,
+         title,phase,phase_since,last_seen_at,open_tool_since,seq,started_at,context_pct,cost_usd,context_tokens,heartbeat_at)
+       SELECT $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::text,$7::jsonb,$21::text,$8::text,
          snapshot.phase_since,GREATEST(snapshot.last_seen_at,snapshot.phase_since),snapshot.open_tool_since,$12::bigint,
          snapshot.phase_since,$14::smallint,$15::numeric,$16::integer,
          CASE WHEN $20::boolean THEN snapshot.last_seen_at END
@@ -88,6 +88,7 @@ async function upsertSnapshot(
          account=COALESCE(EXCLUDED.account,agent_sessions.account),
          project=COALESCE(EXCLUDED.project,agent_sessions.project),
          sealed_names=COALESCE(EXCLUDED.sealed_names,agent_sessions.sealed_names),
+         title=COALESCE(EXCLUDED.title,agent_sessions.title),
          phase=EXCLUDED.phase,
          phase_since=EXCLUDED.phase_since,
          last_seen_at=EXCLUDED.last_seen_at,
@@ -113,7 +114,7 @@ async function upsertSnapshot(
     [principalId,input.session,input.harness,input.computer ?? null,input.account ?? null,input.project ?? null,
       input.sealedNames === undefined ? null : JSON.stringify(input.sealedNames),input.phase,input.phaseSince,
       input.lastSeenAt,input.openToolSince,input.seq,SESSION_FUTURE_SKEW_SECONDS,input.contextPct ?? null,input.costUsd ?? null,input.contextTokens ?? null,
-      input.phase === "ended" ? input.endReason ?? null : null,previousPhase,previousLastSeenAt,input.heartbeat === true],
+      input.phase === "ended" ? input.endReason ?? null : null,previousPhase,previousLastSeenAt,input.heartbeat === true,input.title ?? null],
   );
   return result.rows[0].applied > 0;
 }
@@ -128,7 +129,7 @@ async function upsertSnapshot(
 export function agentSessionRowsSql(principal: string): string {
   return `(SELECT COALESCE(jsonb_agg(to_jsonb(y) ORDER BY y.last_seen_at DESC,y.id),'[]'::jsonb) FROM (
       SELECT s.id,s.session_hash,s.harness,s.computer,s.account,s.project,s.phase,s.phase_since,s.last_seen_at,s.open_tool_since,s.heartbeat_at,s.context_pct,s.cost_usd,s.context_tokens,
-        s.started_at,s.sealed_names,
+        s.started_at,s.sealed_names,s.title,
         card.id AS card_id,card.state AS card_state,card.updated_at AS card_updated_at,declared.at AS declared_at,
         machine.computer_icon,machine.computer_kind,machine.computer_row,waiting.since AS waiting_since
       FROM agent_sessions s
@@ -161,6 +162,16 @@ const SESSION_HANDLE = /^[pca]-[a-z2-7]{16}$/u;
 /** At most this many handles are looked up and session ids returned for one page. */
 const NAMES_FROM_HANDLES_MAX = 200;
 export const NAMES_FROM_MAX = 20;
+
+/**
+ * A session's label over the card's own: the session's wins (Now and Sessions name the same computer and project),
+ * except a handle over a readable name, which would turn a name everyone can read into one only sealed names open.
+ */
+export function sessionLabelOver(sessionValue: string | null | undefined,cardValue: string | null | undefined): string | null {
+  const session = sessionValue ?? null;
+  if (session && SESSION_HANDLE.test(session.trim()) && cardValue && !SESSION_HANDLE.test(cardValue.trim())) return cardValue;
+  return session ?? cardValue ?? null;
+}
 
 /** The session-named handles anywhere in a page value, in the order they appear. */
 export function sessionHandlesIn(value: unknown, into: Set<string> = new Set()): Set<string> {

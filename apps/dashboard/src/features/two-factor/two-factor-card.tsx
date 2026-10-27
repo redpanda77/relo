@@ -149,7 +149,7 @@ export function TwoFactorCard({ service = httpService }: { service?: TwoFactorSe
             />
           </form>
         ) : null}
-        <OperationStatus error={error || null} />
+        <OperationStatus card error={error || null} />
       </CardContent>
       ) : null}
       {step.kind === "on" ? (

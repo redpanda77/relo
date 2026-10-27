@@ -10,10 +10,10 @@ export const STEP_SEGMENTS_MAX = 40
  * capsule ends, in the card's tone (`--tone`).
  *
  * - Steps (up to 40): one segment per TOP-LEVEL step, 3px apart (1.5px past 16) (substeps never add segments). Done steps in
- *   the tone, the current step white at 28% and filled to the server's `fill` (its substeps, or its own
+ *   the tone, the current step's track the tone at 32% and filled to the server's `fill` (its substeps, or its own
  *   progress), pending ones white at 10%. A finished work fills them all.
  * - More than 40 steps, or a plain `progress` (0...1): one bar filled to the fraction.
- * - `live`: a sweep of light runs through the filled part only (masked by it), never the track.
+ * - `live`: a shimmer (22px, white .8, 2.8 s) runs inside the current segment only; its track is the tone at 32%.
  *
  * No caption: the card's standing line says "2 of 6 · Run migrations".
  */
@@ -56,7 +56,7 @@ export function StepTrack({
         aria-valuemin={0}
         aria-valuemax={total}
         aria-valuenow={filled}
-        data-live={(live && filled > 0) || undefined}
+        data-live={live || undefined}
         data-many={total > 16 || undefined}
         style={{ ["--steps" as string]: total, ["--done" as string]: filled } as React.CSSProperties}
       >
@@ -67,7 +67,6 @@ export function StepTrack({
             style={index === at && !finished && fill != null ? ({ ["--seg-fill" as string]: `${Math.min(Math.max(fill, 0), 1) * 100}%` } as React.CSSProperties) : undefined}
           />
         ))}
-        {live && filled > 0 ? <span className="step-sweep" aria-hidden="true" /> : null}
       </div>
     )
   }

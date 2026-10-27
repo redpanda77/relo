@@ -58,7 +58,7 @@ test("status creates a private identity, publishes it once and trusts the accoun
   try {
     const output = await h.run("status");
     const store = await loadKeyStore(h.storePath);
-    assert.equal(statSync(h.storePath).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(statSync(h.storePath).mode & 0o777, 0o600);
     assert.deepEqual(h.published, [{ identityKey: store.identity.publicKey }]);
     assert.equal(output.data.identity.keyId, store.identity.keyId);
     assert.equal(output.data.required, true);
@@ -155,7 +155,7 @@ test("rotate needs a person and replaces the identity", async () => {
   }
 });
 
-test("the key store refuses loose permissions and corrupted identities, and tests never touch the real one", async () => {
+test("the key store refuses loose permissions and corrupted identities, and tests never touch the real one", { skip: process.platform === "win32" && "POSIX file modes: chmod 0644 changes nothing on Windows, so a loose store cannot be made (see keystore.mjs: no ACL check on win32)" }, async () => {
   const folder = mkdtempSync(join(tmpdir(), "relo-keystore-"));
   const path = join(folder, "e2ee.json");
   try {

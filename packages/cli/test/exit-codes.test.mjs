@@ -47,7 +47,7 @@ test("publishes the golden exit-code matrix (0.11: 4 still open, 8 closed)", asy
     assert.match(document, /\| `8` \| Closed without an answer \(expired, canceled\): do not act/u);
     assert.match(document, /\| `5` \| The owner denied or said no/u);
     assert.match(document, /\| `6` \| Network unreachable/u);
-    assert.match(document, /\| `7` \| No phone could receive it/u);
+    assert.match(document, /\| `7` \| Nothing could show it/u);
   }
 
   const cases = [

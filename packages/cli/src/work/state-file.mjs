@@ -1,10 +1,11 @@
 // Atomic private JSON files (plan 04 §2.7). The caller's module picks the root; nothing here takes a key
 // from the command line.
-import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { open, readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writeFileAtomic } from "../shared/atomic-write.mjs";
+import { ensurePrivateDirectory } from "../shared/private-dir.mjs";
 import { FACTS } from "../shared/facts.generated.mjs";
 
 /** The owner-state windows (contracts OWNER_STATE_TIMING, through the generated facts). */
@@ -17,17 +18,22 @@ const MAX_BYTES = 256 * 1024;
  * The CLI's data folder (plan 10 D2): what outlives a state reset, such as verified releases and archived skill
  * copies. One home for its path; docs/site/reference/files.md lists what is in it (state-paths.test.mjs).
  */
-export function dataRoot(home = homedir()) {
-  return join(home, ".local", "share", "relo");
+export function dataRoot(home, env = home === undefined ? process.env : {}, platform = process.platform) {
+  home ??= homedir();
+  return platform === "win32" ? join(localAppData(env, home), "Relo", "data") : join(home, ".local", "share", "relo");
 }
+
+/** %LOCALAPPDATA% (the env's own, so an injected home never reaches the real one), else <home>\AppData\Local. */
+const localAppData = (env, home) => env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local");
 
 /**
  * The CLI's state folder: the env's RELO_STATE_DIR, then its XDG_STATE_HOME, then the process's RELO_STATE_DIR
- * (a test's own env object without either never falls back to the real folder), then ~/.local/state/relo.
+ * (a test's own env object without either never falls back to the real folder), then ~/.local/state/relo (win32: %LOCALAPPDATA%\Relo\state; the data folder is ...\Relo\data).
  */
-export function stateRoot(env = process.env, home = homedir()) {
+export function stateRoot(env = process.env, home = homedir(), platform = process.platform) {
   return env.RELO_STATE_DIR?.trim() || (env.XDG_STATE_HOME?.trim() && join(env.XDG_STATE_HOME.trim(), "relo"))
-    || process.env.RELO_STATE_DIR?.trim() || join(home, ".local", "state", "relo");
+    || process.env.RELO_STATE_DIR?.trim()
+    || (platform === "win32" ? join(localAppData(env, home), "Relo", "state") : join(home, ".local", "state", "relo"));
 }
 
 /**
@@ -56,14 +62,13 @@ export async function readStateFile(path) {
 }
 
 /** Writes atomically; skipped when the file already holds a newer version of the same open work. */
-export async function writeStateFile(path, data) {
+export async function writeStateFile(path, data, { privateDirectory = {} } = {}) {
   const dir = join(path, "..");
-  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // On Windows the first write under %LOCALAPPDATA%\Relo restricts that folder to this user (once; a marker file remembers).
+  await ensurePrivateDirectory(dir, privateDirectory);
   const existing = await readStateFile(path);
   if (existing?.open && data.open && existing.open.id === data.open.id && (existing.open.version ?? 0) > (data.open.version ?? 0)) return false;
-  const temp = join(dir, `.${path.split("/").pop()}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
-  await writeFile(temp, JSON.stringify({ ...data, v: 1, writtenAt: new Date().toISOString() }), { mode: 0o600 });
-  await rename(temp, path);
+  await writeFileAtomic(path, JSON.stringify({ ...data, v: 1, writtenAt: new Date().toISOString() }));
   return true;
 }
 

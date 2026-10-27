@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { platform } from "node:os";
 import { assertNoExtra, parseDuration, requireText } from "../shared/validate.mjs";
-import { normalizeApiUrl } from "../shared/config.mjs";
+import { isLoopbackApiUrl, normalizeApiUrl, profileName } from "../shared/config.mjs";
 import { ApiError, AuthError, EXIT, NetworkError, ReloError, UsageError, normalizeError } from "../shared/errors.mjs";
 import { waitsShort } from "../caller.mjs";
 import { getAuthenticated } from "../shared/login.mjs";
@@ -38,8 +38,19 @@ export function openBrowser(url) {
 }
 
 /** Opens Relo for Mac (the notch app) at `path` with launch arguments; it reads them once, at start. */
-export function openMacApp(path, args) {
-  const child = spawn("open", [path, "--args", ...args], { detached: true, shell: false, stdio: "ignore" });
+export function openMacApp(path, args, { platform: current = platform(), spawnImpl = spawn } = {}) {
+  // `open` and .app bundles exist only on a Mac: elsewhere this throws, and the caller reports "not-opened".
+  if (current !== "darwin") throw new Error("Relo for Mac can only be opened on a Mac.");
+  const child = spawnImpl("open", [path, "--args", ...args], { detached: true, shell: false, stdio: "ignore", windowsHide: true });
+  child.on("error", () => {});
+  child.unref();
+}
+
+/** Opens Relo for Windows at `path` with launch arguments (--relo-origin, --relo-sign-in-code, --relo-code-verifier); it reads them once, at start. */
+export function openWindowsApp(path, args, { platform: current = platform(), spawnImpl = spawn } = {}) {
+  // An .exe runs only on Windows: elsewhere this throws, and the caller reports "not-opened".
+  if (current !== "win32") throw new Error("Relo for Windows can only be opened on Windows.");
+  const child = spawnImpl(path, args, { detached: true, shell: false, stdio: "ignore", windowsHide: false });
   child.on("error", () => {});
   child.unref();
 }
@@ -215,19 +226,24 @@ async function pollAuthorization({ client, apiUrl, deviceCode, intervalSeconds, 
  * Saves the login a sign-in issued (the device authorization's token, or a redeemed one-time code) and returns the
  * auth.login result. A response that does not match what was asked is revoked, never saved.
  */
-async function saveIssuedLogin({ response, apiUrl, scopes, clientName, profile, expectedConfigRevision, dependencies }) {
+async function saveIssuedLogin({ response, apiUrl, scopes, clientName, profile, expectedConfigRevision, dependencies, local, activate = false }) {
   const path = dependencies.configPath();
   const accessToken = response?.accessToken;
   try {
     const issued = validateAuthorizationToken(response, scopes, clientName);
     // A new login on the same server keeps what the old one learned (the first phone test).
     let previous;
-    try { previous = await dependencies.loadConfig(path); } catch { previous = undefined; }
+    try { previous = await loadProfile(dependencies, profile ?? dependencies.profile); } catch { previous = undefined; }
     const sameServer = previous?.apiUrl === apiUrl;
+    // Without --profile a sign-in never writes over the local profile (Relo for Mac's server): it gets a profile of its own.
+    const target = profile ?? (local ? undefined : await profileBesideLocal(dependencies, apiUrl));
     await dependencies.writeConfig(path, {
       version: 1,
-      ...(profile === undefined ? {} : { profile }),
+      ...(target === undefined ? {} : { profile: target }),
+      // join --profile: the new sign-in becomes the active one; every other profile stays as it is.
+      ...((activate || (profile === undefined && target !== undefined)) && target !== undefined ? { activeProfile: target } : {}),
       apiUrl,
+      ...(local ? { local: true } : {}),
       token: issued.accessToken,
       principal: {
         id: issued.credential.id,
@@ -242,13 +258,25 @@ async function saveIssuedLogin({ response, apiUrl, scopes, clientName, profile, 
       authenticated: true,
       apiUrl,
       credential: issued.credential,
-      ...(profile === undefined ? {} : { profile }),
+      ...(target === undefined ? {} : { profile: target }),
       configPath: path,
     });
   } catch (error) {
     await revokeIssuedCredential(apiUrl, accessToken, dependencies);
     throw error;
   }
+}
+
+/** When the active profile is the local one: the profile a remote sign-in goes to instead (`default`, else one named after the server's host), or undefined. */
+async function profileBesideLocal(dependencies, apiUrl) {
+  let active;
+  try { active = await loadProfile(dependencies, undefined); } catch { return undefined; }
+  if (active?.local !== true) return undefined;
+  let other;
+  try { other = await loadProfile(dependencies, "default"); } catch { other = undefined; }
+  if (!other || other.local !== true) return "default";
+  const host = new URL(apiUrl).hostname.replace(/[^A-Za-z0-9_-]/gu, "-").replace(/^[^A-Za-z0-9]+/u, "").slice(0, 40);
+  return profileName(host || "remote");
 }
 
 /** A cloud sandbox is not a computer: a login there would be a stray computer on the owner's phone. Before any network call. */
@@ -271,32 +299,52 @@ export async function join(options, fullCode, dependencies) {
     throw new UsageError("That is not a Relo join code.", { hint: "Copy the whole command from Add a computer on your iPhone, Mac or the Dashboard." });
   }
   const { clientName, scopes, expiresInSeconds } = loginSettings(options, dependencies);
+  // --profile NAME: a sign-in of its own, made the active one; the others stay. Without it the code replaces the active login.
+  const profile = options.profile === undefined ? undefined : profileName(options.profile);
   let trustedOrigin = options["api-url"] ?? dependencies.env.RELO_API_URL;
+  let onLocal = false;
   if (trustedOrigin === undefined) {
-    try { trustedOrigin = (await loadForOrigin(dependencies)).apiUrl; } catch { /* named below */ }
+    try {
+      const reused = await reusableOrigin(dependencies);
+      trustedOrigin = reused.apiUrl;
+      onLocal = reused.local === true;
+    } catch { /* named below */ }
   }
-  if (trustedOrigin === undefined) throw new UsageError("Relo server origin is required; use --api-url");
+  if (trustedOrigin === undefined) throw new UsageError("Relo server origin is required; use --api-url", onLocal ? { hint: LOCAL_ORIGIN_HINT } : undefined);
   const apiUrl = normalizeApiUrl(trustedOrigin);
+  const local = options.local === true;
+  if (local && !isLoopbackApiUrl(apiUrl)) {
+    throw new UsageError("--local needs a server on this computer: the API URL must be 127.0.0.1, localhost or ::1.", { hint: "Drop --local to sign in to a remote server." });
+  }
   const expectedConfigRevision = await dependencies.configRevision(dependencies.configPath());
   // A code means switch: the login it replaces is named afterwards, never asked about.
   let left;
   try { left = await dependencies.loadConfig(dependencies.configPath()); } catch { left = undefined; }
-  // The Mac app the install script just put in place (--mac-app): the redeem asks for its sign-in code with a PKCE
-  // challenge, and only the app is handed the verifier.
+  // The desktop app the install script just put in place (--mac-app on a Mac, --windows-app on Windows): the redeem asks for
+  // its sign-in code with a PKCE challenge, and only the app is handed the verifier.
   const macApp = typeof options["mac-app"] === "string" && dependencies.platform === "darwin" ? options["mac-app"] : undefined;
-  const macVerifier = macApp ? randomBytes(32).toString("base64url") : undefined;
-  const macAppChallenge = macVerifier ? createHash("sha256").update(macVerifier).digest("base64url") : undefined;
+  const windowsApp = typeof options["windows-app"] === "string" && dependencies.platform === "win32" ? options["windows-app"] : undefined;
+  const desktopApp = macApp ?? windowsApp;
+  // Relo for Mac running the join itself (its own onboarding) keeps the verifier and sends only the challenge: the
+  // sign-in code comes back in the result instead of opening the app.
+  const givenChallenge = typeof options["mac-app-challenge"] === "string" ? options["mac-app-challenge"] : undefined;
+  if (givenChallenge !== undefined && (desktopApp || !/^[A-Za-z0-9_-]{43}$/u.test(givenChallenge))) {
+    throw new UsageError("--mac-app-challenge is a PKCE S256 challenge (43 characters), and it does not go with --mac-app or --windows-app.");
+  }
+  const appVerifier = desktopApp ? randomBytes(32).toString("base64url") : undefined;
+  const desktopAppChallenge = givenChallenge ?? (appVerifier ? createHash("sha256").update(appVerifier).digest("base64url") : undefined);
   let response;
   try {
     response = await dependencies.clientFactory({ apiUrl })
-      .redeemComputerInvite({ code, clientName, scopes, expiresInSeconds, ...(macAppChallenge ? { macAppChallenge } : {}) });
+      .redeemComputerInvite({ code, clientName, scopes, expiresInSeconds, ...(desktopAppChallenge ? { desktopAppChallenge } : {}) });
   } catch (error) {
     throw joinRedeemFailure(error, apiUrl);
   }
   if (typeof response?.accessToken !== "string") throw joinRedeemFailure(undefined, apiUrl);
-  const saved = await saveIssuedLogin({ response, apiUrl, scopes, clientName, profile: undefined, expectedConfigRevision, dependencies });
+  const saved = await saveIssuedLogin({ response, apiUrl, scopes, clientName, profile, expectedConfigRevision, dependencies, local, activate: true });
   // Publish the identity key now so the binding goes with it; a failure here is retried, unbound, by the next command.
-  try {
+  // A local account never seals, so it publishes no key.
+  if (!local) try {
     const config = { apiUrl, token: response.accessToken };
     await publishJoinKey({ client: dependencies.clientFactory(config), config, clientId: response.credential?.id, bind, dependencies });
   } catch { /* ensureTrust publishes it later, without a binding: the owner approves this computer the ordinary way */ }
@@ -304,21 +352,30 @@ export async function join(options, fullCode, dependencies) {
   // The agents the owner picked; none named: every agent this computer has.
   const agents = Array.isArray(response?.setup?.agents) ? response.setup.agents.filter((id) => typeof id === "string" && /^[a-z][a-z0-9-]{1,30}$/u.test(id)) : [];
   // Named only when it left another server: locally a login knows its server, not its account.
-  const leftLogin = left && left.source !== "environment" && left.apiUrl && left.apiUrl !== apiUrl
+  // A named profile replaces nothing: the active login is kept as a profile, so it is not "left".
+  const leftLogin = profile === undefined && left && left.source !== "environment" && left.apiUrl && left.apiUrl !== apiUrl
     ? { server: left.apiUrl, name: left.principal?.name } : undefined;
+  // desktopAppSignInCode; macAppSignInCode is what servers that predate the rename call it.
+  const appSignInCode = typeof response?.desktopAppSignInCode === "string" ? response.desktopAppSignInCode
+    : typeof response?.macAppSignInCode === "string" ? response.macAppSignInCode : undefined;
   let mac;
-  if (macApp) {
-    const signInCode = typeof response?.macAppSignInCode === "string" ? response.macAppSignInCode : undefined;
+  let windows;
+  if (desktopApp) {
+    const launch = appSignInCode
+      ? ["--relo-origin", apiUrl, "--relo-sign-in-code", appSignInCode, "--relo-code-verifier", appVerifier]
+      : ["--relo-origin", apiUrl];
+    let state;
     try {
-      await dependencies.openMacApp(macApp, signInCode
-        ? ["--relo-origin", apiUrl, "--relo-sign-in-code", signInCode, "--relo-code-verifier", macVerifier]
-        : ["--relo-origin", apiUrl]);
-      mac = signInCode ? "signed-in" : "opened";
+      await (macApp ? dependencies.openMacApp(macApp, launch) : dependencies.openWindowsApp(windowsApp, launch));
+      state = appSignInCode ? "signed-in" : "opened";
     } catch {
-      mac = "not-opened";
+      state = "not-opened";
     }
+    if (macApp) mac = state; else windows = state;
   }
-  return { saved, clientName, left: leftLogin, setup: { level, approvals: response?.setup?.approvals === true, agents }, ...(mac ? { mac } : {}) };
+  if (givenChallenge && appSignInCode) mac = "code";
+  return { saved, clientName, left: leftLogin, ...(profile === undefined ? {} : { profile }), setup: { level, approvals: response?.setup?.approvals === true, agents }, ...(mac ? { mac } : {}),
+    ...(windows ? { windows } : {}), ...(mac === "code" ? { macAppSignInCode: appSignInCode } : {}) };
 }
 
 const PENDING_NEXT = "relo auth login --wait";
@@ -341,6 +398,24 @@ async function loadForOrigin(dependencies) {
   }
 }
 
+/**
+ * The server a sign-in without --api-url goes to: the existing login's, except a local account's (Relo for Mac's
+ * own server on this computer): its loopback address is no server to sign in to, so the owner names the server.
+ */
+async function reusableOrigin(dependencies) {
+  const config = await loadForOrigin(dependencies);
+  return config.local === true && isLoopbackApiUrl(config.apiUrl) ? { local: true } : { apiUrl: config.apiUrl };
+}
+
+const LOCAL_ORIGIN_HINT = "This computer is signed in to Relo for Mac's own server, which is not a server to sign in to: name the server with --api-url.";
+
+/** The stored sign-in of one profile (the active one when `profile` is undefined), without changing which profile the command uses. */
+async function loadProfile(dependencies, profile) {
+  const keep = dependencies.profile;
+  dependencies.profile = profile;
+  try { return await dependencies.loadConfig(dependencies.configPath()); } finally { dependencies.profile = keep; }
+}
+
 export async function login(options, dependencies) {
   refuseCloudSandbox(dependencies);
   if (options.open && options["no-open"]) {
@@ -357,9 +432,12 @@ export async function login(options, dependencies) {
   const detach = Boolean(options["no-wait"]) || agentDefault;
   const profile = dependencies.profile;
   let trustedOrigin = options["api-url"] ?? dependencies.env.RELO_API_URL;
+  let onLocal = false;
   if (trustedOrigin === undefined) {
     try {
-      trustedOrigin = (await loadForOrigin(dependencies)).apiUrl;
+      const reused = await reusableOrigin(dependencies);
+      trustedOrigin = reused.apiUrl;
+      onLocal = reused.local === true;
     } catch (error) {
       if (!(error instanceof AuthError && error.code === "CONFIG_NOT_FOUND")) throw error;
     }
@@ -367,6 +445,7 @@ export async function login(options, dependencies) {
   if (trustedOrigin === undefined) {
     throw new UsageError(
       "Relo server origin is required; use --api-url or RELO_API_URL for first-time login",
+      onLocal ? { hint: LOCAL_ORIGIN_HINT } : undefined,
     );
   }
   const apiUrl = normalizeApiUrl(trustedOrigin);
@@ -491,6 +570,7 @@ export async function runAuthCommand(command) {
       apiUrl: config.apiUrl,
       credential: safeCredential(response.credential),
       credentialSource: config.source ?? "config",
+      ...(isLoopbackApiUrl(config.apiUrl) && config.local === true ? { local: "this Mac" } : {}),
       ...(config.profile === undefined ? {} : { profile: config.profile, profiles: config.profiles }),
       configPath: config.path,
     });
@@ -516,7 +596,7 @@ export async function runAuthCommand(command) {
   }
 
   if (group === "auth" && action === "invite") {
-    assertNoExtra(rest, 0, "Usage: relo auth invite [--level LEVEL] [--approvals on|off] [--with-mac-app]");
+    assertNoExtra(rest, 0, "Usage: relo auth invite [--level LEVEL] [--approvals on|off] [--with-desktop-app]");
     const { client } = await getAuthenticated(dependencies);
     const agents = [options.agent ?? []].flat();
     const { harnessFor } = await import("../harness/catalog.mjs");
@@ -525,18 +605,22 @@ export async function runAuthCommand(command) {
     const invite = await client.createComputerInvite({
       ...(options.level ? { level: options.level } : {}), ...(options.approvals ? { approvals: options.approvals === "on" } : {}),
       ...(agents.length ? { agents: [...new Set(agents.map((name) => harnessFor(name).id))] } : {}),
-      ...(options["with-mac-app"] ? { macApp: true } : {}),
+      ...(options["with-desktop-app"] || options["with-mac-app"] ? { desktopApp: true } : {}),
     });
-    return result("auth.invite", { command: invite.command, expiresAt: invite.expiresAt, level: invite.level, approvals: invite.approvals,
-      agents: invite.agents ?? null, macApp: invite.macApp === true },
-      { message: "Paste the command on the new computer. It works once, for 30 minutes." });
+    // commands: the POSIX one (macOS, Linux) and the PowerShell one (Windows); command is the first, for older servers' answers too.
+    const commands = invite.commands ?? { posix: invite.command };
+    return result("auth.invite", { command: commands.posix, commands, expiresAt: invite.expiresAt, level: invite.level, approvals: invite.approvals,
+      agents: invite.agents ?? null, desktopApp: invite.desktopApp === true || invite.macApp === true },
+      { message: commands.windows
+        ? "Paste the command on the new computer (the PowerShell one on Windows). It works once, for 30 minutes."
+        : "Paste the command on the new computer. It works once, for 30 minutes." });
   }
 
   if (group === "auth" && action === "join") {
-    assertNoExtra(rest, 1, "Usage: relo auth join CODE [--api-url URL] [--client-name NAME] [--mac-app PATH]");
+    assertNoExtra(rest, 1, "Usage: relo auth join CODE [--api-url URL] [--client-name NAME] [--mac-app PATH | --windows-app PATH]");
     const joined = await join(options, rest[0], dependencies);
     const apiUrl = joined.saved.data.apiUrl;
-    dependencies.stderr?.(`Signed in to ${apiUrl} as ${joined.clientName}. Setting up this computer's agents…`);
+    dependencies.stderr?.(`${options.local === true ? "Linked to" : "Signed in to"} ${apiUrl} as ${joined.clientName}.${options["no-setup"] === true ? "" : " Setting up this computer's agents…"}`);
     // A code is never a person at a terminal: setup must not ask, even when stdout happens to be a TTY.
     const quiet = { ...dependencies, stdinIsTTY: false, stdoutIsTTY: false };
     // Set up the way the owner chose when making the code; the computer's name is the one it signed in with.
@@ -546,7 +630,9 @@ export async function runAuthCommand(command) {
     const agents = joined.setup.agents.filter((id) => harnessFor(id));
     let outcome;
     // No agent here yet (and none picked): signed in all the same; setup runs once one is installed.
-    if (agents.length === 0 && chooseHarnesses([], { env, home, cwd, platform }).length === 0) {
+    if (options["no-setup"] === true) {
+      outcome = result("auth.login", joined.saved.data, { message: "Signed in. Agents were not set up (--no-setup): relo setup does it when the owner asks." });
+    } else if (agents.length === 0 && chooseHarnesses([], { env, home, cwd, platform }).length === 0) {
       outcome = result("auth.login", joined.saved.data, { message: `Signed in. No agent is installed here yet: install an agent (Claude Code, Codex, OpenCode, Gemini CLI, Cursor, Copilot), then run relo setup --level ${joined.setup.level}${joined.setup.approvals ? " --approvals on" : ""}.` });
     } else {
       const { runSetupCommand } = await import("./setup.mjs");
@@ -555,18 +641,20 @@ export async function runAuthCommand(command) {
         action: undefined, rest: [], dependencies: quiet,
       });
     }
-    const summary = await joinSummary({ joined, apiUrl, dependencies: quiet, outcome });
+    const summary = await joinSummary({ joined, apiUrl, dependencies: quiet, outcome, local: options.local === true, setup: options["no-setup"] !== true });
     return { ...outcome, data: { ...outcome.data, join: summary.data }, text: summary.lines.join("\n") };
   }
 
   if (group === "auth" && action === "logout") {
-    assertNoExtra(rest, 0, "Usage: relo auth logout");
+    assertNoExtra(rest, 0, "Usage: relo auth logout [--profile NAME] [--only-local]");
     const path = dependencies.configPath();
+    const named = typeof options.profile === "string";
     let config;
     try {
       config = await dependencies.loadConfig(path);
     } catch (error) {
-      if (error instanceof AuthError && error.code === "CONFIG_NOT_FOUND") {
+      const nothing = error instanceof AuthError && (error.code === "CONFIG_NOT_FOUND" || (named && error.code === "PROFILE_NOT_FOUND"));
+      if (nothing) {
         return result("auth.logout", {
           authenticated: false,
           revoked: false,
@@ -581,6 +669,12 @@ export async function runAuthCommand(command) {
         hint: "Unset RELO_TOKEN, or revoke the computer in the Relo dashboard under Connections → Computers",
       });
     }
+    if (options["only-local"] === true && !(config.local === true && isLoopbackApiUrl(config.apiUrl))) {
+      return result("auth.logout", { authenticated: true, revoked: false, credentialsRemoved: false, skipped: true,
+        ...(config.profile === undefined ? {} : { profile: config.profile }) },
+      { message: "Skipped: that sign-in is not the local one, so it was left as it is." });
+    }
+    // Best effort: the server being down (a local server that is stopped, a tunnel that is gone) never keeps a login here.
     let revoked = false;
     let revocationError;
     try {
@@ -593,6 +687,11 @@ export async function runAuthCommand(command) {
       expectedRevision: config.revision,
       ...(config.profile === undefined ? {} : { profile: config.profile }),
     });
+    // A profile that was the active one hands that over to another remaining profile (or none is left).
+    let activeProfile = null;
+    if (named) {
+      try { activeProfile = (await loadProfile(dependencies, undefined)).profile ?? null; } catch { activeProfile = null; }
+    }
     return result(
       "auth.logout",
       {
@@ -601,8 +700,9 @@ export async function runAuthCommand(command) {
         credentialsRemoved,
         serverRevocation: revoked ? "confirmed" : "unconfirmed",
         ...(revocationError ? { revocationError } : {}),
+        ...(named ? { profile: config.profile, activeProfile } : {}),
       },
-      revoked
+      revoked || config.local === true
         ? undefined
         : {
             message:

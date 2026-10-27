@@ -1,0 +1,880 @@
+@import "tailwindcss";
+@import "../relo/ui/relo-ui.css";
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * Relo Settings on glass, after the Mac's window (ReloGlass.swift, SettingsView.swift): no title band, the content runs to
+ * the top edge and the sidebar is a floating pane of glass beside the page; the desktop shows through (Acrylic, glass.rs),
+ * tinted rgb(.03 .035 .07) at .6, with two slow lights on it. Panels are the Mac's ReloGlassSurface: a fill brighter at
+ * the top (white .085 to .03), a .5px hairline at .13, a lit top edge, a soft shadow.
+ */
+:root {
+  color-scheme: dark;
+  --ink: #0b0c14;
+  --fg: #f3f3f7;
+  --muted: rgb(255 255 255 / 0.55);
+  --faint: rgb(255 255 255 / 0.4);
+  --hair: rgb(255 255 255 / 0.08);
+  --tone: #8b7cff;
+  --warn: #fbbf24;
+  --ok: #34d399;
+  --bad: #f87171;
+  --mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  --glass-fill: linear-gradient(180deg, rgb(255 255 255 / 0.085), rgb(255 255 255 / 0.03));
+  --glass-line: rgb(255 255 255 / 0.13);
+  --glass-shadow: 0 8px 16px rgb(0 0 0 / 0.22);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--ink);
+  color: var(--fg);
+  font-family: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+/* A desktop backdrop is behind the page: stay transparent so it shows (the tint comes with the Acrylic). */
+html[data-glass="on"],
+html[data-glass="on"] body,
+html[data-glass="on"] #root {
+  background: transparent;
+}
+/* Dev preview only (settings.html?preview=1&glass=sim): a wallpaper and the Mac's tint stand in for the blurred desktop. */
+html[data-glass="sim"],
+html[data-glass="sim"] body,
+html[data-glass="sim"] #root {
+  background: transparent;
+}
+html[data-glass="sim"] body {
+  background:
+    radial-gradient(60% 70% at 15% 20%, #e8743b, transparent 70%), radial-gradient(55% 70% at 85% 25%, #2a7fd4, transparent 70%),
+    radial-gradient(60% 60% at 60% 95%, #2fb68a, transparent 70%), #3b2a66;
+}
+html[data-glass="sim"] .shell {
+  background: rgb(8 9 18 / 0.6);
+  backdrop-filter: blur(40px) saturate(1.2);
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+}
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--tone) 70%, white);
+  outline-offset: 2px;
+}
+html[data-reduce-motion] * {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* ---- Window: the glass, then the sidebar and the page over it, the title bar over both ---- */
+.shell {
+  position: relative;
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  isolation: isolate;
+}
+.shell-ob .ob {
+  flex: 1;
+  padding-top: 40px;
+}
+.glass-bg {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Without a desktop behind the page the base is a flat stand-in for the blurred, tinted desktop. */
+html[data-glass="off"] .glass-bg {
+  background: #0c0d15;
+}
+.blob {
+  position: absolute;
+  width: 60vw;
+  height: 60vw;
+  border-radius: 50%;
+  animation: drift 13s ease-in-out infinite alternate;
+}
+.blob.a {
+  left: -2vw;
+  top: -36vw;
+  background: radial-gradient(closest-side, rgb(122 104 255 / 0.32), transparent);
+  --dx: -8vw;
+  --dy: -6vw;
+}
+.blob.b {
+  right: -16vw;
+  bottom: -30vw;
+  width: 55vw;
+  height: 55vw;
+  background: radial-gradient(closest-side, rgb(43 143 214 / 0.32), transparent);
+  --dx: 6vw;
+  --dy: -8vw;
+  animation-delay: -6s;
+}
+@keyframes drift {
+  to {
+    transform: translate(var(--dx), var(--dy));
+  }
+}
+.sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgb(255 255 255 / 0.06), transparent 50%);
+}
+
+/* The glass panel: sidebar, groups, preview. */
+.sheet,
+.sidebar,
+.alert-preview {
+  position: relative;
+  background: var(--glass-fill);
+  border: 0.5px solid var(--glass-line);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+}
+.sheet::before,
+.sidebar::before,
+.alert-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.2), transparent 25%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+.sidebar {
+  width: 210px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  margin: var(--chrome-h, 32px) 0 10px 10px;
+  border-radius: 18px;
+}
+.side-label {
+  font: 600 9.5px var(--mono);
+  letter-spacing: 1.6px;
+  color: rgb(255 255 255 / 0.38);
+  padding: 16px 10px 6px;
+}
+.side-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 11px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-weight: 500;
+  font-size: 13px;
+  color: rgb(255 255 255 / 0.82);
+  min-width: 0;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.side-item:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+.side-item[aria-current="page"] {
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pc) 40%, transparent), color-mix(in srgb, var(--pc) 20%, transparent));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--pl) 45%, transparent), 0 3px 8px color-mix(in srgb, var(--pc) 25%, transparent);
+}
+.tile {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: linear-gradient(180deg, var(--pl), var(--pc));
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.22), 0 1px 3px rgb(0 0 0 / 0.25);
+  color: #fff;
+}
+.tile svg {
+  width: 13px;
+  height: 13px;
+}
+.quit {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 10px 10px 2px;
+  color: rgb(255 255 255 / 0.5);
+  font-size: 12px;
+  font-weight: 500;
+}
+.quit:hover {
+  color: var(--fg);
+}
+
+/* The page: scrolls under a soft fade at the title bar, no scrollbar track (the Mac hides its indicators). */
+.detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  padding-top: var(--chrome-h, 32px);
+}
+.main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 10px 30px 24px 14px;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 14px);
+  mask-image: linear-gradient(180deg, transparent, #000 14px);
+}
+.main::-webkit-scrollbar {
+  width: 8px;
+}
+.main::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.14);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.main::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.26);
+  background-clip: padding-box;
+}
+.page {
+  max-width: 636px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  animation: page-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.page-title .orb {
+  flex: none;
+  animation: none;
+}
+.page-title-text {
+  min-width: 0;
+}
+.page-title h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.page-title p {
+  margin: 3px 0 0;
+  color: rgb(255 255 255 / 0.55);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+/* ---- Groups and rows ---- */
+.group-title {
+  font: 600 10.5px var(--mono);
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.5);
+  margin: 0 0 10px 4px;
+}
+.group-foot {
+  margin: 10px 4px 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: rgb(255 255 255 / 0.48);
+}
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 18px;
+  min-height: 24px;
+}
+.row + .row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  height: 0.5px;
+  background: rgb(255 255 255 / 0.08);
+}
+.row-text {
+  flex: 1;
+  min-width: 0;
+}
+.row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+  color: #fff;
+  overflow-wrap: anywhere;
+}
+.row-detail {
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: rgb(255 255 255 / 0.5);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.row > :not(.row-text) {
+  flex: none;
+  max-width: 55%;
+}
+.row[data-disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.warn {
+  color: var(--warn);
+  font-size: 11.5px;
+}
+
+/* ---- Controls ---- */
+/* The glass switch (ReloGlassSwitch): 40x24, violet and lit when on, the knob springing across. */
+.switch {
+  position: relative;
+  width: 40px;
+  height: 24px;
+  flex: none;
+  border-radius: 999px;
+  border: 0;
+  padding: 0;
+  background: rgb(255 255 255 / 0.14);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.16);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff, #e6e6e6);
+  box-shadow: 0 2px 3px rgb(0 0 0 / 0.35);
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.switch[aria-checked="true"] {
+  background: linear-gradient(180deg, #a194ff, #7a68ff);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.3), 0 0 8px rgb(122 104 255 / 0.45);
+}
+.switch[aria-checked="true"]::after {
+  transform: translateX(16px);
+}
+/* The quiet glass capsule (ReloGlassButtonStyle). */
+.btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 15px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.92);
+  background: rgb(255 255 255 / 0.08);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.14);
+  white-space: nowrap;
+  transition: background 0.15s, transform 0.12s;
+}
+.btn:hover {
+  background: rgb(255 255 255 / 0.12);
+}
+.btn:active {
+  background: rgb(255 255 255 / 0.16);
+  transform: scale(0.97);
+}
+.btn[data-primary] {
+  background: var(--tone);
+  color: #0b0b12;
+  box-shadow: none;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.select {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 30px 7px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: rgb(255 255 255 / 0.08)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23fff' stroke-opacity='.6' stroke-width='1.5'/%3E%3C/svg%3E")
+    no-repeat right 12px center;
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.14);
+  max-width: 260px;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.select:hover {
+  background-color: rgb(255 255 255 / 0.12);
+}
+.select option {
+  background: #16161f;
+}
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.1);
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 5px 13px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgb(255 255 255 / 0.6);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.seg button:hover {
+  color: var(--fg);
+}
+.seg button[aria-pressed="true"] {
+  background: rgb(255 255 255 / 0.16);
+  color: #fff;
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.18);
+}
+/* Slider: a 4px track filled to --p in the accent, a white knob. */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 160px;
+  height: 18px;
+  background: transparent;
+  --p: 0%;
+}
+.range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--tone) var(--p), rgb(255 255 255 / 0.16) var(--p));
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: 50%;
+  border: 0;
+  background: linear-gradient(180deg, #fff, #e6e6e6);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 0.5px rgb(0 0 0 / 0.1);
+}
+.range:active::-webkit-slider-thumb {
+  transform: scale(1.08);
+}
+.input {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 9px 12px;
+  background: rgb(255 255 255 / 0.07);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.14);
+  user-select: text;
+}
+.input::placeholder {
+  color: var(--faint);
+}
+.swatches {
+  display: flex;
+  gap: 10px;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--c);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.3), 0 0 0 2px transparent;
+}
+.swatch[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.3), 0 0 0 2px var(--ink), 0 0 0 3.5px var(--c);
+}
+kbd {
+  font: 600 11.5px var(--mono);
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.12);
+  margin-left: 4px;
+}
+.recorder {
+  min-width: 120px;
+  display: inline-flex;
+  justify-content: center;
+}
+.recorder kbd:first-child {
+  margin-left: 0;
+}
+.recorder[data-recording] {
+  background: color-mix(in srgb, var(--tone) 35%, transparent);
+  box-shadow: 0 0 0 1.5px var(--tone);
+}
+.meter {
+  width: 120px;
+  height: 6px;
+  accent-color: var(--tone);
+}
+.avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #a194ff, #5b47e0);
+  box-shadow: 0 4px 10px rgb(139 124 255 / 0.45);
+  position: relative;
+}
+.avatar[data-live]::after {
+  content: "";
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px #14151d;
+}
+.account {
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+.account > div {
+  min-width: 0;
+}
+.account-name {
+  font-size: 16px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alert-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 0 18px;
+  overflow: hidden;
+  background: radial-gradient(ellipse 60% 100% at 50% 0, color-mix(in srgb, var(--k) 20%, transparent), transparent), var(--glass-fill);
+}
+.mini-notch {
+  width: 320px;
+  max-width: 90%;
+  height: 34px;
+  background: #000;
+  border-radius: 0 0 16px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  box-shadow: 0 14px 36px -10px var(--k);
+  transition: box-shadow 0.3s;
+}
+.mini-notch i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--k);
+  box-shadow: 0 0 6px var(--k);
+}
+.mini-notch b {
+  font: 700 10px/1 "Inter Variable", sans-serif;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: var(--k);
+  background: color-mix(in srgb, var(--k) 22%, transparent);
+}
+.kind-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--k) 17%, transparent);
+  color: var(--k);
+  font-weight: 700;
+  font-size: 11px;
+}
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 8px;
+  background: var(--faint);
+  flex: none;
+}
+.dot[data-ok] {
+  background: var(--ok);
+}
+.licenses {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 16px;
+  font: 11px/1.5 var(--mono);
+  color: var(--muted);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* ---- Onboarding ---- */
+.ob {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 26px 40px 30px;
+  text-align: center;
+}
+.ob-dots {
+  display: flex;
+  gap: 6px;
+  height: 6px;
+}
+.ob-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.16);
+}
+.ob-dots span[data-on] {
+  background: var(--tone);
+}
+.ob-body {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.ob h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+.ob-caption {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 0;
+  line-height: 1.45;
+}
+.orb {
+  width: var(--s, 84px);
+  height: var(--s, 84px);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #c4bbff, var(--tone) 55%, #3b2fb0);
+  box-shadow: 0 0 40px color-mix(in srgb, var(--tone) 55%, transparent);
+  animation: breathe 3.4s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    transform: scale(1.06);
+  }
+}
+.choices {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+.choice {
+  flex: 1;
+  padding: 16px 10px;
+  border-radius: 18px;
+  border: 0.5px solid rgb(255 255 255 / 0.12);
+  background: rgb(255 255 255 / 0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.choice small {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.choice[aria-pressed="true"] {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tone) 32%, transparent), color-mix(in srgb, var(--tone) 12%, transparent));
+  border-color: color-mix(in srgb, var(--tone) 60%, white);
+}
+.choice:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ob-foot {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.link {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+.link:hover {
+  color: var(--fg);
+}
+.agent-list,
+.setup-list {
+  width: 100%;
+  text-align: left;
+}
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.1);
+  color: var(--muted);
+}
+.badge[data-s="running"] {
+  color: #c4bbff;
+  background: rgb(139 124 255 / 0.18);
+}
+.badge[data-s="done"] {
+  color: var(--ok);
+  background: rgb(52 211 153 / 0.14);
+}
+.badge[data-s="failed"] {
+  color: var(--bad);
+  background: rgb(248 113 113 / 0.14);
+}
+.check {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid rgb(255 255 255 / 0.3);
+  background: transparent;
+  padding: 0;
+}
+.check[aria-checked="true"] {
+  background: var(--tone);
+  border-color: var(--tone);
+}
+
+/* ---- Keyboard focus on every control (Z03); the base ring above uses --tone ---- */
+:is(button, a, [tabindex], select, input, textarea, summary):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--tone, #8b7cff) 70%, white);
+  outline-offset: 2px;
+}
+
+/* ---- Forced colors (Windows High Contrast): system colours; selection by border and fill, never by tint (Z05) ---- */
+@media (forced-colors: active) {
+  html,
+  body {
+    background: Canvas;
+    color: CanvasText;
+  }
+  :is(.btn, .select, .input, .seg, .recorder, .swatch, .choice, .check, .side-item, .badge, .quit, .alert-preview, .mini-notch) {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .btn[data-primary],
+  .side-item[aria-current="page"],
+  .seg button[aria-pressed="true"],
+  .swatch[aria-pressed="true"],
+  .check[aria-checked="true"] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+  }
+  .switch {
+    forced-color-adjust: none;
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+  }
+  .switch::after {
+    background: ButtonText;
+  }
+  .switch[aria-checked="true"] {
+    background: Highlight;
+    border-color: Highlight;
+  }
+  .switch[aria-checked="true"]::after {
+    background: HighlightText;
+  }
+  .btn:disabled {
+    color: GrayText;
+    border-color: GrayText;
+    opacity: 1;
+  }
+  :is(button, a, [tabindex], select, input, textarea, summary):focus-visible {
+    outline: 3px solid Highlight;
+  }
+  .row-detail,
+  .group-foot,
+  .side-label {
+    color: CanvasText;
+  }
+}

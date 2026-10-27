@@ -1,4 +1,5 @@
 import { AnimatedHeight, CrossfadeText } from "@/components/atoms/animated-height"
+import { SaveError } from "@/components/molecules/system-card"
 import { cn } from "@/lib/utils"
 
 /** What an owner action is doing: idle, working, done, or failed. */
@@ -20,6 +21,7 @@ export function OperationStatus({
   success = null,
   state,
   reserve = false,
+  card = false,
   id,
   className,
 }: {
@@ -30,6 +32,8 @@ export function OperationStatus({
   /** The same thing as one value (account forms). */
   state?: OperationState
   reserve?: boolean
+  /** A failure shows as the NOT SAVED card (a form's own submit) instead of a red line. */
+  card?: boolean
   id?: string
   className?: string
 }) {
@@ -37,6 +41,18 @@ export function OperationStatus({
   const done = state?.status === "success" ? state.message : success
   const working = state ? state.status === "pending" : pending
   const text = failed ?? (working ? pendingLabel : done)
+  if (card && !reserve) {
+    return (
+      <>
+        <SaveError message={failed} />
+        <AnimatedHeight show={!failed && Boolean(working ? pendingLabel : done)}>
+          <p role="status" aria-live="polite" className={cn("text-sm", working ? "text-muted-foreground" : "text-[var(--status-success)]", className)}>
+            {working ? pendingLabel : done}
+          </p>
+        </AnimatedHeight>
+      </>
+    )
+  }
   const line = (
     <p
       id={id}

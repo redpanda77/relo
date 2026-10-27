@@ -16,7 +16,7 @@ in Relo assumes a particular host; the iPhone app and the CLI ask for your addre
   refuses to start with plain `http` on a public address.
 - **Reachable from every device**: the iPhone on mobile data too, if you want answers away from home,
   the browser, and every computer and CI runner that reports.
-- **The API stays on loopback.** Compose publishes Relo on `127.0.0.1:8180`; a tunnel, proxy or
+- **The API is reachable only from the server itself.** Compose publishes Relo on `127.0.0.1:8180`; a tunnel, proxy or
   overlay network in front of it terminates TLS and forwards to that port.
 
 Relo needs no inbound port for push: the worker only connects out to Apple.

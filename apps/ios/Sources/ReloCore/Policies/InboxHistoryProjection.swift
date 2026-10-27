@@ -34,6 +34,14 @@ public enum InboxHistoryProjection {
         }
     }
 
+    /// History as the owner reads it: one row per card, without a work's outcome notification while the card
+    /// of the round it reports is there (the server names that card in `outcomeOf`), so a round shows once.
+    public static func readable(_ items: [InboxItem]) -> [InboxItem] {
+        let collapsed = collapsedActivities(items)
+        let cards = Set(collapsed.compactMap(cardID))
+        return collapsed.filter { item in item.outcomeOf.map { !cards.contains($0) } ?? true }
+    }
+
     /// The card an event belongs to, from whichever identity the event still carries.
     public static func cardID(_ item: InboxItem) -> String? {
         guard item.kind == .liveActivity else { return nil }

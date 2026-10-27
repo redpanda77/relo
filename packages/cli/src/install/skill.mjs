@@ -2,15 +2,17 @@
 // skill and the CLI cannot drift apart. relo setup installs it, --refresh updates it, relo uninstall
 // archives it; relo doctor only reads.
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
-import { cp, lstat, mkdir, rename, rm } from "node:fs/promises";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { cp, lstat, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renameWithRetry } from "../shared/atomic-write.mjs";
 import { UsageError } from "../shared/errors.mjs";
 import { shortPath } from "./block.mjs";
 import { HARNESSES, detectHarness, harnessFor, presentHarnesses } from "../harness/catalog.mjs";
 import { harnessPath } from "../harness/paths.mjs";
 import { dataRoot } from "../work/state-file.mjs";
+import { isNewerVersion } from "./versions.mjs";
 
 const SKILL_NAME = "relo-notifications";
 const EXCLUDED = new Set(["node_modules", "tests", "validate-skill.mjs", ".DS_Store", ".git"]);
@@ -83,7 +85,7 @@ export const KEPT_ARCHIVES = 4;
 async function moveAside(source, destination) {
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   try {
-    await rename(source, destination);
+    await renameWithRetry(source, destination);
   } catch (error) {
     if (error?.code !== "EXDEV") throw error;
     await cp(source, destination, { recursive: true });
@@ -116,6 +118,8 @@ export async function installSkill({ root, agent, dryRun, home, now }) {
   const base = { agent, dir: shown, version };
   const current = await existingCopy(target);
   if (current && isBundle(target) && skillDigest(target) === skillDigest(source)) return { ...base, action: "unchanged" };
+  // A newer relo put its copy here: this older CLI leaves it alone (two relo versions must not overwrite each other).
+  if (current && isNewerVersion(current.version, version)) return { ...base, action: "unchanged", keptNewer: current.version };
   const archived = current ? archivePathFor({ home, now, version: current.version, root }) : undefined;
   const action = current ? "updated" : "installed";
   const report = { ...base, action, ...(archived ? { archived: shortPath(archived, home) } : {}), ...(dryRun ? { dryRun: true } : {}) };
@@ -126,7 +130,7 @@ export async function installSkill({ root, agent, dryRun, home, now }) {
   try {
     await cp(source, staging, { recursive: true, filter: (path) => !EXCLUDED.has(basename(path)) });
     if (current) await moveAside(target, join(archived, SKILL_NAME));
-    await rename(staging, target);
+    await renameWithRetry(staging, target);
   } finally {
     await rm(staging, { recursive: true, force: true });
   }
@@ -158,6 +162,28 @@ function discoveryRoots({ env, home }) {
   return roots;
 }
 
+/**
+ * A cheap fingerprint of the skill state (size and mtime of SKILL.md and package.json in the bundled skill and
+ * each installed copy, plus the CLI version): it changes whenever a copy is installed, updated or edited, so a
+ * caller can reuse a full-digest verdict while it holds. Reads only; no file is hashed.
+ */
+export function skillStamp({ env, home, cliVersion }) {
+  const parts = [String(cliVersion)];
+  const mark = (directory) => {
+    for (const file of ["SKILL.md", "package.json"]) {
+      try { const info = statSync(join(directory, file)); parts.push(`${file}:${info.size}:${Math.round(info.mtimeMs)}`); } catch { parts.push(`${file}:-`); }
+    }
+  };
+  const source = bundledSkillDirectory();
+  parts.push(source ?? "no-source");
+  if (source) mark(source);
+  for (const root of discoveryRoots({ env, home }).keys()) {
+    parts.push(root);
+    mark(join(root, SKILL_NAME));
+  }
+  return createHash("sha256").update(parts.join("\n")).digest("base64url").slice(0, 22);
+}
+
 /** Installed copies of the skill and their versions. Reads only. */
 export function findSkillCopies({ env, home, cliVersion }) {
   // A copy is current when its files match the skill this CLI carries, not merely its version number:
@@ -171,7 +197,9 @@ export function findSkillCopies({ env, home, cliVersion }) {
     try { present = lstatSync(directory).isDirectory() && (existsSync(join(directory, "SKILL.md")) || versionOf(directory) !== undefined); } catch { /* absent */ }
     if (!present) continue;
     const version = versionOf(directory);
-    const current = wanted ? isBundle(directory) && skillDigest(directory) === wanted : version === cliVersion;
+    // A copy from a newer relo is not stale: this CLI never replaces it (installSkill).
+    const current = isNewerVersion(version, source ? versionOf(source) : cliVersion)
+      || (wanted ? isBundle(directory) && skillDigest(directory) === wanted : version === cliVersion);
     copies.push({ directory, root, agent, version, current });
   }
   return copies;

@@ -37,8 +37,10 @@ export async function reserveSecretFile(path) {
   };
 }
 
-function sameFile(info, identity) {
-  return info.dev === identity.dev && info.ino === identity.ino;
+// On Windows a handle's stat reports the volume serial as dev while lstat of the path reports 0, so only the file id
+// (ino, the NTFS file index) identifies the file there.
+function sameFile(info, identity, platform = process.platform) {
+  return (platform === "win32" || info.dev === identity.dev) && info.ino === identity.ino;
 }
 
 async function assertReservationPathIdentity(reservation, message) {

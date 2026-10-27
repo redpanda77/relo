@@ -7,12 +7,14 @@
 # Signing: Developer ID Application (Xcode > Settings > Accounts signed in to the team, or the certificate in the
 # keychain). Without it the build's own development signature is kept and the script says so: such a build runs on
 # this team's registered Macs only. Notarization: when the keychain holds a notarytool profile (RELO_NOTARY_PROFILE,
-# default relo-notary; `xcrun notarytool store-credentials relo-notary`). An install with curl adds no quarantine flag,
-# so a build without it still opens.
+# default relo-notary; `xcrun notarytool store-credentials relo-notary`). Without it the build is not notarized, and
+# deploy.sh refuses to publish a Mac app that is not Developer ID signed and notarized (a downloaded DMG or an update
+# that Gatekeeper rejects must never replace a good one).
 # Updates: the zip is signed with Sparkle's EdDSA key from a file, never the keychain (a keychain read can wait on an
 # invisible prompt): RELO_SPARKLE_KEY_FILE, default ~/.config/relo/sparkle/ed25519.key (`node scripts/release/sparkle-key.mjs
 # init` makes it; its public half is RELO_SPARKLE_PUBLIC_KEY in Relo.local.xcconfig). The manifest carries the signature
-# the server's /mac/appcast.xml hands installed apps. Without the file the build ships but apps never take it as an update.
+# the server's /mac/appcast.xml hands installed apps. The build fails unless the built app's SUPublicEDKey is that key
+# file's public half and its RELOAPIOrigin is a real server (not relo.invalid).
 # Every long command runs through scripts/step.mjs (plan 15): a budget, a no-output timeout, no stdin. The build is the
 # one heavy step (background priority); Developer ID builds are exported from it, not archived. Derived data is fixed (RELO_MAC_DERIVED_DATA, default
 # ~/Library/Caches/relo/notch-derived-data), and so is the source: apps/notch and apps/ios (its local package) are synced
@@ -20,7 +22,7 @@
 # recompiles only what changed (a release builds from a fresh clone; built in place, every file looked new). Release
 # compiles incrementally (SWIFT_COMPILATION_MODE=incremental, still optimized): whole-module mode recompiled every
 # module on any change (446 s for a one-line change against 468 s from scratch, 19 Oct).
-# A build is cached by the tree of apps/notch and apps/ios/Sources: an unchanged app is not built again.
+# A build is cached by the trees of everything the app carries (CARRIED below): an unchanged app is not built again.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,11 +41,16 @@ die() { say "$*"; exit 1; }
 TEAM="$(sed -n 's/^RELO_DEVELOPMENT_TEAM *= *//p' "$NOTCH/Configuration/Relo.local.xcconfig" | tr -d '[:space:]')"
 [[ -n "$TEAM" ]] || die "Relo.local.xcconfig names no RELO_DEVELOPMENT_TEAM"
 
-KEY="$(git -C "$ROOT" rev-parse HEAD:apps/notch | cut -c1-12)-$(git -C "$ROOT" rev-parse HEAD:apps/ios/Sources | cut -c1-12)"
-BUILD="$(git -C "$ROOT" rev-list --count HEAD -- apps/notch apps/ios/Sources)"
+# Everything the app carries (plan 16): the notch app and its iOS package, and the server, the Dashboard, the contracts,
+# the CLI with its skill, the release scripts and the lockfile that fix what goes inside. One list makes the cache key,
+# the dirty check and the build number, so a change to anything the app carries is a newer build Sparkle offers
+# (a build number counted over the app's own paths alone shipped a new server under an old number).
+CARRIED=(apps/notch apps/ios/Sources apps/server apps/dashboard packages/contracts packages/owner-crypto packages/cli skills/relo-notifications scripts/release pnpm-lock.yaml)
+KEY="$(git -C "$ROOT" rev-parse "${CARRIED[@]/#/HEAD:}" | cut -c1-8 | paste -sd- -)"
+BUILD="$(git -C "$ROOT" rev-list --count HEAD -- "${CARRIED[@]}")"
 CACHE="${XDG_CACHE_HOME:-$HOME/Library/Caches}/relo/mac-app/$KEY"
-if ! git -C "$ROOT" diff --quiet HEAD -- apps/notch apps/ios/Sources; then
-  say "apps/notch or apps/ios/Sources has uncommitted changes: building them, not caching"
+if ! git -C "$ROOT" diff --quiet HEAD -- "${CARRIED[@]}"; then
+  say "what the app carries has uncommitted changes: building them, not caching"
   CACHE=""
 fi
 
@@ -110,6 +117,17 @@ else
     >"$WORK/build.log" 2>&1 || { tail -20 "$WORK/build.log" >&2; die "the build failed"; }
   BUILT="$(find "$DERIVED/Build/Products/Release" -maxdepth 1 -name '*.app' | head -1)"
   [[ -n "$BUILT" ]] || die "the build made no app"
+  # What the built app carries must be what updates and the server need: Sparkle's public key (the one matching the key
+  # file that signs the zip, or no installed app ever accepts an update) and a real server origin, not the placeholder.
+  BUILT_PLIST="$BUILT/Contents/Info.plist"
+  PUBLIC_KEY_IN_APP="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$BUILT_PLIST" 2>/dev/null | tr -d '[:space:]' || true)"
+  [[ -n "$PUBLIC_KEY_IN_APP" ]] || die "the built app has no SUPublicEDKey (RELO_SPARKLE_PUBLIC_KEY in Relo.local.xcconfig: node scripts/release/sparkle-key.mjs public)"
+  [[ -f "$KEY_FILE" ]] || die "no Sparkle signing key file at $KEY_FILE (node scripts/release/sparkle-key.mjs init)"
+  KEY_FILE_PUBLIC="$(RELO_SPARKLE_KEY_FILE="$KEY_FILE" node "$ROOT/scripts/release/sparkle-key.mjs" public)" || die "could not read the public half of $KEY_FILE"
+  [[ "$PUBLIC_KEY_IN_APP" == "$KEY_FILE_PUBLIC" ]] || die "the app's SUPublicEDKey is not the public half of $KEY_FILE: updates signed with that file would be rejected"
+  API_ORIGIN_IN_APP="$(/usr/libexec/PlistBuddy -c 'Print :RELOAPIOrigin' "$BUILT_PLIST" 2>/dev/null | tr -d '[:space:]' || true)"
+  API_HOST="$(node -e 'try{process.stdout.write(new URL(process.argv[1]).hostname)}catch{}' "$API_ORIGIN_IN_APP")"
+  [[ -n "$API_HOST" && "$API_HOST" != relo.invalid ]] || die "the built app's RELOAPIOrigin is '$API_ORIGIN_IN_APP' (RELO_API_ORIGIN in Relo.local.xcconfig)"
   if [[ "${RELO_MAC_DEVELOPER_ID:-}" == 1 ]] || node "$STEP" --name find-identity --timeout 30s --quiet 30s -- \
       security find-identity -v -p codesigning 2>/dev/null | grep -q "Developer ID Application"; then
     # Signing as the last export did takes about 10 s; Xcode's export spends some 35 s of its 48 looking up signing
@@ -176,23 +194,68 @@ PLIST
   [[ -n "$APP_PATH" ]] || die "the export holds no app"
   APP="$(basename "$APP_PATH")"
   node "$STEP" --name codesign-verify --timeout 2m --quiet 1m -- codesign --verify --deep --strict "$APP_PATH" || die "$APP does not verify"
-
-  NOTARIZED=false
-  if [[ "$SIGNED" == developer-id ]] && node "$STEP" --name notary-profile --timeout 1m --quiet 30s -- xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
-    say "notarizing (profile $PROFILE)"
-    node "$STEP" --name ditto-notarize --timeout 5m --quiet 3m -- ditto -c -k --keepParent "$APP_PATH" "$WORK/notarize.zip"
-    node "$STEP" --name notarytool --timeout 30m --quiet 30m -- xcrun notarytool submit "$WORK/notarize.zip" --keychain-profile "$PROFILE" --wait >&2 || die "notarization failed"
-    node "$STEP" --name stapler --timeout 5m --quiet 2m -- xcrun stapler staple "$APP_PATH" >&2
-    NOTARIZED=true
-  elif [[ "$SIGNED" == developer-id ]]; then
-    say "not notarized: no notarytool profile $PROFILE in the keychain (an install with curl opens it all the same)"
+  # The server Relo for Mac runs on this Mac (plan 16): a Developer ID build carries it, signed, before notarization.
+  if [[ "$SIGNED" == developer-id ]]; then
+    node "$STEP" --name server-payload --timeout 20m --quiet 10m -- "$ROOT/scripts/release/mac-server-payload.sh" "$WORK/server-payload" >&2 \
+      || die "could not build the server payload"
+    node "$STEP" --name embed-server --timeout 15m --quiet 5m -- "$ROOT/scripts/release/embed-server.sh" "$APP_PATH" "$WORK/server-payload" >&2 \
+      || die "could not embed the server in $APP"
+  else
+    say "development-signed: no server inside (local mode needs a Developer ID build)"
   fi
+
+  # Notarization is one submission: the signed DMG, which carries the app (plan 15: Apple's wait is the slow step, about
+  # two minutes, so the app and the DMG are not sent separately). The ticket covers the app inside, so both are stapled.
+  NOTARY_READY=false
+  if [[ "$SIGNED" == developer-id ]] && node "$STEP" --name notary-profile --timeout 1m --quiet 30s -- xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+    NOTARY_READY=true
+  elif [[ "$SIGNED" == developer-id ]]; then
+    say "not notarized: no notarytool profile $PROFILE in the keychain (this build is not published: deploy.sh publishes notarized apps only)"
+  fi
+  NOTARIZED=false
 
   VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist")"
   EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Contents/Info.plist")"
   MINIMUM="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist" 2>/dev/null || echo "")"
   STAGE="$WORK/out"
   mkdir -p "$STAGE"
+  # The DMG people download (plan 16): the app and a link to Applications, signed, and notarized with the app.
+  if [[ "$SIGNED" == developer-id ]]; then
+    # dmgbuild lays the window out without Finder (the volume's Relo icon, the aurora background, the app and the
+    # Applications link side by side): apps/notch/Configuration/dmg. Its hash-pinned tools live in a venv in the cache.
+    DMG_VENV="$HOME/Library/Caches/relo-release/dmgbuild-venv"
+    if [[ ! -x "$DMG_VENV/bin/dmgbuild" ]]; then
+      node "$STEP" --name dmgbuild-install --timeout 10m --quiet 5m -- bash -c "python3 -m venv '$DMG_VENV' && '$DMG_VENV/bin/python' -m pip install -q --require-hashes -r '$NOTCH/Configuration/dmg/requirements.txt'" >&2 \
+        || die "could not install dmgbuild"
+    fi
+    node "$STEP" --name dmg --timeout 10m --quiet 5m -- env PATH="$DMG_VENV/bin:$PATH" "$NOTCH/Configuration/dmg/create_dmg.sh" "$APP_PATH" \
+      "$STAGE/relo-mac.dmg" "${APP%.app}" >&2 || die "could not make the DMG"
+    DMG_IDENTITY="$(codesign -dvv "$APP_PATH" 2>&1 | sed -n 's/^Authority=\(Developer ID Application: .*\)$/\1/p' | head -1)"
+    node "$STEP" --name dmg-sign --timeout 3m --quiet 2m -- codesign --force --timestamp --sign "$DMG_IDENTITY" "$STAGE/relo-mac.dmg" >&2 \
+      || die "could not sign the DMG"
+    if [[ "$NOTARY_READY" == true ]]; then
+      say "notarizing (profile $PROFILE)"
+      # --wait exits 0 for an Invalid submission too: the status decides.
+      node "$STEP" --name notarytool --timeout 30m --quiet 30m -- xcrun notarytool submit "$STAGE/relo-mac.dmg" --keychain-profile "$PROFILE" \
+        --wait --output-format json > "$WORK/notary.json" || die "notarization failed"
+      NOTARY_STATUS="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status' "$WORK/notary.json" 2>/dev/null || echo unknown)"
+      if [[ "$NOTARY_STATUS" != Accepted ]]; then
+        NOTARY_ID="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).id' "$WORK/notary.json" 2>/dev/null || true)"
+        say "Apple's log: xcrun notarytool log $NOTARY_ID --keychain-profile $PROFILE"
+        die "notarization was $NOTARY_STATUS"
+      fi
+      node "$STEP" --name stapler-dmg --timeout 5m --quiet 2m -- xcrun stapler staple "$STAGE/relo-mac.dmg" >&2 || die "could not staple the DMG"
+      node "$STEP" --name stapler-validate-dmg --timeout 2m --quiet 1m -- xcrun stapler validate "$STAGE/relo-mac.dmg" >&2 \
+        || die "the DMG's notarization ticket does not validate"
+      node "$STEP" --name stapler --timeout 5m --quiet 2m -- xcrun stapler staple "$APP_PATH" >&2 || die "could not staple $APP"
+      node "$STEP" --name stapler-validate --timeout 2m --quiet 1m -- xcrun stapler validate "$APP_PATH" >&2 || die "$APP's notarization ticket does not validate"
+      # What Gatekeeper decides for a downloaded disk image: a signed, notarized one opens.
+      node "$STEP" --name spctl-dmg --timeout 2m --quiet 1m -- spctl -a -t open --context context:primary-signature -v "$STAGE/relo-mac.dmg" >&2 \
+        || die "Gatekeeper rejects the DMG"
+      NOTARIZED=true
+    fi
+  fi
+  # The update zip (Sparkle) carries the stapled app.
   node "$STEP" --name ditto-zip --timeout 5m --quiet 3m -- ditto -c -k --keepParent "$APP_PATH" "$STAGE/relo-mac.zip"
   SHA="$(shasum -a 256 "$STAGE/relo-mac.zip" | cut -d' ' -f1)"
   SPARKLE_BIN="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin"
@@ -208,12 +271,14 @@ PLIST
     "$STAGE/manifest.json" "$VERSION" "$BUILD" "$SHA" "$APP" "$EXECUTABLE" "$SIGNED" "$NOTARIZED" "$ED_SIGNATURE" "$LENGTH" "$MINIMUM"
   if [[ -n "$CACHE" ]]; then
     rm -rf "$CACHE" && mkdir -p "$CACHE" && cp "$STAGE/relo-mac.zip" "$STAGE/manifest.json" "$CACHE/"
+    [[ -f "$STAGE/relo-mac.dmg" ]] && cp "$STAGE/relo-mac.dmg" "$CACHE/"
   fi
   CACHE="${CACHE:-$STAGE}"
 fi
 
 mkdir -p "$OUT"
 cp "$CACHE/relo-mac.zip" "$CACHE/manifest.json" "$OUT/"
+if [[ -f "$CACHE/relo-mac.dmg" ]]; then cp "$CACHE/relo-mac.dmg" "$OUT/"; else rm -f "$OUT/relo-mac.dmg"; fi
 
 # Storage keeps itself (dev mode): only the newest cached build (it skips rebuilding an unchanged app), and no Xcode derived data left by a release clone that is gone
 # (on 19 Oct two such folders held 2.2 GB). The owner's own Xcode folders are never touched.

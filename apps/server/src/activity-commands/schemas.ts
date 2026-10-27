@@ -37,6 +37,10 @@ const contextSchema = z.object({
 const semanticStepsSchema = z.object({
   labels: z.array(z.string().trim().min(1).max(40)).min(1).max(8).describe("Labels of the steps shown on the card, in order."),
   current: z.number().int().min(1).max(8).describe("Which of the given labels is in progress, counting from the first."),
+  /** Each label's own state; when present the card draws these and `current` is only a positional fallback. */
+  states: z.array(z.enum(["done","current","pending"])).min(1).max(8).optional().describe("Each label's own state (done, current or pending); none is marked when no step is current."),
+  /** Each label's plan step id: a phone opens a sealed work's labels by step id, so the card's steps carry the plan's. */
+  ids: z.array(z.string().trim().min(1).max(64)).min(1).max(8).optional().describe("Each label's own step id from the plan, so a device matches sealed labels to the card's steps."),
   /** Steps of a longer plan hidden before (done) and after (not started) these labels. */
   before: z.number().int().min(1).max(99).optional().describe("How many earlier steps of a longer plan are hidden before these labels; they count as done."),
   after: z.number().int().min(1).max(99).optional().describe("How many later steps of a longer plan are hidden after these labels; they count as not started."),
@@ -44,6 +48,12 @@ const semanticStepsSchema = z.object({
 }).strict().superRefine((value,context) => {
   if (value.current > value.labels.length) {
     context.addIssue({ code: "custom",path: ["current"],message: "Current step must reference a supplied label" });
+  }
+  if (value.states && value.states.length !== value.labels.length) {
+    context.addIssue({ code: "custom",path: ["states"],message: "States must match the supplied labels one to one" });
+  }
+  if (value.ids && (value.ids.length !== value.labels.length || new Set(value.ids).size !== value.ids.length)) {
+    context.addIssue({ code: "custom",path: ["ids"],message: "Ids must be distinct and match the supplied labels one to one" });
   }
 });
 
@@ -191,6 +201,8 @@ export const activityDeliverySummarySchema = z.object({
   eligibleDevices: z.number().int().min(0),
   durableCommands: z.number().int().min(0),
   apnsJobs: z.number().int().min(0),
+  /** Active owner overview devices (the Mac) that show the card from Now: readers, not push targets (owner-overview.ts). */
+  readers: z.number().int().min(0).optional(),
 }).strict();
 
 export type ActivityDeliverySummary = z.infer<typeof activityDeliverySummarySchema>;

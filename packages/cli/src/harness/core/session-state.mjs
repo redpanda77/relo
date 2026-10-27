@@ -1,9 +1,9 @@
 // The per-session observed state file (EDGE.1): <observed dir>/<sessionKey prefix>.json, 0600 in 0700.
 // Separate from the declared state file under sessions/ (agents write that one through relo commands;
 // hooks only ever read it). Only the hook process writes this one.
-import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { renameWithRetry, writeFileAtomic } from "../../shared/atomic-write.mjs";
 
 // Async hooks of one session run concurrently. Each appends its event to the session's journal first; the
 // one that gets the lock folds every journaled event into the state, in order, and writes it. A hook that
@@ -31,11 +31,26 @@ async function readObservedState(directory, session) {
   }
 }
 
+/** The context reading time recorded in the session's state (ms), or undefined: lets a hook skip a transcript read it just did. */
+export async function readObservedContextAt(directory, session) {
+  const at = (await readObservedState(directory, session))?.contextReadAt;
+  return Number.isFinite(at) ? at : undefined;
+}
+
+// A state that differs from the stored one only by a lastSeenAt under this age is not rewritten: a tool-heavy turn
+// would otherwise rewrite the file on every event for a clock nobody reads closer than the liveness windows.
+const SEEN_WRITE_MS = 15_000;
+
+function onlySeenMoved(previous, next) {
+  if (!previous || !next) return false;
+  const gap = Date.parse(next.lastSeenAt) - Date.parse(previous.lastSeenAt);
+  if (!(gap >= 0 && gap < SEEN_WRITE_MS)) return false;
+  return JSON.stringify({ ...previous, lastSeenAt: 0 }) === JSON.stringify({ ...next, lastSeenAt: 0 });
+}
+
 async function writeObservedState(directory, state) {
   const path = observedStatePath(directory, state.session);
-  const temp = join(directory, `.${process.pid}-${randomBytes(4).toString("hex")}.tmp`);
-  await writeFile(temp, JSON.stringify(state), { mode: 0o600 });
-  await rename(temp, path);
+  await writeFileAtomic(path, JSON.stringify(state));
 }
 
 async function lock(path) {
@@ -75,7 +90,7 @@ async function takeEntries(directory, session) {
   const journal = journalPath(directory, session);
   const draining = `${journal}.draining`;
   const left = await readEntries(draining);
-  try { await rename(journal, `${draining}.next`); } catch { return { entries: left, done: () => rm(draining, { force: true }) }; }
+  try { await renameWithRetry(journal, `${draining}.next`); } catch { return { entries: left, done: () => rm(draining, { force: true }) }; }
   const fresh = await readEntries(`${draining}.next`);
   await writeFile(draining, [...left, ...fresh].map((entry) => JSON.stringify(entry)).join("\n") + "\n", { mode: 0o600 });
   await rm(`${draining}.next`, { force: true });
@@ -102,7 +117,9 @@ export async function recordObservedEvent(directory, session, entry, fold) {
       const { entries, done } = await takeEntries(directory, session);
       if (entries.length === 0) break;
       outcome = await fold(state, entries);
-      if (outcome?.state) { await writeObservedState(directory, outcome.state); state = outcome.state; }
+      if (outcome?.state) {
+        if (!onlySeenMoved(state, outcome.state)) { await writeObservedState(directory, outcome.state); state = outcome.state; }
+      }
       await done();
     }
     return outcome ?? { state };

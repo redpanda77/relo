@@ -1,3 +1,7 @@
+import { carriedTitle } from "@relo/owner-crypto"
+
+export { carriedTitle }
+
 /**
  * End-to-end encrypted content (docs/ENCRYPTION-PROTOCOL.md, ADR 0005). A Dashboard that is not a
  * linked browser holds no key: it only says that the item is encrypted and where to read it. A
@@ -30,14 +34,6 @@ export function rememberNames(names: ReadonlyMap<string, string>) {
 
 /** Session id (`ags_…`) → the session's own name, from the `title` its opened names envelope carries. */
 const learnedSessionTitles = new Map<string, string>()
-
-/** The name a names envelope carries: a single line of at most 80 characters (iOS ReloNames.carriedTitle). */
-export function carriedTitle(content: unknown): string | null {
-  const title = (content as { title?: unknown } | null)?.title
-  if (typeof title !== "string") return null
-  const trimmed = title.trim()
-  return trimmed && trimmed.length <= 80 && !trimmed.includes("\n") ? trimmed : null
-}
 
 export function rememberSessionTitle(sessionId: string, title: string) {
   learnedSessionTitles.set(sessionId, title)

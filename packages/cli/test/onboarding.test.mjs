@@ -160,7 +160,7 @@ test("auth login --no-wait stores the pending sign-in privately and prints the l
   assert.equal(out.exitCode, EXIT.OK);
   assert.deepEqual(out.line, { ok: true, state: "pending", url: "http://192.168.1.10:8180/cli/authorize?code=ABCD-EFGH",
     code: "ABCD-EFGH", qr: qrText("http://192.168.1.10:8180/cli/authorize?code=ABCD-EFGH"), next: "relo auth login --wait" });
-  assert.equal((await stat(box.pending)).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal((await stat(box.pending)).mode & 0o777, 0o600);
   assert.equal(JSON.stringify(out.line).includes(DEVICE_CODE), false);
   assert.equal(box.state.opened.length, 0);
   assert.equal(box.state.polls.length, 0);
@@ -334,13 +334,14 @@ test("relo test: no phone with Live Activities fails before sending anything", a
 
 // ---- relo doctor: the first unmet step ---------------------------------------------------------
 
-function doctorBox({ devices = [authorized()], config = {}, skill = true, pending, ready, authenticated = true } = {}) {
+function doctorBox({ devices = [authorized()], config = {}, skill = true, pending, ready, authenticated = true, keys } = {}) {
   const calls = [];
   const client = {
     ready: async () => ready ?? ({ ready: true }),
     authStatus: async () => ({ authenticated, credential: { id: "c", clientName: "Studio", prefix: "p", expiresAt: "2027-01-01T00:00:00Z", scopes: SCOPES.slice(0, 6) } }),
     doctor: async () => ({ version: 1, ok: true }),
     listDevices: async () => { calls.push("devices"); return devicePage(devices); },
+    ...(keys ? { listDeviceKeys: async () => ({ devices: keys }) } : {}),
     startActivity: async () => assert.fail("doctor never pings a phone"),
     sendNotification: async () => assert.fail("doctor never pings a phone"),
   };
@@ -391,6 +392,23 @@ test("doctor names the first unmet step, in order, and costs no writes", async (
   const done = doctorBox({ config: verified });
   assert.deepEqual((await cli(["doctor"], await done.build())).line, { ok: true, ready: true });
   assert.equal(done.memory.state.writes.length, 0);
+});
+
+test("doctor is ready with only Relo for Mac signed in, and not with a Mac whose key is old", async () => {
+  const MAC = "dev_macmacmacmac";
+  const mac = (createdAt) => ({ deviceId: MAC, name: "Mac", model: "Mac16,1", capabilities: ["owner_overview"], prekey: { prekeyId: "pk_1", createdAt } });
+  const now = new Date().toISOString();
+  for (const devices of [[], [{ deviceId: MAC }]]) {
+    const out = await cli(["doctor"], await doctorBox({ devices, keys: [mac(now)] }).build());
+    assert.equal(out.line.ready, true, JSON.stringify(out.line));
+    assert.deepEqual(out.line.receives, { device: "Mac", model: "Mac16,1" });
+  }
+  const old = await cli(["doctor"], await doctorBox({ devices: [], keys: [mac("2020-01-01T00:00:00Z")] }).build());
+  assert.equal(old.line.ready, false);
+  assert.equal(old.line.next.step, "phone");
+  // An iPhone that exists without Live Activities keeps the phone step, Mac or not.
+  const off = await cli(["doctor"], await doctorBox({ devices: [{ deviceId: PHONE, liveActivityAuthorization: "denied" }], keys: [mac(now)] }).build());
+  assert.equal(off.line.next.step, "phone");
 });
 
 test("a stale skill is a warning step only after the real steps are met; ready stays true", async () => {

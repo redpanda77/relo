@@ -88,6 +88,8 @@ export function cleanSpoken(text) {
   let s = String(text ?? "")
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
     .replace(/https?:\/\/([^/\s]+)\S*/gu, "$1")
+    // A Windows path (C:\Users\me\notes.md, ~\.claude\agents) is read as its last name too, like a POSIX one below.
+    .replace(/(?:[A-Za-z]:|~|\.{1,2})?(?:\\[\w.@-]+){2,}\\?/gu, (path) => path.split("\\").filter(Boolean).pop() ?? "")
     .replace(/(?:~|\.{1,2}|[\w.@-]+)?(?:\/[\w.@-]+){2,}\/?/gu, (path) => path.split("/").filter(Boolean).pop() ?? "");
   const rules = [
     [/`{1,3}/gu, ""],

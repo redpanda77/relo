@@ -36,6 +36,16 @@ struct ReloNativeReferenceHost: App {
             status = "Unknown reference case"
             return
         }
+        // `--reference-also <case>` starts a second activity first, so the island shows two (the shared layout).
+        if let also = arguments.firstIndex(of: "--reference-also"), arguments.indices.contains(also + 1),
+           let other = NativeReferenceSample.named(arguments[also + 1]) {
+            _ = try? Activity<ReloActivityAttributes>.request(
+                attributes: ReloActivityAttributes(eventID: "act_reference_also", generation: 1,
+                    sourceName: other.presentation.header ?? "Relo", style: .standard, accountID: "acc_reference123456"),
+                content: ActivityContent(state: .init(generation: 1, updatedAt: .now, sequence: 1, staleAt: other.staleAt,
+                    interaction: other.interaction, presentation: other.presentation, owner: other.owner), staleDate: nil),
+                pushType: nil)
+        }
         do {
             let state = ReloActivityAttributes.ContentState(
                 generation: 1,
@@ -43,7 +53,8 @@ struct ReloNativeReferenceHost: App {
                 sequence: 1,
                 staleAt: sample.staleAt,
                 interaction: sample.interaction,
-                presentation: sample.presentation
+                presentation: sample.presentation,
+                owner: sample.owner
             )
             let attributes = ReloActivityAttributes(
                 eventID: "act_reference_\(name.replacingOccurrences(of: "-", with: "_"))",
@@ -82,6 +93,7 @@ struct NativeReferenceSample {
     let presentation: LiveActivityPresentation
     let interaction: LiveActivityContentInteraction?
     var staleAt: Date? = nil
+    var owner: LiveActivityOwner? = nil
 
     static func named(_ name: String) -> NativeReferenceSample? {
         #if DEBUG
@@ -114,6 +126,33 @@ struct NativeReferenceSample {
                     "sha256": String(repeating: "a", count: 64), "mediaType": "image/png",
                     "byteSize": 204_800, "pixelWidth": 1_200, "pixelHeight": 630],
                   "altText": "A Relo report preview", "contentMode": "fit"]])
+        case "island-plan", "island-done", "island-failed":
+            // The island study's moments: a four-step plan running, finished, and stopped on its third step.
+            let ended = name != "island-plan"
+            let states = name == "island-done" ? ["complete", "complete", "complete", "complete"]
+                : name == "island-failed" ? ["complete", "complete", "current", "pending"]
+                : ["complete", "current", "pending", "pending"]
+            let labels = ["Read the island code", "Design the variants", "Build the canvas", "Publish the study"]
+            let items = zip(labels, states).enumerated().map { index, pair in
+                ["id": "s\(index + 1)", "label": pair.0, "state": pair.1] }
+            return sample(
+                title: "A UI study of the Dynamic Island", subtitle: nil,
+                status: name == "island-done" ? "Five compact and four open variants on one canvas"
+                    : name == "island-failed" ? "The canvas would not publish; nothing was saved"
+                    : "Drawing compact and expanded island variants on the canvas",
+                components: [["id": "steps", "type": "steps", "colorRole": "thread", "items": items]],
+                behavior: ended ? "informational" : "progress", contextual: true,
+                stateKind: name == "island-done" ? "completed" : name == "island-failed" ? "failed" : "active")
+        case "island-three", "island-five":
+            // The plan sample with other sessions live: one satellite each, +N in the wing (five: one needs you).
+            guard var sample = named("island-plan") else { return nil }
+            let five = name == "island-five"
+            sample.owner = LiveActivityOwner(state: "moving", placement: "shown", needsYouCount: five ? 1 : 0,
+                                             live: five ? 5 : 3)
+            return sample
+        case "island-noplan":
+            return sample(title: "Find why History repeats rounds", subtitle: nil,
+                status: "Reading how History builds its rows", behavior: "progress", contextual: true)
         case "approval": return binarySample(kind: "approval")
         case "yes-no": return binarySample(kind: "yes_no")
         case "long-text":
@@ -165,7 +204,8 @@ struct NativeReferenceSample {
         components: [[String: Any]] = [],
         behavior: String = "informational",
         interaction: LiveActivityContentInteraction? = nil,
-        contextual: Bool = false
+        contextual: Bool = false,
+        stateKind: String = "active"
     ) -> NativeReferenceSample {
         let componentIDs = components.compactMap { $0["id"] as? String }
         let identity: [String: Any] = contextual
@@ -179,6 +219,8 @@ struct NativeReferenceSample {
         ]
         let state: [String: Any] = behavior == "approval" || behavior == "yes_no"
             ? ["kind": "needs_action", "tone": "attention", "icon": "needs_action"]
+            : stateKind == "completed" ? ["kind": "completed", "tone": "success", "icon": "completed"]
+            : stateKind == "failed" ? ["kind": "failed", "tone": "failure", "icon": "failed"]
             : ["kind": "active", "tone": "live", "icon": "active"]
         let appearance: [String: Any] = ["roles": [
             "cardIdentity": "project", "componentIdentity": "thread", "statusEmphasis": "state",

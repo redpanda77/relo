@@ -1,0 +1,6 @@
+// Copy to Relo.local.xcconfig and fill in: your Apple team, a bundle id you own, your Relo server.
+RELO_DEVELOPMENT_TEAM = ABCDE12345
+RELO_NOTCH_BUNDLE_ID = com.example.relo.notch
+RELO_API_ORIGIN = https:/$()/relo.example.com
+// The public half of `generate_keys --account relo-notch` (Sparkle's tool); the deploy signs updates with the private half.
+RELO_SPARKLE_PUBLIC_KEY = BASE64_PUBLIC_KEY

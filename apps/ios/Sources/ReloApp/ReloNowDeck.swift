@@ -58,61 +58,48 @@ struct ReloDeckField: View {
     }
 }
 
-/// The deck's footer: where the data stands, and today's session time.
+/// The deck's status line, at the trailing end of the title row: where the data stands ("● LIVE 6:37",
+/// "OFFLINE · 6:37", "SYNCING") and, tapped, the way into connection details and recovery.
 struct ReloDeckFooter: View {
     enum Sync: Equatable { case live(Date), syncing, offline(Date?) }
     let sync: Sync
     let pendingResponses: Int
-    var agentTime: String? = nil
     var trouble: String? = nil
     var showConnection: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var breathing = false
 
     var body: some View {
-        // Where the data stands, and the way into connection details and recovery.
         Button(action: showConnection) {
-            HStack(spacing: 6) {
-                status
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Color.reloSecondaryText)
-                Spacer(minLength: 8)
-                if let agentTime {
-                    Text("\(agentTime) session time")
-                        .font(.system(.caption2, design: .monospaced)).foregroundStyle(Color.reloSecondaryText)
-                        .lineLimit(1).minimumScaleFactor(0.8)
-                }
-            }
-            .frame(minHeight: 32).contentShape(Rectangle())
+            // A hit area taller and wider than the 9 pt line itself.
+            status
+                .contentShape(Rectangle().inset(by: -10))
         }
         .buttonStyle(.plain)
         .accessibilityHint("Shows connection details and recovery options")
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var status: some View {
         let (color, text): (Color, String) = if let trouble { (ReloHoloTheme.color(.attention), trouble) } else { switch sync {
-        case let .live(at): (ReloHoloTheme.color(.done), "LIVE · SYNCED \(at.formatted(date: .omitted, time: .shortened))")
-        case .syncing: (ReloHoloTheme.color(.running), "SYNCING")
-        case let .offline(at): (ReloHoloTheme.color(.attention),
-                                at.map { "OFFLINE · AS OF \($0.formatted(date: .omitted, time: .shortened))" } ?? "OFFLINE")
+        case let .live(at): (Color(red: 0x34 / 255, green: 0xD3 / 255, blue: 0x99 / 255), "LIVE \(at.formatted(date: .omitted, time: .shortened))")
+        case .syncing: (ReloHoloTheme.cyan, "SYNCING")
+        case let .offline(at): (ReloHoloTheme.yellow, at.map { "OFFLINE · \($0.formatted(date: .omitted, time: .shortened))" } ?? "OFFLINE")
         } }
-        return HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 6, height: 6)
-                .opacity(sync == .syncing && breathing ? 0.35 : 1)
-            Text(text).foregroundStyle(color)
+        let dotted: Bool = { if case .offline = sync { return false } else { return true } }()
+        return HStack(spacing: 4) {
+            if dotted {
+                Circle().fill(color).frame(width: 5, height: 5)
+                    .opacity(sync == .syncing && breathing ? 0.35 : 1)
+            }
+            Text(text).foregroundStyle(color).lineLimit(1)
             if pendingResponses > 0 {
                 Text("· \(pendingResponses) SENDING").foregroundStyle(Color.reloSecondaryText)
             }
         }
-        .font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1)
+        .font(.system(size: 9, weight: .medium, design: .monospaced)).tracking(1)
         .fixedSize()
         // The dot breathes only while syncing; otherwise nothing animates here.
-        .onChange(of: sync == .syncing, initial: true) { _, syncing in
-            guard !reduceMotion else { return }
-            if syncing { withAnimation(.easeInOut(duration: 0.8).repeatForever()) { breathing = true } }
-            else { withAnimation(nil) { breathing = false } }
-        }
+        .reloLoop(.easeInOut(duration: 0.8).repeatForever(), flag: $breathing, enabled: sync == .syncing)
         .accessibilityElement(children: .combine)
     }
 }

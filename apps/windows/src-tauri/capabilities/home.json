@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "home",
+  "description": "The Home window listens for events (the state the notch publishes) and calls the app's own commands; it never reaches a server and opens nothing itself.",
+  "windows": ["home"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-start-dragging", "core:window:allow-toggle-maximize"]
+}

@@ -9,9 +9,10 @@ export type { PageBack }
  * The page's large title, as on iOS, with an optional one-line description. The h1 takes focus
  * after a client navigation (tabIndex -1), so a screen reader starts on the new page's name.
  */
-export function PageTitle({ title, eyebrow }: { title: string; eyebrow?: string }) {
+export function PageTitle({ title, eyebrow, kicker = true }: { title: string; eyebrow?: string; kicker?: boolean }) {
   return (
     <div className="min-w-0">
+      {kicker ? <p className="page-eyebrow" aria-hidden="true">{`RELO · ${title}`}</p> : null}
       <h1 className="page-title" tabIndex={-1}>
         {title}
       </h1>

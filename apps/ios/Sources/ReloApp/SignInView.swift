@@ -39,6 +39,42 @@ enum BrowserSignInSession {
     }
 }
 
+/// Apple's own button for a native Sign in with Apple; shown only where the server offers it.
+struct AppleSignInRow: View {
+    @Bindable var model: AppModel
+    var onSignedIn: () -> Void = {}
+    @State private var attempt = AppleSignIn()
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        SignInWithAppleButton(.continue) { request in
+            attempt = AppleSignIn()
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = attempt.hashedNonce
+        } onCompletion: { result in
+            switch result {
+            case .success(let authorization):
+                guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                      let data = credential.identityToken, let token = String(data: data, encoding: .utf8) else {
+                    model.authenticationError = "Apple's sign-in didn't go through. Try again."
+                    return
+                }
+                let used = attempt
+                Task { if await model.signInWithApple(identityToken: token, name: credential.fullName, attempt: used) { onSignedIn() } }
+            case .failure(let error):
+                // Closing Apple's sheet is not an error.
+                if (error as? ASAuthorizationError)?.code == .canceled { return }
+                model.authenticationError = "Apple's sign-in didn't go through. Try again."
+            }
+        }
+        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+        .frame(height: 50)
+        .clipShape(Capsule())
+        .disabled(model.isAuthenticating)
+        .accessibilityIdentifier("sign-in-with-apple")
+    }
+}
+
 /// The single sign-in surface: first run, "Sign in again", and the Now re-auth banner all land here.
 struct SignInView: View {
     @Bindable var model: AppModel
@@ -67,6 +103,12 @@ struct SignInView: View {
                     }
                 }
             }
+            if model.appleSignInAvailable {
+                Section {
+                    AppleSignInRow(model: model) { dismiss() }
+                        .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
+                }
+            }
             Section {
                 Button(action: signIn) {
                     HStack {
@@ -81,6 +123,7 @@ struct SignInView: View {
         .reloGroupedScreen().navigationTitle("Sign in").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(model.isAuthenticating) } }
         .onAppear { origin = model.chosenServerOrigin ?? "" }
+        .task(id: model.serverOrigin) { await model.refreshSignInMethods() }
     }
     private func signIn() {
         guard !model.isAuthenticating, !editsOrigin else { return }

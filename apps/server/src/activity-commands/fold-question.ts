@@ -3,6 +3,7 @@ import { canonicalPresentation,persistedPresentationColumns } from "../presentat
 import type { ChoiceOption } from "@relo/notification-contracts";
 import { assertChoiceTargets,ChoiceUnsupportedError,isQuestionBehavior,questionBehavior } from "../choice-questions.js";
 import { publicId } from "../ids.js";
+import { overviewReaderIds } from "../owner-overview.js";
 import { prepareNotificationContent,type NotificationContentCipher } from "../notification-content.js";
 import { createActivityCommands } from "./runtime.js";
 import type { ActivityDeliverySummary,ApnsMode } from "./schemas.js";
@@ -32,7 +33,11 @@ export async function foldQuestionIntoCard(client: Queryable, input: {
   contentCipher?: NotificationContentCipher | null | undefined;
 }): Promise<FoldQuestionResult> {
   const { row,question: asked } = input;
-  if (!(row.target_device_ids as string[] | null)?.length) return { kind: "activity_target_unavailable" };
+  // Someone must show the question: a phone the card targets, or an owner overview device (the Mac)
+  // that lists and answers it from Now (owner-overview.ts).
+  const phones = (row.target_device_ids as string[] | null) ?? [];
+  const readers = phones.length ? [] : await overviewReaderIds(client,input.principalId,null);
+  if (!phones.length && !readers.length) return { kind: "activity_target_unavailable" };
   const working = canonicalPresentation(row.presentation);
   if (row.resume_presentation || isQuestionBehavior(working.behavior.type)) {
     return { kind: "question_pending" };
@@ -40,7 +45,7 @@ export async function foldQuestionIntoCard(client: Queryable, input: {
   if (working.privacy === "private") return { kind: "private_activity_question" };
   if (asked.detail && !input.contentCipher) return { kind: "content_encryption_unavailable" };
   if (asked.type === "choice") {
-    try { await assertChoiceTargets(client,input.principalId,row.target_device_ids); }
+    try { await assertChoiceTargets(client,input.principalId,phones.length ? phones : readers); }
     catch (error) { if (error instanceof ChoiceUnsupportedError) return { kind: "choice_unsupported",error }; throw error; }
   }
   const question = persistedPresentationColumns({

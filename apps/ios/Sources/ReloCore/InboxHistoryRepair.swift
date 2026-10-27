@@ -65,6 +65,86 @@ public struct InboxRepairResponse: Decodable, Equatable, Sendable {
     public let serverTime: Date
     public let readWatermark: String?
     public let unread: InboxUnreadSummary
+    /// Each work's plan, rounds and newest sealed card, sent once per work instead of on every card event.
+    /// `withWorkPlans()` moves them onto the items, so nothing downstream (or stored) needs this again.
+    public let works: [String: Work]
+
+    public struct Work: Decodable, Equatable, Sendable {
+        public let plan: [InboxCardDigest.PlanStep]?
+        public let rounds: [InboxCardDigest.PlanRound]?
+        public let sealed: ReloEnvelope?
+
+        private enum CodingKeys: String, CodingKey { case plan, rounds, sealed }
+
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            let steps: [InboxCardDigest.PlanStep] = values.contains(.plan) ? ReloWork.lenientArray(values, .plan) : []
+            let closedRounds: [InboxCardDigest.PlanRound] = values.contains(.rounds) ? ReloWork.lenientArray(values, .rounds) : []
+            plan = steps.isEmpty ? nil : steps
+            rounds = closedRounds.isEmpty ? nil : closedRounds
+            sealed = (try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)) ?? nil
+        }
+    }
+
+    /// Card envelopes shared by several events, by md5; an item names one as `sealed.contentRef`.
+    public let envelopes: [String: ReloEnvelope]
+
+    private enum CodingKeys: String, CodingKey { case items, total, serverTime, readWatermark, unread, works, envelopes }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        items = try values.decode([InboxHistorySummary].self, forKey: .items)
+        total = try values.decode(Int.self, forKey: .total)
+        serverTime = try values.decode(Date.self, forKey: .serverTime)
+        readWatermark = try values.decodeIfPresent(String.self, forKey: .readWatermark)
+        unread = try values.decode(InboxUnreadSummary.self, forKey: .unread)
+        // A bad entry is dropped, never the snapshot: its items then show what they carry themselves.
+        struct Lossy: Decodable {
+            let work: Work?
+            init(from decoder: Decoder) throws { work = try? Work(from: decoder) }
+        }
+        struct LossyEnvelope: Decodable {
+            let envelope: ReloEnvelope?
+            init(from decoder: Decoder) throws { envelope = try? ReloEnvelope(from: decoder) }
+        }
+        let sharedRaw = (try? values.decodeIfPresent([String: LossyEnvelope].self, forKey: .envelopes)) ?? nil
+        envelopes = (sharedRaw ?? [:]).compactMapValues(\.envelope).filter {
+            $0.key.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil
+        }
+        let raw = (try? values.decodeIfPresent([String: Lossy].self, forKey: .works)) ?? nil
+        works = (raw ?? [:]).compactMapValues(\.work).filter {
+            $0.key.range(of: "^wrk_[0-9a-f-]{36}$", options: .regularExpression) != nil
+        }
+    }
+
+    /// The items as before the server stopped repeating shared data: `sealed.content` from `envelopes` by its reference, and `plan` and `rounds` filled from the
+    /// item's work when it has none, and the work's newest sealed card as `sealed.plan` when it differs from the
+    /// item's own text (an earlier round's event names the later rounds from it). Run right after decoding and
+    /// before opening, so History, detail and Now see ordinary items and a stored item never needs `works` again.
+    public func resolvingShared() -> InboxRepairResponse {
+        guard !works.isEmpty || !envelopes.isEmpty else { return self }
+        var filled = self
+        filled.items = items.map { summary in
+            var summary = summary
+            var item = summary.item
+            // Shared card envelopes first: the work step compares against the item's own content. A missing
+            // reference leaves the item sealed and unreadable, never failing the snapshot.
+            if let notice = item.sealed, let ref = notice.contentRef, let shared = envelopes[ref] {
+                item = item.replacing(activity: item.activity,
+                                      sealed: InboxSealedNotice(alert: notice.alert, content: shared, plan: notice.plan))
+                summary.item = item
+            }
+            guard let id = item.activity?.workId, let work = works[id] else { return summary }
+            let activity = item.activity?.filling(plan: work.plan, rounds: work.rounds)
+            var sealed = item.sealed
+            if let notice = item.sealed, notice.contentRef == nil, notice.plan == nil, let newest = work.sealed, newest != notice.content {
+                sealed = InboxSealedNotice(alert: notice.alert, content: notice.content, plan: newest)
+            }
+            summary.item = item.replacing(activity: activity, sealed: sealed)
+            return summary
+        }
+        return filled
+    }
 
     public var isValid: Bool {
         items.count <= 250 && total >= items.count && unread.account >= 0
@@ -87,6 +167,17 @@ public protocol InboxSnapshotRemoteDataSource: Sendable {
 }
 
 extension InboxItem {
+    /// The same item, its card digest and sealed notice replaced.
+    func replacing(activity: InboxCardDigest?, sealed: InboxSealedNotice?) -> InboxItem {
+        InboxItem(
+            id: id, kind: kind, sourceName: sourceName, sourceImageUrl: sourceImageUrl, title: title, detail: detail,
+            content: content, readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
+            apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
+            destinationUrl: destinationUrl, privacy: privacy, liveActivity: liveActivity, activitySummary: activitySummary,
+            interaction: interaction, context: context, resources: resources, activityEvent: activityEvent,
+            activity: activity, sealed: sealed, work: work, outcomeOf: outcomeOf)
+    }
+
     /// Also strips full content when compacting a cache written by the predecessor.
     public func historySummary(text: String? = nil, activityEvent: InboxHistoryMetadata.ActivityEvent? = nil) -> InboxItem {
         let summary = privacy == .private ? "Private notification" : (text ?? content?.summary ?? detail)
@@ -101,6 +192,6 @@ extension InboxItem {
             readAt: readAt, withdrawnAt: withdrawnAt, result: result, deliveryState: deliveryState,
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: destinationUrl, privacy: privacy, interaction: request, context: context, resources: resources,
-            activityEvent: activityEvent ?? self.activityEvent, activity: activity, sealed: sealed, work: work)
+            activityEvent: activityEvent ?? self.activityEvent, activity: activity, sealed: sealed, work: work, outcomeOf: outcomeOf)
     }
 }

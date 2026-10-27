@@ -12,23 +12,14 @@ export type Signal = "done" | "running" | "needsYou" | "attention" | "failed" | 
 /** Display order. */
 export const SIGNALS: readonly Signal[] = ["done", "running", "needsYou", "attention", "failed", "message"]
 
-export const SIGNAL_LABEL: Record<Signal, string> = {
-  done: "Done",
-  running: "Running",
-  needsYou: "Needs you",
-  attention: "Attention",
-  failed: "Failed",
-  message: "Messages",
-}
-
 /** Light and deep shade per meaning (ReloHoloTheme.color / deep). */
 export const SIGNAL_RAMP: Record<Signal, { light: RGB; deep: RGB }> = {
   done: { light: rgbOf(0x34d399), deep: rgbOf(0x10b981) },
   running: { light: rgbOf(0x5ce1ff), deep: rgbOf(0x4d8dff) },
   needsYou: { light: rgbOf(0xff8a3d), deep: rgbOf(0xff6b57) },
   attention: { light: rgbOf(0xfacc15), deep: rgbOf(0xfbbf24) },
-  failed: { light: rgbOf(0xf43f5e), deep: rgbOf(0xbe123c) },
-  message: { light: rgbOf(0x8b7cff), deep: rgbOf(0xd65cf0) },
+  failed: { light: rgbOf(0xf87171), deep: rgbOf(0xbe123c) },
+  message: { light: rgbOf(0xa99eff), deep: rgbOf(0xd65cf0) },
 }
 
 /** The one CSS color for each meaning. */
@@ -37,8 +28,8 @@ export const SIGNAL_CSS: Record<Signal, string> = {
   running: "#5CE1FF",
   needsYou: "#FF8A3D",
   attention: "#FACC15",
-  failed: "#F43F5E",
-  message: "#8B7CFF",
+  failed: "#F87171",
+  message: "#A99EFF",
 }
 
 /** Today's work by meaning. */
@@ -67,6 +58,6 @@ export function signalAt(mix: NowMix, position: number): Signal | null {
 }
 
 /** The Sessions section's violet (iOS ReloHoloTheme.sessions); not a work meaning, so not a Signal. */
-export const SESSIONS_CSS = "#8B7CFF"
+export const SESSIONS_CSS = "#A99EFF"
 
 export const rgbCss = ([r, g, b]: RGB, alpha = 1) => (alpha === 1 ? `rgb(${r} ${g} ${b})` : `rgb(${r} ${g} ${b} / ${alpha})`)

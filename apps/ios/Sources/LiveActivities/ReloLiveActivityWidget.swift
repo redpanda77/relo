@@ -26,18 +26,14 @@ struct ReloLiveActivityWidget: Widget {
             .accessibilityHint(accessibilitySummary(for: context).hint)
         } dynamicIsland: { context in
             let presentation = context.state.presentation
-            let palette = PresentationPalette(presentation: presentation)
+            let look = IslandLook(context: context)
             return DynamicIsland {
-                // The system insets each expanded region differently, so the header lives in
-                // the bottom card with the content it labels: one column, one inset. The corner
-                // regions carry only components a sender assigns to them explicitly.
+                // The Mac notch's layout: who and how long beside the camera, what it is doing below.
                 DynamicIslandExpandedRegion(.leading) {
-                    if !presentation.components(for: .expandedLeading).isEmpty {
-                        PresentationCompactSurface(
-                            presentation: presentation, surface: .expandedLeading,
-                            palette: palette, interaction: context.state.displayInteraction,
-                            isStale: context.isStale)
-                    }
+                    IslandSource(presentation: presentation, look: look)
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    IslandStanding(context: context, look: look)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     PresentationCardView(
@@ -45,41 +41,29 @@ struct ReloLiveActivityWidget: Widget {
                     )
                 }
             } compactLeading: {
-                if let count = context.state.owner?.needsYouCountLabel {
-                    Image(systemName: "exclamationmark.bubble.fill")
-                        .foregroundStyle(OwnerChipStyle.needsYouOrange)
-                        .accessibilityLabel("Relo, \(count) need you")
-                } else if presentation.components(for: .compactLeading).isEmpty {
-                    Image(
-                        systemName: presentation.privacy == .private
-                            ? "lock.fill"
-                            : presentation.identity.project?.icon.systemImageName
-                                ?? presentation.state.icon.systemImageName
-                    )
-                    .foregroundStyle(presentation.privacy == .private ? palette.primaryText : palette.accent)
-                    .accessibilityLabel(accessibilitySummary(for: context).label)
-                } else {
-                    PresentationCompactSurface(
-                        presentation: presentation, surface: .compactLeading,
-                        palette: palette, interaction: context.state.displayInteraction,
-                        isStale: context.isStale)
+                // Relo's disc in the state's colour, as on the Mac notch's left wing.
+                Group {
+                    if look.isPrivate {
+                        Image(systemName: "lock.fill").foregroundStyle(.white)
+                    } else {
+                        IslandDisc(color: look.color, satellites: look.satellites)
+                    }
                 }
+                .accessibilityLabel(accessibilitySummary(for: context).label)
             } compactTrailing: {
-                PresentationCompactSurface(
-                    presentation: presentation, surface: .compactTrailing, palette: palette,
-                    interaction: context.state.displayInteraction, isStale: context.isStale,
-                    owner: context.state.owner
-                )
+                IslandWing(look: look)
             } minimal: {
-                PresentationCompactSurface(
-                    presentation: presentation, surface: .minimal, palette: palette,
-                    interaction: context.state.displayInteraction, isStale: context.isStale,
-                    owner: context.state.owner
-                )
+                if let count = look.needsYouCount {
+                    IslandCount(count: count, size: 20)
+                } else if look.isPrivate {
+                    Image(systemName: "lock.fill").foregroundStyle(.white)
+                        .accessibilityLabel("Relo private activity")
+                } else {
+                    IslandDisc(color: look.color, satellites: look.satellites, size: 20)
+                        .accessibilityLabel(look.accessibilityText(title: presentation.title))
+                }
             }
-            .keylineTint(
-                presentation.privacy == .private ? palette.primaryText.opacity(0.5) : palette.state
-            )
+            .keylineTint(look.isPrivate ? Color.white.opacity(0.5) : look.color)
             .widgetURL(ReloDeepLink.activityURL(identity: context.attributes.identity))
         }
     }
@@ -91,7 +75,7 @@ struct LockScreenPlan: Equatable {
     let window: LiveActivityDisplayPresentation.StepWindow
 
     /// One segment per top-level step, hidden ones included; the current one filled to the server's fraction.
-    var bar: PlanBar { PlanBar.make(steps: steps, before: window.before, after: window.after, fill: window.progress?.fill) }
+    var bar: PlanBar { PlanBar.make(steps: steps, before: window.before, after: window.after, progress: window.progress, fill: window.progress?.fill) }
 
     var standing: PlanProgress.Standing = .moving
 
@@ -160,7 +144,7 @@ struct PresentationCardView: View {
 
     private var palette: PresentationPalette {
         // Lock Screen and Island share one dark, brand-tinted surface in every appearance.
-        .init(presentation: presentation, surface: surface)
+        .init(presentation: presentation, surface: surface, projectSlot: context.state.owner?.projectSlot)
     }
     private var componentSurface: LiveActivityPresentation.Surface {
         surface == .lockScreen ? .lockScreen : .expandedBottom
@@ -176,7 +160,8 @@ struct PresentationCardView: View {
         // Select within the surface budget, then report the selected content's height.
         // A flexible max-height frame here would inflate even the smallest fallback.
         VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
-            if presentation.privacy != .private {
+            // In the island the source and the time sit beside the camera (`IslandSource`, `IslandStanding`).
+            if presentation.privacy != .private && surface == .lockScreen {
                 header
             }
             fittedContent
@@ -194,7 +179,7 @@ struct PresentationCardView: View {
         }
     }
 
-    /// Source on the leading edge; in the island, the state glyph or fact on the trailing edge.
+    /// The Lock Screen's header: the source on the leading edge, the time on the trailing edge.
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
             PresentationSourceMark(presentation: presentation, palette: palette)
@@ -202,40 +187,8 @@ struct PresentationCardView: View {
                 OwnerChipView(chip: chip, owner: context.state.owner)
             }
             Spacer(minLength: 0)
-            if let owner = context.state.owner, let timeSlot = OwnerTimeSlot(owner: owner) {
-                timeSlot.font(.caption.monospacedDigit()).foregroundStyle(palette.secondaryText)
-                    .lineLimit(1)
-            } else if let deadline = questionDeadline {
-                PresentationCountdown(deadline: deadline, palette: palette)
-            } else {
-                if let startedAt = elapsedStart {
-                    // The system ticks this for free; nothing in the widget redraws it.
-                    Text(timerInterval: startedAt...Date.distantFuture, countsDown: false)
-                        .font(.caption.monospacedDigit()).foregroundStyle(palette.secondaryText)
-                        .multilineTextAlignment(.trailing)
-                        .frame(maxWidth: 72, alignment: .trailing)
-                        .accessibilityLabel("Running for")
-                }
-                if surface == .expanded {
-                    PresentationIslandStatusMark(
-                    presentation: presentation, palette: palette,
-                        interaction: context.state.displayInteraction, isStale: context.isStale)
-                }
-            }
+            PresentationTimeSlot(context: context, projection: projection, color: palette.secondaryText)
         }
-    }
-
-    /// When the work began, only while it is still running; ended or stale cards show no timer.
-    private var elapsedStart: Date? {
-        guard presentation.state.kind == "active", !context.isStale else { return nil }
-        if let state = context.state.owner?.ownerState, state != .moving, state != .needsYou { return nil }
-        return context.state.startedAt
-    }
-
-    /// The answer deadline while a question can still be answered on the card.
-    private var questionDeadline: Date? {
-        guard projection.permitsInlineResponse, let interaction = context.state.displayInteraction else { return nil }
-        return interaction.expiresAt
     }
 
     private var fittedContent: some View {
@@ -251,17 +204,28 @@ struct PresentationCardView: View {
                     questionCard(showsTitle: false, questionLines: 2)
                     questionCard(showsTitle: false, questionLines: 1)
                     questionCard(showsTitle: false, questionLines: 0)
-                } else if surface == .lockScreen, let plan = lockScreenPlan {
+                } else if let plan = lockScreenPlan {
                     // Work with a plan reads like its card in Relo: title, status, the plan's segments, one caption.
+                    // The island opens on the same card, its title on one line under the camera.
                     if !dynamicTypeSize.isAccessibilitySize {
-                        workCard(plan, titleLines: 2, statusLines: 2)
-                        workCard(plan, titleLines: 2, statusLines: 1)
+                        if surface == .lockScreen {
+                            workCard(plan, titleLines: 2, statusLines: 2)
+                            workCard(plan, titleLines: 2, statusLines: 1)
+                        } else {
+                            workCard(plan, titleLines: 1, statusLines: 2)
+                        }
                         workCard(plan, titleLines: 1, statusLines: 1)
                     }
                     workCard(plan, titleLines: 1, statusLines: 0)
                     compactCard
                         .fixedSize(horizontal: false, vertical: true)
                     conciseFact.font(.caption).foregroundStyle(palette.secondaryText).lineLimit(1)
+                } else if surface == .expanded, projection.components.isEmpty, !presentation.status.isEmpty {
+                    // No plan yet: what it is doing now is the island's second line.
+                    statusCard(statusLines: 2)
+                    statusCard(statusLines: 1)
+                    compactCard
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     if !dynamicTypeSize.isAccessibilitySize {
                         card(showComponents: true)
@@ -309,15 +273,23 @@ struct PresentationCardView: View {
         }
     }
 
-    /// The Lock Screen's plan: its steps (with any hidden around the window) and the current step's own count.
-    private var lockScreenPlan: LockScreenPlan? {
-        guard let step = projection.components.first(where: { if case .steps = $0 { true } else { false } }),
-              case .steps(_, _, let items, let window) = step else { return nil }
-        let count = projection.components.lazy.compactMap { component -> (Int, Int)? in
-            if case .progressBar(_, _, _, let label) = component { LiveActivitySurfaceProjection.stepCount(label) } else { nil }
-        }.first
-        return LockScreenPlan(steps: LiveActivityPlanDisplay.steps(items, count: count), window: window,
-                              standing: presentation.planStanding)
+    /// The card's plan: its steps (with any hidden around the window) and the current step's own count.
+    private var lockScreenPlan: LockScreenPlan? { LockScreenPlan.make(projection: projection, presentation: presentation) }
+
+    /// Work without a plan: the title and what it is doing now.
+    private func statusCard(statusLines: Int) -> some View {
+        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
+            Text(presentation.title)
+                .font(ReloLayout.cardTitle)
+                .foregroundStyle(palette.primaryText)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
+            Text(presentation.status)
+                .font(ReloLayout.cardMeta).foregroundStyle(palette.secondaryText)
+                .lineLimit(statusLines)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Work with a plan, as its card in Relo: title, status, the plan's segments across the card and the plan
@@ -395,7 +367,7 @@ struct PresentationCardView: View {
 
     @ViewBuilder private var conciseFact: some View {
         switch projection.fact {
-        case .percentage(let value, let role):
+        case .percentage(let value, _):
             HStack(spacing: ReloLayout.cardGap) {
                 Text(value, format: .percent.precision(.fractionLength(0)))
                     .fontWeight(.semibold).monospacedDigit()
@@ -609,37 +581,6 @@ struct PresentationSourceMark: View {
     }
 }
 
-struct PresentationIslandStatusMark: View {
-    let presentation: LiveActivityPresentation
-    let palette: PresentationPalette
-    let interaction: ReloActivityAttributes.Interaction?
-    let isStale: Bool
-    /// The bottom card already states measured progress beside its bar or step track.
-    private var bottomCarriesProgress: Bool {
-        let bottom = LiveActivitySurfaceProjection.make(
-            presentation: presentation, surface: .expandedBottom,
-            interaction: interaction, isStale: isStale, now: .now)
-        switch bottom.fact {
-        case .percentage, .stages: return !bottom.components.isEmpty
-        case .symbol: return false
-        }
-    }
-
-    var body: some View {
-        if bottomCarriesProgress && presentation.privacy != .private {
-            // Never repeat the bottom card's number; show the state glyph instead.
-            Image(systemName: presentation.state.icon.systemImageName)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(palette.state)
-                .accessibilityLabel(presentation.status)
-        } else {
-            PresentationCompactSurface(
-                presentation: presentation, surface: .expandedTrailing,
-                palette: palette, interaction: interaction, isStale: isStale)
-        }
-    }
-}
-
 /// Time left to answer, counted down by the system without further pushes.
 struct PresentationCountdown: View {
     let deadline: Date
@@ -651,7 +592,9 @@ struct PresentationCountdown: View {
             Text(timerInterval: Date.now...max(deadline, Date.now), countsDown: true)
                 .monospacedDigit()
                 .multilineTextAlignment(.trailing)
-                .frame(maxWidth: 44, alignment: .trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: 64, alignment: .trailing)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(palette.state)
@@ -681,119 +624,324 @@ struct PresentationProgressRing: View {
     }
 }
 
-struct PresentationCompactSurface: View {
-    let presentation: LiveActivityPresentation
-    let surface: LiveActivityPresentation.Surface
-    let palette: PresentationPalette
-    var interaction: ReloActivityAttributes.Interaction? = nil
-    var isStale = false
-    /// The server's owner state: its needs-you count wins compact trailing and minimal (spec 6.2).
-    var owner: LiveActivityOwner? = nil
+extension LockScreenPlan {
+    /// A card's plan from its steps component (with any steps hidden around the window) and the current step's
+    /// own count; nil without steps.
+    static func make(projection: LiveActivitySurfaceProjection, presentation: LiveActivityPresentation) -> LockScreenPlan? {
+        guard let step = projection.components.first(where: { if case .steps = $0 { true } else { false } }),
+              case .steps(_, _, let items, let window) = step else { return nil }
+        let count = projection.components.lazy.compactMap { component -> (Int, Int)? in
+            if case .progressBar(_, _, _, let label) = component { LiveActivitySurfaceProjection.stepCount(label) } else { nil }
+        }.first
+        return LockScreenPlan(steps: LiveActivityPlanDisplay.steps(items, count: count), window: window,
+                              standing: presentation.planStanding)
+    }
+}
 
-    private var projection: LiveActivitySurfaceProjection {
-        .make(
-            presentation: presentation, surface: surface,
-            interaction: interaction, isStale: isStale, owner: owner, now: .now)
-    }
-    private var needsYouCount: Int? {
-        guard surface == .compactTrailing || surface == .minimal else { return nil }
-        return projection.needsYouCount
-    }
-    private var factColor: Color {
-        if presentation.privacy == .private { return palette.primaryText }
-        if case .percentage(_, let role) = projection.fact {
-            return palette.state
-        }
-        return palette.state
-    }
+/// The card's time: when an outcome landed or the work was last updated, the time left to answer, or how long
+/// it has run. The system ticks the timers; nothing in the widget redraws them.
+struct PresentationTimeSlot: View {
+    let context: ActivityViewContext<ReloActivityAttributes>
+    let projection: LiveActivitySurfaceProjection
+    let color: Color
+
+    private var presentation: LiveActivityPresentation { context.state.presentation }
 
     var body: some View {
-        Group {
-            if let count = needsYouCount {
-                if surface == .minimal {
-                    ZStack {
-                        Circle().fill(OwnerChipStyle.needsYouOrange)
-                        Text(count > 9 ? "9+" : "\(count)")
-                            .font(.system(size: 11, weight: .bold).monospacedDigit())
-                            .foregroundStyle(.black)
-                            .minimumScaleFactor(0.6)
-                    }
-                    .frame(width: 20, height: 20)
-                } else {
-                    Text(count > 9 ? "9+" : "\(count)")
-                        .foregroundStyle(OwnerChipStyle.needsYouOrange)
-                }
-            } else if surface == .minimal {
-                minimalFact
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    fullFact.fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: fallbackSymbol).foregroundStyle(factColor)
-                }
+        if let owner = context.state.owner, let timeSlot = OwnerTimeSlot(owner: owner) {
+            timeSlot.font(.caption.monospacedDigit()).foregroundStyle(color)
+                .lineLimit(1)
+        } else if let deadline = questionDeadline {
+            PresentationCountdown(deadline: deadline, palette: PresentationPalette(presentation: presentation))
+        } else if let startedAt = elapsedStart {
+            Text(timerInterval: startedAt...Date.distantFuture, countsDown: false)
+                .font(.caption.monospacedDigit()).foregroundStyle(color)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 72, alignment: .trailing)
+                .accessibilityLabel("Running for")
+        }
+    }
+
+    /// When the work began, only while it is still running; ended or stale cards show no timer.
+    private var elapsedStart: Date? {
+        guard presentation.state.kind == "active", !context.isStale else { return nil }
+        if let state = context.state.owner?.ownerState, state != .moving, state != .needsYou { return nil }
+        return context.state.startedAt
+    }
+
+    /// The answer deadline while a question can still be answered on the card.
+    private var questionDeadline: Date? {
+        guard projection.permitsInlineResponse, let interaction = context.state.displayInteraction else { return nil }
+        return interaction.expiresAt
+    }
+}
+
+// MARK: The island, as the Mac notch draws it
+
+/// How the island reads a card: the state's colour and word (the app's one table, from the server's owner state),
+/// the plan's segments, and the chip for a moment that asks for the owner. Display only: it decides nothing.
+struct IslandLook {
+    let style: ReloStateStyle
+    let isPrivate: Bool
+    let plan: LockScreenPlan?
+    /// A sender's measured progress, for a card without a plan.
+    let fraction: Double?
+    /// The right wing's chip for a moment that asks for the owner: Answer, Missed, Your turn.
+    let chip: String?
+    /// The account's needs-you count, when any card needs the owner.
+    let needsYouCount: Int?
+    /// One satellite per live item across the account (the Mac notch's orbit), at least this card's own.
+    let satellites: Int
+    /// Live items besides this card: the right wing's +N.
+    let more: Int
+
+    var color: Color { isPrivate ? .white : style.color }
+    /// The word beside the camera: the chip's, else the state's.
+    var word: String { chip ?? style.label }
+
+    init(context: ActivityViewContext<ReloActivityAttributes>) {
+        let presentation = context.state.presentation
+        let owner = context.state.owner
+        let projection = LiveActivitySurfaceProjection.make(
+            presentation: presentation, surface: .lockScreen,
+            interaction: context.state.displayInteraction, isStale: context.isStale, owner: owner, now: .now)
+        isPrivate = presentation.privacy == .private
+        style = Self.style(presentation: presentation, projection: projection, owner: owner, isStale: context.isStale)
+        plan = isPrivate ? nil : LockScreenPlan.make(projection: projection, presentation: presentation)
+        fraction = isPrivate ? nil : projection.measuredProgress
+        chip = if style == .missed { "Missed" }
+            else if style == .needsYou || style == .permission { "Answer" }
+            else if style == .yourTurn { "Your turn" }
+            else { nil }
+        needsYouCount = owner.flatMap { $0.needsYouCount > 0 ? $0.needsYouCount : nil }
+        let live = owner?.live ?? 0
+        satellites = min(max(live, 1), Self.maxSatellites)
+        more = max(0, live - 1)
+    }
+
+    static let maxSatellites = 6
+
+    /// The server's owner state when the card carries it; else what the card itself says.
+    private static func style(
+        presentation: LiveActivityPresentation, projection: LiveActivitySurfaceProjection,
+        owner: LiveActivityOwner?, isStale: Bool
+    ) -> ReloStateStyle {
+        if owner?.isMissedQuestion == true { return .missed }
+        if owner?.isPermission == true { return .permission }
+        if let style = ReloStateStyle.make(state: owner?.ownerState, standing: nil) { return style }
+        switch presentation.state.kind {
+        case "completed": return .done
+        case "failed": return .failed
+        case "cancelled", "canceled", "expired", "superseded": return .ended
+        case "needs_action": return .needsYou
+        default: return projection.isDecision ? .needsYou : isStale ? .quiet : .running
+        }
+    }
+
+    func accessibilityText(title: String) -> String {
+        isPrivate ? "Relo private activity, \(word)" : "\(title), \(word)"
+    }
+}
+
+/// Relo's disc, the Mac notch's left wing: an orbit, a core and one satellite per live item, spread evenly from the
+/// top right, in the state's colour. Static: the island moves only when an update lands.
+struct IslandDisc: View {
+    let color: Color
+    var satellites = 1
+    var size: CGFloat = 22
+
+    var body: some View {
+        let dot = size * (satellites > 3 ? 0.19 : 0.23)
+        let radius = size / 2 - 0.7
+        ZStack {
+            Circle().strokeBorder(color.opacity(0.5), lineWidth: 1.4)
+            Circle().fill(color).padding(size * 0.27)
+            ForEach(0..<max(satellites, 1), id: \.self) { index in
+                let angle = (-45 + Double(index) * 360 / Double(max(satellites, 1))) * .pi / 180
+                Circle().fill(color)
+                    .frame(width: dot, height: dot)
+                    .overlay { Circle().stroke(Color.black, lineWidth: 1.4) }
+                    .offset(x: radius * cos(angle), y: radius * sin(angle))
             }
         }
-        .font(.caption2.weight(.semibold).monospacedDigit())
+        .frame(width: size, height: size)
+    }
+}
+
+/// The right wing: a chip when the moment asks for the owner, else one segment per step (done filled, the
+/// current one bright), else a sender's measured progress. Before it, the count of cards that need the owner.
+/// When another app's activity shares the island the wing gets less room: it drops the "+N", then the chip's
+/// word for its glyph, and never draws outside its own space (under the disc).
+struct IslandWing: View {
+    let look: IslandLook
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            wing(more: true, word: true)
+            wing(more: false, word: true)
+            wing(more: false, word: false)
+        }
+        .clipped()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
 
-    @ViewBuilder private var fullFact: some View {
-        switch projection.fact {
-        case .symbol(let symbol, _):
-            Image(systemName: symbol).foregroundStyle(factColor)
-        case .percentage(let value, _):
-            Text(value, format: .percent.precision(.fractionLength(0)))
-                .foregroundStyle(factColor).frame(width: 36)
-        case .stages(let completed, let total):
-            Text("\(completed)/\(total)").foregroundStyle(factColor).frame(width: 30)
+    private func wing(more: Bool, word: Bool) -> some View {
+        HStack(spacing: 4) {
+            if look.chip == nil, let count = look.needsYouCount {
+                IslandCount(count: count, size: 16)
+            }
+            if let chip = look.chip {
+                Group {
+                    if word {
+                        Text(chip).font(.caption2.weight(.semibold)).lineLimit(1).fixedSize()
+                            .padding(.horizontal, 7)
+                    } else {
+                        Image(systemName: glyph).font(.system(size: 10, weight: .bold)).frame(width: 20)
+                    }
+                }
+                .foregroundStyle(look.color)
+                .frame(height: 20)
+                .background { Capsule().fill(look.color.opacity(0.2)) }
+            } else if let segments = look.plan?.bar.segments, !segments.isEmpty {
+                IslandSegments(segments: segments, color: look.color, failed: look.style == .failed)
+            } else if let fraction = look.fraction {
+                IslandBar(value: fraction, color: look.color)
+            }
+            if more, look.more > 0 {
+                Text("+\(look.more)")
+                    .font(.caption2.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.white.opacity(0.6))
+                    .fixedSize()
+            }
+        }
+        .fixedSize()
+    }
+
+    /// The chip's word as a glyph, for a wing too narrow for the word.
+    private var glyph: String {
+        switch look.chip {
+        case "Missed": "exclamationmark"
+        case "Your turn": "arrow.turn.down.left"
+        default: "questionmark"
         }
     }
 
-    @ViewBuilder private var minimalFact: some View {
-        switch projection.fact {
-        case .symbol(let symbol, _):
-            Image(systemName: symbol).foregroundStyle(factColor)
-        case .percentage(let value, _):
-            ring(value)
-        case .stages(let completed, let total):
-            ring(Double(completed) / Double(max(total, 1)))
-        }
-    }
-
-    private func ring(_ value: Double) -> some View {
-        ZStack {
-            Circle().stroke(palette.primaryText.opacity(0.22), lineWidth: 2)
-            Circle().trim(from: 0, to: value).stroke(
-                factColor, style: StrokeStyle(lineWidth: 2, lineCap: .round)
-            )
-            .rotationEffect(.degrees(-90))
-        }
-        .frame(width: 20, height: 20)
-    }
-
-    private var fallbackSymbol: String {
-        if case .symbol(let symbol, _) = projection.fact { return symbol }
-        return presentation.state.icon.systemImageName
-    }
     private var accessibilityText: String {
-        let needsYou = needsYouCount.map { "\($0) need you" }
-        if presentation.privacy == .private {
-            return needsYou.map { "Relo private activity, \($0)" } ?? "Relo private activity. Open Relo to view"
+        var standing = look.chip ?? look.plan?.caption ?? look.style.label
+        if look.more > 0 { standing += ", \(look.more) more live" }
+        guard look.chip == nil, let count = look.needsYouCount else { return standing }
+        return "\(count) need you, \(standing)"
+    }
+}
+
+/// The plan in the right wing: a small segment per step; a long plan becomes one bar.
+struct IslandSegments: View {
+    let segments: [PlanBar.Segment]
+    let color: Color
+    let failed: Bool
+
+    private var width: CGFloat { segments.count <= 4 ? 7 : segments.count <= 6 ? 5 : 3 }
+
+    var body: some View {
+        if segments.count > 10 {
+            IslandBar(value: segments.reduce(0.0) { $0 + $1.fill } / Double(segments.count), color: color)
+        } else {
+            HStack(spacing: 2.5) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                    piece(segment.state).frame(width: width, height: 5)
+                }
+            }
         }
-        let fact: String
-        if let needsYou {
-            return surface == .minimal
-                ? "\(presentation.identity.project?.label ?? presentation.header ?? "Relo"), \(presentation.title), \(needsYou)"
-                : needsYou
+    }
+
+    /// A failed plan dims what was done and lights the step it stopped on.
+    @ViewBuilder private func piece(_ state: LiveActivityPlanDisplay.StepState) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 2)
+        switch state {
+        case .done: shape.fill(failed ? color.opacity(0.45) : color)
+        case .current: shape.fill(color).overlay { shape.fill(Color.white.opacity(failed ? 0 : 0.5)) }
+        case .open, .skipped: shape.fill(Color.white.opacity(0.18))
         }
-        switch projection.fact {
-        case .symbol(_, let label): fact = label
-        case .percentage(let value, _): fact = "\(Int((value * 100).rounded())) percent"
-        case .stages(let completed, let total): fact = "\(completed) of \(total)"
+    }
+}
+
+struct IslandBar: View {
+    let value: Double
+    let color: Color
+
+    var body: some View {
+        Capsule().fill(Color.white.opacity(0.18))
+            .frame(width: 28, height: 5)
+            .overlay(alignment: .leading) {
+                Capsule().fill(color).frame(width: 28 * min(max(value, 0), 1))
+            }
+    }
+}
+
+/// The account's needs-you count: "1"…"9", "9+".
+struct IslandCount: View {
+    let count: Int
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().fill(ReloStateStyle.needsYou.color)
+            Text(count > 9 ? "9+" : "\(count)")
+                .font(.system(size: size * 0.55, weight: .bold).monospacedDigit())
+                .foregroundStyle(.black)
+                .minimumScaleFactor(0.6)
         }
-        return surface == .minimal
-            ? "\(presentation.identity.project?.label ?? presentation.header ?? "Relo"), \(presentation.title), \(fact)"
-            : fact
+        .frame(width: size, height: size)
+        .accessibilityLabel("\(count) need you")
+    }
+}
+
+/// The open island's left of the camera: Relo's disc, the project and the session.
+struct IslandSource: View {
+    let presentation: LiveActivityPresentation
+    let look: IslandLook
+
+    var body: some View {
+        HStack(spacing: 7) {
+            if look.isPrivate {
+                Image(systemName: "lock.fill").font(.caption).foregroundStyle(.white)
+            } else {
+                IslandDisc(color: look.color, satellites: look.satellites, size: 20)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(look.isPrivate ? "Relo" : presentation.identity.project?.label ?? presentation.header ?? "Relo")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.white)
+                if !look.isPrivate, let thread = presentation.identity.thread?.label {
+                    Text(thread).font(.caption2).foregroundStyle(Color.white.opacity(0.6))
+                }
+            }
+            .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The open island's right of the camera: the state's word over its time.
+struct IslandStanding: View {
+    let context: ActivityViewContext<ReloActivityAttributes>
+    let look: IslandLook
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(look.word).font(.caption.weight(.semibold)).foregroundStyle(look.color)
+                .lineLimit(1)
+            PresentationTimeSlot(
+                context: context,
+                projection: .make(
+                    presentation: context.state.presentation, surface: .expandedBottom,
+                    interaction: context.state.displayInteraction, isStale: context.isStale,
+                    owner: context.state.owner, now: .now),
+                color: Color.white.opacity(0.72))
+        }
+        // The region's top edge sits on the island's curve: keep ascenders clear of it.
+        .padding(.top, 3)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -995,18 +1143,21 @@ struct PresentationPalette: Sendable {
     }
 
     init(
-        presentation: LiveActivityPresentation, surface: PresentationCardSurface = .expanded
+        presentation: LiveActivityPresentation, surface: PresentationCardSurface = .expanded, projectSlot: Int? = nil
     ) {
+        // The project's slot (every app's colour for it) wins over the presentation's own accent.
         let project = (ReloReadableColor(hex: presentation.color(for: .project))
             ?? .init(red: 0.37, green: 0.85, blue: 0.72)).readable(onLight: false)
-        accent = Color(red: project.red, green: project.green, blue: project.blue)
+        accent = projectSlot.flatMap { ReloProjectPalette.color(slot: $0, name: nil) }
+            ?? Color(red: project.red, green: project.green, blue: project.blue)
         secondary = Color(neonHex: 0x8B7CFF)
         // Tone picks the ramp: running cyan>violet, done mint>teal, needs-you coral>magenta,
-        // failed/stopped amber>coral, waiting amber>amber, neutral cyan>blue.
+        // failed red>coral, stopped amber>coral, waiting amber>amber, neutral cyan>blue (red failed, as in the app).
         let ramp: (Color, Color) = switch presentation.state.tone {
         case "success": (Self.mint, Self.teal)
         case "attention": (Self.coral, Color(neonHex: 0xD65CF0))
-        case "failure", "stopped", "warning": (Self.amber, Self.coral)
+        case "failure": (Color(neonHex: 0xF87171), Self.coral)
+        case "stopped", "warning": (Self.amber, Self.coral)
         case "waiting": (Self.amber, Color(neonHex: 0xF59E0B))
         case "live": (Color(neonHex: 0x5CE1FF), Color(neonHex: 0x8B7CFF))
         default: (Color(neonHex: 0x5CE1FF), Self.blue)
@@ -1137,8 +1288,12 @@ struct OwnerTimeSlot: View {
 
     init?(owner: LiveActivityOwner) {
         switch owner.ownerState {
-        case .workingQuietly, .stale, .stoppedResponding, .noSignal: kind = .updated(owner.declaredAt)
-        case .done, .failed: kind = .finished(owner.finishedAt ?? owner.declaredAt)
+        case .workingQuietly, .stale, .stoppedResponding, .noSignal:
+            guard let declaredAt = owner.declaredAt else { return nil }
+            kind = .updated(declaredAt)
+        case .done, .failed:
+            guard let finishedAt = owner.finishedAt ?? owner.declaredAt else { return nil }
+            kind = .finished(finishedAt)
         case .waitingOnYou: kind = .none
         case .needsYou where owner.needsYouReason == .permission: kind = .none
         default: return nil

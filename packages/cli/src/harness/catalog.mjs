@@ -4,6 +4,7 @@
 import { statSync } from "node:fs";
 import agents from "./adapters/agents/descriptor.mjs";
 import amp from "./adapters/amp/descriptor.mjs";
+import antigravity from "./adapters/antigravity/descriptor.mjs";
 import claudeCode from "./adapters/claude-code/descriptor.mjs";
 import claudeDesktop from "./adapters/claude-desktop/descriptor.mjs";
 import codex from "./adapters/codex/descriptor.mjs";
@@ -16,7 +17,7 @@ import vscode from "./adapters/vscode/descriptor.mjs";
 import { configDirectory } from "./paths.mjs";
 
 /** In detection order: the first whose markers are in the environment is the calling harness. */
-export const HARNESSES = Object.freeze([claudeCode, codex, opencode, gemini, cursor, copilot, amp, claudeDesktop, vscode, agents, mcp]);
+export const HARNESSES = Object.freeze([claudeCode, codex, opencode, antigravity, gemini, cursor, copilot, amp, claudeDesktop, vscode, agents, mcp]);
 
 /** The harness for an id or alias (case-insensitive), or undefined. */
 export function harnessFor(name) {

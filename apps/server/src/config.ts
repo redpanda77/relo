@@ -18,6 +18,10 @@ const schema = z.object({
   RELO_LANDING_FILM_URL: optionalTrimmed(z.string().regex(FILM_FOLDER)),
   /** Where the onboarding film lives, shown above Get started in the docs; unset: no film. */
   RELO_ONBOARDING_FILM_URL: optionalTrimmed(z.string().regex(FILM_FOLDER)),
+  /** Sign in with Apple on the web: the Services ID whose return URL is <APP_URL>/api/auth/apple/callback; unset, no web button. */
+  RELO_APPLE_SERVICES_ID: optionalTrimmed(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.-]{2,154}$/)),
+  /** Sign in with Apple in the iPhone app: the app's bundle ID (the token's audience); unset, no button in the app. */
+  RELO_APPLE_BUNDLE_ID: optionalTrimmed(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.-]{2,154}$/)),
   RELO_RELEASE_IDENTITY: z.string().trim()
     .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/).optional(),
   BETTER_AUTH_SECRET_FILE: z.string().optional(),
@@ -52,6 +56,8 @@ const schema = z.object({
     z.iso.datetime().optional(),
   ),
   WORKER_POLL_MS: z.coerce.number().int().min(250).default(2000),
+  /** Where the worker marks itself ready (the compose healthcheck reads the default); local mode keeps it per user. */
+  RELO_WORKER_READY_FILE: z.string().min(1).default("/tmp/relo-worker-ready"),
   WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(20),
   WORKER_URGENT_RESERVED_SLOTS: z.coerce.number().int().min(0).max(99).optional(),
   /** Hours after which the worker deletes notification content; unset keeps it (manual retention). */

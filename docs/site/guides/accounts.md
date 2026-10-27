@@ -27,6 +27,21 @@ sees only that account.
 Open is for private networks only: on a public HTTPS address it acts as Approval, and the Dashboard
 refuses to choose it. The iPhone signs in through the same web page, so the mode applies there too.
 
+## Sign in with Apple
+
+People can also sign in, or register, with their Apple Account: natively in the iPhone app, and with
+**Continue with Apple** on the web sign-in page. A new person follows the registration mode above,
+exactly like an email sign-up. When the Apple Account's email already has a Relo account, Apple sign-in
+joins that account, as long as Apple has verified the email; the password keeps working too. Relo checks Apple's identity token against Apple's public
+keys, so no Apple private key is involved. Set either or both in `deploy/.env`:
+
+| Variable | Turns on | What to create in your Apple Developer account |
+| --- | --- | --- |
+| `RELO_APPLE_BUNDLE_ID` | the iPhone app's button | nothing extra: your app's bundle ID (`RELO_BUNDLE_ID`), built with the Sign in with Apple capability (Xcode adds it to the App ID with automatic signing) |
+| `RELO_APPLE_SERVICES_ID` | the web button | a Services ID with Sign in with Apple, your domain, and the return URL `https://relo.example.com/api/auth/apple/callback` |
+
+Restart the API after changing them. The web button needs an HTTPS address.
+
 ## Approve a sign-up
 
 In Approval mode each request reaches you as a notification from "Relo accounts" with **Approve**

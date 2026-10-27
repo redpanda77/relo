@@ -72,6 +72,20 @@ public struct HistoryRow: Equatable, Identifiable, Sendable {
     public let unread: Bool
     /// Which computer and agent account the card came from: "MacBook Pro · Work".
     public let origin: String?
+    /// The round of its work this row reports: the work's latest closed round, else the one in play.
+    public let round: Round?
+
+    public struct Round: Equatable, Sendable {
+        public let n: Int
+        public let title: String?
+    }
+
+    /// The row's headline: a later round's request ("Push and release to users") reads better than the
+    /// work's goal, which every round of the work repeats.
+    public var headline: String {
+        guard let round, round.n > 1, let request = round.title, !request.isEmpty else { return title }
+        return request
+    }
 }
 
 public enum HistoryRowProjection {
@@ -112,7 +126,21 @@ public enum HistoryRowProjection {
             progress: steps == nil ? card?.progress : nil,
             decision: asked.map { decision($0) },
             unread: item.readAt == nil,
-            origin: origin(of: item))
+            origin: origin(of: item),
+            round: round(of: item.work ?? card?.work))
+    }
+
+    /// Rounds are the work's phases `r<n>` (ADR 0012): the latest closed one, else the current one.
+    static func round(of work: ReloWork?) -> HistoryRow.Round? {
+        guard let work else { return nil }
+        let rounds = work.phases.compactMap { phase -> (Int, ReloWork.Phase)? in
+            guard phase.id.hasPrefix("r"), let n = Int(phase.id.dropFirst()), n >= 1 else { return nil }
+            return (n, phase)
+        }
+        let closed = rounds.filter { $0.1.outcome != nil || $0.1.state == .done }
+        let current = work.currentPhaseIndex.flatMap { index in rounds.first { $0.1.id == work.phases[index].id } }
+        guard let (n, phase) = closed.max(by: { $0.0 < $1.0 }) ?? current else { return nil }
+        return .init(n: n, title: phase.title)
     }
 
     /// "3 done · 1 stopped · 2 need you": how the day went, in the order that matters.
@@ -254,5 +282,55 @@ public enum HistoryRowProjection {
         if let prompt = item.interaction?.prompt { return prompt }
         let detail = item.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
         return detail?.isEmpty == false && detail != item.title ? detail : nil
+    }
+}
+
+/// How the History timeline reads a day: what each row means, the quiet stretches between rows, and the
+/// day's counts by meaning (the same colors as the hourly bars).
+public enum HistoryTimeline {
+    /// A pause between two rows worth marking on the rail: an hour or more.
+    public static let quietThreshold: TimeInterval = 3600
+
+    /// "3h 45m quiet" when the older row came an hour or more before the newer one; otherwise nil.
+    public static func quietGap(newer: Date, older: Date) -> String? {
+        let gap = newer.timeIntervalSince(older)
+        guard gap >= quietThreshold, let label = HistoryRowProjection.agentTimeLabel(gap) else { return nil }
+        return "\(label) quiet"
+    }
+
+    /// What a settled row means on the timeline: its dot, label color and the bar it counts in.
+    public static func signal(_ row: HistoryRow) -> NowSignal { NowSignal.of(row.outcome) }
+
+    /// How many of a day's rows have one meaning.
+    public struct Count: Equatable, Hashable, Sendable {
+        public let signal: NowSignal
+        public let count: Int
+    }
+
+    /// The day's rows counted by meaning, in display order, leaving out meanings with none.
+    public static func counts(_ rows: [HistoryRow]) -> [Count] {
+        var counts: [NowSignal: Int] = [:]
+        for row in rows where row.outcome.isSettled { counts[signal(row), default: 0] += 1 }
+        return NowSignal.allCases.compactMap { signal in counts[signal].map { Count(signal: signal, count: $0) } }
+    }
+
+    /// The word a count chip and the day line use for a meaning in History, where everything is settled.
+    public static func countLabel(_ signal: NowSignal, count: Int) -> String {
+        switch signal {
+        case .done: "Done"
+        case .failed: "Stopped"
+        case .attention: "Ended"
+        case .message: count == 1 ? "Message" : "Messages"
+        case .running: "Running"
+        case .needsYou: "Needs you"
+        }
+    }
+
+    /// One day's activity by hour, for any day: today runs to `now`, an earlier day to its end.
+    public static func activity(_ rows: [HistoryRow], on day: Date, now: Date, calendar: Calendar = .current) -> TodayActivity {
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.isDate(day, inSameDayAs: now)
+            ? now : calendar.date(byAdding: DateComponents(day: 1, second: -1), to: start) ?? start
+        return TodayActivity.settled(rows: rows, now: end, calendar: calendar)
     }
 }

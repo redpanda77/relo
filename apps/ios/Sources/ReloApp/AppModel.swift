@@ -61,13 +61,23 @@ final class AppModel {
         didSet { if oldValue != credential { invalidateSelectionScope() } }
     }
     var permission: PermissionState = .unknown
-    var items: [InboxItem] = []
+    var items: [InboxItem] = [] { didSet { refreshAttention() } }
     private(set) var currentNavigationRevision = 0
     private(set) var currentState: CurrentRuntimeState? { didSet { currentStateSubject.send(currentState) } }
     private var decisionDrafts: [String: CurrentDecisionDraft] = [:]
     private(set) var historySnapshot = InboxHistorySnapshot.offlineCache(items: [])
     /// The server's Now summary (`GET /api/now`); set by the Now summary controller (stream D1).
-    var nowSummary: NowSummary?
+    var nowSummary: NowSummary? {
+        didSet {
+            guard let nowSummary else { nowItemsByNotificationID = [:]; return }
+            var byID: [String: NowItem] = [:]
+            for item in nowSummary.allItems { if let id = item.notificationId, byID[id] == nil { byID[id] = item } }
+            nowItemsByNotificationID = byID
+        }
+    }
+    /// The summary's items by notification, rebuilt when the summary changes: a History row or a detail looks its
+    /// server state up here instead of joining the six lists on every read.
+    private(set) var nowItemsByNotificationID: [String: NowItem] = [:]
     /// Bumped when Now should refetch its summary at once (after dismissing a missed question).
     private(set) var nowRefetchRequest = 0
     /// Missed questions being dismissed: kept off Now until the server's next summary drops them.
@@ -86,8 +96,12 @@ final class AppModel {
     /// Agent sessions from the last inbox snapshot (empty from older servers).
     private(set) var historyLoadState: HistoryLoadState = .idle
     var syncState: SyncState = .idle
+    /// The last inbox sync reached the server but couldn't read its answer (size, shape): not offline.
+    private(set) var syncUnreadable = false
     var lastSyncedAt: Date?
     var authenticationError: String?
+    /// The server offers Sign in with Apple to this app (`refreshSignInMethods`).
+    var appleSignInAvailable = false
     var signOutError: String?
     var accountDeletionError: String?
     private(set) var isDeletingAccount = false
@@ -107,15 +121,15 @@ final class AppModel {
     }
     var respondingNotificationID: String?
     var interactionError: String?
-    private(set) var queuedResponseNotificationIDs = Set<String>()
+    private(set) var queuedResponseNotificationIDs = Set<String>() { didSet { refreshAttention() } }
     private(set) var responseFeedbackByNotificationID: [String: NotificationResponseFeedback] = [:] {
-        didSet { responseFeedbackSubject.send(responseFeedbackByNotificationID) }
+        didSet { responseFeedbackSubject.send(responseFeedbackByNotificationID); refreshAttention() }
     }
     private(set) var unreadCount = 0
     private(set) var unreadByProject: [String: Int] = [:]
     private(set) var withdrawingNotificationID: String?
     private(set) var selectedNotificationDetail: InboxNotificationDetail? {
-        didSet { selectedNotificationDetailSubject.send(selectedNotificationDetail) }
+        didSet { selectedNotificationDetailSubject.send(selectedNotificationDetail); refreshAttention() }
     }
     /// Every assignment, including transient ones, for race tests and non-SwiftUI observers.
     @ObservationIgnored private let currentStateSubject = CurrentValueSubject<CurrentRuntimeState?, Never>(nil)
@@ -132,16 +146,35 @@ final class AppModel {
     }
 
     private let system: AppSystemServices
-    private(set) var attentionDate = Date.now
+    /// The clock the projections read. Written coarsely (see `updateAttentionClock`), so views that read it are not
+    /// invalidated by every tick, only when time can change what they show.
+    private(set) var attentionDate = Date.now { didSet { refreshAttention() } }
     @ObservationIgnored private var replyDraftState = ReplyDraftState()
 
-    var attention: InboxAttentionProjection.Snapshot {
-        InboxAttentionProjection.make(items: items + [selectedNotificationDetail?.item].compactMap { $0 }, now: attentionDate,
+    /// What needs the owner, stored and recomputed only when its inputs change (items, the open detail, answers,
+    /// queued answers, the clock): reading it in a view body used to project every item again on each read.
+    private(set) var attention = InboxAttentionProjection.make(
+        items: [], now: .now, acceptedNotificationIDs: [], queuedNotificationIDs: [])
+
+    private func refreshAttention() {
+        let next = InboxAttentionProjection.make(
+            items: items + [selectedNotificationDetail?.item].compactMap { $0 }, now: attentionDate,
             acceptedNotificationIDs: Set(responseFeedbackByNotificationID.filter { $0.value.phase == .accepted }.keys),
             queuedNotificationIDs: queuedResponseNotificationIDs)
+        if next != attention { attention = next }
     }
 
-    func updateAttentionClock() { attentionDate = .now }
+    /// Moves the clock on, but not for every caller: within a few seconds of the last write, and short of the next
+    /// time-driven transition and the day's end, nothing the screens show could differ, so the write (which would
+    /// redraw every screen reading the clock) is skipped.
+    func updateAttentionClock() {
+        let now = Date.now
+        let elapsed = now.timeIntervalSince(attentionDate)
+        if elapsed >= 0, elapsed < 5,
+           (attention.nextTransitionAt ?? .distantFuture) > now,
+           Calendar.current.isDate(now, inSameDayAs: attentionDate) { return }
+        attentionDate = now
+    }
     func draft(for requestID: String) -> String {
         replyDraftState.transition(to: historyScopeIdentity)
         return replyDraftState.text(requestID: requestID)
@@ -847,29 +880,67 @@ final class AppModel {
             let session = try await apiClient.exchangeBrowserSignIn(
                 code: code, codeVerifier: flow.verifier, installationId: installationId
             )
-            try await retireCurrentDeviceBinding()
-            try accountSessionStore.save(session)
-            accountSession = session
-            accountUser = session.user
-            RuntimeServerOrigin.persist(serverURL)
-            chosenServerOrigin = serverOrigin
-            linkCeremonyPending = true
-            account = nil
-            items = []
-            clearHistory()
-            await updateApplicationBadge()
-            lastSyncedAt = nil
-            syncEngine = nil
-            inboxRemote = nil
-            configuredSyncScopeIdentity = nil
-            selectedAccountId = nil
-            accountState = .signedIn
-            // This iPhone registers only with notification permission, and the inbox syncs only once
-            // it is registered: ask now, as part of signing in, rather than leaving it to Settings.
-            await updatePermission()
-            if permission == .allowed { await registerDevice(force: true) } else { await requestNotifications() }
-            computerSetupOfferPending = true
-            return accountSession != nil
+            return try await adopt(session)
+        } catch {
+            accountState = credential == nil ? .signedOut : .reauthenticationRequired
+            authenticationError = authenticationMessage(for: error)
+            return false
+        }
+    }
+
+    /// Keeps a new account session and sets this iPhone up for it: the shared end of every sign-in.
+    private func adopt(_ session: AccountSession) async throws -> Bool {
+        try await retireCurrentDeviceBinding()
+        try accountSessionStore.save(session)
+        accountSession = session
+        accountUser = session.user
+        RuntimeServerOrigin.persist(serverURL)
+        chosenServerOrigin = serverOrigin
+        linkCeremonyPending = true
+        account = nil
+        items = []
+        clearHistory()
+        await updateApplicationBadge()
+        lastSyncedAt = nil
+        syncEngine = nil
+        inboxRemote = nil
+        configuredSyncScopeIdentity = nil
+        selectedAccountId = nil
+        accountState = .signedIn
+        // This iPhone registers only with notification permission, and the inbox syncs only once
+        // it is registered: ask now, as part of signing in, rather than leaving it to Settings.
+        await updatePermission()
+        if permission == .allowed { await registerDevice(force: true) } else { await requestNotifications() }
+        computerSetupOfferPending = true
+        return accountSession != nil
+    }
+
+    /// Asks the server which sign-ins it offers; the sign-in screens show Sign in with Apple only when it does.
+    func refreshSignInMethods() async {
+        appleSignInAvailable = (try? await apiClient.signInMethods().apple) ?? false
+    }
+
+    /// Finishes a native Sign in with Apple: the server checks Apple's identity token against `attempt`'s nonce.
+    func signInWithApple(identityToken: String, name: PersonNameComponents?, attempt: AppleSignIn) async -> Bool {
+        guard !isAuthenticating else { return false }
+        authenticationError = nil
+        signOutError = nil
+        deliveryTransportStatus = nil
+        deliveryTransportStatusError = nil
+        deliveryStatusScopeIdentity = nil
+        deliveryStatusLastAttemptAt = nil
+        guard chosenServerOrigin != nil || hasLocalAccountAccess else {
+            authenticationError = "Enter your Relo server's address first."
+            return false
+        }
+        accountState = .signingIn
+        do {
+            let installationId = try installationIDStore.loadOrCreate().uuidString.lowercased()
+            let session = try await apiClient.signInWithApple(
+                identityToken: identityToken, nonce: attempt.nonce, codeChallenge: attempt.challenge,
+                installationId: installationId, name: name
+            )
+            return try await adopt(session)
         } catch {
             accountState = credential == nil ? .signedOut : .reauthenticationRequired
             authenticationError = authenticationMessage(for: error)
@@ -964,7 +1035,7 @@ final class AppModel {
     func refresh() async -> Bool {
         guard !Task.isCancelled else { return false }
         sessionController.receive(.reconcile)
-        requestMaintenance()
+        requestMaintenance(force: true)
         guard let scope = currentSyncScopeIdentity else { return false }
         return await historyRepair.repair(scope: scope) { [weak self] in
             guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return false }
@@ -1007,7 +1078,7 @@ final class AppModel {
         if let count { currentBadge.set(count) }
         if state?.connection == .current, previous != nativeVersions(state),
            let scope = currentSyncScopeIdentity, configuredSyncScopeIdentity == scope {
-            scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope)
+            scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope, force: true)
         }
     }
 
@@ -1017,15 +1088,34 @@ final class AppModel {
     static let inboxFollowInterval: TimeInterval = 20
     @ObservationIgnored private var inboxFollowTask: Task<Void, Never>?
     @ObservationIgnored private var inboxFollowedAt = Date.distantPast
+    /// When the first hint of the pending burst arrived; a burst can postpone the sync by this much at most.
+    @ObservationIgnored private var inboxFollowPendingSince: Date?
+    /// A failed snapshot is not asked for again on every hint or tick: it backs off (2 s to 60 s, jittered).
+    @ObservationIgnored private var refreshFailures = RefreshFailureGate()
+    @ObservationIgnored private var lastSnapshotSucceededAt: Date?
+    /// Native reconciliation is a server read; it runs when the snapshot's live activities changed, else at a floor.
+    @ObservationIgnored private var nativeReconciliationGate = NativeReconciliationGate()
+    static let inboxFollowDebounce: TimeInterval = 2
+    static let inboxFollowBurstCap: TimeInterval = 10
+    /// History opened right after a good snapshot reuses it instead of reading the same window again.
+    static let historyReuseWindow: TimeInterval = 30
 
+    /// Trailing debounce: each hint of a burst restarts a short wait, so a burst becomes one sync, and the
+    /// `maxAge` floor between syncs still holds. A burst postpones the sync by at most `inboxFollowBurstCap`.
     func followInbox(maxAge: TimeInterval = AppModel.inboxFollowInterval) {
-        guard isForeground, inboxFollowTask == nil, let scope = currentSyncScopeIdentity,
+        guard isForeground, let scope = currentSyncScopeIdentity,
               configuredSyncScopeIdentity == scope else { return }
-        let wait = max(1, maxAge - Date().timeIntervalSince(inboxFollowedAt))
+        let now = Date()
+        if inboxFollowTask != nil, let since = inboxFollowPendingSince,
+           now.timeIntervalSince(since) >= Self.inboxFollowBurstCap { return }
+        let backedOff = refreshFailures.blockedUntil.map { $0.timeIntervalSince(now) } ?? 0
+        let wait = max(Self.inboxFollowDebounce, maxAge - now.timeIntervalSince(inboxFollowedAt), backedOff)
+        inboxFollowTask?.cancel()
+        if inboxFollowPendingSince == nil { inboxFollowPendingSince = now }
         inboxFollowTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(wait))
+            do { try await Task.sleep(for: .seconds(wait)) } catch { return }
             guard let self else { return }
-            defer { self.inboxFollowTask = nil }
+            defer { self.inboxFollowTask = nil; self.inboxFollowPendingSince = nil }
             guard !Task.isCancelled, self.isForeground, self.currentSyncScopeIdentity == scope else { return }
             self.inboxFollowedAt = .now
             _ = await self.historyRepair.repair(scope: scope) { [weak self] in
@@ -1065,11 +1155,12 @@ final class AppModel {
         pathMonitor = monitor
     }
 
-    private func requestMaintenance() {
+    /// `force`: an explicit refresh also reconciles native activities, whatever the snapshot shows.
+    private func requestMaintenance(force: Bool = false) {
         guard !Task.isCancelled, isForeground, let scope = currentSyncScopeIdentity, configuredSyncScopeIdentity == scope else { return }
         maintenance.bind(scope: scope)
         requestReadRecovery()
-        scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope)
+        scheduleNativeReconciliation(snapshot: InboxSnapshot(items: items), scope: scope, force: force)
         maintenance.request(.commands) { [weak self] in
             guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
             await self.responseSubmitter.flushPending()
@@ -1132,6 +1223,9 @@ final class AppModel {
             readCoordinator.reconcileHistory(snapshot.items)
             lastSyncedAt = snapshot.lastSuccessfulSyncAt
             inboxFollowedAt = .now
+            lastSnapshotSucceededAt = .now
+            refreshFailures.recordSuccess()
+            syncUnreadable = false
             syncState = .current
             resolvePendingNotification()
             resolvePendingActivity()
@@ -1152,6 +1246,8 @@ final class AppModel {
         } catch {
             if !Task.isCancelled, expectedScope == configuredSyncScopeIdentity,
                expectedScope == currentSyncScopeIdentity {
+                refreshFailures.recordFailure(at: .now)
+                syncUnreadable = (error as? InboxRemoteError) == .incompatibleResponse
                 syncState = .offline(InboxRefreshErrorGuidance.message(for: error))
                 resolvePendingNotification()
                 resolvePendingActivity()
@@ -1160,8 +1256,9 @@ final class AppModel {
         return false
     }
 
-    private func scheduleNativeReconciliation(snapshot: InboxSnapshot, scope: String) {
+    private func scheduleNativeReconciliation(snapshot: InboxSnapshot, scope: String, force: Bool = false) {
         guard isForeground else { return }
+        guard nativeReconciliationGate.shouldReconcile(scope: scope, items: snapshot.items, now: .now, force: force) else { return }
         maintenance.bind(scope: scope)
         maintenance.request(.nativeActivities) { [weak self] in
             guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return }
@@ -1172,6 +1269,7 @@ final class AppModel {
             if let authoritative {
                 await self.convergeLiveActivitiesWithServerTruth(Set(authoritative.activities.map(\.identity)))
             }
+            await self.liveActivityApplier.repairPlaceholderActivities(accountID: self.credential?.accountId)
         }
     }
 
@@ -2543,6 +2641,11 @@ final class AppModel {
 
     private func reloadHistoryFromServer() async throws {
         guard let scope = currentSyncScopeIdentity else { return }
+        // A server snapshot that just succeeded already is the History window; reading it again changes nothing.
+        if historySnapshot.source == .server, let at = lastSnapshotSucceededAt,
+           Date().timeIntervalSince(at) < Self.historyReuseWindow {
+            historyLoadState = .current; return
+        }
         historyLoadState = .loading
         let repaired = await historyRepair.repair(scope: scope) { [weak self] in
             guard let self, self.currentSyncScopeIdentity == scope, !Task.isCancelled else { return false }
@@ -2820,6 +2923,16 @@ final class AppModel {
 
     private func authenticationMessage(for error: Error) -> String {
         switch error {
+        case AppleSignInRefusal.approvalPending:
+            "Your account is waiting for the server admin's approval. Sign in again once they approve it."
+        case AppleSignInRefusal.registrationClosed:
+            "This server isn't taking new accounts. Ask its admin to create one for you."
+        case AppleSignInRefusal.accountExists:
+            "This email already has a Relo account. Sign in with its password."
+        case AppleSignInRefusal.serverNotReady:
+            "This server isn't ready for its first account yet. Create it in the Dashboard first."
+        case AppleSignInRefusal.invalidToken:
+            "Apple's sign-in didn't go through. Try again."
         case MobileAPIError.invalidRequest, is BrowserSignIn.CallbackError:
             "That sign-in expired. Tap Sign in to try again."
         case MobileAPIError.accountDisabled, MobileAPIError.forbidden:

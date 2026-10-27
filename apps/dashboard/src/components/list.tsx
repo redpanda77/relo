@@ -11,11 +11,11 @@ import { toneFor, type NeonTone } from "@/lib/status-tone"
 import { cn } from "@/lib/utils"
 
 /**
- * The one section caption (Now, History, every page): mono 12px, weight 600, tracked 0.16em,
- * uppercase and muted, the count after it in the section's meaning colour.
+ * The one section caption (Now, History, every page): mono 10.5px, weight 600, tracked 0.13em,
+ * uppercase, white at 42%, the count after it (weight 700) in the section's meaning colour.
  */
 export const SECTION_CAPTION_CLASS =
-  "section-caption flex items-center gap-2 font-mono text-[12px] leading-4 font-semibold tracking-[0.16em] uppercase text-muted-foreground"
+  "section-caption flex items-center gap-2 font-mono text-[10.5px] leading-4 font-semibold tracking-[0.13em] uppercase text-white/[0.42]"
 
 /**
  * A titled block of a page: the section caption (with an optional count in its meaning colour),
@@ -46,12 +46,12 @@ export function Section({
   const headingId = `section-${title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`
   return (
     <section id={id} aria-labelledby={headingId} className={cn("scroll-mt-6", className)}>
-      <div className="mb-3 flex min-h-9 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="mb-2.5 flex min-h-9 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h2 id={headingId} className={cn(SECTION_CAPTION_CLASS, color && `tone-${color}`)}>
             {title}
             {count != null ? (
-              <span aria-hidden="true" className="tabular-nums" style={{ color: color ? "var(--tone)" : undefined }}>
+              <span aria-hidden="true" className="font-bold tabular-nums" style={{ color: color ? "var(--tone)" : undefined }}>
                 {count}
               </span>
             ) : null}
@@ -75,8 +75,8 @@ const LIST_CLASS = "glass divide-y divide-white/[0.06] overflow-hidden rounded-c
 const RowElement = React.createContext<"li" | "div">("li")
 
 /** The list's rise, shared by an Empty state that takes over after the last item leaves. */
-const RISE_FROM = { opacity: 0, y: 10, scale: 0.985 }
-const RISE_TO = { opacity: 1, y: 0, scale: 1 }
+const RISE_FROM = { opacity: 0, y: 8 }
+const RISE_TO = { opacity: 1, y: 0 }
 
 type StaticListProps = { items?: undefined; children: React.ReactNode }
 type PresenceListProps<T> = {
@@ -274,32 +274,41 @@ export function Status({ value }: { value: string }) {
 
 export function Empty({
   icon,
+  eyebrow,
   title,
   description,
   action,
 }: {
-  /** Replaces the orb (a lucide icon element). */
+  /** Replaces the breathing dot (a lucide icon element). */
   icon?: React.ReactNode
+  /** A mono caps line over the title ("NO HISTORY YET"), beside the breathing dot. */
+  eyebrow?: string
   title: string
   description?: React.ReactNode
   action?: React.ReactNode
 }) {
   return (
-    <div className="glass flex flex-col items-center rounded-card px-5 py-8 text-center sm:px-6 sm:py-12">
+    <div className="glass flex flex-col items-center rounded-card px-[18px] py-[22px] text-center" data-slot="empty">
       {icon ? (
-        <span aria-hidden="true" className="mb-3 text-muted-foreground sm:mb-4 [&_svg]:size-6">
+        <span aria-hidden="true" className="mb-3 text-muted-foreground [&_svg]:size-6">
           {icon}
         </span>
-      ) : (
-        <span aria-hidden="true" className="brand-orb mb-3 size-8 opacity-80 sm:mb-4 sm:size-10" />
+      ) : eyebrow ? null : (
+        <span aria-hidden="true" className="breath-dot mb-3" />
       )}
+      {eyebrow ? (
+        <p className="standby-eyebrow mb-2">
+          {icon ? null : <span aria-hidden="true" className="breath-dot" />}
+          {eyebrow}
+        </p>
+      ) : null}
       <p className="text-[15px] font-semibold">{title}</p>
       {description ? (
-        <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
+        <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-[1.45] text-white/60">
           {description}
         </p>
       ) : null}
-      {action ? <div className="mt-4 flex flex-wrap justify-center gap-2 sm:mt-5">{action}</div> : null}
+      {action ? <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div> : null}
     </div>
   )
 }

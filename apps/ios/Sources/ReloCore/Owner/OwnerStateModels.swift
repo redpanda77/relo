@@ -194,7 +194,15 @@ public struct NowItem: Codable, Equatable, Hashable, Identifiable, Sendable {
         }
 
         /// The bar for these counts: one segment per top-level step.
-        public var bar: PlanBar { PlanBar.make(done: done, total: total, current: currentIndex, fill: fill) }
+        public var bar: PlanBar { PlanBar.make(done: done, total: total, current: position, fill: fill) }
+
+        /// The current step's place, the one number the bar lights and the caption writes ("Step N of M"): the server's
+        /// `currentIndex`, else the step after the done ones when a current step's label is known (the caption's rule).
+        public var position: Int? {
+            if let currentIndex, currentIndex >= 1 { return currentIndex }
+            guard done < total, let label = current?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty else { return nil }
+            return min(done + 1, total)
+        }
     }
 
     public struct Question: Codable, Equatable, Hashable, Sendable {
@@ -223,6 +231,8 @@ public struct NowItem: Codable, Equatable, Hashable, Identifiable, Sendable {
     /// The icon of the computer this work runs on; nil when the server names none.
     public var computerIcon: ComputerIcon?
     public var project: String?
+    /// The project's colour slot (`ProjectPalette`); nil when the server names no project resource.
+    public var projectSlot: Int?
     public var steps: Steps?
     /// The plan's count as the server computes it (top-level steps, the current one and its fraction); preferred over `steps`.
     public var progress: PlanProgress?

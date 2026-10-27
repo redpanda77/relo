@@ -151,7 +151,8 @@ describe("CI tokens on Connections", () => {
     expect(api.revokeCiToken).not.toHaveBeenCalled()
     fireEvent.click(within(dialog).getByRole("button", { name: "Revoke" }))
     await waitFor(() => expect(api.revokeCiToken).toHaveBeenCalledWith(deploy.id))
-    await waitFor(() => expect(within(ciSection()).queryByText("Deploy pipeline")).toBeNull())
+    // The row animates out: a loaded gate machine needs more than the default second.
+    await waitFor(() => expect(within(ciSection()).queryByText("Deploy pipeline")).toBeNull(), { timeout: 5000 })
     expect(api.revokeClient).not.toHaveBeenCalled()
   })
 

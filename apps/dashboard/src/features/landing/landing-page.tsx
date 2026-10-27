@@ -23,6 +23,80 @@ import type { LandingScene } from "@/features/landing/landing-scene"
 
 /** The docs this server serves: the install guide starts at Get started. */
 const DOCS_PATH = "/docs"
+/** Getting Relo: the desktop apps this server hosts (the notarized Mac app, the per-user Windows installer), and Get started (the chooser) for everything else. */
+const MAC_DOWNLOAD_PATH = "/mac/relo-mac.dmg"
+const WINDOWS_DOWNLOAD_PATH = "/windows/relo-setup.exe"
+
+const GET_STARTED_PATH = "/docs/get-started"
+
+type DesktopPlatform = "mac" | "windows"
+
+/** The visitor's desktop, from the browser: its app's download leads. Anything else (a phone, Linux) leads with the Mac. */
+function visitorPlatform(nav: Pick<Navigator, "userAgent"> & { userAgentData?: { platform?: string } } | undefined =
+  typeof navigator === "undefined" ? undefined : navigator): DesktopPlatform {
+  const platform = nav?.userAgentData?.platform ?? nav?.userAgent ?? ""
+  return /windows|win32|win64/iu.test(platform) ? "windows" : "mac"
+}
+
+const DOWNLOADS: Record<DesktopPlatform, { label: string; path: string; note: string }> = {
+  mac: { label: "Download for Mac", path: MAC_DOWNLOAD_PATH, note: "macOS 14 or later · Apple silicon" },
+  windows: {
+    label: "Download for Windows",
+    path: WINDOWS_DOWNLOAD_PATH,
+    note: "Windows 10 or later · installs for you alone, no administrator needed",
+  },
+}
+
+/**
+ * The "Get Relo" moment. A server that carries the Mac app or the Windows app offers each download beside the server
+ * guide, the visitor's own computer first (the filled button); one that carries neither (a server built from the public
+ * repository) offers the way in, never a dead download. Sign in is this server's, in the top bar.
+ */
+function GetRelo({ className, macApp, windowsApp }: { className?: string; macApp: boolean; windowsApp: boolean }) {
+  const lead = React.useMemo(() => visitorPlatform(), [])
+  if (!macApp && !windowsApp)
+    return (
+      <div className={className}>
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-[inherit]">
+          <a href={GET_STARTED_PATH} className="capsule-cta max-sm:w-full">
+            Get started
+            <ArrowRight className="size-[18px]" aria-hidden="true" />
+          </a>
+        </div>
+      </div>
+    )
+  const offered = (["mac", "windows"] as const).filter((platform) => (platform === "mac" ? macApp : windowsApp))
+  const ordered = [...offered].sort((a, b) => Number(b === lead) - Number(a === lead))
+  return (
+    <div className={className}>
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-[inherit]">
+        {ordered.map((platform, index) => (
+          <a
+            key={platform}
+            href={DOWNLOADS[platform].path}
+            download
+            className={index === 0 ? "capsule-cta max-sm:w-full" : "ghost-cta max-sm:w-full"}
+          >
+            {DOWNLOADS[platform].label}
+            <ArrowRight className={index === 0 ? "size-[18px]" : "size-4"} aria-hidden="true" />
+          </a>
+        ))}
+        <a href={GET_STARTED_PATH} className="ghost-cta max-sm:w-full">
+          Run your own server
+          <ArrowRight className="size-4" aria-hidden="true" />
+        </a>
+      </div>
+      {ordered.map((platform) => (
+        <p key={platform} className="get-relo-note">
+          {DOWNLOADS[platform].note}
+        </p>
+      ))}
+      <p className="get-relo-note">
+        iPhone app: build it yourself from the source (see <a href={GET_STARTED_PATH}>Get started</a>).
+      </p>
+    </div>
+  )
+}
 
 /** Harnesses the CLI sets up (`relo setup`, `--mcp`), then everything that speaks HTTP. */
 const sources = [
@@ -53,7 +127,7 @@ const flowSources = [
 const flowOutcomes = [
   { icon: Activity, title: "Live status", text: "What's running and how far along, on the Lock Screen", tone: "92 225 255" },
   { icon: BellRing, title: "Time-sensitive alerts", text: "Only what needs you now breaks through", tone: "255 138 61" },
-  { icon: ListTree, title: "The details", text: "The plan, the steps, the payload, on demand", tone: "139 124 255" },
+  { icon: ListTree, title: "The details", text: "The plan, the steps, the specifics, on demand", tone: "139 124 255" },
   { icon: MessageSquareReply, title: "Your input", text: "Approve, decline or answer, and it carries on", tone: "52 211 153" },
 ] as const
 
@@ -101,7 +175,7 @@ const features: ReadonlyArray<{ tone: string; title: string; text: string; visua
   {
     tone: "255 138 61",
     title: "Only you can say yes",
-    text: "Approvals are signed on your phone, so nothing and no one else can approve for you.",
+    text: "With a server and an iPhone, approvals are signed on your phone, so nothing and no one else can approve for you.",
     visual: "approval",
   },
   {
@@ -232,8 +306,7 @@ function Chip({
   )
 }
 
-export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?: string; filmBase?: string }) {
-  const signUpPath = `${signInPath}?mode=sign-up`
+export function LandingPage({ signInPath = "/sign-in", filmBase, macApp = false, windowsApp = false }: { signInPath?: string; filmBase?: string; macApp?: boolean; windowsApp?: boolean }) {
   const rootRef = React.useRef<HTMLDivElement>(null)
   const stageRef = React.useRef<HTMLDivElement>(null)
   const canvasRef = React.useRef<HTMLCanvasElement>(null)
@@ -364,18 +437,9 @@ export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?
                 </span>
               </h1>
               <p className="hero-sub landing-lede landing-hero-lede mt-7">
-                Live status, alerts and approvals from every agent, script and app you run, wherever it runs. On your iPhone.
+                Live status, alerts and approvals from every agent, script and app you run, wherever it runs. On your iPhone or your Mac.
               </p>
-              <div className="hero-cta mt-9 flex flex-wrap items-center gap-3">
-                <a href={signUpPath} className="capsule-cta magnetic max-sm:w-full">
-                  Create account
-                  <ArrowRight className="size-[18px]" aria-hidden="true" />
-                </a>
-                <a href={signInPath} className="ghost-cta magnetic max-sm:w-full">
-                  Sign in
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </a>
-              </div>
+              <GetRelo className="hero-cta mt-9" macApp={macApp} windowsApp={windowsApp} />
             </div>
 
             <div className="pointer-events-none absolute inset-y-0 right-[var(--landing-gutter)] hidden w-[46%] xl:block" aria-hidden="true">
@@ -401,7 +465,7 @@ export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?
               </h2>
               <p className="landing-lede landing-reveal mx-auto mt-5 !max-w-[44rem] text-balance">
                 Claude Code on your laptop, Codex on another computer, a script on your home server, a job in the
-                cloud, your own app waiting for an approval. Relo brings them together on your iPhone.
+                cloud, your own app waiting for an approval. Relo brings them together on your iPhone or your Mac.
               </p>
             </div>
 
@@ -522,7 +586,7 @@ export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?
             <div className="order-1 lg:order-2">
               <SectionHeading title={<>Say yes<br />from anywhere.</>}>
                 Before anything risky, your agent, script or app asks on its card: deploy to production, approve a new
-                sign-up. Approve, decline or answer on your iPhone and it carries on the moment you do. No answer means
+                sign-up. Approve, decline or answer on your iPhone or in your Mac's notch and it carries on the moment you do. No answer means
                 no.
               </SectionHeading>
             </div>
@@ -535,9 +599,9 @@ export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?
           <div className="landing-wrap">
             <div className="landing-head-wide">
               <SectionHeading title={<>Total privacy.<br />For confidential work.</>}>
-                Your agents work on client code, unreleased plans and personal matters. Everything Relo carries is
+                Your agents work on client code, unreleased plans and personal matters. What your agents send is
                 encrypted on your computer and opens only on your devices. Nobody in between can read it, not even
-                your own server.
+                your own server. With Relo for Mac on its own, nothing leaves the Mac.
               </SectionHeading>
             </div>
 
@@ -553,9 +617,9 @@ export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?
 
             <ul className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-[14px] text-[#c3c3d3]">
               {[
-                "End-to-end encrypted by default",
+                "End-to-end encrypted once an iPhone is trusted",
                 "Keys never leave your devices",
-                "Approvals signed on your phone",
+                "Approvals signed on your iPhone",
                 "Self-hosted and source-available, so you can check",
               ].map((text) => (
                 <li key={text} className="landing-reveal inline-flex items-center gap-2">
@@ -598,16 +662,7 @@ export function LandingPage({ signInPath = "/sign-in", filmBase }: { signInPath?
               <p className="landing-lede mx-auto mt-6 text-center">
                 Source-available under PolyForm Noncommercial. Free for personal and noncommercial use.
               </p>
-              <div className="mt-10 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-                <a href={signUpPath} className="capsule-cta magnetic">
-                  Create account
-                  <ArrowRight className="size-[18px]" aria-hidden="true" />
-                </a>
-                <a href={signInPath} className="ghost-cta magnetic">
-                  Sign in
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </a>
-              </div>
+              <GetRelo className="get-relo-center mt-10" macApp={macApp} windowsApp={windowsApp} />
             </div>
           </div>
         </section>

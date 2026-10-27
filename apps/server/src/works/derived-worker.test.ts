@@ -86,6 +86,21 @@ suite("derived worker over works",() => {
     expect(await updates()).toBe(1);
   });
 
+  test("a card carries the island's live count; another session's card refreshes it once",async () => {
+    const live = async () => (await db.query(
+      `SELECT DISTINCT ON (payload#>>'{liveActivity,activityId}') payload#>>'{liveActivity,owner,live}' AS live
+       FROM notification_events WHERE kind='live_activity'
+       ORDER BY payload#>>'{liveActivity,activityId}',created_at DESC,id DESC`)).rows.map((row) => Number(row.live));
+    await startWork(call,{},sessions[0]);
+    expect(await live()).toEqual([1]);
+    expect((await retireByPolicy(db,"sandbox")).restaled).toBe(0);
+    await startWork(call,{},sessions[1]);
+    // The second card counts both; the first learns of the second from the pass, once.
+    expect((await retireByPolicy(db,"sandbox")).restaled).toBe(1);
+    expect(await live()).toEqual([2,2]);
+    expect((await retireByPolicy(db,"sandbox")).restaled).toBe(0);
+  });
+
   test("a time-only derived change between passes wakes the account once; no change wakes nobody",async () => {
     const work = await startWork(call,{},sessions[0]);
     const worker = createDerivedWorker(db,"sandbox");

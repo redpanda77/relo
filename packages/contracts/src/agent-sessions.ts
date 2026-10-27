@@ -43,6 +43,7 @@ export const agentSessionObservedRequestSchema = z.object({
   contextPct: z.number().int().min(0).max(100).optional().describe("How full the session's context window is, in whole percent; present once the CLI's status line wrapper (relo setup --level optimize) has read it, and sent only after it moved by 5 points."),
   costUsd: z.number().min(0).max(1_000_000).optional().describe("What the session has cost so far in US dollars, rounded to the cent; present with contextPct, and sent only after it moved by 50 cents."),
   contextTokens: z.number().int().min(0).max(10_000_000).optional().describe("Tokens in the session's context window, read by the CLI's hooks from the session's transcript (where no status line runs, such as the Claude desktop app); sent first, then only after it moved by 10,000 tokens or 5%."),
+  title: label(80).optional().describe("The session's readable name (the title the owner or the harness gave the conversation), one line. Sent only when the account is not encrypted; otherwise it travels sealed inside sealedNames."),
   heartbeat: z.boolean().optional().describe("True on a snapshot the Relo MCP server sends once a minute for a session at a permission prompt; it repeats the phase and only proves the session is still alive."),
   endReason: z.enum(["hook","gone","mcp"]).optional().describe("How the session ended, sent with phase ended: the harness's end hook, the CLI's dead-process sweep (gone) or the Relo MCP server (mcp). Logged with the phase change to measure how fast ended sessions clear."),
   /**

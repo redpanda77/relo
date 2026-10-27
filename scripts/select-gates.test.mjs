@@ -5,14 +5,20 @@ import { GATES, gatesFor, selectGates } from "./select-gates.mjs";
 const heavy = ["contracts", "dashboard", "server"];
 
 test("server, contracts, migrations, dashboard and deploy paths select the server gates", () => {
-  for (const path of ["apps/server/src/app.ts", "apps/server/migrations/0115_work_handoffs.sql", "packages/contracts/src/works.ts",
+  for (const path of ["apps/server/src/app.ts", "apps/server/migrations/0115_work_handoffs.sql", "packages/contracts/src/works.ts", "packages/owner-crypto/src/keys.ts", "packages/owner-crypto/test/envelope.test.ts",
     "apps/dashboard/src/main.tsx", "deploy/compose.yaml", "docs/api/openapi.json", "docs/internal/operations/example-host/compose.yaml"]) {
     for (const gate of heavy) assert.ok(gatesFor(path).includes(gate), `${path} selects ${gate}`);
   }
 });
 
-test("paths only the phone, the notch app or internal notes read select no gate", () => {
+test("the owner client selects only the contracts gate", () => {
+  assert.deepEqual(gatesFor("packages/owner-client/src/store.ts"), ["contracts"]);
+  assert.deepEqual(selectGates(["packages/owner-client/package.json"]).selected, ["contracts"]);
+});
+
+test("paths only the phone, the notch app, the Windows app or internal notes read select no gate", () => {
   const { selected } = selectGates(["apps/ios/Sources/ReloApp/NowView.swift", "apps/notch/Sources/Orb.swift",
+    "apps/windows/src/notch/Notch.tsx",
     "docs/internal/STATUS.md", "docs/adr/0012-handoff.md", "ROADMAP.md", ".github/workflows/ci.yml"]);
   assert.deepEqual(selected, []);
 });

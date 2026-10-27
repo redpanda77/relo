@@ -99,7 +99,7 @@ writes itself, such as account requests, are readable too. The phone labels thes
 Relo is self-hosted: one Docker Compose stack on a machine you choose, behind an address you choose.
 Each person on the server gets a separate, private account, and the server admin manages accounts
 without being able to open them. There is no Relo cloud in the path; the server talks only to Apple's
-push service, outbound.
+push service, outbound. Relo for Mac on its own runs on that Mac and nothing leaves it.
 
 ## Read more
 

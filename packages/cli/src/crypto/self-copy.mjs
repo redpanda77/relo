@@ -7,6 +7,7 @@
 // phones' recipient set and needs no prekey for the computer.
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { b64u, fromB64u } from "./e2ee.mjs";
+import { FACTS } from "../shared/facts.generated.mjs";
 import { identityKeys, keyStorePath, loadKeyStore, subkey } from "./keystore.mjs";
 
 const SELF_COPY_VERSION = "relo.work-self.v1";
@@ -17,8 +18,13 @@ const keyIdOf = (key) => b64u(createHash("sha256").update(key).digest().subarray
 
 /** The text a work's self copy holds: goal, spoken name, status, waiting reason and step labels by id. */
 export function selfCopyText(work) {
-  const labels = Object.fromEntries((work?.plan?.steps ?? []).filter((step) => step.label != null).map((step) => [step.id, step.label]));
-  const details = Object.fromEntries((work?.plan?.steps ?? []).filter((step) => step.detail).map((step) => [step.id, step.detail]));
+  // Labels and details only for the newest rounds, the card's own rule (workCardText): the server keeps no steps for
+  // older rounds, so their text could never be restored and would only grow the copy with every round.
+  const listed = work?.plan?.rounds ?? [];
+  const kept = listed.length ? new Set(listed.slice(-FACTS.work.planRoundsWithSteps).map((round) => round.n)) : undefined;
+  const steps = (work?.plan?.steps ?? []).filter((step) => !kept || kept.has(step.round ?? 1));
+  const labels = Object.fromEntries(steps.filter((step) => step.label != null).map((step) => [step.id, step.label]));
+  const details = Object.fromEntries(steps.filter((step) => step.detail).map((step) => [step.id, step.detail]));
   const rounds = Object.fromEntries((work?.plan?.rounds ?? []).filter((round) => round.title || round.outcome).map((round) => [round.n, { ...(round.title ? { title: round.title } : {}), ...(round.outcome ? { outcome: round.outcome } : {}) }]));
   const waiting = work?.waiting && typeof work.waiting === "object" ? work.waiting.reason : work?.waiting;
   return {

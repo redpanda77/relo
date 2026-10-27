@@ -1,0 +1,27 @@
+{
+  "name": "@relo/owner-crypto",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The owner clients' end-to-end encryption (relo.e2e.v1): keys, envelope opening, answer signing. Shared by the Dashboard and the Windows app.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "package.json"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "~6",
+    "vitest": "^3.2.7"
+  }
+}

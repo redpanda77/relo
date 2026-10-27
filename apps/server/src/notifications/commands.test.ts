@@ -91,7 +91,7 @@ suite("Notification command adapter authority and atomicity",()=>{
   test.each(["credential","service"])("%s creation preserves exact replay, content, targets and actor provenance",async adapter=>{
     const key=randomUUID(),first=await create(adapter,key);expect(first.status).toBe(201);
     const receipt=await first.json() as {eventId:string;delivery:unknown;relevance:unknown};
-    expect(receipt.delivery).toEqual({eligibleDevices:1,durableCommands:1,apnsJobs:1});
+    expect(receipt.delivery).toMatchObject({ eligibleDevices:1,durableCommands:1,apnsJobs:1,readers:0});
     const replay=await create(adapter,key);expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({eventId:receipt.eventId,delivery:receipt.delivery,relevance:receipt.relevance});
     expect((await create(adapter,key,"Changed intent")).status).toBe(409);

@@ -1,11 +1,13 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { EXIT, UsageError, normalizeError } from "../shared/errors.mjs";
+import { EXIT, UsageError, normalizeError, LOCAL_NOT_LINKED, LOCAL_RELINK } from "../shared/errors.mjs";
 import { listAllDevices } from "../shared/devices.mjs";
+import { receivingMacs } from "../crypto/mac-device.mjs";
 import { readHarnessCredential } from "../harness/core/credential.mjs";
-import { inspectBlocks, inspectHooksInstall, inspectMcpInstall, inspectPath } from "../install/inspect.mjs";
+import { inspectBlocks, inspectHooksInstall, inspectMcpInstall, inspectPath, inspectRelos } from "../install/inspect.mjs";
 import { pending } from "../outbox/index.mjs";
 import { inspectSkill, skillAdvice } from "../install/skill.mjs";
+import { updateMode } from "./auto-update.mjs";
 import { updateAdvice } from "./releases.mjs";
 import { FACTS } from "../shared/facts.mjs";
 import { harnessesOf } from "./machine-report.mjs";
@@ -14,6 +16,7 @@ import { adapterFor } from "../harness/adapters/index.mjs";
 import { surfaceFor } from "../caller.mjs";
 import { sessionKey } from "../shared/session-key.mjs";
 import { isReadyResponse, safeCredential } from "./credential-shape.mjs";
+import { evaluateLocal, isLocalAccount, mismatchWarning, readLocalFacts } from "./local-doctor.mjs";
 
 /**
  * Advice, not failures: nothing here changes `ok` or the exit code. What relo setup wrote, checked against
@@ -117,7 +120,9 @@ export async function sessionNamesDiffer(dependencies) {
 
 const LOGIN_RUN = "relo auth login --no-wait";
 
-async function loginStep(dependencies,why,hasConfig) {
+async function loginStep(dependencies,why,hasConfig,local = false) {
+  // A local account is linked by Relo for Mac, never by a sign-in link.
+  if (local) return { step: "mac",run: "relo doctor",why: LOCAL_RELINK };
   let pending = null;
   try { pending = await dependencies.pendingLogin?.read(); } catch { pending = null; }
   if (pending && dependencies.now() < pending.expiresAtMs) {
@@ -130,7 +135,19 @@ async function loginStep(dependencies,why,hasConfig) {
 async function readiness(dependencies,client,config,warnings) {
   let devices;
   try { devices = (await listAllDevices(client)).devices; } catch { return { ready: false }; }
-  if (!devices.some((device) => device.liveActivityAuthorization === "authorized")) {
+  const phoneLive = devices.some((device) => device.liveActivityAuthorization === "authorized");
+  if (!phoneLive) {
+    // No iPhone, but Relo for Mac is signed in (with a current key, unless the account is local: nothing is sealed there): the Mac receives.
+    const local = isLocalAccount(config);
+    const macs = await receivingMacs(client, { local, now: dependencies.now?.(), devices });
+    const current = macs[0];
+    const macIds = new Set(macs.map((device) => device.deviceId));
+    if (current && (local || devices.every((device) => macIds.has(device.deviceId)))) {
+      const receives = { device: current.name ?? "Mac",model: current.model };
+      return warnings.skill.ok ? { ready: true,receives } : { ready: true,receives,next: { step: "skill",run: warnings.skill.run ?? "relo setup",
+        why: `The skill is ${warnings.skill.state}: ask the owner before running it; it never blocks work.` } };
+    }
+    if (local) return { ready: false,next: { step: "mac",run: "relo devices list",why: LOCAL_NOT_LINKED } };
     return { ready: false,next: { step: "phone",run: "relo devices list",
       why: devices.length === 0
         ? "No iPhone is signed in: the owner opens the Relo app, signs in and allows Live Activities."
@@ -181,10 +198,19 @@ async function runDoctor(options,dependencies,helpers) {
   await dependencies.recordDoctor?.(outcome.data.checks);
   const warnings = await setupWarnings(dependencies);
   // Read-only except one cache file (update-check.json, 24 h). Only asked when the server answered, so offline costs nothing.
-  if (outcome.data.checks.server.ok) {
+  if (updateMode({ home: dependencies.home, env: dependencies.env, entrypoint: dependencies.entrypoint }) === "managed") {
+    warnings.update = { ok: true, state: "managed", hint: "The Relo app keeps this CLI up to date." };
+  } else if (outcome.data.checks.server.ok) {
     const update = await updateAdvice(dependencies).catch(() => undefined);
     if (update) warnings.update = update;
   }
+  // Windows ignores mode 0600: warn when the config folder's ACL lets other accounts in (shared/private-dir.mjs).
+  const acl = dependencies.configAcl ? await dependencies.configAcl() : undefined;
+  if (acl) warnings.configAcl = acl;
+  const relos = inspectRelos({ env: dependencies.env ?? {} });
+  if (!relos.ok) warnings.relos = relos;
+  const mismatch = mismatchWarning(outcome.data.checks.local);
+  if (mismatch) warnings.localVersion = mismatch;
   // Anything still queued locally (offline writes, observed snapshots) or dropped by the server: shown
   // only when there is something, never a failure (the flusher retries on its own).
   const queued = dependencies.outboxDirectory ? await pending({ directory: dependencies.outboxDirectory }).catch(() => undefined) : undefined;
@@ -199,14 +225,26 @@ async function runDoctor(options,dependencies,helpers) {
   }
   let state = { ready: false };
   if (context.loginWhy) {
-    state = { ready: false,next: await loginStep(dependencies,context.loginWhy,context.hasConfig) };
+    state = { ready: false,next: await loginStep(dependencies,context.loginWhy,context.hasConfig,isLocalAccount(context.config)) };
   } else if (outcome.data.ok) {
     state = await readiness(dependencies,context.client,context.config,warnings);
   }
-  const privacy = context.content ? privacyLine(context.content) : undefined;
+  const privacy = isLocalAccount(context.config) ? "Relo runs on this Mac: nothing leaves it; not encrypted."
+    : context.content ? privacyLine(context.content) : undefined;
   // After the checks and the release look-up, so the report carries this run and the fresh cache.
   await dependencies.sendMachineReport?.();
-  return { ...outcome,data: { ...outcome.data,ready: state.ready,...(state.next ? { next: state.next } : {}),...(privacy ? { privacy } : {}),warnings } };
+  // --full says "ready" only when readiness (a receiving device, a test) holds, never just because the checks passed.
+  const message = outcome.data.ok && options.full
+    ? (state.ready ? "Relo is ready." : state.next?.why ?? "Relo is not ready yet.") : outcome.message;
+  return { ...outcome,...(message === undefined ? {} : { message }),data: { ...outcome.data,ready: state.ready,...(state.receives ? { receives: state.receives } : {}),...(state.next ? { next: state.next } : {}),...(privacy ? { privacy } : {}),warnings } };
+}
+
+/** Where a stale sign-in sends the owner: a local account is linked by Relo for Mac, not by `relo auth login`. */
+const relinkMessage = (config,message) => (isLocalAccount(config) ? LOCAL_RELINK : message);
+
+async function localCheck(dependencies,config) {
+  const facts = await (dependencies.localFacts ?? readLocalFacts)({ apiUrl: config.apiUrl,home: dependencies.home,platform: dependencies.platform });
+  return evaluateLocal(facts,{ version: dependencies.version,updateMode: updateMode({ home: dependencies.home,env: dependencies.env,entrypoint: dependencies.entrypoint }) });
 }
 
 async function runChecks(options,dependencies,{ isReadyResponse,safeCredential },context) {
@@ -241,12 +279,14 @@ async function runChecks(options,dependencies,{ isReadyResponse,safeCredential }
   } catch (error) {
     const normalized = normalizeError(error);
     checks.server = { ok: false,state: normalized.code,apiUrl: config.apiUrl };
-    context.loginWhy = "The Relo server did not answer: check the network and the server address, then sign in again if it moved.";
+    if (isLocalAccount(config)) checks.local = await localCheck(dependencies,config);
+    else context.loginWhy = "The Relo server did not answer: check the network and the server address, then sign in again if it moved.";
     return {
       exitCode: normalized.exitCode === EXIT.NETWORK ? EXIT.NETWORK : EXIT.API,
       command: "doctor",data: { ok: false,checks },message: "Relo server is unreachable or not ready.",
     };
   }
+  if (isLocalAccount(config)) checks.local = await localCheck(dependencies,config);
   try {
     const status = await client.authStatus();
     if (status?.authenticated !== true) {
@@ -254,7 +294,7 @@ async function runChecks(options,dependencies,{ isReadyResponse,safeCredential }
       context.loginWhy = "The server no longer accepts this sign-in.";
       return {
         exitCode: EXIT.AUTH,command: "doctor",data: { ok: false,checks },
-        message: "Relo credentials need attention. Run `relo auth login`.",
+        message: relinkMessage(config,"Relo credentials need attention. Run `relo auth login`."),
       };
     }
     const credential = safeCredential(status.credential);
@@ -273,7 +313,7 @@ async function runChecks(options,dependencies,{ isReadyResponse,safeCredential }
     context.loginWhy = "The server did not accept this sign-in.";
     return {
       exitCode: EXIT.AUTH,command: "doctor",data: { ok: false,checks },
-      message: "Relo credentials need attention. Run `relo auth login`.",
+      message: relinkMessage(config,"Relo credentials need attention. Run `relo auth login`."),
     };
   }
   try {
@@ -320,9 +360,9 @@ async function runChecks(options,dependencies,{ isReadyResponse,safeCredential }
     exitCode: ok ? EXIT.OK : activityEvidenceMissing ? EXIT.AUTH : EXIT.API,
     command: "doctor",data: { ok,checks },
     message: ok
-      ? (options.full ? "Relo is ready." : undefined)
+      ? undefined
       : activityEvidenceMissing
-        ? "Relo activity credentials need `devices:read` for delivery evidence. Run `relo auth login`."
+        ? relinkMessage(config,"Relo activity credentials need `devices:read` for delivery evidence. Run `relo auth login`.")
         : "Relo needs attention; inspect the failed doctor stages.",
   };
 }

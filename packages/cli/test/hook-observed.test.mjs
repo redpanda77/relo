@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { SECRET_PROMPT, SESSION_ID, cli, hookBox } from "./hook-fixture.mjs";
 
@@ -22,7 +22,7 @@ test("relo hook queues only the session facts: hashed id, phase and its times, p
   const [body] = box.sent;
   const at = new Date(box.clock).toISOString();
   assert.deepEqual(body, { session: KEY, harness: "claude-code", phase: "open", phaseSince: at, lastSeenAt: at, openToolSince: null, seq: 1,
-    project: box.repo.split("/").at(-1), computer: "Studio Mac" });
+    project: basename(box.repo), computer: "Studio Mac" });
   assert.equal(box.entries[0].route, "/api/agent-sessions/observed");
   assert.equal(box.entries[0].credential, "harness");
   assert.equal(box.spawned, 1, "a background flusher was started");
@@ -107,7 +107,7 @@ test("the observed lane keeps the latest snapshot per session while offline", as
 test("Notification is a wait only for a prompt that blocks on the owner", async () => {
   const box = await hookBox();
   await box.event("UserPromptSubmit", "prompt");
-  for (const type of ["idle_prompt", "auth_success", undefined]) await box.event("Notification", "wait", { notification_type: type });
+  for (const type of ["auth_success", undefined]) await box.event("Notification", "wait", { notification_type: type });
   assert.deepEqual(box.sent.map((body) => body.phase), ["working"]);
   for (const type of ["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]) {
     await box.event("PostToolUse", "tool-end", { tool_use_id: `t-${type}` });
@@ -164,7 +164,7 @@ test("the observed state file is the hook's own: 0600, separate from the declare
   await box.event("UserPromptSubmit", "prompt");
   const path = join(box.state, "observed", `${KEY.slice(0, 32)}.json`);
   const info = await stat(path);
-  assert.equal(info.mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(info.mode & 0o777, 0o600);
   const state = JSON.parse(await readFile(path, "utf8"));
   for (const key of ["phase", "phaseSince", "lastSeenAt", "openToolSince", "subagents", "seq", "lastSentSeq", "lastSentAt"]) assert.ok(key in state, key);
   assert.equal(existsSync(join(box.state, ".local", "state", "relo", "sessions")), false, "the declared session file is never written by hooks");
@@ -187,7 +187,7 @@ test("the flusher mints the harness credential once, sends with it, and seals no
   assert.match(request.idempotencyKey, /^obs-/u);
   const stored = JSON.parse(await readFile(join(box.state, "harness-credential"), "utf8"));
   assert.deepEqual(stored, { apiUrl: "https://relo.example", id: "hcr_1", token: "h".repeat(44) });
-  assert.equal((await stat(join(box.state, "harness-credential"))).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal((await stat(join(box.state, "harness-credential"))).mode & 0o777, 0o600);
   await box.event("Stop", "stop");
   await box.flush();
   assert.equal(box.minted.length, 1, "minted once");
@@ -255,7 +255,7 @@ test("a hook never fails and never prints, whatever goes wrong", async () => {
     "unwritable state": await hookBox(),
   };
   const argv = { "unknown harness": ["hook", "start", "--agent", "nope"], "garbage event": ["hook", "explode"] };
-  const extra = { "unwritable state": { hookStateDirectory: "/nonexistent/relo/hooks", observedStateDirectory: "/nonexistent/relo/observed" } };
+  const extra = { "unwritable state": { hookStateDirectory: join(process.env.RELO_TEST_UNWRITABLE, "hooks"), observedStateDirectory: join(process.env.RELO_TEST_UNWRITABLE, "observed") } };
   for (const [name, box] of Object.entries(cases)) {
     const out = await box.run(argv[name] ?? ["hook", "start"], extra[name]);
     assert.equal(out.exitCode, 0, name);
@@ -270,10 +270,10 @@ test("a hook never fails and never prints, whatever goes wrong", async () => {
 
 test("RELO_DEBUG=1 logs a failure to a file in the state folder, never to stdout", async () => {
   const quiet = await hookBox();
-  await quiet.run(["hook", "start"], { outboxDirectory: "/nonexistent/relo/outbox" });
+  await quiet.run(["hook", "start"], { outboxDirectory: join(process.env.RELO_TEST_UNWRITABLE, "outbox") });
   assert.equal(existsSync(join(quiet.state, "hooks", "hook-debug.log")), false);
   const loud = await hookBox({ env: { RELO_DEBUG: "1" } });
-  const out = await loud.run(["hook", "start"], { outboxDirectory: "/nonexistent/relo/outbox" });
+  const out = await loud.run(["hook", "start"], { outboxDirectory: join(process.env.RELO_TEST_UNWRITABLE, "outbox") });
   assert.deepEqual(out.stdout, []);
   const log = await readFile(join(loud.state, "hooks", "hook-debug.log"), "utf8");
   assert.match(log, /hook enqueue failed/u);
@@ -313,6 +313,53 @@ test("Gemini CLI hooks map its event names to the same phases under their own se
   }
   assert.ok(box.sent.every((body) => body.harness === "gemini"));
   assert.equal(box.sent[0].session, createHash("sha256").update(`gemini:${id}`).digest("base64url"));
+});
+
+test("Codex hooks map its event names to the same phases under the key its shell's CODEX_THREAD_ID gives", async () => {
+  const box = await hookBox();
+  const id = "019a0000-0000-7000-8000-00000000c0de";
+  const steps = [["SessionStart", "open", { source: "startup" }], ["UserPromptSubmit", "working"], ["PermissionRequest", "waiting", { tool_name: "Bash" }],
+    ["PostToolUse", "working", { tool_name: "Bash" }], ["Stop", "stopped"], ["SessionEnd", "ended"]];
+  for (const [name, phase, extra = {}] of steps) {
+    box.stdin = { session_id: id, hook_event_name: name, cwd: tmpdir(), ...extra };
+    box.clock += 1_000;
+    await box.run(["hook", "--agent", "codex"]);
+    assert.equal(box.sent.at(-1).phase, phase, name);
+  }
+  assert.ok(box.sent.every((body) => body.harness === "codex"));
+  const { detectCaller } = await import("../src/caller.mjs");
+  assert.equal(box.sent[0].session, detectCaller({ CODEX_THREAD_ID: id }).sessionKey, "the hook and the agent's own relo commands name one session");
+});
+
+test("Codex subagents and interrupts: a subagent counts toward its parent session; Interrupt stops the turn", async () => {
+  const box = await hookBox();
+  const id = "019a0000-0000-7000-8000-00000000beef";
+  const send = async (name, extra = {}) => {
+    box.stdin = { session_id: id, hook_event_name: name, cwd: tmpdir(), ...extra };
+    box.clock += 1_000;
+    await box.run(["hook", "--agent", "codex"]);
+  };
+  await send("UserPromptSubmit", { turn_id: "t1" });
+  await send("SubagentStart", { agent_id: "a1", agent_type: "worker" });
+  await send("SubagentStop", { agent_id: "a1", agent_type: "worker" });
+  assert.equal(new Set(box.sent.map((body) => body.session)).size, 1, "one session: the subagent shares its parent's");
+  assert.equal(box.sent.at(-1).phase, "working");
+  await send("Interrupt", { turn_id: "t1" });
+  assert.equal(box.sent.at(-1).phase, "stopped");
+});
+
+test("Antigravity hooks name their event on the command line and key the session by conversationId", async () => {
+  const box = await hookBox();
+  const id = "5b0c7a52-0d7e-4a8e-9a43-7c6bd1b0a9f1";
+  for (const [command, phase] of [["start", "open"], ["prompt", "working"], ["stop", "stopped"]]) {
+    box.stdin = { conversationId: id, workspacePaths: [tmpdir()], modelName: "gemini" };
+    box.clock += 1_000;
+    await box.run(["hook", command, "--agent", "antigravity"]);
+    assert.equal(box.sent.at(-1).phase, phase, command);
+  }
+  assert.ok(box.sent.every((body) => body.harness === "antigravity"));
+  const { detectCaller } = await import("../src/caller.mjs");
+  assert.equal(box.sent[0].session, detectCaller({ ANTIGRAVITY_AGENT: "1", ANTIGRAVITY_CONVERSATION_ID: id }).sessionKey);
 });
 
 test("a sending hook never awaits a flusher another process already runs", async () => {

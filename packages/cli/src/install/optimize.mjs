@@ -9,6 +9,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { STATUSLINE_COMMAND, optimizeStatePath } from "../harness/core/statusline.mjs";
+import { isReloStatusline, reloCommand } from "../harness/core/launch.mjs";
 import { UsageError } from "../shared/errors.mjs";
 import { layout, parseSettings, render } from "./hooks.mjs";
 
@@ -109,17 +110,19 @@ async function editSettings(path, dryRun, change) {
 }
 
 /** Puts `relo statusline` in; the owner's previous status line goes to Relo's state first. */
-export function statusLineItem(harness, settingsPath, directory, { remove = false } = {}) {
+export function statusLineItem(harness, settingsPath, directory, { remove = false, launch } = {}) {
   const statePath = optimizeStatePath(directory);
   return {
     kind: "statusline", harness, path: settingsPath,
     apply: (dryRun) => editSettings(settingsPath, dryRun, async (settings, { created, commit }) => {
       const state = await readState(statePath);
-      const ours = settings.statusLine?.command === STATUSLINE_COMMAND;
+      const ours = isReloStatusline(settings.statusLine?.command);
+      const wanted = reloCommand(STATUSLINE_COMMAND.slice("relo ".length), launch);
       if (!remove) {
-        if (ours) return { action: "unchanged" };
+        if (ours && settings.statusLine.command === wanted) return { action: "unchanged" };
+        if (ours) { settings.statusLine = { ...settings.statusLine, command: wanted }; return { action: "updated" }; }
         const previous = settings.statusLine === undefined ? null : settings.statusLine;
-        settings.statusLine = { ...(isObject(previous) ? previous : {}), type: "command", command: STATUSLINE_COMMAND };
+        settings.statusLine = { ...(isObject(previous) ? previous : {}), type: "command", command: wanted };
         if (commit) await writeState(statePath, { ...state, statusLine: { previous } });
         return { action: created ? "created" : "updated" };
       }
@@ -197,7 +200,7 @@ export function managedAgentFiles(folder, format = "md") {
 
 /** Whether a settings file's status line is Relo's wrapper (read only). */
 export function ownsStatusLine(settingsPath) {
-  try { return JSON.parse(readFileSync(settingsPath, "utf8").replace(/^\uFEFF/u, ""))?.statusLine?.command === STATUSLINE_COMMAND; } catch { return false; }
+  try { return isReloStatusline(JSON.parse(readFileSync(settingsPath, "utf8").replace(/^\uFEFF/u, ""))?.statusLine?.command); } catch { return false; }
 }
 
 /** What Relo recorded it changed (status line, subagent model), for the shallower depths and uninstall. */

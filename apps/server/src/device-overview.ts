@@ -114,6 +114,8 @@ export async function twoFactorEnabled(db: Pick<Database,"query">,userId: string
 export type AccountPhone = {
   deviceId: string; name: string; model: string | null; isSimulator: boolean | null;
   registeredAt: string; lastSeenAt: string | null; isCurrent: boolean; trusted: boolean;
+  /** An owner overview device (the Mac, owner-overview.ts): never an iPhone, so Relo for Mac filters it from "an iPhone is trusted". */
+  ownerOverview?: true;
 };
 
 /**
@@ -132,7 +134,7 @@ export async function accountPhones(db: Pick<Database,"query">,principalId: stri
        SELECT id FROM active WHERE NOT simulator AND NOT ${ownerOverviewSql("active")} AND public_key IS NOT NULL
        ORDER BY registered_at ASC,id ASC LIMIT 1
      )
-     SELECT a.id,a.name,a.model,a.simulator,a.registered_at,a.last_seen_at,
+     SELECT a.id,a.name,a.model,a.simulator,${ownerOverviewSql("a")} AS owner_overview,a.registered_at,a.last_seen_at,
        a.public_key IS NOT NULL AND (a.id IN (SELECT id FROM first_real) OR EXISTS (
          SELECT 1 FROM device_approvals ap WHERE ap.device_id=a.id AND ap.identity_key=a.public_key
            AND (ap.approved_by_device IS NOT NULL OR ap.approved_by_browser IS NOT NULL))) AS trusted
@@ -140,6 +142,6 @@ export async function accountPhones(db: Pick<Database,"query">,principalId: stri
   return result.rows.map((row) => ({
     deviceId: publicId("dev",row.id),name: row.name,model: row.model ?? null,isSimulator: Boolean(row.simulator),
     registeredAt: iso(row.registered_at)!,lastSeenAt: iso(row.last_seen_at),isCurrent: row.id === callerDeviceId,
-    trusted: Boolean(row.trusted),
+    trusted: Boolean(row.trusted),...(row.owner_overview ? { ownerOverview: true as const } : {}),
   }));
 }

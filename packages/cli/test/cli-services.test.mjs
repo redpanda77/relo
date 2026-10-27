@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { symlinkSkip } from "./symlink-support.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
 import { compactData } from "../src/shared/output.mjs";
 import { execute, run, overrides } from "./cli-fixtures.mjs";
@@ -90,7 +91,7 @@ test("service secret-file output is exclusive, private, durable, and secret-free
   }
 });
 
-test("service secret-file refuses existing regular, symlink, and non-regular targets before creation", async () => {
+test("service secret-file refuses existing regular, symlink, and non-regular targets before creation", { skip: symlinkSkip }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "relo-service-refuse-"));
   let creates = 0;
   const client = {

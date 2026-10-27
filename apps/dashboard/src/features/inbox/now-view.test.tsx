@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { nowSummarySchema, type NowSummary } from "@relo/notification-contracts"
@@ -10,7 +10,7 @@ const routes = vi.hoisted(() => ({ fetchDashboardRoute: vi.fn() }))
 vi.mock("@/app/dashboard-route-loader", () => routes)
 
 import { InboxView } from "@/features/inbox/inbox-view"
-import { NowItemList } from "@/features/inbox/now-all-clear"
+import { NowItemList } from "@/features/inbox/now-cards"
 import type { InboxOverview } from "@/features/inbox/types"
 import { readLastLooked, writeLastLooked } from "@/lib/last-looked"
 import type { InboxService } from "@/services/inbox-service"
@@ -40,18 +40,15 @@ const service = {
   getSnapshot: vi.fn(),
 } as unknown as InboxService
 
-/** The Now blocks in document order, by their headings / fold summaries. */
+/** The Now blocks in document order, by their headings and the one parked line. */
 function blockOrder(container: HTMLElement): string[] {
-  const nodes = container.querySelectorAll("[data-now-block], section[aria-labelledby], details[data-fold]")
+  const nodes = container.querySelectorAll("section[aria-labelledby], [data-fold='parked']")
   const labels: string[] = []
   for (const node of nodes) {
-    if (node.closest("details[data-fold]") && node.tagName !== "DETAILS") continue
-    if (node.parentElement?.closest("details[data-fold='idle']")) continue
-    if (node.getAttribute("data-now-block") === "since-you-looked") labels.push("Since you looked")
-    else if (node.tagName === "DETAILS") labels.push(node.getAttribute("data-fold")!)
+    if (node.getAttribute("data-fold") === "parked") labels.push("parked")
     else labels.push(node.querySelector("h2")?.textContent?.replace(/\d+$/, "") ?? "")
   }
-  return labels.filter((label) => label && label !== "recent" && label !== "idle")
+  return labels.filter(Boolean)
 }
 
 beforeEach(() => {
@@ -62,21 +59,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe("Now from a NowSummary fixture", () => {
-  it("renders the blocks in the spec order: Waiting on you open, Quiet folded with the server's count", () => {
+  it("renders the blocks in the iPhone's order: Your turn open, Quiet and Paused as one folded line with the server's counts", () => {
     const { container } = render(<InboxView overview={overview} service={service} />)
     const order = blockOrder(container)
-    const expected = ["Needs you", "Waiting on you", "Running", "Since you looked", "quiet", "Sessions"]
+    const expected = ["Needs you", "Your turn", "Running", "Since you looked", "parked", "Sessions"]
     expect(order.filter((label) => expected.includes(label))).toEqual(expected)
-    // Waiting on you is an open section with its cards, never a fold.
-    expect(container.querySelector("details[data-fold='waitingOnYou']")).toBeNull()
-    const waiting = container.querySelector("section[aria-labelledby='now-waiting-on-you']")!
-    expect(waiting.querySelector("h2")?.textContent).toBe(`Waiting on you${summary.waitingOnYou.length}`)
+    // Your turn is an open section with its cards, never a fold.
+    const waiting = container.querySelector("section[aria-labelledby='now-your-turn']")!
+    expect(waiting.querySelector("h2")?.textContent).toBe(`Your turn${summary.waitingOnYou.length}`)
     expect(within(waiting as HTMLElement).getAllByRole("listitem")).toHaveLength(summary.waitingOnYou.length)
-    expect(container.querySelector("details[data-fold='quiet'] > summary")?.textContent).toBe(`Quiet (${summary.folds.quiet})`)
-    // Paused is zero in the fixture: no empty fold is shown.
-    expect(container.querySelector("details[data-fold='paused']")).toBeNull()
-    // Folds start closed.
-    expect((container.querySelector("details[data-fold='quiet']") as HTMLDetailsElement).open).toBe(false)
+    // One line: Quiet with the server's count; Paused is zero in the fixture, so it is not named.
+    const line = container.querySelector(".parked-line")!
+    expect(line.textContent).toBe(`Quiet ${summary.folds.quiet}Show \u203a`)
+    expect(container.querySelectorAll("[data-fold='parked']")).toHaveLength(1)
+    // The line starts closed: no rows.
+    expect(line.getAttribute("aria-expanded")).toBe("false")
+    expect(screen.queryByRole("list", { name: "Quiet" })).toBeNull()
   })
 
   it("cards read as the iPhone's work card: origin, title, meter, and the state in sentence case", () => {
@@ -89,11 +87,13 @@ describe("Now from a NowSummary fixture", () => {
     expect(card.querySelector("[data-part='state']")?.textContent).toBe("Running")
     expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", String(item.steps!.done))
     expect(card.textContent).toContain(`Step ${item.steps!.done + 1} of ${item.steps!.total} · ${item.steps!.current}`)
-    const waiting = within(screen.getByRole("list", { name: "Waiting on you" })).getByRole("button", { name: `Open ${summary.waitingOnYou[0]!.title}` }).closest<HTMLElement>(".card")!
+    const waiting = within(screen.getByRole("list", { name: "Your turn" })).getByRole("button", { name: `Open ${summary.waitingOnYou[0]!.title}` }).closest<HTMLElement>(".card")!
     expect(waiting.querySelector("[data-part='state']")?.textContent).toBe("Your turn")
-    // No uppercase chip text anywhere outside a needs-you card.
+    // Settled work is a compact row: the failed one carries its red icon and opens a panel, never a state chip.
     const since = within(screen.getByRole("list", { name: "Since you looked" }))
-    expect(since.getByRole("button", { name: `Open ${summary.recent[0]!.title}` }).querySelector("[data-part='state']")?.textContent).toBe("Failed")
+    const failed = since.getByRole("button", { name: new RegExp(summary.recent[0]!.title, "u") })
+    expect(failed.querySelector(".settled-icon")?.getAttribute("data-kind")).toBe("failed")
+    expect(failed.getAttribute("aria-expanded")).toBe("false")
     expect(document.body.textContent).not.toMatch(/STOPPED WITHOUT FINISHING|\bDONE\b|\bFAILED\b/)
   })
 
@@ -103,58 +103,73 @@ describe("Now from a NowSummary fixture", () => {
     expect(within(running).getAllByRole("listitem")).toHaveLength(summary.running.length)
     for (const item of summary.quiet) {
       expect(within(running).queryByText(item.title)).toBeNull()
+      fireEvent.click(container.querySelector(".parked-line")!)
       const row = within(screen.getByRole("list", { name: "Quiet" })).getByRole("button", { name: `Open ${item.title}` })
       expect(row.textContent ?? "").not.toMatch(/running/i)
-      expect(row.getAttribute("data-live")).toBeNull()
+      expect(row.querySelector(".settled-icon")?.getAttribute("data-kind")).toBe("quiet")
     }
     for (const item of summary.waitingOnYou) {
-      expect(within(screen.getByRole("list", { name: "Waiting on you" })).getByRole("button", { name: `Open ${item.title}` })).toBeTruthy()
+      expect(within(screen.getByRole("list", { name: "Your turn" })).getByRole("button", { name: `Open ${item.title}` })).toBeTruthy()
     }
     const needs = screen.getByRole("list", { name: "Needs you" })
     expect(within(needs).getAllByRole("listitem")).toHaveLength(summary.needsYou.length)
   })
 
-  it("Sessions: server rows grouped by computer, idle folded inside each computer, standing from the server phase", () => {
+  it("Sessions: a card per machine, idle behind \"N idle\", phase chips from the server's phase, the caption counts every non-idle session", () => {
     render(<InboxView overview={overview} service={service} />)
     const section = screen.getAllByRole("heading", { name: /^Sessions/ }).find((node) => node.tagName === "H2")!.closest("section")!
-    const working = summary.sessions.sessions.filter((row) => row.phase === "working").length
-    expect(section.querySelector("h2")?.textContent).toBe(`Sessions${working}`)
+    const active = summary.sessions.sessions.filter((row) => row.fold !== "idle").length
+    expect(section.querySelector("h2")?.textContent).toBe(`Sessions${active}`)
     const idleRows = summary.sessions.sessions.filter((row) => row.fold === "idle")
     const groups = [...section.querySelectorAll("[role='group']")]
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(
       [...new Set(summary.sessions.sessions.map((row) => row.computer ?? "Unknown computer"))]
     )
-    // Each computer folds its own idle sessions at the bottom of its card.
-    const idleFolds = section.querySelectorAll("details[data-fold='idle']")
-    expect(idleFolds).toHaveLength(new Set(idleRows.map((row) => row.computer ?? "Unknown computer")).size)
-    for (const fold of idleFolds) {
-      const computer = fold.closest("[role='group']")!.getAttribute("aria-label")
-      const inGroup = idleRows.filter((row) => (row.computer ?? "Unknown computer") === computer)
-      expect((fold as HTMLDetailsElement).open).toBe(false)
-      expect(fold.querySelector("summary")?.textContent).toBe(`Idle (${inGroup.length})`)
-      expect(fold.querySelectorAll("li[data-session-phase]")).toHaveLength(inGroup.length)
-      // An idle session is never shown as working.
-      for (const standing of fold.querySelectorAll("[data-session-standing]")) expect(standing.textContent).toMatch(/^Idle/)
-    }
-    // Every row shown outside an idle fold carries its server phase; no idle row escapes the fold.
-    const open = [...section.querySelectorAll("li[data-session-phase]")].filter((li) => !li.closest("details"))
+    // A machine with nothing but idle sessions is one dimmed line that opens its idle rows.
+    const idleMachine = groups.find((group) => group.hasAttribute("data-idle-only"))!
+    const toggle = within(idleMachine as HTMLElement).getByRole("button", { expanded: false })
+    expect(toggle.textContent).toContain(`${idleRows.length} idle`)
+    expect(idleMachine.querySelectorAll("li[data-session-phase]")).toHaveLength(0)
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute("aria-expanded")).toBe("true")
+    for (const standing of idleMachine.querySelectorAll("[data-session-standing]")) expect(standing.textContent).toMatch(/^Idle/)
+    // Every row outside an idle machine carries its server phase; no idle row escapes.
+    const open = [...section.querySelectorAll("li[data-session-phase]")].filter((li) => !li.closest("[data-idle-only]"))
     expect(open.map((li) => li.getAttribute("data-session-phase")).sort()).toEqual(
       summary.sessions.sessions.filter((row) => row.fold !== "idle").map((row) => row.phase ?? "unobserved").sort()
     )
     const waitingRow = section.querySelector("li[data-session-phase='waiting'] [data-session-standing]")
-    expect(waitingRow?.textContent).toMatch(/^(Needs your input|Your turn)/)
-    // The last-seen clock sits in the row's footer, not beside the state.
-    expect(waitingRow?.closest(".card-row-text")?.querySelector(".card-row-sub .card-row-time time")).not.toBeNull()
+    expect(waitingRow?.textContent).toMatch(/^(Needs you|Your turn)/)
     // Its linked work opens from the row.
-    expect(within(section).getByRole("button", { name: `Open ${summary.waitingOnYou[0]!.title}` })).toBeTruthy()
+    expect(within(section).getByRole("button", { name: new RegExp(`Open ${summary.waitingOnYou[0]!.title}`, "u") })).toBeTruthy()
     // An unobserved session (hooks off) says when it was last seen, never a phase.
     expect([...section.querySelectorAll("[data-session-standing]")].some((node) => /^Last seen /.test(node.textContent ?? ""))).toBe(true)
   })
 
-  it("the deck's readouts are the server's: sessions working, waiting on you, running, needs you", () => {
+  it("a failed row opens its panel in place: the status, Open and Close (Close only collapses)", () => {
+    render(<InboxView overview={overview} service={service} />)
+    const failedItem = summary.recent.find((item) => item.owner.state === "failed")!
+    const row = within(screen.getByRole("list", { name: "Since you looked" })).getByRole("button", { name: new RegExp(failedItem.title, "u") })
+    expect(screen.queryByRole("group", { name: /failed$/u })).toBeNull()
+    fireEvent.click(row)
+    const panel = screen.getByRole("group", { name: `${failedItem.title} failed` })
+    expect(panel.textContent).toContain(failedItem.status ?? "It failed.")
+    expect(within(panel).getByRole("button", { name: "Open" })).toBeTruthy()
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }))
+    expect(screen.queryByRole("group", { name: `${failedItem.title} failed` })).toBeNull()
+  })
+
+  it("the deck's gauge tags are the server's: needs you, your turn, running, every live session", () => {
     const { container } = render(<InboxView overview={overview} service={service} />)
     const labels = [...container.querySelectorAll("[data-readout]")].map((node) => node.getAttribute("data-readout"))
-    expect(labels).toEqual(["Sessions", "Waiting", "Running", "Needs you"])
+    expect(labels).toEqual(["Needs you", "Your turn", "Running", "Sessions"])
+    const live = summary.sessions.sessions.filter((row) => row.fold !== "idle" && row.phase !== "ended").length
+    expect([...container.querySelectorAll("[data-readout]")].map((node) => node.querySelector(".readout-value")?.textContent)).toEqual([
+      String(summary.needsYou.length), String(summary.waitingOnYou.length), String(summary.running.length), String(live),
+    ])
+    // The centre holds the top-priority state, never alternating; there is no Today count.
+    expect(container.querySelector("[data-hud-centre]")?.getAttribute("data-hud-centre")).toBe("Needs you")
+    expect(container.querySelector("[data-hud-centre='Today']")).toBeNull()
     const working = summary.sessions.sessions.filter((row) => row.phase === "working").length
     const spoken = [...container.querySelectorAll("[role='status']")].find((node) => /sessions? working/.test(node.textContent ?? ""))
     expect(spoken?.textContent).toContain(
@@ -166,11 +181,11 @@ describe("Now from a NowSummary fixture", () => {
     vi.useFakeTimers({ toFake: ["Date"] })
     const { container, rerender } = render(<InboxView overview={overview} service={service} />)
     const before = blockOrder(container)
-    const folds = [...container.querySelectorAll("details[data-fold] > summary")].map((node) => node.textContent)
+    const folds = [...container.querySelectorAll(".parked-line")].map((node) => node.textContent)
     vi.setSystemTime(Date.now() + 2 * 60 * 60_000)
     rerender(<InboxView overview={overview} service={service} />)
     expect(blockOrder(container)).toEqual(before)
-    expect([...container.querySelectorAll("details[data-fold] > summary")].map((node) => node.textContent)).toEqual(folds)
+    expect([...container.querySelectorAll(".parked-line")].map((node) => node.textContent)).toEqual(folds)
   })
 })
 
@@ -218,12 +233,11 @@ describe("Now moves with the server's refreshes", () => {
     expect(container.querySelectorAll("section[aria-labelledby='now-needs-you']")).toHaveLength(1)
   })
 
-  it("a fold's count rolls in place and its summary keeps the server's words", () => {
+  it("the parked line keeps the server's counts", () => {
     const { container, rerender } = render(<InboxView overview={overview} service={service} />)
-    const fold = container.querySelector("details[data-fold='quiet'] > summary")!
-    expect(fold.textContent).toBe(`Quiet (${summary.folds.quiet})`)
-    rerender(<InboxView overview={{ ...overview, now: { ...summary, folds: { ...summary.folds, quiet: summary.folds.quiet + 1 } } } as InboxOverview} service={service} />)
-    expect(container.querySelector("details[data-fold='quiet'] > summary")!.textContent).toBe(`Quiet (${summary.folds.quiet + 1})`)
+    expect(container.querySelector(".parked-line")!.textContent).toBe(`Quiet ${summary.folds.quiet}Show \u203a`)
+    rerender(<InboxView overview={{ ...overview, now: { ...summary, folds: { ...summary.folds, quiet: summary.folds.quiet + 1, paused: 2 } } } as InboxOverview} service={service} />)
+    expect(container.querySelector(".parked-line")!.textContent).toBe(`Quiet ${summary.folds.quiet + 1} \u00b7 Paused 2Show \u203a`)
   })
 })
 
@@ -335,12 +349,12 @@ describe("the core's motion on Now", () => {
     still.sessions.sessions = still.sessions.sessions.filter((row) => row.phase !== "working")
     const quiet = render(<InboxView overview={{ ...overview, now: still } as InboxOverview} service={service} />)
     expect(quiet.container.querySelector("[data-orb-motion]")?.getAttribute("data-orb-motion")).toBe("quiet")
-    // The centre stays still when nothing moves and nothing needs the owner.
+    // Nothing needs the owner: the centre holds the next state (your turn), still the one centre.
     still.needsYou = []
     still.quiet = []
     quiet.unmount()
     const calm = render(<InboxView overview={{ ...overview, now: still } as InboxOverview} service={service} />)
     expect(calm.container.querySelector("[data-orb-motion]")?.getAttribute("data-orb-motion")).toBe("calm")
-    expect(calm.container.querySelector("[data-hud-centre]")?.hasAttribute("data-live")).toBe(false)
+    expect(calm.container.querySelector("[data-hud-centre]")?.getAttribute("data-hud-centre")).toBe("Your turn")
   })
 })

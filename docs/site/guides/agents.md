@@ -1,7 +1,7 @@
 ---
 title: Agent harnesses
 nav: Agent harnesses
-summary: Every agent on this computer knows Relo from its first message, so its work shows on your iPhone without you asking.
+summary: Every agent on this computer knows Relo from its first message, so its work shows on your iPhone or Mac without you asking.
 ---
 
 ## Why
@@ -92,7 +92,7 @@ agent follows are on [For agents](/docs/agents).
 
 ## A harness Relo does not detect
 
-Relo detects Claude Code, Codex, OpenCode, Gemini CLI and Cursor from the variables they set in the
+Relo detects Claude Code, Codex, OpenCode, Antigravity, Gemini CLI and Cursor from the variables they set in the
 agent's shell. Any other harness names itself and gives each session a stable id, so every command lands
 on one card and questions wait the short agent way (up to 100 seconds per command):
 
@@ -122,7 +122,7 @@ entry needs `type: "local"`, `command` as an array, and `enabled`.
 
 Start a new session and give the agent a task that takes a few minutes. Then:
 
-- **On your iPhone:** a card appears on the Lock Screen and in Now, with the goal and plan in the agent's
+- **On your iPhone or Mac:** a card appears on the Lock Screen and in Now, or in the notch, with the goal and plan in the agent's
   words, and moves as the agent works.
 - **In the session:** ask the agent to run `relo state`. It prints what the session has open, the plan,
   what you see and the next command.

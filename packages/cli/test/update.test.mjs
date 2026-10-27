@@ -12,6 +12,8 @@ import test from "node:test";
 import { run } from "../src/cli.mjs";
 import { VERSION } from "../src/version.mjs";
 import { compareVersions, parseSums } from "../src/owner/releases.mjs";
+import { dataRoot } from "../src/work/state-file.mjs";
+import { cmdLauncherText, shLauncherText, windowsPaths } from "../src/owner/windows-launcher.mjs";
 import { cardDependencies, fakeHome } from "./fake-cards.mjs";
 
 const PREFIX = "/repos/redpanda77/relo/releases";
@@ -77,7 +79,7 @@ async function box({ server, version = VERSION, npmCode = 0, env = {} } = {}) {
       const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, { ...overrides, ...extra });
       return { exitCode, line: stdout[0] ? JSON.parse(stdout[0]) : undefined };
     },
-    stored: () => readdir(join(home, ".local", "share", "relo", "cli-releases")).catch(() => []),
+    stored: () => readdir(join(dataRoot(home), "cli-releases")).catch(() => []),
   };
 }
 
@@ -112,17 +114,17 @@ test("update downloads, verifies the checksum, installs the stored tarball and k
   const updated = await b.cli(["update"]);
   assert.equal(updated.exitCode, 0);
   assert.deepEqual(updated.line, { ok: true, from: VERSION, to: NEWER, verified: true, refreshed: [{ kind: "block", harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "updated" }] });
-  const tarball = join(b.home, ".local", "share", "relo", "cli-releases", NEWER, `relo-cli-${NEWER}.tgz`);
+  const tarball = join(dataRoot(b.home), "cli-releases", NEWER, `relo-cli-${NEWER}.tgz`);
   assert.deepEqual(b.npmCalls, [["install", "--global", tarball]]);
   assert.equal(sha(await readFile(tarball)), sha(Buffer.from(`tarball ${NEWER}`)));
-  assert.match(await readFile(join(b.home, ".local", "share", "relo", "cli-releases", NEWER, "SHA256SUMS"), "utf8"), /^[0-9a-f]{64} {2}relo-cli-9\.9\.9\.tgz\n$/u);
+  assert.match(await readFile(join(dataRoot(b.home), "cli-releases", NEWER, "SHA256SUMS"), "utf8"), /^[0-9a-f]{64} {2}relo-cli-9\.9\.9\.tgz\n$/u);
   assert.deepEqual((await b.stored()).sort(), [VERSION, NEWER].sort(), "the installed release is stored too, and no partial folder is left");
 });
 
 test("update keeps only the new release and the one before it (no pile of old tarballs)", async () => {
   const server = await releaseServer({ releases: [release(VERSION), release(NEWER)] });
   const b = await box({ server });
-  for (const old of ["0.0.1", "0.0.2", "0.0.3"]) await mkdir(join(b.home, ".local", "share", "relo", "cli-releases", old), { recursive: true });
+  for (const old of ["0.0.1", "0.0.2", "0.0.3"]) await mkdir(join(dataRoot(b.home), "cli-releases", old), { recursive: true });
   assert.equal((await b.cli(["update"])).exitCode, 0);
   assert.deepEqual((await b.stored()).sort(), [VERSION, NEWER].sort());
 });
@@ -134,11 +136,11 @@ test("rollback reinstalls the previous stored release after re-verifying it", as
   b.npmCalls.length = 0;
   const rolled = await b.cli(["update", "--rollback"], { version: NEWER });
   assert.deepEqual(rolled.line, { ok: true, from: NEWER, to: VERSION, rollback: true, verified: true, refreshed: [{ kind: "block", harness: "claude-code", file: "~/.claude/CLAUDE.md", action: "updated" }] });
-  assert.deepEqual(b.npmCalls, [["install", "--global", join(b.home, ".local", "share", "relo", "cli-releases", VERSION, `relo-cli-${VERSION}.tgz`)]]);
+  assert.deepEqual(b.npmCalls, [["install", "--global", join(dataRoot(b.home), "cli-releases", VERSION, `relo-cli-${VERSION}.tgz`)]]);
 
   // A stored tarball that no longer matches its checksum is never installed.
   b.npmCalls.length = 0;
-  await writeFile(join(b.home, ".local", "share", "relo", "cli-releases", VERSION, `relo-cli-${VERSION}.tgz`), "tampered");
+  await writeFile(join(dataRoot(b.home), "cli-releases", VERSION, `relo-cli-${VERSION}.tgz`), "tampered");
   const refused = await b.cli(["update", "--rollback"], { version: NEWER });
   assert.equal(refused.exitCode, 1);
   assert.equal(refused.line.error.code, "NO_PREVIOUS_RELEASE");
@@ -237,7 +239,7 @@ const doctor = async (deps) => {
   const exitCode = await run(["doctor"], { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, deps);
   return { exitCode, line: JSON.parse(stdout[0]) };
 };
-const cachePath = (home) => join(home, ".local", "share", "relo", "update-check.json");
+const cachePath = (home) => join(dataRoot(home), "update-check.json");
 
 test("doctor shows warnings.update when behind, caches for 24 hours, and never changes ready", async () => {
   const server = await releaseServer({ releases: [release(VERSION), release(NEWER)] });
@@ -274,7 +276,7 @@ test("doctor is silent when up to date, opted out, offline or the release server
   await doctor(out.deps);
   assert.equal(behind.requests.length, 0, "no request at all when opted out");
   assert.equal(existsSync(cachePath(out.home)), false, "and no cache file");
-  assert.equal(existsSync(join(out.home, ".local", "share", "relo", "cli-releases")), false);
+  assert.equal(existsSync(join(dataRoot(out.home), "cli-releases")), false);
 
   const failing = await doctorDeps({ server: behind, fetchImpl: async () => { throw new TypeError("fetch failed"); } });
   const down = await doctor(failing.deps);
@@ -301,6 +303,9 @@ test("doctor skips the update check when the Relo server is unreachable", async 
 
 const PACKAGE_ROOT = new URL("..", import.meta.url);
 
+const WIN = process.platform === "win32";
+const NPM = WIN ? "npm.cmd" : "npm";
+
 async function packedVersion(temp, version) {
   const root = join(temp, `source-${version}`);
   await cp(PACKAGE_ROOT, root, { recursive: true, filter: (path) => !path.includes("node_modules") });
@@ -312,7 +317,7 @@ async function packedVersion(temp, version) {
   await edit("src/version.mjs", (text) => text.replace(/export const VERSION = "[^"]+";/u, `export const VERSION = "${version}";`));
   await edit("skill/package.json", (text) => text.replace(/"version": "[^"]+"/u, `"version": "${version}"`).replace(/"@relo\/cli": "[^"]+"/u, `"@relo/cli": "${version}"`));
   const env = { ...process.env, npm_config_cache: join(temp, "npm-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_update_notifier: "false" };
-  const [packed] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: root, env, encoding: "utf8" }));
+  const [packed] = JSON.parse(execFileSync(NPM, ["pack", "--json", "--pack-destination", temp], { cwd: root, env, encoding: "utf8", shell: WIN }));
   return { bytes: await readFile(join(temp, packed.filename)), file: join(temp, packed.filename) };
 }
 
@@ -326,8 +331,9 @@ test("end to end in a temp prefix: install the old release, update with a verifi
   const env = { ...process.env, HOME: home, npm_config_prefix: prefix, npm_config_cache: join(temp, "npm-cache"), npm_config_audit: "false",
     npm_config_fund: "false", npm_config_update_notifier: "false", RELO_RELEASES_URL: server.url, RELO_NO_UPDATE_CHECK: "1" };
   // Async: the fake release server lives in this process, so a blocking spawn would starve it.
-  const relo = async (...args) => (await promisify(execFile)(join(prefix, "bin", "relo"), args, { env, encoding: "utf8" })).stdout.trim();
-  execFileSync("npm", ["install", "--global", oldRelease.file], { env, encoding: "utf8" });
+  // npm --global puts the shim at prefix\relo.cmd on Windows (a .cmd runs only through a shell), prefix/bin/relo elsewhere.
+  const relo = async (...args) => (await promisify(execFile)(WIN ? join(prefix, "relo.cmd") : join(prefix, "bin", "relo"), args, { env, encoding: "utf8", shell: WIN })).stdout.trim();
+  execFileSync(NPM, ["install", "--global", oldRelease.file], { env, encoding: "utf8", shell: WIN });
   assert.equal(await relo("--version"), "0.9.1");
   assert.deepEqual(JSON.parse(await relo("update", "--check")), { ok: true, current: "0.9.1", latest: "0.9.2", updateAvailable: true });
   assert.deepEqual(JSON.parse(await relo("update")), { ok: true, from: "0.9.1", to: "0.9.2", verified: true, refreshed: [] },
@@ -344,7 +350,8 @@ async function reloServer(version) {
   await mkdir(join(work, "package", "bin"), { recursive: true });
   await writeFile(join(work, "package", "bin", "relo.mjs"), `console.log("relo ${version}")\n`);
   await writeFile(join(work, "package", "package.json"), JSON.stringify({ name: "@relo/cli", version }));
-  execFileSync("tar", ["-czf", join(work, "relo-cli.tgz"), "-C", work, "package"]);
+  // Relative names: GNU tar (Git Bash) reads "C:" in an absolute path as a remote host.
+  execFileSync("tar", ["-czf", "relo-cli.tgz", "package"], { cwd: work });
   const bytes = await readFile(join(work, "relo-cli.tgz"));
   const requests = [];
   const server = createServer((request, response) => {
@@ -361,14 +368,14 @@ async function reloServer(version) {
 test("a CLI the install script installed updates from its own server, beside itself, and the launcher follows", async () => {
   const server = await reloServer(NEWER);
   const home = await mkdtemp(join(tmpdir(), "relo-update-launcher-"));
-  const entry = join(home, ".local", "share", "relo", "cli", VERSION, "bin", "relo.mjs");
-  await mkdir(join(home, ".local", "share", "relo", "cli", VERSION, "bin"), { recursive: true });
+  const entry = join(dataRoot(home), "cli", VERSION, "bin", "relo.mjs");
+  await mkdir(join(dataRoot(home), "cli", VERSION, "bin"), { recursive: true });
   await writeFile(entry, "// the running CLI\n");
   await mkdir(join(home, ".local", "bin"), { recursive: true });
   const launcher = join(home, ".local", "bin", "relo");
   await writeFile(launcher, `#!/bin/sh\n# relo launcher: ${entry}\nexec "/opt/node/bin/node" "${entry}" "$@"\n`);
   const npmCalls = [];
-  const deps = { home, version: VERSION, entrypoint: entry, env: {},
+  const deps = { home, version: VERSION, entrypoint: entry, env: {}, platform: "linux",
     loadConfig: async () => ({ apiUrl: server.origin, token: "x".repeat(44) }),
     runNpm: async (args) => { npmCalls.push(args); return { code: 0 }; },
     runRefresh: async () => ({ ok: true, changed: [] }) };
@@ -379,10 +386,38 @@ test("a CLI the install script installed updates from its own server, beside its
   assert.equal(line.to, NEWER);
   assert.equal(line.source, server.origin);
   assert.deepEqual(npmCalls, [], "no npm: the new version is unpacked beside the old one");
-  const next = join(home, ".local", "share", "relo", "cli", NEWER, "bin", "relo.mjs");
+  const next = join(dataRoot(home), "cli", NEWER, "bin", "relo.mjs");
   assert.equal(await readFile(next, "utf8"), `console.log("relo ${NEWER}")\n`);
   assert.equal(await readFile(launcher, "utf8"), `#!/bin/sh\n# relo launcher: ${next}\nexec "/opt/node/bin/node" "${next}" "$@"\n`);
   assert.ok(existsSync(entry), "the old version stays for --rollback");
   // Checked against the server's digest, never GitHub.
   assert.ok(server.requests.includes("/cli/version") && server.requests.includes("/cli/relo-cli.tgz"));
+});
+
+test("on Windows a CLI behind relo.cmd updates beside itself and relo.cmd (and the Git Bash sibling) follow", async () => {
+  const server = await reloServer(NEWER);
+  const home = await mkdtemp(join(tmpdir(), "relo-update-win-"));
+  const env = { LOCALAPPDATA: join(home, "Local") };
+  const paths = windowsPaths({ home, env });
+  const entry = join(paths.cli, VERSION, "bin", "relo.mjs");
+  await mkdir(join(paths.cli, VERSION, "bin"), { recursive: true });
+  await writeFile(entry, "// the running CLI\n");
+  await mkdir(paths.bin, { recursive: true });
+  const node = "C:\\Program Files\\nodejs\\node.exe";
+  await writeFile(paths.cmd, cmdLauncherText(node, entry));
+  await writeFile(paths.sh, shLauncherText(node, entry));
+  const npmCalls = [];
+  const deps = { home, version: VERSION, entrypoint: entry, env, platform: "win32",
+    loadConfig: async () => ({ apiUrl: server.origin, token: "x".repeat(44) }),
+    runNpm: async (args) => { npmCalls.push(args); return { code: 0 }; },
+    runRefresh: async () => ({ ok: true, changed: [] }) };
+  const stdout = [];
+  const exitCode = await run(["update"], { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, deps);
+  assert.equal(exitCode, 0, stdout[0]);
+  assert.deepEqual(npmCalls, []);
+  const next = join(paths.cli, NEWER, "bin", "relo.mjs");
+  assert.equal(await readFile(paths.cmd, "utf8"), cmdLauncherText(node, next));
+  assert.equal(await readFile(paths.sh, "utf8"), shLauncherText(node, next));
+  assert.ok(existsSync(entry), "the old version stays for --rollback");
+  assert.deepEqual((await readdir(paths.bin)).sort(), ["relo", "relo.cmd"], "no temp file left behind");
 });

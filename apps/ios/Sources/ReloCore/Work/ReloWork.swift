@@ -403,6 +403,33 @@ public struct ReloWork: Codable, Equatable, Hashable, Sendable {
         return merged
     }
 
+    /// The text this phone opened of one work, merged from its copies newest first: step labels and details by id,
+    /// round titles and outcomes by round number. A History event's own copy is from when it was sent, while the plan
+    /// it draws is the work's current one, so rounds and steps added later read from a newer copy of the same work.
+    public struct TextBook: Equatable, Sendable {
+        public var labels: [String: String] = [:]
+        public var details: [String: String] = [:]
+        public var titles: [Int: String] = [:]
+        public var outcomes: [Int: String] = [:]
+
+        public init(newestFirst works: [ReloWork]) {
+            for work in works {
+                for phase in work.phases {
+                    if phase.id.hasPrefix("r"), let n = Int(phase.id.dropFirst()) {
+                        if titles[n] == nil, let title = ReloWork.text(phase.title) { titles[n] = title }
+                        if outcomes[n] == nil, let outcome = ReloWork.text(phase.outcome) { outcomes[n] = outcome }
+                    }
+                    for step in phase.steps {
+                        if labels[step.id] == nil, let label = ReloWork.text(step.label), !ReloSealedCards.isPlaceholderStep(label) {
+                            labels[step.id] = label
+                        }
+                        if details[step.id] == nil, let detail = ReloWork.text(step.detail) { details[step.id] = detail }
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Decoding helpers
 
     static func text(_ value: String?) -> String? {

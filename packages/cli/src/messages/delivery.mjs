@@ -1,4 +1,5 @@
-// The server's delivery summary on a notice or question: refused when malformed, NoDeliveryError when no phone got it.
+// The server's delivery summary on a notice or question: refused when malformed, NoDeliveryError when nothing will
+// show it: no phone got it and no Relo for Mac reads it (`readers`, an account whose only device is the Mac).
 import { ApiError, NoDeliveryError } from "../shared/errors.mjs";
 
 export function deliveryGuard(payload) {
@@ -16,7 +17,8 @@ export function deliveryGuard(payload) {
       code: "INVALID_API_RESPONSE",
     });
   }
-  if (delivery.durableCommands === 0) {
+  const readers = Number.isInteger(delivery.readers) && delivery.readers > 0 ? delivery.readers : 0;
+  if (delivery.durableCommands === 0 && readers === 0) {
     throw new NoDeliveryError(undefined, {
       eventId: payload?.event?.id ?? payload?.eventId ?? payload?.id,
       eligibleDevices: delivery.eligibleDevices,

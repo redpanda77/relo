@@ -40,6 +40,7 @@ export const FACTS = deepFreeze({
     "planMaxSteps": 30,
     "planMaxNodes": 120,
     "planMaxDepth": 3,
+    "planRoundsWithSteps": 3,
     "detailMax": 200
   },
   "lease": {
@@ -107,6 +108,7 @@ export const FACT_UNITS = deepFreeze({
   "work.planMaxSteps": "count",
   "work.planMaxNodes": "count",
   "work.planMaxDepth": "count",
+  "work.planRoundsWithSteps": "count",
   "work.detailMax": "characters",
   "lease.minSeconds": "seconds",
   "lease.maxSeconds": "seconds",

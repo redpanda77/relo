@@ -97,16 +97,7 @@ const presentationStepsSchema = z.array(presentationStepSchema)
     if (items.filter((item) => item.state === "current").length > 1) {
       context.addIssue({ code: "custom", message: "At most one step may be current" });
     }
-    const ranks = { complete: 0, current: 1, pending: 2 } as const;
-    let priorRank = 0;
-    for (const [index, item] of items.entries()) {
-      const rank = ranks[item.state];
-      if (rank < priorRank) context.addIssue({
-        code: "custom", path: [index, "state"],
-        message: "Steps must be ordered complete, current, then pending",
-      });
-      priorRank = Math.max(priorRank, rank);
-    }
+    // Order is the plan's own: a step done out of order sits after an open one, so states are not ranked.
   });
 
 const actionSchema = <Action extends string>(action: Action) => z.object({

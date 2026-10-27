@@ -1,0 +1,90 @@
+/* The custom title bar (TitleBar.tsx): transparent, over the top of the window; Windows 11 caption buttons, 46x32. */
+:root {
+  --chrome-h: 32px;
+}
+.relo-titlebar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--chrome-h);
+  display: flex;
+  align-items: stretch;
+  z-index: 50;
+  user-select: none;
+}
+.relo-titlebar-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  min-width: 0;
+  pointer-events: none;
+  color: rgb(255 255 255 / 0.5);
+  font-size: 12px;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.relo-titlebar:not([data-focused]) .relo-titlebar-id,
+.relo-titlebar:not([data-focused]) .cap {
+  opacity: 0.55;
+}
+.relo-titlebar-mark {
+  display: grid;
+  place-items: center;
+  color: var(--tone, #8b7cff);
+}
+.relo-titlebar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.relo-caption {
+  margin-left: auto;
+  display: flex;
+}
+.cap {
+  width: 46px;
+  height: var(--chrome-h);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgb(255 255 255 / 0.9);
+  cursor: default;
+}
+.cap:hover,
+.cap[data-hover] {
+  background: rgb(255 255 255 / 0.08);
+}
+.cap:active,
+.cap[data-pressed] {
+  background: rgb(255 255 255 / 0.05);
+  color: rgb(255 255 255 / 0.65);
+}
+.cap[data-close]:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+.cap[data-close]:active {
+  background: rgb(196 43 28 / 0.9);
+  color: rgb(255 255 255 / 0.7);
+}
+/* The window's top-right corner is rounded by Windows 11: keep the close button's hover inside it. */
+.cap[data-close] {
+  border-top-right-radius: 8px;
+}
+html[data-maximized] .cap[data-close] {
+  border-top-right-radius: 0;
+}
+@media (forced-colors: active) {
+  .cap {
+    color: ButtonText;
+  }
+  .cap:hover,
+  .cap[data-hover],
+  .cap[data-close]:hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+}

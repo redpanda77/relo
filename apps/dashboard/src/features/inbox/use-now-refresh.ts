@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { fetchDashboardRoute } from "@/app/dashboard-route-loader"
 import { overviewNow, type NowSummary } from "@/features/inbox/now-model"
@@ -28,6 +28,8 @@ export function useNowRefresh(accountId: string | undefined, initial: NowSummary
   const [offline, setOffline] = useState(false)
   // A refetch in flight: shown as the sync dot's pulse. Set and cleared by the fetches themselves.
   const [syncing, setSyncing] = useState(false)
+  const refreshRef = useRef<(() => Promise<void>) | null>(null)
+  const retry = useCallback(() => void refreshRef.current?.(), [])
   // A new page object (sealed text opened in place) keeps the newer Now: the page load's summary never
   // replaces a later refetch, or sections would flash back to how they were when the page loaded.
   const summary = fetched && (fetched.from === initial || !initial || fetched.value.serverTime >= initial.serverTime)
@@ -50,6 +52,7 @@ export function useNowRefresh(accountId: string | undefined, initial: NowSummary
         if (!cancelled) setSyncing(false)
       }
     }
+    refreshRef.current = refresh
     const onVisibility = () => {
       if (document.visibilityState === "hidden") writeLastLooked(accountId)
       else void refresh()
@@ -71,6 +74,7 @@ export function useNowRefresh(accountId: string | undefined, initial: NowSummary
     window.addEventListener("pagehide", onHide)
     return () => {
       cancelled = true
+      refreshRef.current = null
       window.clearInterval(timer)
       stopLive()
       stopLink?.()
@@ -106,5 +110,5 @@ export function useNowRefresh(accountId: string | undefined, initial: NowSummary
     }
   }, [accountId, initial, refreshAt, serverTime])
 
-  return { summary, offline, syncing }
+  return { summary, offline, syncing, retry }
 }

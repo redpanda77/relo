@@ -9,10 +9,13 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as nodeModule from "node:module";
 import { fileURLToPath } from "node:url";
 
+// module-counter.mjs uses module.registerHooks (Node 22.15+); CI runs a newer Node 22 than some developer machines.
+const NO_COUNTER = typeof nodeModule.registerHooks !== "function" && "needs module.registerHooks (Node >= 22.15) for the module counter";
 const BIN = fileURLToPath(new URL("../bin/relo.mjs", import.meta.url));
-const COUNTER = fileURLToPath(new URL("./module-counter.mjs", import.meta.url));
+const COUNTER = new URL("./module-counter.mjs", import.meta.url).href; // --import needs a file: URL on Windows
 
 // The hook reads its config, which checks the server address with the shared origin rule (origin.generated.mjs).
 // 38: shared/settings.mjs (dependency-free) is the one place a variable is read (RELO_PROFILE, RELO_COMPUTER).
@@ -21,7 +24,9 @@ const COUNTER = fileURLToPath(new URL("./module-counter.mjs", import.meta.url));
 // The status line wrapper reads a few local files and runs the owner's command (child_process loads only then); the
 // snapshot path (process.mjs, the adapters) loads only when a reading moved enough to send.
 // 41: the turn hook and the status line reach one more shared module (context size from hooks).
-const CEILINGS = { hook: 41, turn: 41, statusline: 41, version: 2 };
+// 36/37: a hook loads only its own harness's adapter (harness/adapters/load.mjs), not every adapter.
+// 39/40: plus Windows' hardening on the write path: the hook command's launch form, atomic writes and private folders.
+const CEILINGS = { hook: 39, turn: 40, statusline: 40, version: 2 };
 // What a hook must never load: the command dispatcher, the caller and harness catalog, sealing, and the
 // producer and owner modules.
 const HOOK_NEVER = [/^src\/cli\.mjs$/u, /^src\/deps\.mjs$/u, /^src\/caller\.mjs$/u, /^src\/harness\/catalog\.mjs$/u, /^src\/crypto\//u,
@@ -45,21 +50,21 @@ function spawn(argv, input) {
 
 const HOOK_INPUT = { session_id: "9f2c1c34-5c0e-4d63-8a3a-7f1d3bd2c001", hook_event_name: "PreToolUse", tool_use_id: "t1", tool_name: "Bash" };
 
-test("a hook loads no more modules than its budget", () => {
+test("a hook loads no more modules than its budget", { skip: NO_COUNTER }, () => {
   const run = spawn(["hook", "tool-start", "--agent", "claude-code"], HOOK_INPUT);
   assert.equal(run.status, 0);
   assert.ok(run.modules.length <= CEILINGS.hook, `relo hook loaded ${run.modules.length} modules (budget ${CEILINGS.hook}):\n${run.modules.join("\n")}`);
   for (const module of run.modules) for (const pattern of HOOK_NEVER) assert.doesNotMatch(module, pattern, `relo hook loaded ${module}`);
 });
 
-test("the turn hook (UserPromptSubmit context) stays local: one module over a hook, none of the forbidden ones", () => {
+test("the turn hook (UserPromptSubmit context) stays local: one module over a hook, none of the forbidden ones", { skip: NO_COUNTER }, () => {
   const run = spawn(["hook", "turn", "--agent", "claude-code"], { session_id: HOOK_INPUT.session_id, hook_event_name: "UserPromptSubmit" });
   assert.equal(run.status, 0);
   assert.ok(run.modules.length <= CEILINGS.turn, `relo hook turn loaded ${run.modules.length} modules (budget ${CEILINGS.turn}):\n${run.modules.join("\n")}`);
   for (const module of run.modules) for (const pattern of HOOK_NEVER) assert.doesNotMatch(module, pattern, `relo hook turn loaded ${module}`);
 });
 
-test("the status line wrapper stays local: a small module count, none of the forbidden ones", () => {
+test("the status line wrapper stays local: a small module count, none of the forbidden ones", { skip: NO_COUNTER }, () => {
   const run = spawn(["statusline"], { session_id: HOOK_INPUT.session_id });
   assert.equal(run.status, 0);
   assert.ok(run.modules.length <= CEILINGS.statusline, `relo statusline loaded ${run.modules.length} modules (budget ${CEILINGS.statusline}):\n${run.modules.join("\n")}`);
@@ -74,7 +79,7 @@ test("the status line wrapper stays local: a small module count, none of the for
 const deferred = process.env.RELO_GATES_DEFER_TIMING === "1";
 
 test("a hook costs at most 20 ms over a bare node start (median of 9)", {
-  skip: deferred && "deferred: scripts/gates.sh runs this test alone after the parallel gates",
+  skip: NO_COUNTER || (deferred && "deferred: scripts/gates.sh runs this test alone after the parallel gates"),
 }, () => {
   const median = (values) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const costs = [];
@@ -91,7 +96,7 @@ test("a hook costs at most 20 ms over a bare node start (median of 9)", {
   assert.fail(`relo hook over budget in all ${costs.length} medians: ${costs.map((c) => `${c.hook.toFixed(1)} ms vs node ${c.baseline.toFixed(1)} ms`).join("; ")}`);
 });
 
-test("relo --version loads no more modules than its budget", () => {
+test("relo --version loads no more modules than its budget", { skip: NO_COUNTER }, () => {
   const run = spawn(["--version"]);
   assert.equal(run.status, 0);
   assert.ok(run.modules.length <= CEILINGS.version, `relo --version loaded ${run.modules.length} modules (budget ${CEILINGS.version})`);

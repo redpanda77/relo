@@ -961,12 +961,13 @@ private struct BrowserDetailView: View {
     @State private var confirmsRemoval = false
 
     private var linker: (any BrowserLinking)? { model.apiClient as? any BrowserLinking }
+    private static let isoFormatter = ISO8601DateFormatter()
 
     private var linkedLine: String {
         switch target {
         case .local(let browser): "Linked \(browser.linkedAt.formatted(.relative(presentation: .named)))"
         case .serverOnly(let browser):
-            ISO8601DateFormatter().date(from: browser.linkedAt)
+            Self.isoFormatter.date(from: browser.linkedAt)
                 .map { "Linked \($0.formatted(.relative(presentation: .named)))" } ?? "Linked from another device"
         }
     }

@@ -1,0 +1,36 @@
+[package]
+name = "relo-setup"
+version = "0.1.0"
+description = "Relo Setup: the small program people download. It shows a Relo window, runs the installer quietly and opens Relo."
+edition = "2021"
+publish = false
+build = "build.rs"
+
+# Keep this crate out of any parent workspace (the app's src-tauri is its own).
+[workspace]
+
+[lib]
+name = "relo_setup"
+path = "src/lib.rs"
+
+[[bin]]
+name = "relo-setup"
+path = "src/main.rs"
+
+[dependencies]
+# The same WebView2 stack the app uses (apps/windows/src-tauri/Cargo.lock), so the registry cache serves both.
+tao = "0.37"
+wry = "0.57"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(windows)'.build-dependencies]
+tauri-winres = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

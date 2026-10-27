@@ -42,7 +42,7 @@ test("the names this computer made are remembered privately", async () => {
     await rememberNames({ env }, { "p-aaaaaaaaaaaaaaaa": "relo" });
     await rememberNames({ env }, { "t-bbbbbbbbbbbbbbbb": "Release" });
     assert.deepEqual(await loadKnownNames({ env }), { "p-aaaaaaaaaaaaaaaa": "relo", "t-bbbbbbbbbbbbbbbb": "Release" });
-    assert.equal(statSync(join(folder, "state", "names.json")).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(statSync(join(folder, "state", "names.json")).mode & 0o777, 0o600);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }

@@ -45,7 +45,7 @@ export async function observedLabels({ cwd, harnessEnv, config, dependencies }) 
   try {
     // Loaded only when a snapshot is due: most hook events change no phase and send nothing.
     const { hookLabelsWithNames } = await import("../../crypto/opaque-names.mjs");
-    return await hookLabelsWithNames(plain, config?.apiUrl, dependencies);
+    return await hookLabelsWithNames(plain, config?.apiUrl, dependencies, { local: config?.local === true });
   } catch {
     return { labels: {}, names: {} };
   }

@@ -194,11 +194,12 @@ function historyOf(notifications: unknown[]) {
     route: {
       path: "/dashboard/inbox/notifications",
       page: 1,
-      filters: { kind: null, state: null, project: null, source: null, computer: null, q: null },
+      filters: { kind: null, ending: null, project: null, source: null, computer: null, q: null },
     },
     filterOptions: { projects: [], sources: [], computers: [] },
     shell: { ...shell, active: "inbox-notifications" },
     notifications,
+    recent: [],
     pagination: { page: 1, pageSize: 25, total: notifications.length, pageCount: 1, previousHref: null, nextHref: null },
   } as unknown as NotificationHistory
 }
@@ -377,7 +378,7 @@ describe("Inbox feature contracts", () => {
       route: {
         path: "/dashboard/inbox/notifications",
         page: 1,
-        filters: { kind: null, state: null, project: null, source: null, computer: null, q: null },
+        filters: { kind: null, ending: null, project: null, source: null, computer: null, q: null },
       },
       filterOptions: { projects: [], sources: [], computers: [] },
       shell: {
@@ -391,6 +392,7 @@ describe("Inbox feature contracts", () => {
           destination: { state: "not-set", href: null },
         },
       ],
+      recent: [],
       pagination: {
         page: 1,
         pageSize: 25,
@@ -700,7 +702,7 @@ describe("Inbox feature contracts", () => {
     expect(await screen.findByText("Withdrawn")).toBeVisible()
   })
 
-  it("shows Source · Project › Topic on each row and the source alone without context", () => {
+  it("names the project (else the source), then the topic, beside each row's state, as the iPhone does", () => {
     const withContext = {
       ...notification,
       id: "ntf_33333333-3333-4333-8333-333333333333",
@@ -710,10 +712,8 @@ describe("Inbox feature contracts", () => {
     }
     render(<InboxFeature bootstrap={historyOf([withContext, notification])} service={service()} />)
     const activity = within(screen.getByRole("list", { name: "Activity" }))
-    expect(activity.getByLabelText("Codex, Relo, Releases")).toBeVisible()
-    expect(activity.getByText("Releases")).toBeVisible()
-    expect(activity.getByLabelText("Test Lab")).toBeVisible()
-    expect(activity.getByText("Test Lab")).toBeVisible()
+    expect(activity.getByText("· Relo · Releases")).toBeVisible()
+    expect(activity.getByText("· Test Lab")).toBeVisible()
   })
 
   it("shows a lock instead of sealed placeholders and never shows a handle", () => {
@@ -733,7 +733,7 @@ describe("Inbox feature contracts", () => {
     const activity = within(screen.getByRole("list", { name: "Activity" }))
     expect(activity.getByText("End-to-end encrypted · open on iPhone to read")).toBeVisible()
     // Names this browser cannot read are left out, never shown as "Encrypted topic".
-    expect(activity.getByLabelText("Claude Code")).toBeVisible()
+    expect(activity.getByText("· Claude Code")).toBeVisible()
     expect(activity.getByRole("button", { name: "Open encrypted item" })).toBeVisible()
     const page = document.body.textContent ?? ""
     for (const hidden of ["Encrypted notification", "Encrypted question", "Encrypted topic", "Encrypted project", "Open Relo on your iPhone", "p-abcdefghijklmnop", "t-abcdefghijklmnop"])
@@ -777,40 +777,53 @@ describe("Inbox feature contracts", () => {
     expect(document.body.textContent).not.toContain(sealedPrompt)
   })
 
-  it("keeps a framed work card only for live work and lists settled items as rows under their day", () => {
-    const running = {
+  it("lists what is over as the iPhone's timeline: a dot per meaning, today unbanded, earlier days banded, quiet gaps", () => {
+    const at = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
+    const done = {
       ...notification,
       id: "ntf_77777777-7777-4777-8777-777777777777",
       kind: "live_activity",
-      activity: { ...liveActivity, state: "active", steps: { done: 1, total: 3, current: "Build" }, updates: 2 },
+      createdAt: at(0),
+      activity: { ...liveActivity, state: "ended", updatedAt: at(0), presentation: undefined },
+      historySignal: "done",
     }
-    const settled = { ...notification, id: "ntf_99999999-9999-4999-8999-999999999999", kind: "notification", state: "recorded", title: "Nightly backup finished" }
-    render(<InboxFeature bootstrap={historyOf([running, settled])} service={service()} />)
-    const activity = screen.getByRole("list", { name: "Activity" })
-    const card = within(activity).getByRole("button", { name: "Open Correct activity lifecycle history" })
-    const live = card.closest<HTMLElement>(".card")!
-    expect(live).toHaveAttribute("data-variant", "live")
-    // The meter docks on the card's edge, outside the open target.
-    expect(within(live).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1")
-    // A work card needs no "Live Activity" label.
-    expect(within(live).queryByText(/live activity/i)).toBeNull()
-    const row = within(activity).getByRole("button", { name: "Open Nightly backup finished" })
-    expect(row.closest(".card")).toHaveAttribute("data-variant", "row")
-    expect(row.closest("ul")).toHaveClass("card-list")
-    // A message has no outcome: its type stands in the state's place.
-    expect(within(row).getByText("Message").closest("[data-part='state']")).not.toBeNull()
+    const message = {
+      ...notification, id: "ntf_99999999-9999-4999-8999-999999999999", kind: "notification", state: "recorded",
+      title: "Nightly backup finished", question: null, activity: null, createdAt: at(0.05), historySignal: "message",
+    }
+    const old = { ...message, id: "ntf_88888888-8888-4888-8888-888888888888", title: "Old backup", createdAt: at(72), readAt: now }
+    const history = {
+      ...historyOf([done, message, old]),
+      recent: [{ at: at(0), signal: "done" }, { at: at(0.05), signal: "message" }],
+    } as NotificationHistory
+    render(<InboxFeature bootstrap={history} service={service()} />)
+    // Today's panel: the count and one chip per meaning, each a link that narrows the list.
+    const today = screen.getByRole("region", { name: "Today" })
+    expect(within(today).getByRole("link", { name: "1 Done" })).toHaveAttribute("href", "/dashboard/inbox/notifications?ending=done")
+    expect(within(today).getByRole("link", { name: "1 Message" })).toHaveAttribute("href", "/dashboard/inbox/notifications?ending=message")
+    const row = screen.getByRole("button", { name: "Open Nightly backup finished" })
+    expect(row).toHaveClass("history-tl-row")
+    expect(row).toHaveAttribute("data-signal", "message")
+    // An unread message reads bolder; there is no unread dot.
+    expect(row.querySelector(".history-tl-headline")).toHaveAttribute("data-unread", "true")
+    // Today has no band of its own (the panel names it); an earlier day is banded with its counts.
+    const bands = [...document.querySelectorAll(".history-band")]
+    expect(bands).toHaveLength(1)
+    expect(bands[0]).toHaveTextContent("1 message")
+    // No plan bars or framed cards: History is what is over.
+    expect(document.querySelector(".card, [role=progressbar]")).toBeNull()
   })
 
   it("says what is filtered, what is empty and what is left", () => {
     const filtered = {
       ...historyOf([]),
-      route: { path: "/dashboard/inbox/notifications", page: 1, filters: { kind: "decision", state: "missed", project: null, source: null, computer: null, q: "deploy" } },
+      route: { path: "/dashboard/inbox/notifications", page: 1, filters: { kind: "decision", ending: "attention", project: null, source: null, computer: null, q: "deploy" } },
     } as NotificationHistory
     render(<InboxFeature bootstrap={filtered} service={service()} />)
     expect(screen.getByText("0 matches")).toBeVisible()
     expect(screen.getByText("No matches")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Decisions" })).toHaveAttribute("aria-pressed", "true")
-    expect(screen.getByLabelText("State")).toHaveValue("missed")
+    expect(screen.getByLabelText("How it ended")).toHaveValue("attention")
     expect(screen.getByRole("searchbox", { name: "Search history" })).toHaveValue("deploy")
     expect(screen.getByRole("searchbox", { name: "Search history" })).toHaveAccessibleDescription(/Encrypted items match by their source only/)
     expect(screen.getByRole("link", { name: "Clear all filters" })).toHaveAttribute("href", "/dashboard/inbox/notifications")
@@ -876,10 +889,11 @@ describe("Inbox feature contracts", () => {
     const history = {
       version: 1,
       kind: "notification-history",
-      route: { path: "/dashboard/inbox/notifications", page: 2, filters: { kind: "decision", state: null, project: null, source: null, computer: null, q: null } },
+      route: { path: "/dashboard/inbox/notifications", page: 2, filters: { kind: "decision", ending: null, project: null, source: null, computer: null, q: null } },
       filterOptions: { projects: ["Relo", "Kuatzi"], sources: [], computers: [] },
       shell: { ...shell, active: "inbox-notifications" },
       notifications: [notification, { ...notification, id: "ntf_55555555-5555-4555-8555-555555555555" }],
+      recent: [],
       pagination: { page: 2, pageSize: 25, total: 27, pageCount: 2, previousHref: "/dashboard/inbox/notifications?page=1", nextHref: null },
     } as NotificationHistory
     render(<InboxFeature bootstrap={history} service={service()} />)

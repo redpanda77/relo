@@ -37,6 +37,8 @@ struct ReloActivityAttributes: Codable {
         /// The server's derived owner state for this card (spec 6.2). Each card renders alone in the
         /// widget process, so cross-card facts (the needs-you count) arrive in every card's content.
         var owner: Owner?
+        /// The card's id, which scopes the last known step labels when the state carries no work.
+        var cardID: String?
 
         typealias Owner = LiveActivityOwner
 
@@ -51,7 +53,8 @@ struct ReloActivityAttributes: Codable {
             startedAt: Date? = nil,
             sealed: ReloEnvelope? = nil,
             work: ReloWork? = nil,
-            owner: Owner? = nil
+            owner: Owner? = nil,
+            cardID: String? = nil
         ) {
             precondition(generation > 0, "Live Activity generation must be positive")
             self.generation = generation
@@ -61,35 +64,34 @@ struct ReloActivityAttributes: Codable {
             self.staleAt = staleAt
             // The app applies the same command a push carries: open its sealed text the same way, so
             // a card the app starts or updates never falls back to the server's placeholders.
-            let opened = Self.opening(presentation, sealed: sealed, work: work)
+            let opened = Self.opening(presentation, sealed: sealed, work: work, cardID: cardID)
             self.interaction = opened.permitsLiveActivityActions ? interaction : nil
             self.presentation = opened
             self.startedAt = startedAt
             self.sealed = sealed
             self.work = work
             self.owner = owner
+            self.cardID = cardID
         }
 
         /// The presentation with this phone's sealed text applied (step labels by id) and handles named.
         static func opening(_ presentation: LiveActivityPresentation, sealed: ReloEnvelope?,
-                            work: ReloWork? = nil) -> LiveActivityPresentation {
-            let text = sealed.flatMap(ReloSealedCards.open)
-            let scope = work?.id ?? text?.phases.map { $0.map(\.id).joined(separator: "|") }
-            var opened = text.map { presentation.applying($0, memoryScope: scope) } ?? presentation
-            // A card that stays encrypted says why, in one plain line, instead of showing raw handles.
-            if text == nil, presentation.title == ReloSealedCards.titlePlaceholder {
-                opened = opened.replacingSubtitle(ReloSealedCards.failureLine(sealed: sealed != nil))
-            }
-            // A sealed question shows only the prompt this phone opened, never text the server wrote.
-            if sealed?.kind == "question" {
-                opened = opened.replacingSubtitle(text?.summary ?? ReloSealedCards.promptPlaceholder)
-            }
-            // Opaque project and topic handles show their real names (E2.5).
-            return opened.resolvingNames(ReloSealedCards.knownNames())
+                            work: ReloWork? = nil, cardID: String? = nil) -> LiveActivityPresentation {
+            ReloSealedCards.opening(presentation, sealed: sealed, work: work, cardID: cardID)
+        }
+
+        /// This state with its sealed text opened again, for a card that was first shown with placeholders (the
+        /// keys were not ready in this process then). Nil when it already reads in full or still cannot be opened.
+        func reopened(cardID fallbackCardID: String? = nil) -> ContentState? {
+            let cardID = cardID ?? fallbackCardID
+            guard let repaired = ReloSealedCards.reopened(presentation, sealed: sealed, work: work, cardID: cardID) else { return nil }
+            return ContentState(generation: generation, updatedAt: updatedAt, sequence: sequence, expiresAt: expiresAt,
+                                staleAt: staleAt, interaction: interaction, presentation: repaired, startedAt: startedAt,
+                                sealed: sealed, work: work, owner: owner, cardID: cardID)
         }
 
         private enum CodingKeys: String, CodingKey {
-            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed, work, owner
+            case generation, updatedAt, sequence, expiresAt, staleAt, interaction, startedAt, sealed, work, owner, cardID
         }
 
         init(from decoder: Decoder) throws {
@@ -105,8 +107,9 @@ struct ReloActivityAttributes: Codable {
             let decodedPresentation = try LiveActivityPresentation(from: decoder)
             sealed = try? values.decodeIfPresent(ReloEnvelope.self, forKey: .sealed)
             work = (try? values.decodeIfPresent(ReloWork.self, forKey: .work)).flatMap { $0.isEmpty ? nil : $0 }
+            cardID = (try? values.decodeIfPresent(String.self, forKey: .cardID)) ?? nil
             // Opened on this phone: every surface shows the real text instead of the placeholders.
-            presentation = Self.opening(decodedPresentation, sealed: sealed, work: work)
+            presentation = Self.opening(decodedPresentation, sealed: sealed, work: work, cardID: cardID)
             updatedAt = try Self.decodeDate(.updatedAt, from: values)
             sequence = try values.decodeIfPresent(Int.self, forKey: .sequence) ?? 0
             expiresAt = try Self.decodeDateIfPresent(.expiresAt, from: values)
@@ -131,6 +134,7 @@ struct ReloActivityAttributes: Codable {
             try values.encodeIfPresent(sealed, forKey: .sealed)
             try values.encodeIfPresent(work, forKey: .work)
             try values.encodeIfPresent(owner, forKey: .owner)
+            try values.encodeIfPresent(cardID, forKey: .cardID)
         }
 
         private static func decodeDateIfPresent(

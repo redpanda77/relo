@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, openSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import claudeCode from "../src/harness/adapters/claude-code/index.mjs";
@@ -100,7 +100,7 @@ test("an agent's relo reply sent to /dev/null goes to stderr instead; a script's
   const bin = fileURLToPath(new URL("../bin/relo.mjs", import.meta.url));
   const home = mkdtempSync(join(tmpdir(), "relo-null-"));
   const base = { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_STATE_HOME: join(home, "state") };
-  const run = (env) => spawnSync(process.execPath, [bin, "help", "work"], { env: { ...base, ...env }, stdio: ["ignore", openSync("/dev/null", "w"), "pipe"], encoding: "utf8" });
+  const run = (env) => spawnSync(process.execPath, [bin, "help", "work"], { env: { ...base, ...env }, stdio: ["ignore", openSync(devNull, "w"), "pipe"], encoding: "utf8" });
   const agent = run({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "sess-null" }).stderr;
   assert.match(agent, /^Relo: this reply was sent to \/dev\/null, so it is shown here\. Run relo commands alone/u);
   assert.match(agent, /^relo work: \d+ commands/mu);

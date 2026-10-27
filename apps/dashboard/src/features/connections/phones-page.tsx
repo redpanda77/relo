@@ -1,9 +1,9 @@
 import { Smartphone, Trash2 } from "lucide-react"
 import * as React from "react"
 
-import { IconTile } from "@/components/atoms/icon-tile"
-import { StatusDot } from "@/components/atoms/status-dot"
-import { Empty, List, Row, Section } from "@/components/list"
+import { Empty, Section } from "@/components/list"
+import { seenDot } from "@/lib/machine-seen"
+import { MachineCard, MachineList } from "@/components/molecules/machine-card"
 import { DestructiveAction } from "@/components/molecules/confirmation-action"
 import { OperationStatus } from "@/components/molecules/operation-status"
 import type { ConnectionPhone } from "@/features/connections/types"
@@ -31,18 +31,13 @@ function PhoneRow({
   const [error, setError] = React.useState<string | null>(null)
   const state = readiness(phone)
   return (
-    <Row
+    <MachineCard
       busy={pending}
-      wrap
-      leading={<IconTile icon={Smartphone} />}
-      title={phone.name}
-      status={<StatusDot tone={state === "Ready" ? "mint" : "yellow"} label={state} />}
-      meta={
-        <>
-          {phone.model} · iOS {phone.osVersion}
-          {phone.lastSeenAt ? ` · seen ${relativeTime(phone.lastSeenAt)}` : ""}
-        </>
-      }
+      glyph={Smartphone}
+      name={phone.name}
+      dot={state === "Ready" ? seenDot(phone.lastSeenAt) : "amber"}
+      summary={`${state} \u00b7 ${phone.model} \u00b7 iOS ${phone.osVersion}${phone.lastSeenAt ? ` \u00b7 Last seen ${relativeTime(phone.lastSeenAt)}` : ""}`}
+      note={error || pending ? <OperationStatus pending={pending} error={error} pendingLabel="Removing phone…" className="text-xs" /> : undefined}
       actions={
         <DestructiveAction
           label="Remove"
@@ -65,9 +60,7 @@ function PhoneRow({
           }}
         />
       }
-    >
-      <OperationStatus pending={pending} error={error} pendingLabel="Removing phone…" className="px-4 pb-3 text-xs" />
-    </Row>
+    />
   )
 }
 
@@ -93,20 +86,19 @@ export function PhonesSection({
         </>
       }
     >
-      <List
-        label="Phones"
-        items={phones}
-        getKey={(phone) => phone.id}
-        empty={<Empty icon={<Smartphone />} title="No phones yet" description="To add an iPhone, open Relo on it and tap Sign in." />}
-      >
-        {(phone) => (
-          <PhoneRow
-            phone={phone}
-            api={api}
-            onRevoke={(id) => setPhones((current) => current.filter((item) => item.id !== id))}
-          />
-        )}
-      </List>
+      {phones.length ? (
+        <MachineList label="Phones" items={phones} getKey={(phone) => phone.id}>
+          {(phone) => (
+            <PhoneRow
+              phone={phone}
+              api={api}
+              onRevoke={(id) => setPhones((current) => current.filter((item) => item.id !== id))}
+            />
+          )}
+        </MachineList>
+      ) : (
+        <Empty eyebrow="Phones" title="No phones yet" description="To add an iPhone, open Relo on it and tap Sign in." />
+      )}
       {total > initial.length ? (
         <p className="mt-3 text-xs text-muted-foreground">Showing {initial.length} of {total}.</p>
       ) : null}

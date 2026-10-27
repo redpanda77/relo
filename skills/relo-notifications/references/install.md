@@ -7,7 +7,9 @@ asked to set Relo up.
 ## First run, end to end
 
 Only when a relo command fails with an auth or no-phone error, or `relo doctor` prints `"ready":false`
-(never as a preamble to a task, and one question to the owner per missing step at most):
+(never as a preamble to a task, and one question to the owner per missing step at most). On a Mac where doctor shows
+`checks.local` (Relo for Mac running on its own), there is no sign-in link, no phone and no encryption: Relo for Mac
+links this Mac; if it isn't linked, ask the owner to open Relo for Mac, and never run `relo auth login`:
 
 1. `relo` not found: ask the owner, then install the CLI from the reviewed tarball or checkout (next section).
 2. `relo doctor`, then run `next.run` for the first unmet `next.step`, repeating until `ready` is `true`:
@@ -18,7 +20,7 @@ Only when a relo command fails with an auth or no-phone error, or `relo doctor` 
      `relo auth login --wait` (up to 100s; exit `4` state `pending`: run it again; exit `8` "expired": start over).
      A pending sign-in resumes (`next.run` is `relo auth login --wait`) instead of starting a second one.
    - `phone`: the owner opens the Relo app, signs in and allows Live Activities; `relo devices list` shows it.
-   - `test`: `relo test` shows a short card and asks "Can you see this card on your iPhone?". Done once; a
+   - `test`: `relo test` shows a short card and asks "Can you see this card on your iPhone?" (in your Mac's notch on a local account). Done once; a
      phone that passed is remembered. `relo test --again` forces a re-run.
    - `skill` (warning only): `next.run` is the exact `relo setup --agent <x>` (or `relo setup --refresh` for an
      older copy); tell the owner once and run it only with their go-ahead, never mid-task.
@@ -36,7 +38,7 @@ relo doctor
 
 GitHub releases (`cli-v<version>`, `npm install --global` of their tarball) remain for an npm install.
 
-`relo doctor` names the next step (sign in with `relo auth login`, a phone, `relo test`); never paste tokens.
+`relo doctor` names the next step (sign in with `relo auth login`, a phone or Relo for Mac, `relo test`); never paste tokens.
 CI and containers skip `auth login` and set `RELO_TOKEN` and `RELO_API_URL` from their secret store; the owner makes that token with `relo auth token create --secret-file PATH`.
 
 ### Updating

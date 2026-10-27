@@ -15,10 +15,14 @@ import { checkSubagentModel, managedAgentFiles, ownsStatusLine, recordedExtras }
 import { applyPlan, changedHarnesses, chooseHarnesses, depthPlan, refreshPlan, setupPlan } from "../install/plan.mjs";
 import { EXIT, UsageError } from "../shared/errors.mjs";
 import { atTerminal, computerIdentityItem } from "./computer-identity.mjs";
+import { basename, resolve } from "node:path";
+import { putOnPath } from "./setup-path.mjs";
+import { writeWindowsLauncher } from "./windows-launcher.mjs";
 import { installResult } from "./install-report.mjs";
+import { harnessRows } from "./harness-status.mjs";
 import { harnessesOf } from "./machine-report.mjs";
 
-const USAGE = "relo setup [--level notify|track|guide|optimize] [--approvals on|off] [--statusline on|off] [--agents on|off] [--subagent-model MODEL|off] [--modules a,b] [--project] [--agent NAME]... [--mcp] [--computer NAME] [--icon ICON] [--show] [--dry-run] | relo setup --refresh [--dry-run]";
+const USAGE = "relo setup [--level notify|track|guide|optimize] [--approvals on|off] [--statusline on|off] [--agents on|off] [--subagent-model MODEL|off] [--modules a,b] [--project] [--agent NAME]... [--mcp] [--computer NAME] [--icon ICON] [--show [--all]] [--dry-run] | relo setup --refresh [--dry-run] | relo setup --path [--dry-run]";
 const LEVELS = Object.keys(DEPTHS);
 const hooked = (level) => level === "guide" || level === "optimize";
 
@@ -96,7 +100,7 @@ function harnessLine(harness, plan, modules, report) {
     if (typeof plan.extras.subagentModel === "string" && plan.extras.subagentModel !== "off") extras.push(`subagents default to ${plan.extras.subagentModel}`);
   }
   if (plan.level === "optimize" && plan.extras.agents !== undefined) {
-    const names = rows.filter((row) => row.kind === "agent" && row.harness === harness.id).map((row) => String(row.file).split("/").pop().replace(/\.(md|toml)$/u, ""));
+    const names = rows.filter((row) => row.kind === "agent" && row.harness === harness.id).map((row) => basename(String(row.file)).replace(/\.(md|toml)$/u, ""));
     const kept = report.skipped.filter((row) => row.kind === "agent" && row.harness === harness.id);
     if (plan.extras.agents === false) extras.push("no agents");
     else if (!harness.agents) { if (kept.length) extras.push("no agents for this harness"); }
@@ -106,8 +110,8 @@ function harnessLine(harness, plan, modules, report) {
   const block = skipped("block");
   const hooks = report.changed.concat(report.unchanged).find((row) => row.kind === "hooks" && row.harness === harness.id);
   const parts = [
-    block ? block.reason : `instructions: ${modules.join(" ")}`,
-    plan.skill ? (skipped("skill")?.reason ?? "skill") : "no skill",
+    block ? block.reason : harness.instructions?.global ? `instructions: ${modules.join(" ")}` : "no instructions file for this harness",
+    !harness.skills ? "no skill for this harness" : plan.skill ? (skipped("skill")?.reason ?? "skill") : "no skill",
     plan.hooks === "off" ? "no hooks" : skipped("hooks")?.reason ?? (hooks ? `hooks: ${hooks.level.replace("+lean", " + subagent nudge")}` : `hooks: ${plan.hooks}`),
     ...extras,
   ];
@@ -152,14 +156,18 @@ function installedExtras(dependencies) {
     subagentModel: recordedExtras(dependencies.hookStateDirectory).subagentModel };
 }
 
+/** What each depth installs: the choices a person (or the Mac app) can make, from the one place that maps a depth to files. */
+function levelChoices() {
+  return Object.fromEntries(LEVELS.map((name) => {
+    const plan = depthPlan({ level: name });
+    return [name, { modules: plan.modules, instructions: true, skill: plan.skill, hooks: hooked(name) ? "presence" : "off", approvalsAllowed: hooked(name) }];
+  }));
+}
+
 /** `--show`: what is installed per harness, or with --level what that depth would install; the block text; nothing written. */
 function showResult({ harnesses, plan, wanted, custom, dependencies }) {
   const probe = { env: dependencies.env, home: dependencies.home, cwd: dependencies.cwd, platform: dependencies.platform };
-  const ids = harnesses.map((harness) => harness.id);
-  const rows = harnessesOf(dependencies, probe).filter((row) => ids.includes(row.id)).map((row) => ({
-    harness: row.id, level: row.level, modules: row.modules, hooks: row.hooks, approvals: row.hooks === "approvals", skill: row.skill,
-    hooksAvailable: Boolean(ADAPTERS[row.id]),
-  }));
+  const rows = harnessRows(dependencies, probe, harnesses.map((harness) => harness.id));
   const installed = installedExtras(dependencies);
   const wouldExtras = plan.level === "optimize" ? plan.extras : {};
   const extrasText = wanted
@@ -168,11 +176,12 @@ function showResult({ harnesses, plan, wanted, custom, dependencies }) {
       ? [`  Optimize extras: status line ${installed.statusline ? "on" : "off"}, agents ${installed.agents.length ? installed.agents.join(" ") : "none"}${installed.subagentModel ? ", subagent model set by Relo" : ""}`] : []);
   const text = [
     wanted ? `Would install: ${depthTitle(plan, custom)}` : "Installed",
+    ...(rows.length === 0 ? ["  No agent was found on this computer. relo setup --show --all lists every agent Relo knows."] : []),
     ...rows.map((row) => {
       const shown = wanted ? { modules: plan.modules, skill: plan.skill ? "skill" : "no skill", hooks: ADAPTERS[row.harness] ? plan.hooks : "no hooks for this harness" }
         : { modules: row.modules, skill: row.skill === "none" ? "no skill" : `skill ${row.skill}`, hooks: row.hooksAvailable ? row.hooks : "no hooks for this harness" };
       const depth = wanted ? "" : `${row.level} `;
-      return `  ${harnessLabel(row.harness).padEnd(14)} ${depth}${shown.modules.length ? `[${shown.modules.join(" ")}]` : "no block"} · ${shown.skill} · ${shown.hooks === "off" || !shown.hooks ? "no hooks installed" : shown.hooks.startsWith("no hooks") ? shown.hooks : `hooks: ${shown.hooks}`}`;
+      return `  ${harnessLabel(row.harness).padEnd(14)} ${depth}${shown.modules.length ? `[${shown.modules.join(" ")}]` : "no block"} · ${shown.skill} · ${shown.hooks === "off" || !shown.hooks ? "no hooks installed" : shown.hooks.startsWith("no hooks") ? shown.hooks : `hooks: ${shown.hooks}`}${row.parts.mcp ? " · MCP" : ""}${row.installed ? "" : " · not installed"}`;
     }),
     ...extrasText,
     "",
@@ -181,17 +190,80 @@ function showResult({ harnesses, plan, wanted, custom, dependencies }) {
   ].join("\n");
   return {
     exitCode: EXIT.OK, command: "setup",
-    data: { show: true, harnesses: rows, ...(wanted ? { would: { level: plan.level, modules: plan.modules, skill: plan.skill, hooks: plan.hooks, approvals: plan.approvals, ...(plan.level === "optimize" ? { extras: plan.extras } : {}) } } : {}),
+    data: { show: true, harnesses: rows, levels: levelChoices(), ...(wanted ? { would: { level: plan.level, modules: plan.modules, skill: plan.skill, hooks: plan.hooks, approvals: plan.approvals, ...(plan.level === "optimize" ? { extras: plan.extras } : {}) } } : {}),
       ...(installed.statusline || installed.agents.length || installed.subagentModel ? { extras: installed } : {}), block: renderBlockText(plan.modules) },
     text,
   };
+}
+
+const PAST = { created: "added", appended: "added", added: "added", installed: "added", updated: "updated", removed: "removed" };
+const PARTS = [["block", "instructions", "instructions"], ["skill", "skill", "skill"], ["hooks", "hooks", "hooks"], ["mcp", "mcp", "MCP entry"]];
+
+/**
+ * What setup did per harness and per part: `changes` maps instructions, skill, hooks, mcp to added|updated|removed|
+ * unchanged|skipped|failed|n/a (n/a: the harness has no such thing), `approvals` to on|off|unchanged, and `summary` is the same
+ * in words for the app ("Added instructions"; "Would add" on a dry run). `level` and `parts` are what is installed
+ * after (what would be, on a dry run: not read, so they are left out).
+ */
+function harnessChanges({ harnesses, report, before, after, dryRun, plan }) {
+  const rows = (list) => list.filter((row) => row.harness);
+  return harnesses.map((harness) => {
+    const mine = (kind) => [...rows(report.changed).map((row) => ({ ...row, done: true })), ...rows(report.unchanged),
+      ...rows(report.skipped).map((row) => ({ ...row, how: "skipped" })), ...rows(report.errors).map((row) => ({ ...row, how: "failed" }))]
+      .filter((row) => row.kind === kind && row.harness === harness.id);
+    const hasPart = { block: Boolean(harness.instructions?.global), skill: Boolean(harness.skills), hooks: Boolean(ADAPTERS[harness.id] && harness.hooks), mcp: Boolean(harness.mcp) };
+    const changes = {};
+    const summary = [];
+    for (const [kind, key, noun] of PARTS) {
+      const found = mine(kind);
+      const first = found.find((row) => row.done) ?? found[0];
+      if (!first) { changes[key] = hasPart[kind] ? "unchanged" : "n/a"; continue; }
+      const done = first.done ? PAST[first.action] ?? "updated" : first.how ?? "unchanged";
+      changes[key] = done;
+      if (first.done) summary.push(`${dryRun ? "Would " + { added: "add", updated: "update", removed: "remove" }[done] : done[0].toUpperCase() + done.slice(1)} ${noun}`);
+    }
+    const was = before.find((row) => row.harness === harness.id)?.parts.approvals ?? false;
+    const now = after ? after.find((row) => row.harness === harness.id)?.parts.approvals ?? false : plan.hooks === "approvals" && changes.hooks !== "unchanged" && changes.hooks !== "n/a";
+    changes.approvals = was === now ? "unchanged" : now ? "on" : "off";
+    if (changes.approvals !== "unchanged") summary.push(`${dryRun ? "Would turn" : "Turned"} ${changes.approvals} approvals`);
+    const row = after?.find((candidate) => candidate.harness === harness.id);
+    const nothing = !Object.values(hasPart).some(Boolean) ? undefined
+      : !hasPart.block && !hasPart.skill && plan.hooks === "off" ? `${harnessLabel(harness.id)} has no instructions to set up: it takes session hooks (--level guide) or the MCP entry (--mcp).` : undefined;
+    return { harness: harness.id, label: harnessLabel(harness.id), changes, summary,
+      ...(nothing ? { note: nothing } : {}), ...(row ? { level: row.level, configured: row.configured, parts: row.parts } : {}) };
+  });
 }
 
 export async function runSetupCommand({ options, action, rest, dependencies }) {
   const dryRun = Boolean(options["dry-run"]);
   const { env, home, cwd } = dependencies;
   if (rest.length > 0 || action !== undefined) throw new UsageError(`Usage: ${USAGE}`);
+  // Windows: the Relo folders become this user's alone (once; a no-op elsewhere and on --dry-run / --show).
+  if (!dryRun && !options.show) await dependencies.secureDirectories?.();
   const names = [options.agent ?? []].flat();
+  if (options.path) {
+    if (options.level || options.approvals || options.statusline || options.agents || options["subagent-model"] !== undefined || options.modules !== undefined || options.show || options.mcp || options.project || names.length || options.computer !== undefined || options.icon || options.refresh) {
+      throw new UsageError("--path only edits the shell startup files; it takes no other flags but --dry-run.");
+    }
+    const platform = dependencies.platform ?? process.platform;
+    if (platform === "win32") {
+      // The launcher (relo.cmd + the Git Bash sibling) for this CLI and Node, then its folder on the user Path.
+      const entry = dependencies.entrypoint;
+      const launcher = !dryRun && entry
+        ? await writeWindowsLauncher({ home, env, node: dependencies.nodePath ?? process.execPath, entry: resolve(entry), platform })
+        : undefined;
+      const onPath = await putOnPath({ home, env, dryRun, platform, run: dependencies.runRegistry });
+      const lines = [];
+      if (launcher?.written) lines.push(`Wrote ${launcher.path}.`);
+      if (launcher?.managed) lines.push(`${launcher.path} is managed by the Relo Windows app; left as is.`);
+      lines.push(onPath.changed.length ? `${dryRun ? "Would add" : "Added"} ${onPath.bin} to your user Path. Open a new terminal to use it.` : `${onPath.bin} is already on your user Path.`);
+      return { exitCode: EXIT.OK, command: "setup", data: { path: { bin: onPath.bin, changed: onPath.changed, unchanged: onPath.unchanged, ...(launcher ? { launcher: launcher.path } : {}), ...(dryRun ? { dryRun: true } : {}) } },
+        text: lines.join(" ") };
+    }
+    const changed = await putOnPath({ home, env, dryRun, platform });
+    return { exitCode: EXIT.OK, command: "setup", data: { path: { bin: changed.bin, changed: changed.changed, unchanged: changed.unchanged, ...(dryRun ? { dryRun: true } : {}) } },
+      text: changed.changed.length ? `${dryRun ? "Would add" : "Added"} ~/.local/bin to PATH in ${changed.changed.join(", ")}. Open a new terminal to use it.` : "~/.local/bin is already on PATH in your shell startup files." };
+  }
   if (options.refresh) {
     if (options.level || options.approvals || options.statusline || options.agents || options["subagent-model"] !== undefined || options.modules !== undefined || options.show || options.mcp || options.project || names.length || options.computer !== undefined || options.icon) {
       throw new UsageError("--refresh re-renders what is installed; it takes no other flags but --dry-run.");
@@ -199,9 +271,11 @@ export async function runSetupCommand({ options, action, rest, dependencies }) {
     const report = await applyPlan(refreshPlan(dependencies), { dryRun, home });
     return finish({ report, dryRun, dependencies, title: "Refreshed" });
   }
-  if (options.show && (options.mcp || options.computer !== undefined || options.icon)) throw new UsageError("--show only reads: it takes --level, --approvals, --statusline, --agents, --subagent-model, --modules, --agent and --project.");
-  const found = chooseHarnesses(names, { env, home, cwd, platform: dependencies.platform });
-  if (found.length === 0) {
+  if (options.show && (options.mcp || options.computer !== undefined || options.icon)) throw new UsageError("--show only reads: it takes --level, --approvals, --statusline, --agents, --subagent-model, --modules, --agent, --all and --project.");
+  if (options.all && !options.show) throw new UsageError("--all only goes with --show: relo setup --show --all lists every agent, installed or not.");
+  // Setup refuses an agent that is not installed here (it would write into the folders of an app that is not there); --show names any.
+  const found = chooseHarnesses(names, { env, home, cwd, platform: dependencies.platform }, { requireInstalled: !options.show, all: Boolean(options.show && options.all && !names.length) });
+  if (found.length === 0 && !options.show) {
     throw new UsageError("No agent harness was found on this computer.", { hint: "Name it: relo setup --agent claude-code (or codex, gemini, opencode, cursor, copilot, amp)" });
   }
   // A person at the terminal who named no --agent picks among the agents found here (Enter keeps them all).
@@ -224,12 +298,16 @@ export async function runSetupCommand({ options, action, rest, dependencies }) {
   if (!options.show && options.project && (extras.statusline !== undefined || extras.agents !== undefined || extras.subagentModel !== undefined)) {
     throw new UsageError("--statusline, --agents and --subagent-model are user-level: run it without --project.");
   }
+  const probe = { env, home, cwd, platform: dependencies.platform };
+  const ids = harnesses.map((harness) => harness.id);
+  const statusBefore = harnessRows(dependencies, probe, ids);
   const items = setupPlan({ harnesses, project: Boolean(options.project), plan, mcp: Boolean(options.mcp), keepModules }, dependencies);
   // The name and icon last, so a question at the terminal comes after the plan is known to be valid.
   const identity = await computerIdentityItem({ options, dependencies, dryRun });
   if (identity) items.push(identity);
   const report = await applyPlan(items, { dryRun, home });
-  const before = keepModules ? harnessesOf(dependencies, { env, home, cwd, platform: dependencies.platform }) : [];
+  const before = keepModules ? harnessesOf(dependencies, probe) : [];
+  const after = dryRun ? undefined : harnessRows(dependencies, probe, ids);
   const lead = {
     title: `Set up: ${depthTitle(plan, Boolean(modules))}`,
     lines: [...harnesses.map((harness) => {
@@ -238,6 +316,7 @@ export async function runSetupCommand({ options, action, rest, dependencies }) {
     })],
   };
   const extra = {
+    harnesses: harnessChanges({ harnesses, report, before: statusBefore, after, dryRun, plan }),
     depth: { level: plan.level, modules: plan.modules, skill: plan.skill, hooks: plan.hooks, approvals: plan.approvals,
       ...(plan.level === "optimize" ? { extras: plan.extras } : {}) },
     ...(dryRun && report.changed.some((row) => row.kind === "block") ? { block: renderBlockText(plan.modules) } : {}),
@@ -248,10 +327,16 @@ export async function runSetupCommand({ options, action, rest, dependencies }) {
 async function finish({ report, dryRun, dependencies, title, lead, extra }) {
   if (!dryRun) await dependencies.sendMachineReport?.();
   const restart = changedHarnesses(report);
+  // What the owner does once in a harness that runs only hooks they trusted (Codex), after its hooks were written or
+  // changed: [{ harness, step }], also in `next`; the Mac app shows them when setup ends.
+  const ownerSteps = dryRun ? [] : report.changed.filter((row) => row.kind === "hooks" && row.action !== "removed")
+    .filter((row, index, rows) => ADAPTERS[row.harness]?.install.trust && rows.findIndex((other) => other.harness === row.harness) === index)
+    .map((row) => ({ harness: row.harness, step: ADAPTERS[row.harness].install.trust }));
   const next = [
     ...(dryRun && report.changed.length ? ["Run it again without --dry-run to write these."] : []),
     ...(!dryRun && restart.length ? [`Restart ${restart.join(", ")} so ${restart.length > 1 ? "they read" : "it reads"} the changes.`] : []),
+    ...ownerSteps.map((row) => row.step),
     "relo doctor",
   ];
-  return installResult("setup", report, { dryRun, next, title, extra, lead });
+  return installResult("setup", report, { dryRun, next, title, extra: { ...extra, ...(ownerSteps.length ? { ownerSteps } : {}) }, lead });
 }

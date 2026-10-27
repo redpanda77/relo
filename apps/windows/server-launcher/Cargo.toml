@@ -1,0 +1,27 @@
+[package]
+name = "relo-server-launcher"
+version = "0.1.0"
+description = "ReloServer.exe: runs Relo's bundled local-mode server on this PC"
+edition = "2021"
+publish = false
+
+# Keep this crate out of any parent workspace (the app's src-tauri is its own).
+[workspace]
+
+[lib]
+name = "relo_server_launcher"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ReloServer"
+path = "src/main.rs"
+
+# No dependencies on purpose: std only, so the launcher builds offline and stays a few hundred KB.
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

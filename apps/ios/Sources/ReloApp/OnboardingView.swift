@@ -7,6 +7,7 @@ import SwiftUI
 struct OnboardingView: View {
     @Bindable var model: AppModel
     @State private var topInset: CGFloat = 59
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var state: ReloSignalState {
         if model.authenticationError != nil && !model.isAuthenticating { return .needsYou }
@@ -22,13 +23,33 @@ struct OnboardingView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 0) {
-                    ReloWelcomeStage(state: state, status: status, working: model.isAuthenticating)
-                        .padding(.top, topInset)
-                    content.padding(.horizontal, ReloLayout.screenInset)
+            Group {
+                // One screen, no scrolling: the controls take their height first and the sphere scales
+                // into what is left. Only accessibility text sizes, which cannot fit, scroll.
+                if typeSize.isAccessibilitySize {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ReloWelcomeStage(state: state, status: status, working: model.isAuthenticating)
+                                .frame(height: ReloWelcomeStage.fullHeight)
+                                .padding(.top, topInset)
+                            content.padding(.horizontal, ReloLayout.screenInset)
+                        }
+                        .padding(.bottom, 32)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        ReloWelcomeStage(state: state, status: status, working: model.isAuthenticating)
+                            .frame(minHeight: 150, maxHeight: ReloWelcomeStage.fullHeight)
+                            .padding(.top, topInset)
+                            .layoutPriority(0.5)
+                        // Room the sphere does not need goes above the controls, keeping them in thumb reach.
+                        Spacer(minLength: 0)
+                        content.padding(.horizontal, ReloLayout.screenInset)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
+                    }
+                    .padding(.bottom, 8)
                 }
-                .padding(.bottom, 32)
             }
             .ignoresSafeArea(.container, edges: .top)
             .background { GeometryReader { proxy in Color.clear
@@ -44,33 +65,39 @@ struct OnboardingView: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Your agents.\nOne calm Inbox.")
-                    .font(.system(.largeTitle, design: .rounded).weight(.bold))
+                    .font(.system(.title, design: .rounded).weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Get updates, follow work, and respond when your agents need you.")
-                    .font(.body).foregroundStyle(Color.reloSecondaryText)
+                    .font(.subheadline).foregroundStyle(Color.reloSecondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
             server
             VStack(spacing: 10) {
-                Button { signIn() } label: {
-                    HStack(spacing: 8) {
-                        if model.isAuthenticating { ProgressView().tint(.reloOnAction) }
-                        Text(model.isAuthenticating ? "Signing in…" : "Sign in")
+                if model.appleSignInAvailable && hasServer && model.chosenServerOrigin?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == normalizedOrigin {
+                    AppleSignInRow(model: model)
+                }
+                HStack(spacing: 10) {
+                    Button { signIn() } label: {
+                        HStack(spacing: 8) {
+                            if model.isAuthenticating { ProgressView().tint(.reloOnAction) }
+                            Text(model.isAuthenticating ? "Signing in…" : "Sign in")
+                        }
+                        .lineLimit(1).minimumScaleFactor(0.8)
                     }
+                    .buttonStyle(.reloPrimary)
+                    .disabled(!hasServer || model.isAuthenticating)
+                    Button { signIn(signUp: true) } label: {
+                        Text("Create account").lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    .buttonStyle(.reloSecondary)
+                    .disabled(!hasServer || model.isAuthenticating)
+                    .accessibilityIdentifier("create-account")
                 }
-                .buttonStyle(.reloPrimary)
-                .disabled(!hasServer || model.isAuthenticating)
-                Button { signIn(signUp: true) } label: {
-                    Text("Create account")
-                }
-                .buttonStyle(.reloSecondary)
-                .disabled(!hasServer || model.isAuthenticating)
-                .accessibilityIdentifier("create-account")
                 Text("Sign-in opens in the browser. You'll come straight back here.")
-                    .font(.footnote).foregroundStyle(Color.reloSecondaryText)
+                    .font(.caption).foregroundStyle(Color.reloSecondaryText)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -78,6 +105,7 @@ struct OnboardingView: View {
             if let error = model.authenticationError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.subheadline).foregroundStyle(Color.reloErrorText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if model.protectedRegistrationResetAvailable {
                 NavigationLink("Repair this iPhone's registration") { ConnectionSettingsView(model: model) }
@@ -92,9 +120,14 @@ struct OnboardingView: View {
                     .font(.footnote)
             }
             .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.top, 8)
         }
         .onAppear { if origin.isEmpty { origin = model.chosenServerOrigin ?? "" } }
+        // The server the owner typed decides whether Sign in with Apple is on offer.
+        .task(id: normalizedOrigin) {
+            guard hasServer, model.chosenServerOrigin?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == normalizedOrigin
+                    || model.selectServerOrigin(normalizedOrigin) else { return }
+            await model.refreshSignInMethods()
+        }
     }
 
     private static let selfHostingGuide = URL(string: "https://github.com/redpanda77/relo/blob/main/docs/SELF-HOSTING.md")!
@@ -128,36 +161,27 @@ struct OnboardingView: View {
         Task { _ = await model.signInWithBrowser(signUp: signUp) }
     }
 
-    /// Where this iPhone signs in: typed by the owner, never filled in for them. The card shows the
-    /// address; tapping it opens a sheet to type one, so the keyboard never covers the screen.
+    /// Where this iPhone signs in: typed by the owner, never filled in for them. One row shows the
+    /// address; tapping it opens a sheet to type one, so the keyboard never covers the screen. The
+    /// dashboard link sits beside it once the address is valid.
     private var server: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                ReloMonoLabel("Your server")
-                Spacer()
-                if let dashboardURL {
-                    Link(destination: dashboardURL) {
-                        ReloMonoLabel("Dashboard ↗", color: .reloInteractive)
-                    }
-                    .tint(.reloInteractive).frame(minHeight: 32)
-                    .accessibilityLabel("Open dashboard")
-                }
-            }
+        HStack(spacing: 10) {
             Button { editingServer = true } label: {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "server.rack")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Color.reloSecondaryText)
+                        .accessibilityHidden(true)
                     if hasServer {
-                        // HTTPS is a given, so the card spends its width on the host.
+                        // HTTPS is a given, so the row spends its width on the host.
                         Text(normalizedOrigin.replacingOccurrences(of: "https://", with: ""))
-                            .font(.system(.body, design: .monospaced)).foregroundStyle(.white)
+                            .font(.system(.callout, design: .monospaced)).foregroundStyle(.white)
                             .lineLimit(1).truncationMode(.middle)
-                    } else {
-                        Label("Add your server", systemImage: "plus.circle.fill")
-                            .font(.body.weight(.medium)).foregroundStyle(Color.reloInteractive)
-                    }
-                    Spacer(minLength: 0)
-                    if hasServer {
+                        Spacer(minLength: 0)
                         Text("Change").font(.subheadline.weight(.medium)).foregroundStyle(Color.reloInteractive)
                     } else {
+                        Text("Add your server")
+                            .font(.callout.weight(.medium)).foregroundStyle(Color.reloInteractive)
+                        Spacer(minLength: 0)
                         ReloChevron()
                     }
                 }
@@ -165,10 +189,20 @@ struct OnboardingView: View {
             }
             .buttonStyle(ReloPressStyle())
             .disabled(model.isAuthenticating)
-            .accessibilityLabel(hasServer ? "Server address, \(normalizedOrigin)" : "Add your server")
+            .accessibilityLabel(hasServer ? "Your server, \(normalizedOrigin)" : "Add your server")
             .accessibilityHint(hasServer ? "Change the server address" : "")
+            if let dashboardURL {
+                Divider().frame(height: 20).overlay(Color.white.opacity(0.12))
+                Link(destination: dashboardURL) {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.body.weight(.medium)).foregroundStyle(Color.reloInteractive)
+                        .frame(minWidth: 32, minHeight: 44).contentShape(Rectangle())
+                }
+                .accessibilityLabel("Open dashboard")
+                .transition(.opacity)
+            }
         }
-        .padding(.horizontal, ReloLayout.cardInset).padding(.vertical, 14)
+        .padding(.horizontal, ReloLayout.cardInset).padding(.vertical, 2)
         .reloCard()
         .animation(.smooth(duration: 0.25), value: dashboardURL)
     }
@@ -254,10 +288,23 @@ private struct ReloWelcomeStage: View {
     @State private var waves: [ReloOrbWave] = []
     @State private var width: CGFloat = 393
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private let height: CGFloat = 330
+    static let fullHeight: CGFloat = 330
+    private let height: CGFloat = fullHeight
     private let mix = NowMix(counts: [:])
 
+    /// The stage is drawn at its full size and scaled to the height the screen leaves it, so the
+    /// sphere, ring and ripples keep their proportions on every iPhone.
     var body: some View {
+        GeometryReader { proxy in
+            let scale = min(1, proxy.size.height / height)
+            stage
+                .frame(width: proxy.size.width / max(scale, 0.01), height: height)
+                .scaleEffect(scale)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+
+    private var stage: some View {
         ZStack {
             ReloPlasmaOrb(state: state, mix: mix, wave: waves.last,
                           waveOffset: CGPoint(x: width / 2 - 150, y: height / 2 - 150))

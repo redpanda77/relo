@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 
 /**
  * The one badge, for state ("Waiting for approval", "This browser", "Live on iPhone") and plain
- * labels alike: a meaning colour, an optional icon, 20px high. Soft is the tinted fill; hairline is
+ * labels alike: a meaning colour, an optional icon, 20px high, mono caps (`sentence` for host and version labels). Soft is the tinted fill; hairline is
  * the quieter outline; `mono` sets a tool or version label in the mono face. Inline in a card's
  * header or footer, never a row of its own.
  *
@@ -24,8 +24,12 @@ export function Badge({
   value,
   variant = "soft",
   mono = false,
+  sentence = false,
+  live = false,
+  dot = false,
   label,
   title,
+  part,
   className,
 }: {
   tone: BadgeTone
@@ -36,10 +40,18 @@ export function Badge({
   value?: React.Key
   variant?: "soft" | "hairline"
   mono?: boolean
+  /** Host and version labels: sentence case instead of caps. */
+  sentence?: boolean
+  /** A running chip: a light sweeps across it (motion allowed only). */
+  live?: boolean
+  /** The leading dot blinks (.45 to 1). */
+  dot?: boolean
   /** An accessible name for the chip when its words need context ("Status: retry"). */
   label?: string
   /** A tooltip. */
   title?: string
+  /** The card part this chip is (`data-part`), for tests and hooks. */
+  part?: string
   className?: string
 }) {
   const reduced = usePrefersReducedMotion()
@@ -54,6 +66,10 @@ export function Badge({
         data-slot="badge"
         data-variant={variant}
         data-mono={mono || undefined}
+        data-case={sentence ? "sentence" : undefined}
+        data-live={live || undefined}
+        data-dot={dot || undefined}
+        data-part={part}
         aria-label={label}
         title={title}
         className={cn("badge", `tone-${tone}`, className)}

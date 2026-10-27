@@ -133,10 +133,14 @@ public struct InboxCardDigest: Codable, Equatable, Sendable {
     public let plan: [PlanStep]?
     /// The plan's rounds; absent means one open round 1.
     public let rounds: [PlanRound]?
+    /// The work this event belongs to, when the snapshot sends the work's plan once for all its events
+    /// (`InboxRepairResponse.works`) instead of on each one; `withWorkPlans()` fills `plan` and `rounds` from it.
+    public let workId: String?
 
     public init(state: String, outcome: String? = nil, status: String? = nil, progress: Double? = nil,
                 steps: Steps? = nil, updates: Int, startedAt: Date, endedAt: Date? = nil, work: ReloWork? = nil,
-                plan: [PlanStep]? = nil, rounds: [PlanRound]? = nil) {
+                plan: [PlanStep]? = nil, rounds: [PlanRound]? = nil, workId: String? = nil) {
+        self.workId = workId
         self.plan = plan
         self.rounds = rounds
         self.state = state
@@ -150,7 +154,7 @@ public struct InboxCardDigest: Codable, Equatable, Sendable {
         self.work = work
     }
 
-    private enum CodingKeys: String, CodingKey { case state, outcome, status, progress, steps, updates, startedAt, endedAt, work, plan, rounds }
+    private enum CodingKeys: String, CodingKey { case state, outcome, status, progress, steps, updates, startedAt, endedAt, work, plan, rounds, workId }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -182,5 +186,13 @@ public struct InboxCardDigest: Codable, Equatable, Sendable {
         }
         plan = decodedPlan.flatMap { $0.isEmpty ? nil : $0 }
         rounds = decodedRounds.isEmpty ? nil : decodedRounds
+        workId = (try? values.decodeIfPresent(String.self, forKey: .workId)) ?? nil
+    }
+
+    /// The same digest with the work's plan and rounds where it has none of its own.
+    func filling(plan newPlan: [PlanStep]?, rounds newRounds: [PlanRound]?) -> InboxCardDigest {
+        InboxCardDigest(state: state, outcome: outcome, status: status, progress: progress, steps: steps,
+                        updates: updates, startedAt: startedAt, endedAt: endedAt, work: work,
+                        plan: plan ?? newPlan, rounds: rounds ?? newRounds, workId: workId)
     }
 }

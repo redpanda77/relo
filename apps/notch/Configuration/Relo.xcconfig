@@ -1,0 +1,11 @@
+// Relo Notch product configuration. Signing and the server live in Relo.local.xcconfig beside this file
+// (not committed); see Relo.local.xcconfig.example.
+// Apple silicon only: the app carries the arm64 server (Node, PostgreSQL), and the appcast says so (hardwareRequirements).
+ARCHS = arm64
+RELO_NOTCH_BUNDLE_ID = com.example.relo.notch
+RELO_DEVELOPMENT_TEAM =
+RELO_API_ORIGIN = https:/$()/relo.invalid
+// Sparkle's EdDSA public key (generate_keys --account relo-notch); empty: the app never installs an update.
+RELO_SPARKLE_PUBLIC_KEY =
+
+#include? "Relo.local.xcconfig"

@@ -55,9 +55,12 @@ export class ReleaseBuildError extends Error {
   }
 }
 
+// npm is npm.cmd on Windows, which execFileSync can only start through a shell.
+const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
+
 function run(command, args, options) {
   try {
-    return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...options });
+    return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: command === "npm.cmd", ...options });
   } catch (error) {
     const output = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split("\n").slice(-12).join("\n");
     throw new ReleaseBuildError(`${command} ${args.join(" ")} failed (cwd ${options?.cwd})\n${output}`);
@@ -189,16 +192,16 @@ export async function buildRelease({ root = DEFAULT_ROOT, out, allowDirty = fals
     // 2. The CLI and skill checks.
     if (!skipChecks) {
       log("running CLI and skill checks");
-      run("npm", ["test"], { cwd: cliDirectory, env });
-      run("npm", ["run", "check"], { cwd: cliDirectory, env });
-      run("npm", ["run", "check"], { cwd: skillDirectory, env });
-      run("npm", ["test"], { cwd: skillDirectory, env });
+      run(NPM, ["test"], { cwd: cliDirectory, env });
+      run(NPM, ["run", "check"], { cwd: cliDirectory, env });
+      run(NPM, ["run", "check"], { cwd: skillDirectory, env });
+      run(NPM, ["test"], { cwd: skillDirectory, env });
     }
 
     // 3. Pack (prepack bundles the skill at the CLI's exact version and runs prepack-check).
     await rm(partial, { recursive: true, force: true });
     await mkdir(partial, { recursive: true });
-    const packed = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", partial], { cwd: cliDirectory, env }))[0];
+    const packed = JSON.parse(run(NPM, ["pack", "--json", "--pack-destination", partial], { cwd: cliDirectory, env }))[0];
     const tarballName = `relo-cli-${version}.tgz`;
     if (packed.filename !== tarballName) throw new ReleaseBuildError(`npm pack produced ${packed.filename}, expected ${tarballName}`);
     const tarball = join(partial, tarballName);
@@ -219,7 +222,7 @@ export async function buildRelease({ root = DEFAULT_ROOT, out, allowDirty = fals
     let sbom;
     let sbomSource = "npm sbom";
     try {
-      sbom = JSON.parse(run("npm", ["sbom", "--sbom-format", "cyclonedx"], { cwd: cliDirectory, env }));
+      sbom = JSON.parse(run(NPM, ["sbom", "--sbom-format", "cyclonedx"], { cwd: cliDirectory, env }));
     } catch {
       sbomSource = "fallback inventory";
       const files = [];

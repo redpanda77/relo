@@ -106,6 +106,18 @@ final class LiveActivityApplier {
         }
     }
 
+    /// Opens again the sealed text of running cards that still show placeholders (their first open failed: the keys were
+    /// not ready in that process), and updates them in place. Cheap when nothing needs it: nothing is opened or sent.
+    func repairPlaceholderActivities(accountID: String?) async {
+        for activity in Activity<ReloActivityAttributes>.activities
+        where activity.attributes.accountID == accountID && (activity.activityState == .active || activity.activityState == .stale) {
+            let content = activity.content
+            guard let repaired = content.state.reopened(cardID: activity.attributes.eventID) else { continue }
+            await activity.update(ActivityContent(state: repaired, staleDate: content.staleDate,
+                                                  relevanceScore: content.relevanceScore))
+        }
+    }
+
     private func apply(
         _ envelope: LiveActivityCommandEnvelope,
         allowsAuthoritativeRecovery: Bool,
@@ -143,7 +155,8 @@ final class LiveActivityApplier {
             startedAt: startedAt,
             sealed: command.sealed,
             work: command.work,
-            owner: command.owner
+            owner: command.owner,
+            cardID: command.activityId
         )
         // The server's staleDate (evidence + T_fresh); nil only on an end. The phone invents none.
         let staleDate = command.staleAt

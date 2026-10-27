@@ -225,4 +225,59 @@ import Testing
         let row = HistoryRow.Steps(done: 0, total: 4, current: "A", currentIndex: wire.currentIndex, fill: wire.fill)
         #expect(PlanProgress(done: row.done, total: row.total, current: row.currentIndex).line(label: row.current) == "Step 1 of 4 · A")
     }
+
+    // The owner saw "Step 1 of 6" over a bar whose lit segment disagreed. Every surface must light the caption's
+    // "Step N" and show exactly `done` done segments, whatever frame the plan is counted in.
+    private func lit(_ bar: PlanBar) -> Int? { bar.segments.firstIndex { $0.state == .current }.map { $0 + 1 } }
+    private func doneCount(_ bar: PlanBar) -> Int { bar.segments.filter { $0.state == .done }.count }
+
+    @Test func aNowRowLightsTheCaptionsStepAndShowsDoneSegments() {
+        // Server position given: segment == caption number, done segments == done (even when done steps follow the current one).
+        for (done, total, current) in [(0, 6, 1), (1, 6, 2), (3, 6, 4), (2, 6, 1), (5, 6, 6)] {
+            let steps = NowItem.Steps(done: done, total: total, current: "Label", currentIndex: current)
+            let bar = steps.bar
+            #expect(bar.segments.count == total)
+            #expect(lit(bar) == current)
+            #expect(doneCount(bar) == done)
+            #expect(PlanProgress(done: done, total: total, current: steps.position).stepCount == "Step \(current) of \(total)")
+        }
+    }
+
+    @Test func aCurrentStepWithoutAPositionLightsTheSegmentTheCaptionNames() {
+        // Caption rule: a known current label without a position is the step after the done ones; the bar must say the same.
+        let steps = NowItem.Steps(done: 0, total: 6, current: "Write the tests", currentIndex: nil)
+        #expect(StepsCaptionRule.caption(steps) == "Step 1 of 6 · Write the tests")
+        #expect(lit(steps.bar) == 1)
+        #expect(doneCount(steps.bar) == 0)
+        // No current step at all: the caption is the plain count and no segment is lit.
+        let none = NowItem.Steps(done: 2, total: 6, current: nil, currentIndex: nil)
+        #expect(StepsCaptionRule.caption(none) == "2 of 6")
+        #expect(lit(none.bar) == nil)
+        #expect(doneCount(none.bar) == 2)
+    }
+
+    @Test func theLockScreenBarUsesTheServersCountsWhenAPlanCarriesEarlierRoundsSteps() {
+        // Round 2 carries on round 1: whole-plan counts say 5 steps, 2 done, step 4 current; the card shows round 2's 3 steps.
+        typealias S = LiveActivityPlanDisplay.Step
+        let shown = [S(label: "C", state: .open), S(label: "D", state: .current), S(label: "E", state: .open)]
+        let wire = PlanProgress(done: 2, total: 5, current: 4)
+        let withCounts = PlanBar.make(steps: shown, progress: wire, fill: nil)
+        #expect(withCounts.segments.count == 5)
+        #expect(lit(withCounts) == 4)
+        #expect(doneCount(withCounts) == 2)
+        #expect(wire.stepCount == "Step 4 of 5")
+        // No current step: nothing lit, nothing invented.
+        let idle = PlanBar.make(steps: shown.map { S(label: $0.label, state: .open) }, progress: PlanProgress(done: 2, total: 5), fill: nil)
+        #expect(lit(idle) == nil)
+        #expect(doneCount(idle) == 2)
+        // A card without counts keeps its own window.
+        #expect(PlanBar.make(steps: shown, before: 1, after: 1, fill: nil).segments.count == 5)
+    }
+
+    /// The caption the Now row writes (`CurrentAttentionView.stepsCaption`), reproduced from its inputs.
+    private enum StepsCaptionRule {
+        static func caption(_ steps: NowItem.Steps) -> String? {
+            PlanProgress(done: steps.done, total: steps.total, current: steps.currentIndex).line(label: steps.current)
+        }
+    }
 }

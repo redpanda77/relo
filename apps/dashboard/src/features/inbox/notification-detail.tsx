@@ -15,6 +15,7 @@ import {
 } from "@/components/molecules/delivery-chain"
 import { Button } from "@/components/ui/button"
 import { ConfirmationAction } from "@/components/molecules/confirmation-action"
+import { EndWorkButton, type WorkActions } from "@/features/inbox/end-work"
 import { OUTCOME_ICON } from "@/features/inbox/outcome-icons"
 import { planEntries, type PlanStanding } from "@/features/inbox/plan-outline"
 import { PlanTree } from "@/features/inbox/plan-tree"
@@ -200,9 +201,20 @@ function DetailFact({ label, children, mono = false }: { label: string; children
   )
 }
 
+/** The Now work a detail was opened from, when the owner may end it (quiet, paused or their turn): End work at the foot. */
+export type DetailWork = {
+  /** The card (`act_…`) the server ends. */
+  id: string
+  goal: string
+  /** Sealed: the goal is a placeholder, so the confirmation does not quote it. */
+  encrypted: boolean
+  end: WorkActions["end"]
+}
+
 export function NotificationDetailBody({
   detail,
   origin: listOrigin,
+  work,
   service,
   heading,
   variant = "page",
@@ -210,6 +222,7 @@ export function NotificationDetailBody({
   detail: NotificationDetail
   /** What the list that opened it knew about where it came from. */
   origin?: DetailOrigin
+  work?: DetailWork
   service: InboxService
   heading?: (title: React.ReactNode) => React.ReactNode
   /** "page": the title is the page's own h1, Details sit in a side column on wide pages. "panel": one column in the side sheet. */
@@ -307,7 +320,7 @@ export function NotificationDetailBody({
             <Badge tone={toneChip[status.tone]}>{status.text}</Badge>
           )}
         </span>
-        {running && activity?.createdAt ? <span className="card-corner"><RunningFor since={activity.createdAt} /></span> : null}
+        {running && activity?.createdAt ? <span className="card-corner"><RunningFor since={activity.createdAt} prefix="running " /></span> : null}
         {activity?.status && !encrypted ? <p className="detail-status">{activity.status}</p> : null}
       </div>
     </header>
@@ -553,6 +566,11 @@ export function NotificationDetailBody({
           {messageSection}
           {answered}
           {operation}
+          {work ? (
+            <div className="detail-end flex flex-wrap items-center gap-2" data-end-work-section>
+              <EndWorkButton variant="detail" workId={work.id} goal={work.encrypted ? "this work" : work.goal} end={work.end} />
+            </div>
+          ) : null}
           {panel ? null : footer}
         </div>
         <aside className="detail-side" aria-label="About">

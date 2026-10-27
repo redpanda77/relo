@@ -1,24 +1,12 @@
 import { AnimatePresence, LayoutGroup, LazyMotion, m } from "motion/react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from "react"
 
-import { Fold } from "@/components/molecules/fold"
 import { NowDeck } from "@/components/organisms/now-deck"
 import { PageTitle, SplitPage } from "@/components/page"
-import {
-  agentSecondsToday,
-  agentTimeLabel,
-  cardFor,
-  nowMix,
-  nowSentence,
-  todayActivity,
-} from "@/features/inbox/activity-model"
+import { cardFor, nowMix } from "@/features/inbox/activity-model"
 import { useDetailPanel } from "@/features/inbox/detail-panel"
-import {
-  ActivityStrip,
-  NowAllClear,
-  NowItemList,
-  NowSection,
-} from "@/features/inbox/now-all-clear"
+import { NowFooter, NowItemList, NowSection } from "@/features/inbox/now-cards"
+import { workActionsOf, canEndWork } from "@/features/inbox/end-work"
 import { ConnectionRequests } from "@/features/inbox/now-approvals"
 import { NowStageContext, type NowStage } from "@/features/inbox/now-context"
 import {
@@ -29,8 +17,10 @@ import {
   nowPlaces,
   type NowEventBatch,
 } from "@/features/inbox/now-events"
+import { ParkedFold, SettledGroup, SettledList } from "@/features/inbox/settled-row"
 import {
-  FOLD_LABEL,
+  SINCE_ROWS,
+  isSealedItem,
   nowBlocks,
   nowCounts,
   overviewNow,
@@ -38,7 +28,6 @@ import {
   type NowBlock,
   type NowItem,
 } from "@/features/inbox/now-model"
-import { notificationContext } from "@/features/inbox/notification-project"
 import {
   SessionsSection,
   type SessionWorkLink,
@@ -48,7 +37,9 @@ import { useMomentCues } from "@/features/inbox/now-cues"
 import { useNowRefresh } from "@/features/inbox/use-now-refresh"
 import { ConnectEntry } from "@/features/onboarding/connect-entry"
 import { LinkBrowserBanner } from "@/features/linked-browser/link-browser-card"
-import { PendingDevicesNotice } from "@/features/pending-devices/pending-devices"
+import { standbyMachines } from "@/features/inbox/sessions-model"
+import { NowSystem } from "@/features/inbox/now-system"
+import { useBackdropWash, washFor } from "@/lib/backdrop-wash"
 import { DUR, EASE_IN, EASE_OUT, SPRING, loadMotionFeatures } from "@/lib/motion"
 import { setLiveNeedsYou } from "@/lib/attention"
 import { orbMotion } from "@/lib/orb-theme"
@@ -56,7 +47,6 @@ import { displayNameOrNull } from "@/lib/encrypted"
 import { isBrowserLinked, isSealedOpening, subscribeBrowserLinked, subscribeSealedOpening } from "@/lib/sealed-opening"
 import { SIGNAL_CSS } from "@/lib/signal"
 import type { WorkTone } from "@/lib/work-outcome"
-import { SpectrumBar } from "@/components/molecules/spectrum-bar"
 import type { InboxService } from "@/services/inbox-service"
 import { useInboxAction } from "@/state/use-inbox-action"
 
@@ -72,8 +62,8 @@ const ANNOUNCE_MS = 500
 
 /**
  * Now's layout by the page's own width (the `split-page` container, so the sidebar counts):
- * - stacked (under 1100px): a compact deck above the work, Sessions after the folds, Today last;
- * - split (1100px+): the deck is a 360px column beside the work and carries today's strip;
+ * - stacked (under 1100px): a compact deck above the work, Sessions after the folds, View history last;
+ * - split (1100px+): the deck is a 360px column beside the work;
  * - wide (1400px+): Sessions moves to a 320px rail on the right.
  * The breakpoints match now.css. Measured before paint, so the first frame is already right.
  */
@@ -85,18 +75,15 @@ function layoutFor(width: number): NowLayout {
   return width >= RAIL_AT ? "wide" : width >= SPLIT_AT ? "split" : "stacked"
 }
 
-/** Phone width: Since you looked shows one row (and "Show n more"), so the first live card is on screen. */
-const PHONE_BELOW = 640
-
-function useNowLayout(probe: RefObject<HTMLElement | null>): { layout: NowLayout; phone: boolean } {
-  const [layout, setLayout] = useState<{ layout: NowLayout; phone: boolean }>({ layout: "stacked", phone: false })
+function useNowLayout(probe: RefObject<HTMLElement | null>): { layout: NowLayout } {
+  const [layout, setLayout] = useState<{ layout: NowLayout }>({ layout: "stacked" })
   useLayoutEffect(() => {
     const page = probe.current?.closest<HTMLElement>(".split-page")
     if (!page) return
     const measure = () => {
       const width = page.getBoundingClientRect().width
-      const next = { layout: layoutFor(width), phone: width > 0 && width < PHONE_BELOW }
-      setLayout((current) => (current.layout === next.layout && current.phone === next.phone ? current : next))
+      const next = { layout: layoutFor(width) }
+      setLayout((current) => (current.layout === next.layout ? current : next))
     }
     measure()
     if (typeof ResizeObserver === "undefined") return
@@ -107,34 +94,34 @@ function useNowLayout(probe: RefObject<HTMLElement | null>): { layout: NowLayout
   return layout
 }
 
-/** Since you looked: the server's line, then up to three rows and "Show n more" under them. */
+/** Since you looked: a caption with the count, then compact rows in one glass group and "Show n more" inside it. */
 function SinceYouLooked({
   block,
   onOpen,
-  phone,
 }: {
   block: Extract<NowBlock, { kind: "sinceYouLooked" }>
   onOpen: (item: NowItem) => void
-  /** On a phone one row shows, so the first live card is above the fold. */
-  phone: boolean
 }) {
   const [all, setAll] = useState(false)
   const every = [...block.recent, ...block.more]
-  const cap = phone ? 1 : block.recent.length
-  const items = all ? every : every.slice(0, cap)
+  const items = all ? every : every.slice(0, SINCE_ROWS)
   const hidden = every.length - items.length
   return (
-    <section aria-label="Since you looked" className="space-y-3" data-now-block="since-you-looked">
-      <p className={block.muted ? "text-sm text-pretty text-muted-foreground" : "text-sm font-medium text-pretty text-foreground"}>
-        {block.text}
-      </p>
-      {items.length ? <NowItemList variant="rows" label="Since you looked" items={items} onOpen={onOpen} /> : null}
-      {every.length > cap ? (
-        <button type="button" className="now-more" aria-expanded={all} onClick={() => setAll((value) => !value)}>
-          {all ? "Show fewer" : `Show ${hidden} more`}
-        </button>
+    <NowSection title="Since you looked" count={every.length} color="#eef1f7" className="now-since">
+      {/* The server's sentence ("Since 4:10 PM: 2 finished, 1 failed") is spoken, not shown (iPhone). */}
+      <p className="sr-only">{block.text}</p>
+      {items.length ? (
+        <SettledGroup>
+          <SettledList label="Since you looked" items={items} onOpen={onOpen} />
+          {every.length > SINCE_ROWS ? (
+            <button type="button" className="settled-more" aria-expanded={all} onClick={() => setAll((value) => !value)}>
+              <span>{all ? "Show fewer" : `Show ${hidden} more`}</span>
+              <span className="settled-more-end">{all ? "Hide" : "Show \u203a"}</span>
+            </button>
+          ) : null}
+        </SettledGroup>
       ) : null}
-    </section>
+    </NowSection>
   )
 }
 
@@ -152,9 +139,9 @@ export function InboxView({
   const { open, sheet } = useDetailPanel(service)
   const notifications = overview.recentNotifications
   const probe = useRef<HTMLDivElement>(null)
-  const { layout, phone } = useNowLayout(probe)
+  const { layout } = useNowLayout(probe)
 
-  // Display only (Today strip, agent time): the page-load instant formats dates.
+  // Display only (the orb's colours): the page-load instant formats dates.
   const [now] = useState(() => Date.now())
   // A linked browser hides what it still cannot open once opening settles: it was sealed before the
   // link and only the iPhone reads it (now-model `withoutUnreadable`).
@@ -170,7 +157,7 @@ export function InboxView({
   // Now is the server's: sections, folds and counts come from its summary, refetched every 60 s.
   const initialNow = useMemo(() => overviewNow(overview), [overview])
   const refreshed = useNowRefresh(overview.shell.account.id, initialNow)
-  const { offline, syncing } = refreshed
+  const { offline, syncing, retry } = refreshed
   const summary = useMemo(
     () => (refreshed.summary && hideUnreadable ? withoutUnreadable(refreshed.summary) : refreshed.summary),
     [refreshed.summary, hideUnreadable]
@@ -233,10 +220,24 @@ export function InboxView({
     setOpenedId(item.id)
     void open(
       item.notificationId ?? item.id,
-      [item.sourceName, item.project].filter(Boolean).join(" · ")
+      [item.sourceName, item.project].filter(Boolean).join(" · "),
+      // The detail offers End work for the states the iPhone does (never a moving work).
+      workActions && canEndWork(item.owner.state) ? { id: item.id, goal: item.title, encrypted: isSealedItem(item), end: workActions.end } : undefined
     )
   }
 
+  // The owner's End and Dismiss, each followed by a Now refetch (the server's live hint would come too).
+  const workActions = useMemo(() => workActionsOf(service, retry), [service, retry])
+  // The notifications that carry a link: their cards show the small mark.
+  const links = useMemo(
+    () =>
+      new Set(
+        [...notifications, ...(overview.runningActivities ?? [])]
+          .filter((notification) => notification.destination.state === "safe")
+          .map((notification) => notification.id)
+      ),
+    [notifications, overview.runningActivities]
+  )
   const items = useMemo(() => nowItemsById(summary), [summary])
   const places = useMemo(() => nowPlaces(summary), [summary])
   const openId = sheetOpen ? openedId : null
@@ -245,8 +246,8 @@ export function InboxView({
     [summary]
   )
   const stage = useMemo<NowStage>(
-    () => ({ ready, items, places, isFoldOpen, announce, openId, tones, offline, sessionByWork }),
-    [ready, items, places, isFoldOpen, announce, openId, tones, offline, sessionByWork]
+    () => ({ ready, items, places, isFoldOpen, announce, openId, tones, offline, sessionByWork, links, actions: workActions }),
+    [ready, items, places, isFoldOpen, announce, openId, tones, offline, sessionByWork, links, workActions]
   )
 
   // When the server derived the Now on screen: the page load, then each refetch.
@@ -256,6 +257,8 @@ export function InboxView({
   // The deck's readouts are the server's live counts (plus connection requests, which need you too).
   const counts = summary ? nowCounts(summary) : { needsYou: 0, running: 0, sessionsWorking: 0, waitingOnYou: 0 }
   const needsYou = counts.needsYou + approvals.length
+  // The page backdrop takes the state's colour and keeps it on the other pages.
+  useBackdropWash(washFor({ needsYou, waitingOnYou: counts.waitingOnYou, running: counts.running }, !summary))
   // The tab title and icon follow Now's live count (the router reads it), not the page-load bootstrap's.
   useEffect(() => {
     setLiveNeedsYou(needsYou)
@@ -265,11 +268,7 @@ export function InboxView({
   const motion = useMemo(() => orbMotion(summary, offline, approvals.length), [summary, offline, approvals.length])
   const arcs = useMemo(() => nowArcs(summary), [summary])
   const cards = allCards.map(({ card }) => card)
-  // Today is one set of rows: the Today caption, the strip's key and the deck's Today count.
-  const activity = todayActivity(cards, new Date(now))
   const mix = nowMix({ cards, running: counts.running, needsYou, now: new Date(now) })
-  const agentSeconds = agentSecondsToday(cards, new Date(now))
-  const agentTime = agentSeconds > 0 ? agentTimeLabel(agentSeconds) : null
   const works = new Map<string, SessionWorkLink>(
     summary
       ? [...summary.needsYou, ...summary.waitingOnYou, ...summary.running].map(
@@ -277,7 +276,6 @@ export function InboxView({
         )
       : []
   )
-  const split = layout !== "stacked"
   const sessionsBlock = blocks.find((block) => block.kind === "sessions")
 
   // "Needs you" renders in one place: the server's block, or (connection requests only) the same
@@ -306,27 +304,27 @@ export function InboxView({
   const renderBlock = (block: ShownBlock) => {
     switch (block.kind) {
       case "sinceYouLooked":
-        return <SinceYouLooked block={block} onOpen={openItem} phone={phone} />
+        return <SinceYouLooked block={block} onOpen={openItem} />
       case "needsYou":
       case "connections":
         return needsYouSection
       case "waitingOnYou":
         return (
-          <NowSection title="Waiting on you" count={block.items.length} color={SIGNAL_CSS.attention}>
-            <NowItemList label="Waiting on you" items={block.items} onOpen={openItem} />
+          <NowSection title="Your turn" count={block.items.length} color={SIGNAL_CSS.attention}>
+            <NowItemList label="Your turn" items={block.items} onOpen={openItem} />
           </NowSection>
         )
-      case "fold":
+      case "parked":
         return (
-          <Fold
-            name={block.fold}
-            label={FOLD_LABEL[block.fold]}
-            count={block.count}
-            className="now-fold"
-            onOpenChange={(value) => onFold(block.fold, value)}
-          >
-            <NowItemList variant="rows" label={FOLD_LABEL[block.fold]} items={block.items} onOpen={openItem} />
-          </Fold>
+          <ParkedFold
+            quiet={block.quiet}
+            paused={block.paused}
+            onOpen={openItem}
+            onOpenChange={(value) => {
+              onFold("quiet", value)
+              onFold("paused", value)
+            }}
+          />
         )
       case "running":
         return (
@@ -340,18 +338,16 @@ export function InboxView({
         return null
     }
   }
-  const blockKey = (block: ShownBlock) =>
-    block.kind === "fold" ? block.fold : block.kind === "connections" ? "needsYou" : block.kind
-
-  const spectrum = Object.keys(mix).length ? <SpectrumBar mix={mix} /> : null
+  const blockKey = (block: ShownBlock) => (block.kind === "connections" ? "needsYou" : block.kind)
 
   return (
     <SplitPage
       aside={
         <NowDeck
           heading={<PageTitle title="Now" />}
-          today={activity.rows.length}
           sessions={counts.sessionsWorking}
+          sessionRows={summary?.sessions.sessions}
+          connecting={!summary}
           waiting={counts.waitingOnYou}
           running={counts.running}
           needsYou={needsYou}
@@ -359,18 +355,14 @@ export function InboxView({
           arcs={arcs}
           events={batch}
           catchUp={catchUp}
-          sentence={nowSentence({ running: counts.running, needsYou, today: activity.rows.length })}
           mix={mix}
-          agentTime={agentTime}
           syncedAt={syncedAt}
           syncing={syncing}
           offline={offline}
-          layout={split ? "split" : "stacked"}
-          todayStrip={split && activity.rows.length ? <ActivityStrip activity={activity} /> : null}
         />
       }
     >
-      <PendingDevicesNotice />
+      <NowSystem offline={offline} syncing={syncing} syncedAt={syncedAt} onRetry={retry} />
       <ConnectEntry />
       <LinkBrowserBanner accountId={overview.shell.account.id} />
       <NowStageContext.Provider value={stage}>
@@ -398,15 +390,9 @@ export function InboxView({
             </AnimatePresence>
           </LazyMotion>
         </LayoutGroup>
-        <NowAllClear
+        <NowFooter
+          machines={standbyMachines(summary?.sessions.sessions ?? [], syncedAt ?? now)}
           allClear={blocks.some((block) => block.kind === "allClear") && approvals.length === 0}
-          activity={activity}
-          strip={!split}
-          instruments={split ? null : { agentTime, spectrum }}
-          onOpen={(id) => {
-            const found = notifications.find((item) => item.id === id)
-            void open(id, found ? notificationContext(found) : "")
-          }}
         />
         {layout === "wide" && sessionsBlock?.kind === "sessions" ? (
           <aside className="now-rail" aria-label="Sessions">

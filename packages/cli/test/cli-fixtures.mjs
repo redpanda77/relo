@@ -40,7 +40,7 @@ export const loginKeyStoreEnv = () => ({ RELO_KEY_STORE_PATH: join(mkdtempSync(j
 function withLoginKeyStore(argv, dependencies) {
   if (argv[0] !== "auth" || argv[1] !== "login") return dependencies;
   const env = dependencies.env ?? process.env;
-  if (env.RELO_KEY_STORE_PATH && !env.RELO_KEY_STORE_PATH.startsWith("/nonexistent/")) return dependencies;
+  if (env.RELO_KEY_STORE_PATH && !env.RELO_KEY_STORE_PATH.startsWith(process.env.RELO_TEST_UNWRITABLE)) return dependencies;
   return { ...dependencies, env: { ...env, ...loginKeyStoreEnv() } };
 }
 export function execute(argv, dependencies = {}) {

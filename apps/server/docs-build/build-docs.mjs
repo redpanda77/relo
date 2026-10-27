@@ -350,7 +350,7 @@ function allMarkdownFiles(directory = SITE) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) return allMarkdownFiles(path);
     // README.md is the authors' guide to this folder (GitHub shows it), not a page.
-    return entry.name.endsWith(".md") && !(directory === SITE && entry.name === "README.md") ? [relative(SITE, path)] : [];
+    return entry.name.endsWith(".md") && !(directory === SITE && entry.name === "README.md") ? [relative(SITE, path).replaceAll("\\", "/")] : [];
   });
 }
 
@@ -480,7 +480,7 @@ function checkCommands(pages, facts) {
 }
 
 /** Every /docs link and #anchor resolves; a link to another server path is allowed only when listed. */
-const ALLOWED_PATHS = new Set(["/", "/sign-in", "/dashboard", "/dashboard/account", "/dashboard/connections", "/llms.txt", "/llms-full.txt", "/agents.md", "/docs.md"]);
+const ALLOWED_PATHS = new Set(["/", "/sign-in", "/dashboard", "/dashboard/account", "/dashboard/connections", "/llms.txt", "/llms-full.txt", "/agents.md", "/docs.md", "/mac/relo-mac.dmg"]);
 function checkLinks(pages, byPath) {
   const problems = [];
   for (const page of pages) {

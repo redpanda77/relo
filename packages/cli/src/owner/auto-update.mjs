@@ -14,32 +14,49 @@ const LOCK_STALE_MS = 10 * 60_000;
 export const RETRY_MS = 3_600_000; // an hour
 /** How long the owner's phone may take to answer "update?" in ask mode; no new question for that version meanwhile. */
 export const ASK_MS = 8 * 3_600_000;
-export const UPDATE_MODES = Object.freeze(["auto", "ask", "off"]);
+export const UPDATE_MODES = Object.freeze(["auto", "ask", "off", "managed"]);
 
 const paths = (home) => ({ directory: dataRoot(home), lock: join(dataRoot(home), "auto-update.lock"), state: join(dataRoot(home), "auto-update.json"),
   mode: join(dataRoot(home), "updates.json") });
 
 /**
  * How a newer CLI the server offers is installed here: auto (by itself), ask (after the owner says yes on the phone)
- * or off. RELO_NO_UPDATE_CHECK=1 is off; RELO_UPDATES wins over what `relo update --mode` stored; default auto.
+ * off. managed means the Relo app keeps this CLI current: the CLI never checks or installs on its own. RELO_NO_UPDATE_CHECK=1 is off; RELO_UPDATES wins over what `relo update --mode` stored; default auto.
  */
-export function updateMode({ home, env = {} }) {
+export function updateMode({ home, env = {}, entrypoint }) {
   const disabled = env.RELO_NO_UPDATE_CHECK;
   if (disabled !== undefined && disabled !== "" && disabled !== "0") return "off";
   const fromEnv = String(env.RELO_UPDATES ?? "").trim().toLowerCase();
   if (UPDATE_MODES.includes(fromEnv)) return fromEnv;
   try {
     const stored = JSON.parse(readFileSync(paths(home).mode, "utf8"))?.mode;
+    // managed is a fact about the bundled CLI of Relo for Mac, not about the Mac: an nvm or Homebrew relo on the same
+    // computer updates itself. A caller that names its entrypoint gets managed only from inside the app.
+    if (stored === "managed" && entrypoint !== undefined && !bundledEntrypoint(entrypoint)) return "auto";
     if (UPDATE_MODES.includes(stored)) return stored;
   } catch { /* never set */ }
   return "auto";
 }
 
-/** `relo update --mode`: stores how this computer takes updates. */
-export function setUpdateMode(home, mode) {
-  const { directory, mode: file } = paths(home);
+/** True when `entrypoint` is the CLI bundled in an app: it runs from inside `*.app/Contents/Resources`. */
+export function bundledEntrypoint(entrypoint) {
+  return typeof entrypoint === "string" && /\.app[\\/]Contents[\\/]Resources[\\/]/u.test(entrypoint);
+}
+
+/**
+ * `relo update --mode`: stores how this computer takes updates. auto is the default, so choosing it removes the
+ * stored choice, and with it any leftover of the mode it replaces (managed or ask: a declined or unanswered version
+ * in auto-update.json would otherwise keep the next automatic update from starting).
+ */
+export function setUpdateMode(home, mode, entrypoint) {
+  const { directory, mode: file, state } = paths(home);
+  if (mode === "auto") {
+    rmSync(file, { force: true });
+    rmSync(state, { force: true });
+    return;
+  }
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  writeFileSync(file, JSON.stringify({ mode }), { mode: 0o600 });
+  writeFileSync(file, JSON.stringify({ mode, ...(mode === "managed" && entrypoint ? { entrypoint } : {}) }), { mode: 0o600 });
 }
 
 /** The last automatic update's state (auto-update.json), or {}. */
@@ -60,8 +77,8 @@ export function launcherManaged({ home, entrypoint }) {
 export function maybeStartAutoUpdate({ latest, version, home, entrypoint, env = {}, now = Date.now(), compare, spawnImpl = spawn }) {
   try {
     if (!latest || !version || compare(latest, version) <= 0) return false;
-    const mode = updateMode({ home, env });
-    if (mode === "off" || !launcherManaged({ home, entrypoint })) return false;
+    const mode = updateMode({ home, env, entrypoint });
+    if (mode === "off" || mode === "managed" || !launcherManaged({ home, entrypoint })) return false;
     const { directory, lock, state } = paths(home);
     try {
       const last = JSON.parse(readFileSync(state, "utf8"));
@@ -73,7 +90,7 @@ export function maybeStartAutoUpdate({ latest, version, home, entrypoint, env = 
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     writeFileSync(state, JSON.stringify({ target: latest, from: version, at: new Date(now).toISOString(), ...(mode === "ask" ? { asking: true } : {}) }),
       { mode: 0o600 });
-    const child = spawnImpl(process.execPath, [entrypoint, "update", "--auto"], { detached: true, stdio: "ignore", env: { ...process.env, ...env } });
+    const child = spawnImpl(process.execPath, [entrypoint, "update", "--auto"], { detached: true, stdio: "ignore", env: { ...process.env, ...env }, windowsHide: true });
     child.unref?.();
     return true;
   } catch {

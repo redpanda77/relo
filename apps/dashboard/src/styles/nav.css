@@ -90,9 +90,12 @@
 }
 .compact-bar-title {
   overflow: hidden;
-  font-size: 17px;
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.72);
   opacity: var(--bar-p, 0);
   text-overflow: ellipsis;
   transform: translateY(calc((1 - var(--bar-p, 0)) * 6px));
@@ -241,7 +244,9 @@
   position: absolute;
   z-index: -1;
   inset: 0;
-  background: var(--control-fill-active);
+  border-radius: inherit;
+  background: rgb(169 158 255 / 0.15);
+  box-shadow: inset 0 0 0 0.75px rgb(169 158 255 / 0.2), 0 0 14px rgb(169 158 255 / 0.25);
   pointer-events: none;
 }
 
@@ -385,8 +390,8 @@
   z-index: -1;
   inset: 0;
   border-radius: 999px;
-  background: rgb(255 107 87 / 0.15);
-  box-shadow: inset 0 0 0 1px rgb(255 107 87 / 0.18);
+  background: rgb(169 158 255 / 0.15);
+  box-shadow: inset 0 0 0 1px rgb(169 158 255 / 0.18), 0 0 14px rgb(169 158 255 / 0.25);
   pointer-events: none;
 }
 /* A press sinks the icon alone (fast), and lets it go on a springy release. */

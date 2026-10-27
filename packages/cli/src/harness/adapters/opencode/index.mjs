@@ -6,6 +6,7 @@
 // No network here: adapters map events and render outcomes; the core owns state and transport.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { harnessPath } from "../../paths.mjs";
 import descriptor from "./descriptor.mjs";
 
@@ -17,7 +18,9 @@ const PRESENCE = Object.freeze({
   "session.created": ["start", "restore"], "chat.message": ["prompt", "turn"], "tool.execute.before": ["tool-start"],
   "tool.execute.after": ["tool-end"], "permission.asked": ["wait"], "subagent.created": ["subagent-start"],
   "subagent.idle": ["subagent-stop"], "session.compacted": ["compact", "restore"], "session.idle": ["stop", "remind"],
-  "session.deleted": ["end"],
+  // Esc publishes session.error (MessageAbortedError) and session.idle in either order; any error ends the turn, and stop
+  // is idempotent. session.busy (a busy session.status) is the turn running again.
+  "session.error": ["stop"], "session.busy": ["prompt"], "session.deleted": ["end"],
 });
 // Not async in the plugin: it waits for the owner's answer (APPROVAL_WAIT_SECONDS in harness/core/approve.mjs).
 const APPROVALS = Object.freeze({ "permission.request": ["permission"] });
@@ -96,7 +99,9 @@ export default Object.freeze({
       // OpenCode's background service has its own PATH (not the shell's), so the plugin runs this CLI by absolute path.
       content: ({ nodePath, entrypoint } = {}) => {
         const text = readFileSync(new URL("./plugin.js", import.meta.url), "utf8");
-        if (!nodePath || !entrypoint) return text;
+        // Always injected: without a LAUNCH the plugin would have nothing to run. Defaults are this running CLI.
+        nodePath ||= process.execPath;
+        entrypoint ||= fileURLToPath(new URL("../../../../bin/relo.mjs", import.meta.url));
         return text.replace("const LAUNCH = null;", `const LAUNCH = ${JSON.stringify({ node: nodePath, script: entrypoint })};`);
       },
     }),

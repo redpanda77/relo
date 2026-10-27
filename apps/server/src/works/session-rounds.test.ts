@@ -98,6 +98,10 @@ suite("Session works: deliver, rounds, nested plans",() => {
     expect(opened.body.work.plan.rounds.map((round: any) => [round.n,round.state,round.title])).toEqual([[1,"closed",undefined],[2,"open","Phase two"]]);
     expect(opened.body.work.plan.steps.map((step: any) => [step.id,step.round,step.state])).toEqual([["s1",1,"done"],["s2",2,"current"],["s3",2,"open"]]);
     expect((await cards(id)).map((card: any) => card.state)).toEqual(["ended","active"]);
+    // The response names the new round's card (not the delivered round's ended one), so a question asked next attaches to it.
+    expect(opened.body.work.card).toMatchObject({ state: "active" });
+    const live = (await db.query("SELECT id FROM live_activities WHERE work_id=$1 AND state='active'",[id.slice(4)])).rows[0];
+    expect(opened.body.work.card.id).toBe(`act_${live.id}`);
     // The new card shows round 2's steps only.
     const card = (await db.query("SELECT presentation FROM live_activities WHERE work_id=$1 AND state='active'",[id.slice(4)])).rows[0];
     expect(JSON.stringify(card.presentation)).toContain("\"C\"");
@@ -174,13 +178,17 @@ suite("Session works: deliver, rounds, nested plans",() => {
     const principalId = (await db.query("SELECT id FROM owner_principals WHERE handle='owner'")).rows[0].id;
     const made = await start({ plan: { op: "set",steps: [{ label: "Build",detail: "all of it",children: [{ label: "Schema" }] },{ label: "Docs" }] } });
     expect(made.status).toBe(201);
-    const plan = (await loadInboxSnapshot(db,{ principalId })).items.find((item) => item.activity?.plan)!.activity!.plan! as any[];
+    const snapshot = await loadInboxSnapshot(db,{ principalId });
+    // Each work's plan comes once, in the snapshot's works map.
+    const plan = snapshot.works![snapshot.items.find((item) => item.activity?.workId)!.activity!.workId!]!.plan! as any[];
     expect(plan.find((step) => step.label === "Schema")).toMatchObject({ parent: "s1" });
     expect(plan[0]).toMatchObject({ detail: "all of it" });
     await deliver("Built it");
-    const after = (await loadInboxSnapshot(db,{ principalId })).items.map((item) => item.activity).filter((a) => a?.plan).at(0) as any;
-    expect(after.plan.map((step: any) => step.state)).toEqual(["done","done","skipped"]);
-    expect(after.rounds).toEqual([expect.objectContaining({ n: 1,state: "closed",outcome: "Built it" })]);
+    const later = await loadInboxSnapshot(db,{ principalId });
+    const after = later.items.map((item) => item.activity).find((a) => a?.workId) as any;
+    const work = later.works![after.workId]! as any;
+    expect(work.plan.map((step: any) => step.state)).toEqual(["done","done","skipped"]);
+    expect(work.rounds).toEqual([expect.objectContaining({ n: 1,state: "closed",outcome: "Built it" })]);
     expect(after.roundOutcome).toBe("Built it");
     const owned = (await request("GET","/api/works",undefined,null)).body.works[0];
     expect(owned.plan.rounds).toHaveLength(1);

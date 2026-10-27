@@ -3,6 +3,7 @@ import type { ApnsMode } from "../activities.js";
 import type { ChoiceOption } from "@relo/notification-contracts";
 import { assertChoiceTargets,CHOICE_CAPABILITY,ChoiceUnsupportedError,choiceUnsupportedBody,questionBehavior } from "../choice-questions.js";
 import { publicId } from "../ids.js";
+import { overviewReaderIds } from "../owner-overview.js";
 import { persistNotificationContent,prepareNotificationContent,type NotificationContentCipher } from "../notification-content.js";
 import { presentationCommandProjection,terminalPresentationColumnsFromRow,canonicalPresentation,
   persistedPresentationColumns } from "../presentation-runtime.js";
@@ -85,7 +86,7 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
     if (error instanceof ChoiceUnsupportedError) return { kind: "rejected",commit: false,status: 409,body: choiceUnsupportedBody(error) };
     throw error;
   }
-  const eligible = await client.query<any>(
+  const phones = await client.query<any>(
     `SELECT id,apns_environment,live_activity_push_to_start_token
      FROM devices WHERE principal_id=$1 AND revoked_at IS NULL
        AND live_activity_authorization='authorized'
@@ -94,6 +95,17 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
      ORDER BY last_seen_at DESC,id LIMIT 50`,
     [requester.principalId,requestedDeviceIds,choice,CHOICE_CAPABILITY],
   );
+  // No phone: an owner overview device (the Mac) holds the question's copy and lists and answers it from
+  // Now. It is never a push target (owner-overview.ts); a named one beside phones is only a recipient.
+  const allReaders = await overviewReaderIds(client,requester.principalId,null);
+  const readerIds = requestedDeviceIds ? allReaders.filter((id) => requestedDeviceIds.includes(id)) : allReaders;
+  const holders = phones.rows.length ? [] : (await client.query<any>(
+    `SELECT id,apns_environment,live_activity_push_to_start_token FROM devices
+     WHERE principal_id=$1 AND revoked_at IS NULL AND id=ANY($2::uuid[]) AND (NOT $3 OR $4=ANY(capabilities))
+     ORDER BY last_seen_at DESC,id`,
+    [requester.principalId,readerIds,choice,CHOICE_CAPABILITY],
+  )).rows;
+  const eligible = { rows: phones.rows.length ? phones.rows : holders,rowCount: phones.rows.length || holders.length };
   if (choice && !eligible.rowCount) {
     try { await assertChoiceTargets(client,requester.principalId,null); }
     catch (error) {
@@ -101,7 +113,8 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
       throw error;
     }
   }
-  if (!eligible.rowCount || (requestedDeviceIds && eligible.rowCount !== requestedDeviceIds.length)) {
+  const covered = phones.rows.length ? phones.rows.length + readerIds.length : holders.length;
+  if (!eligible.rowCount || (requestedDeviceIds && covered !== requestedDeviceIds.length)) {
     return { kind: "rejected",commit: false,status: 400,
       body: { error: requestedDeviceIds ? "invalid_device_selection" : "no_eligible_device" } };
   }
@@ -218,8 +231,8 @@ export async function createQuestionCardInTransaction(client: SubjectTransaction
      ON CONFLICT DO NOTHING`,
     [event.rows[0]!.id,eligibleDeviceIds,activity.rows[0].id,requester.principalId,deliveryApnsMode],
   );
-  const delivery = { eligibleDevices: eligible.rows.length, durableCommands: expired ? 0 : eligible.rows.length,
-    apnsJobs: remote.rowCount ?? 0 };
+  const delivery = { eligibleDevices: phones.rows.length, durableCommands: expired ? 0 : eligible.rows.length,
+    apnsJobs: remote.rowCount ?? 0,readers: allReaders.length };
   await client.query(
     "UPDATE notification_events SET delivery_summary=$2::jsonb WHERE id=$1",
     [event.rows[0]!.id,delivery],

@@ -1,11 +1,14 @@
 // `relo statusline` (plan 12 §4.6, optimize): the wrapper Relo puts around Claude Code's status line. Claude Code runs
 // it with the status line JSON on stdin; it
-//   1. notes the session's context use and cost (local files; the observed snapshot only after a real move),
+//   1. notes the session's context use and cost (local files; the observed snapshot only after a real move) and, where the
+//      adapter records them, the plan limits (a local file for `relo usage`),
 //   2. runs the owner's previous status line command (saved at install) with the same bytes on stdin, and
 //   3. prints that command's output unchanged, byte for byte. With none saved it prints a short line of its own.
 // It never fails the status line: whatever goes wrong in 1, 2 still happens. No network.
 import { sessionId, sessionKey } from "../../shared/session-key.mjs";
+import { isReloStatusline } from "./launch.mjs";
 import { readContext, writeContext } from "./bookkeeping.mjs";
+import { absolutePath } from "../paths.mjs";
 import { COST_STEP_USD, CONTEXT_STEP } from "./state-machine.mjs";
 
 export const STATUSLINE_COMMAND = "relo statusline";
@@ -43,7 +46,7 @@ export function readingOf(input, harness) {
     over: input.exceeds_200k_tokens === true,
     ...(cost === undefined || cost < 0 ? {} : { cost: Math.round(cost * 100) / 100 }),
     ...(model ? { model: model.trim().slice(0, 60) } : {}),
-    ...(typeof input.cwd === "string" && input.cwd.startsWith("/") ? { cwd: input.cwd } : {}),
+    ...(absolutePath(input.cwd) ? { cwd: input.cwd } : {}),
   };
 }
 
@@ -59,7 +62,7 @@ async function previousCommand(dependencies) {
   try {
     const { readFile } = await import("node:fs/promises");
     const saved = JSON.parse(await readFile(optimizeStatePath(dependencies.hookStateDirectory), "utf8"))?.statusLine?.previous;
-    return typeof saved?.command === "string" && saved.command.trim() && saved.command.trim() !== STATUSLINE_COMMAND ? saved.command : undefined;
+    return typeof saved?.command === "string" && saved.command.trim() && !isReloStatusline(saved.command.trim()) ? saved.command : undefined;
   } catch { return undefined; }
 }
 
@@ -73,9 +76,9 @@ async function runPrevious(command, raw, dependencies) {
       child = spawn(command, { shell: true, env: dependencies.env, cwd: dependencies.cwd, stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
     } catch { resolve(undefined); return; }
     const finish = () => { clearTimeout(timer); resolve(Buffer.concat(chunks)); };
-    const timer = setTimeout(() => { child.kill(); finish(); }, PREVIOUS_TIMEOUT_MS);
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } finish(); }, PREVIOUS_TIMEOUT_MS);
     child.on("error", () => { clearTimeout(timer); resolve(chunks.length ? Buffer.concat(chunks) : undefined); });
-    child.stdout.on("data", (chunk) => chunks.push(chunk));
+    child.stdout?.on("data", (chunk) => chunks.push(chunk));
     child.on("close", finish);
     child.stdin.on("error", () => {});
     child.stdin.end(raw);
@@ -107,6 +110,14 @@ async function note(reading, input, { adapter, dependencies }) {
   if (moved || next.sentPct !== before.sentPct || next.sentCost !== before.sentCost) await writeContext(directory, reading.session, next);
 }
 
+/** The plan limits, when the status line JSON carries them and the harness records them (its adapter's `recordUsage`). */
+async function recordUsage(input, adapter, dependencies) {
+  try {
+    if (!input?.rate_limits || typeof adapter?.recordUsage !== "function") return;
+    await adapter.recordUsage(input, dependencies);
+  } catch { /* never breaks the line */ }
+}
+
 /**
  * One status line run for the harness whose status line it is (`adapter`). `raw`: the stdin bytes; `write(bytes)` prints. Resolves when printed; never throws.
  */
@@ -118,6 +129,7 @@ export async function runStatusline({ adapter, raw, dependencies, write }) {
   const [printed] = await Promise.all([
     command ? runPrevious(command, raw, dependencies).catch(() => undefined) : Promise.resolve(undefined),
     note(reading, input, { adapter, dependencies }).catch(() => {}),
+    recordUsage(input, adapter, dependencies),
   ]);
   try {
     write(printed ?? Buffer.from(`${defaultLine(reading)}\n`));

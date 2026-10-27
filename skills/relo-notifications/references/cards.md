@@ -234,5 +234,5 @@ may carry up to about seven.
   kind and the name), `full` (and the gist) or `verbose` (and each finished step, the default). At verbose, name
   steps for the ear too. The owner's Mac setting can lower it, never raise it.
 
-The name and `--say` travel only inside the end-to-end encrypted card (a readable work says they were not sent and
-the Mac says the frame alone).
+On an account with end-to-end encryption the name and `--say` travel only inside the encrypted card (a readable work says they were not sent and
+the Mac says the frame alone). On a local account (Relo for Mac on its own; `checks.local`) nothing is encrypted, but a custom name and `--say` are not carried yet: the echo says so and the Mac says the goal and the outcome.

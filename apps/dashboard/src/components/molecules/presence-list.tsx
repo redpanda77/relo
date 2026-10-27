@@ -25,8 +25,8 @@ function useEntering(ids: readonly string[], animateFirst: boolean): readonly st
 
 // No blur on entry: a filter on an ancestor switches off the glass's backdrop blur until it ends,
 // so the frost would flash in. Opacity, a short rise and a hint of scale carry the arrival.
-const ENTER_FROM = { opacity: 0, y: 10, scale: 0.985 }
-const ENTER_TO = { opacity: 1, y: 0, scale: 1 }
+const ENTER_FROM = { opacity: 0, y: 8 }
+const ENTER_TO = { opacity: 1, y: 0 }
 /** Leaves on ease-in at ~0.7x the entrance: a fade and a hint of shrink while the rest close the gap. */
 const PRESENCE_EXIT: TargetAndTransition = { opacity: 0, scale: 0.98, transition: { duration: DUR.fast, ease: EASE_IN } }
 

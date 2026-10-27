@@ -1,0 +1,13 @@
+Relo for Mac
+
+This program is a modified version of boring.notch (https://github.com/TheBoredTeam/boring.notch),
+Copyright TheBoredTeam and contributors, licensed under the GNU General Public License v3.0.
+Forked from upstream commit 64b5459 on 2026-10-16. Changes: the Relo tab, Relo's closed-notch card,
+the ReloNotchKit client, bundle and update configuration, and fixes to hover, sleep and drag handling.
+
+The System tab's temperature (SMC) and clock speed (IOReport) readers follow Atoll's
+(https://github.com/Ebullioscopic/Atoll), Copyright Atoll contributors, licensed under the GNU General
+Public License v3.0, whose system readers derive from the Stats project (see THIRD_PARTY_LICENSES).
+
+Relo for Mac is licensed under the GNU General Public License v3.0 (see LICENSE). Third-party components
+keep their own licenses (see THIRD_PARTY_LICENSES).

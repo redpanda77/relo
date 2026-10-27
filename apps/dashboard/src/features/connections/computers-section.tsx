@@ -1,7 +1,7 @@
-import { Laptop } from "lucide-react"
 import * as React from "react"
 
-import { Empty, List, Section } from "@/components/list"
+import { Empty, Section } from "@/components/list"
+import { MachineList } from "@/components/molecules/machine-card"
 import { Sheet } from "@/components/ui/sheet"
 import { ComputerPanel } from "@/features/connections/computer-panel"
 import { HookCredentialRow } from "@/features/connections/computer-panel/access"
@@ -80,21 +80,20 @@ export function ComputersSection({
   )
   return (
     <Section id="computers" title="Computers" count={computers.length || undefined}>
-      <List
-        label="Computers"
-        items={computers}
-        getKey={(computer) => computer.id}
-        empty={<Empty icon={<Laptop />} title="No computers yet" description="Add a computer on Devices: one command installs Relo there and signs it in." />}
-      >
-        {(computer) => (
-          <ComputerItem
-            computer={computer}
-            api={api}
-            onChange={change}
-            onSignedOut={(id) => setComputers((current) => current.filter((item) => item.id !== id))}
-          />
-        )}
-      </List>
+      {computers.length ? (
+        <MachineList label="Computers" items={computers} getKey={(computer) => computer.id}>
+          {(computer) => (
+            <ComputerItem
+              computer={computer}
+              api={api}
+              onChange={change}
+              onSignedOut={(id) => setComputers((current) => current.filter((item) => item.id !== id))}
+            />
+          )}
+        </MachineList>
+      ) : (
+        <Empty eyebrow="Computers" title="No computers yet" description="Add a computer on Devices: one command installs Relo there and signs it in." />
+      )}
       {total > initial.length ? <p className="mt-3 text-xs text-muted-foreground">Showing {initial.length} of {total}.</p> : null}
       <OtherHooks initial={unlinkedHooks} api={api} />
     </Section>

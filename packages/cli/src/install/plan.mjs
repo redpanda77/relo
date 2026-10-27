@@ -2,12 +2,14 @@
 // part of, built from the harness descriptors (harness/catalog.mjs) and applied by the editors in this folder.
 // An item only ever touches Relo's own part of a file. A file Relo cannot read safely becomes an error item;
 // the rest of the plan still runs. Nothing here prints: the commands render the report.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { ADAPTERS } from "../harness/adapters/index.mjs";
 import { HARNESSES, detectHarness, harnessFor, harnessLabel, presentHarnesses } from "../harness/catalog.mjs";
 import { ensureHarnessCredential, revokeHarnessCredential } from "../harness/core/credential.mjs";
 import { inferLevel } from "../harness/core/install.mjs";
+import { resolveLauncher } from "../harness/core/launch.mjs";
+import { installedHarnesses, isInstalled } from "../harness/installed.mjs";
 import { harnessPath, projectPath } from "../harness/paths.mjs";
 import { discard } from "../outbox/index.mjs";
 import { UsageError } from "../shared/errors.mjs";
@@ -26,16 +28,25 @@ const skipped = (kind, harness, reason) => ({ kind, harness, skipped: reason });
 
 /**
  * The harnesses setup works for: the ones named with --agent, else the one running this command plus every
- * harness whose config folder exists on this computer.
+ * harness that is installed on this computer (harness/installed.mjs). `requireInstalled` refuses a named harness
+ * that is not installed, so setup never writes into the folders of an app that is not there; uninstall and --show
+ * name any harness. `all` lists every harness that has something to set up, installed or not (--show --all).
  */
-export function chooseHarnesses(names, probe) {
+export function chooseHarnesses(names, probe, { requireInstalled = false, all = false } = {}) {
   if (names.length > 0) {
-    return names.map((name) => harnessFor(name) ?? (() => {
+    const named = names.map((name) => harnessFor(name) ?? (() => {
       throw new UsageError(`Unknown agent "${name}".`, { hint: `Supported: ${SUPPORTED.join(", ")}` });
     })());
+    const missing = requireInstalled ? named.find((harness) => harness.installation && !isInstalled(harness, probe)) : undefined;
+    if (missing) {
+      throw new UsageError(`${missing.label} isn't installed on this ${(probe.platform ?? process.platform) === "darwin" ? "Mac" : "computer"}.`,
+        { hint: "Install it first; relo setup --show --all lists every agent and whether it is installed." });
+    }
+    return named;
   }
+  if (all) return HARNESSES.filter((harness) => harness.installation && SUPPORTED.includes(harness.id));
   const running = detectHarness(probe.env);
-  return [...new Set([running, ...presentHarnesses(probe)].filter(Boolean))].filter((harness) => SUPPORTED.includes(harness.id));
+  return [...new Set([running, ...installedHarnesses(probe)].filter(Boolean))].filter((harness) => SUPPORTED.includes(harness.id));
 }
 
 /**
@@ -71,6 +82,8 @@ function blockItem(harness, path, { remove = false, companion, modules, keepModu
   });
 }
 
+const readText = (path) => { try { return readFileSync(path, "utf8"); } catch { return undefined; } };
+
 function skillItem(harness, root, { remove = false } = {}, dependencies) {
   return item("skill", harness, root, async (dryRun) => {
     const args = { root, agent: harness, dryRun, home: dependencies.home, now: dependencies.now() };
@@ -81,7 +94,7 @@ function skillItem(harness, root, { remove = false } = {}, dependencies) {
 
 function hooksItem(harness, path, level, dependencies) {
   return item("hooks", harness, path, async (dryRun) => {
-    const planned = await planLevelFile(path, harness, level, { nodePath: dependencies.nodePath, entrypoint: dependencies.entrypoint });
+    const planned = await planLevelFile(path, harness, level, { nodePath: dependencies.nodePath, entrypoint: dependencies.entrypoint, launcher: resolveLauncher(dependencies, readText(path)), platform: dependencies.platform });
     if (!dryRun) await commitLevel(planned);
     return { action: planned.plan.action, level };
   });
@@ -190,7 +203,7 @@ function extrasPlan(harness, plan, keepModules, probe, dependencies) {
   const { statusline, agents, subagentModel } = plan.level === "optimize" ? plan.extras
     : keepModules ? {} : { statusline: false, agents: false, subagentModel: "off" };
   const recorded = recordedExtras(directory);
-  if (settings && statusline === true) items.push(statusLineItem(harness.id, settings, directory));
+  if (settings && statusline === true) items.push(statusLineItem(harness.id, settings, directory, { launch: { nodePath: dependencies.nodePath, entrypoint: dependencies.entrypoint, launcher: resolveLauncher(dependencies, readText(settings)), platform: dependencies.platform } }));
   else if (settings && statusline === false && (ownsStatusLine(settings) || recorded.statusLine)) items.push(statusLineItem(harness.id, settings, directory, { remove: true }));
   if (settings && subagentModel === "off" && recorded.subagentModel) items.push(subagentModelItem(harness.id, settings, directory, { remove: true }));
   else if (settings && typeof subagentModel === "string" && subagentModel !== "off") items.push(subagentModelItem(harness.id, settings, directory, { value: subagentModel }));
@@ -208,13 +221,13 @@ const credentialItem = (dependencies) => item("credential", undefined, undefined
  * credential revoked once no hooks are left anywhere, queued snapshots dropped. `always` revokes even when no
  * file held hooks (uninstall).
  */
-export function hooksOffPlan(dependencies, { harnesses, place, always = false } = {}) {
+export function hooksOffPlan(dependencies, { harnesses, place, always = false, credential = true } = {}) {
   const probe = { env: dependencies.env, home: dependencies.home, cwd: dependencies.cwd };
   const all = findHooks(probe);
   const going = all.filter((found) => (!harnesses || harnesses.includes(found.agent)) && (!place || found.place === place));
   const items = going.map((found) => hooksItem(found.agent, found.path, "off", dependencies));
   const staying = all.some((found) => !going.includes(found));
-  if (staying || (going.length === 0 && !always)) return items;
+  if (!credential || staying || (going.length === 0 && !always)) return items;
   return [...items, item("credential", undefined, undefined, async (dryRun) => {
     if (dryRun) return { action: "revoke" };
     const { state } = await revokeHarnessCredential(dependencies);
@@ -249,8 +262,9 @@ export function refreshPlan(dependencies) {
 }
 
 /** `relo uninstall`: everything Relo wrote on this computer, Relo's parts only. */
-export function uninstallPlan(dependencies) {
+export function uninstallPlan(dependencies, { harnesses } = {}) {
   const probe = { env: dependencies.env, home: dependencies.home, cwd: dependencies.cwd, platform: dependencies.platform };
+  if (harnesses) return uninstallHarnessesPlan(harnesses, probe, dependencies);
   return [
     ...findBlocks(probe).map((found) => blockItem(undefined, found.path, { remove: true })),
     ...findSkillCopies({ env: probe.env, home: probe.home, cliVersion: dependencies.version })
@@ -259,6 +273,52 @@ export function uninstallPlan(dependencies) {
     ...hooksOffPlan(dependencies, { always: true }),
     ...HARNESSES.filter((harness) => harness.statusLine || harness.agents).flatMap((harness) => extrasPlan(harness, { level: "track", extras: {} }, false, probe, dependencies)),
   ];
+}
+
+const realOrSame = (path) => { try { return realpathSync(path); } catch { return path; } };
+// The pseudo-harnesses that only name a shared folder or the MCP entry: they are not agents that read anything.
+const FOLDER_ONLY = new Set(["agents", "mcp"]);
+
+/**
+ * `relo uninstall --agent NAME`: only these harnesses' parts (their user-level instructions block, skill copy, MCP
+ * entries, hook entries, status line and subagent files). Never the shared harness credential, project files or
+ * anything of another harness. A file another present harness also reads stays, reported as skipped.
+ */
+function uninstallHarnessesPlan(harnesses, probe, dependencies) {
+  const ids = new Set(harnesses.map((harness) => harness.id));
+  const others = presentHarnesses(probe).filter((harness) => !ids.has(harness.id) && !FOLDER_ONLY.has(harness.id));
+  const items = [];
+  const blocks = new Map(findBlocks({ ...probe, globalOnly: true }).map((found) => [realOrSame(found.path), found]));
+  const doneBlocks = new Set();
+  for (const harness of harnesses) {
+    if (!harness.instructions?.global) continue;
+    const path = harnessPath(harness, harness.instructions.global, probe);
+    const real = realOrSame(path);
+    if (doneBlocks.has(real) || !blocks.has(real)) continue;
+    doneBlocks.add(real);
+    const sharedWith = others.filter((other) => other.instructions?.global && realOrSame(harnessPath(other, other.instructions.global, probe)) === real);
+    if (sharedWith.length > 0) {
+      items.push(skipped("block", harness.id, `${shortPath(blocks.get(real).path, probe.home)} is also read by ${sharedWith.map((other) => other.label ?? other.id).join(", ")}: it stays; run relo uninstall --agent for them too`));
+    } else items.push(blockItem(harness.id, blocks.get(real).path, { remove: true }));
+  }
+  const rootsOf = (harness) => [harness.skills, ...(harness.legacySkills ? [harness.legacySkills] : [])].filter(Boolean).map((spec) => harnessPath(harness, spec, probe));
+  const mine = new Map(harnesses.flatMap((harness) => rootsOf(harness).map((root) => [root, harness.id])));
+  const readByOthers = (root) => others.filter((other) => rootsOf(other).includes(root)
+    || (other.inherits?.skills ?? []).some((spec) => harnessPath(other, spec, probe) === root));
+  for (const copy of findSkillCopies({ env: probe.env, home: probe.home, cliVersion: dependencies.version })) {
+    const owner = mine.get(copy.root);
+    if (!owner) continue;
+    const sharedWith = readByOthers(copy.root);
+    if (sharedWith.length > 0) {
+      items.push(skipped("skill", owner, `${shortPath(copy.root, probe.home)} is also read by ${sharedWith.map((other) => other.label ?? other.id).join(", ")}: the skill stays; run relo uninstall --agent for them too`));
+    } else items.push(skillItem(owner, copy.root, { remove: true }, dependencies));
+  }
+  items.push(
+    ...findMcp(probe).filter((found) => ids.has(found.agent)).map((found) => mcpItem(found.agent, found.path, wantedEntry(found.agent, dependencies), { remove: true })),
+    ...hooksOffPlan(dependencies, { harnesses: [...ids], credential: false }),
+    ...harnesses.filter((harness) => harness.statusLine || harness.agents).flatMap((harness) => extrasPlan(harness, { level: "track", extras: {} }, false, probe, dependencies)),
+  );
+  return items;
 }
 
 /**

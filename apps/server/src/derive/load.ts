@@ -1,5 +1,5 @@
 import {
-  lastRound,OWNER_STATE_TIMING,planProgressWire,
+  lastRound,OWNER_STATE_TIMING,PLAN_ROUNDS_WITH_STEPS,planProgressWire,
   type ComputerIcon,
   type PlanDigestRound,
   type PlanDigestStep,
@@ -11,11 +11,12 @@ import {
   type WorkLifecycle,
 } from "@relo/notification-contracts";
 import type { Database } from "../db.js";
-import { loadSessionEvidence } from "../agent-sessions.js";
+import { loadSessionEvidence,sessionLabelOver } from "../agent-sessions.js";
 import { computerLastSeenSql } from "../computers/summary.js";
 import { computerIconColumns,iconFromColumns } from "../computers/store.js";
 import { leaseEvidence } from "../works/lease.js";
 import { askedCopySql } from "../browser-answers.js";
+import { PLAN_DIGEST_ROUNDS_MAX } from "../inbox/plan-digest-sql.js";
 import { readsAccount,visibilityDeviceId,type DeviceReader } from "../owner-overview.js";
 
 /**
@@ -28,6 +29,8 @@ export type LoadedWork = {
   status: string | null;
   sourceName: string | null;
   project: string | null;
+  /** The project resource's colour slot (`PROJECT_PALETTE`), when the card names one. */
+  projectSlot: number | null;
   producer: ProducerType;
   sessionKey: string | null;
   notificationId: string | null;
@@ -62,7 +65,7 @@ type Row = {
   id: string; title: string; status: string | null; privacy: string; state: string; producer_type: ProducerType;
   session_key: string | null; created_at: Date; declared_at: Date; ended_at: Date | null; terminal_transition_at: Date | null;
   outcome_kind: string | null; question_only: boolean; lifecycle_provider: string | null; stale_at: Date | null;
-  event_id: string | null; source_name: string | null; project: string | null;
+  event_id: string | null; source_name: string | null; project: string | null; project_slot: number | null;
   question_id: string | null; question_state: string | null; question_at: Date | null; question_late: boolean | null;
   question_opened_at: Date | null; question_dismissed_at: Date | null; seen_at: Date | null;
   card_sealed: unknown; question_sealed: unknown;
@@ -92,7 +95,10 @@ export function planDigestOf(row: Row): { plan: PlanDigestStep[]; rounds?: PlanD
   const readable = !row.work_sealed_text && row.privacy !== "private";
   const text = (value: unknown,max: number): string | undefined =>
     readable && typeof value === "string" && value.trim() ? Array.from(value).slice(0,max).join("") : undefined;
-  const plan = steps.filter((step) => ["open","current","done","skipped"].includes(step.state)).slice(0,120)
+  // Same rule as the SQL in inbox/plan-digest-sql.ts: steps of the newest rounds only, the newest rounds kept.
+  const newest = row.work_plan?.rounds?.reduce((top,round) => Math.max(top,round.n),0) ?? 0;
+  const kept = (step: { round?: number | undefined }) => step.round === undefined || step.round >= newest - (PLAN_ROUNDS_WITH_STEPS - 1);
+  const plan = steps.filter((step) => ["open","current","done","skipped"].includes(step.state) && kept(step)).slice(-120)
     .map((step): PlanDigestStep => {
       const full = step as WorkPlan["steps"][number];
       const label = text(full.label,120);
@@ -102,7 +108,7 @@ export function planDigestOf(row: Row): { plan: PlanDigestStep[]; rounds?: PlanD
         ...(detail ? { detail } : {}),...(full.startedAt ? { startedAt: full.startedAt } : {}),
         ...(full.doneAt ? { doneAt: full.doneAt } : {}),...(full.carriedFrom ? { carriedFrom: full.carriedFrom } : {}) };
     });
-  const rounds = row.work_plan?.rounds?.slice(0,60).map((round): PlanDigestRound => {
+  const rounds = row.work_plan?.rounds?.slice(-PLAN_DIGEST_ROUNDS_MAX).map((round): PlanDigestRound => {
     const title = text(round.title,80);
     const outcome = text(round.outcome,200);
     return { n: round.n,state: round.state,...(title ? { title } : {}),...(outcome ? { outcome } : {}),
@@ -154,58 +160,82 @@ export async function loadOwnerStateInputs(
   activityIds: readonly string[] | "visible",
   now: Date,
   reader: DeviceReader = {},
+  options: { light?: boolean } = {},
 ): Promise<LoadedWork[]> {
   // $4 picks the reader's sealed envelopes; $6 bounds the read by a phone's delivery targets (none for
   // the browser or an overview device, whose Now is the whole account's: owner-overview.ts).
   const ids = activityIds === "visible" ? null : activityIds.map((id) => id.replace(/^act_/,""));
+  // Island counts need only the last round of a plan (a delivered work), never its steps or labels.
+  const plan = options.light
+    ? `CASE WHEN w.plan->'steps' IS NOT NULL AND w.plan->'rounds' IS NOT NULL
+         THEN jsonb_build_object('steps','[]'::jsonb,'rounds',jsonb_build_array(w.plan->'rounds'->-1)) END`
+    : "w.plan";
+  // Set-based, one pass each: the cards in play, their newest event, and the questions that name them (no per-card scans).
   const result = await db.query<Row>(
-    `SELECT a.id,a.title,a.status,a.privacy,a.state::text AS state,a.producer_type,a.session_key,a.created_at,a.declared_at,
+    `WITH cand AS MATERIALIZED (
+       SELECT a.id,a.work_id,'act_'||a.id::text AS act FROM live_activities a
+       WHERE a.principal_id=$1
+         AND ($6::uuid IS NULL OR a.target_device_ids IS NULL OR $6::uuid=ANY(a.target_device_ids))
+         AND (CASE WHEN $2::uuid[] IS NOT NULL THEN a.id=ANY($2::uuid[]) ELSE
+           -- One item per work: a work that got a new card (paused, then resumed) is its newest card.
+           (a.work_id IS NULL OR NOT EXISTS (SELECT 1 FROM live_activities newer WHERE newer.principal_id=a.principal_id
+             AND newer.work_id=a.work_id AND (newer.created_at,newer.id)>(a.created_at,a.id))) END)
+     ), ev AS MATERIALIZED (
+       SELECT DISTINCT ON (e.payload#>>'{liveActivity,activityId}') e.payload#>>'{liveActivity,activityId}' AS act,
+         e.id,e.source,left(e.payload#>>'{context,project}',160) AS project_name,e.project_resource_id,
+         CASE WHEN $4::uuid IS NOT NULL THEN e.payload->'sealed' END AS sealed
+       FROM notification_events e
+       WHERE e.principal_id=$1 AND e.kind='live_activity'
+         AND e.payload#>>'{liveActivity,activityId}'=ANY(ARRAY(SELECT act FROM cand))
+         AND ($6::uuid IS NULL OR e.target_mode='broadcast' OR EXISTS (
+           SELECT 1 FROM notification_event_targets t WHERE t.notification_event_id=e.id AND t.device_id=$6))
+       ORDER BY e.payload#>>'{liveActivity,activityId}',e.created_at DESC,e.id DESC
+     ), qr AS MATERIALIZED (
+       SELECT r.id,r.principal_id,r.work_id,r.state,r.created_at,r.late_responded_at,r.owner_dismissed_at,
+         qe.payload#>>'{liveActivity,activityId}' AS act,jsonb_build_object('liveActivity',qe.payload->'liveActivity') AS event_payload,
+         CASE WHEN $4::uuid IS NOT NULL THEN qe.payload->'sealed' END AS event_sealed
+       FROM interaction_requests r JOIN notification_events qe ON qe.id=r.notification_event_id
+       WHERE r.principal_id=$1 AND (qe.payload#>>'{liveActivity,activityId}'=ANY(ARRAY(SELECT act FROM cand))
+         OR r.work_id=ANY(ARRAY(SELECT work_id FROM cand WHERE work_id IS NOT NULL)))
+     )
+     SELECT a.id,a.title,a.status,a.privacy,a.state::text AS state,a.producer_type,a.session_key,a.created_at,a.declared_at,
        a.ended_at,a.terminal_transition_at,a.presentation#>>'{state,kind}' AS outcome_kind,
        COALESCE(a.presentation_policy_source LIKE 'system.interactive.%',false) AS question_only,
        a.lifecycle_provider,a.stale_at,
-       event.id AS event_id,event.source AS source_name,left(event.payload#>>'{context,project}',160) AS project,
+       event.id AS event_id,event.source AS source_name,event.project_name AS project,
+       project_resource.palette_ordinal % 12 AS project_slot,
        q.id AS question_id,q.state::text AS question_state,q.created_at AS question_at,
        (q.late_responded_at IS NOT NULL) AS question_late,q.owner_dismissed_at AS question_dismissed_at,
-       CASE WHEN $4::uuid IS NOT NULL THEN COALESCE(a.sealed,event.payload->'sealed') END AS card_sealed,
+       CASE WHEN $4::uuid IS NOT NULL THEN COALESCE(a.sealed,event.sealed) END AS card_sealed,
        CASE WHEN $4::uuid IS NOT NULL THEN q.event_sealed END AS question_sealed,
        (SELECT max(i.created_at) FROM interactions i WHERE i.interaction_request_id=q.id AND i.kind='opened') AS question_opened_at,
        (SELECT max(i.created_at) FROM interactions i JOIN notification_events oe ON oe.id=i.notification_event_id
          WHERE i.principal_id=a.principal_id AND i.kind='opened'
-           AND oe.payload#>>'{liveActivity,activityId}'='act_'||a.id::text
+           AND oe.payload#>>'{liveActivity,activityId}'=cand.act
            AND i.created_at>=COALESCE(a.terminal_transition_at,a.ended_at)) AS seen_at,
-       w.lifecycle AS work_lifecycle,w.plan AS work_plan,w.waiting_since AS work_waiting_since,
+       w.lifecycle AS work_lifecycle,${plan} AS work_plan,w.waiting_since AS work_waiting_since,
        w.declared_at AS work_declared_at,w.finished_at AS work_finished_at,w.sealed_text AS work_sealed_text,
        w.producer_type AS work_producer_type,w.lease_until AS work_lease_until,
        left(w.context->>'providerName',200) AS work_provider,left(w.context->>'computer',120) AS work_computer,
        ${computerIconColumns("c")},c.id IS NOT NULL AS computer_row,
        ${computerLastSeenSql("c")} AS computer_last_seen_at
-     FROM live_activities a
+     FROM cand
+     JOIN live_activities a ON a.id=cand.id
      LEFT JOIN works w ON w.id=a.work_id AND w.principal_id=a.principal_id
      LEFT JOIN computers c ON c.login_key_id=w.credential_id AND c.principal_id=w.principal_id
+     LEFT JOIN ev event ON event.act=cand.act
+     LEFT JOIN resource_projects project_resource ON project_resource.principal_id=a.principal_id
+       AND project_resource.id=COALESCE(a.project_resource_id,event.project_resource_id)
      LEFT JOIN LATERAL (
-       SELECT e.id,e.source,e.payload FROM notification_events e
-       WHERE e.principal_id=a.principal_id AND e.kind='live_activity'
-         AND e.payload#>>'{liveActivity,activityId}'='act_'||a.id::text
-         AND ($6::uuid IS NULL OR e.target_mode='broadcast' OR EXISTS (
-           SELECT 1 FROM notification_event_targets t WHERE t.notification_event_id=e.id AND t.device_id=$6))
-       ORDER BY e.created_at DESC,e.id DESC LIMIT 1
-     ) event ON true
-     LEFT JOIN LATERAL (
-       SELECT r.*,qe.payload->'sealed' AS event_sealed FROM interaction_requests r JOIN notification_events qe ON qe.id=r.notification_event_id
-       WHERE r.principal_id=a.principal_id AND (qe.payload#>>'{liveActivity,activityId}'='act_'||a.id::text
-         OR (a.work_id IS NOT NULL AND r.work_id=a.work_id))
+       SELECT r.* FROM qr r, LATERAL (SELECT r.event_payload AS payload) qe
+       WHERE r.act=cand.act OR (a.work_id IS NOT NULL AND r.work_id=a.work_id)
        -- An overview device answers the copy the asker waits on, so its Now names that copy.
        ORDER BY r.created_at DESC,CASE WHEN $7::boolean THEN r.id=${askedCopySql("r","qe")} END DESC NULLS LAST,r.id DESC LIMIT 1
      ) q ON true
-     WHERE a.principal_id=$1
-       AND ($6::uuid IS NULL OR a.target_device_ids IS NULL OR $6::uuid=ANY(a.target_device_ids))
-       AND (CASE WHEN $2::uuid[] IS NOT NULL THEN a.id=ANY($2::uuid[]) ELSE (
-         -- One item per work: a work that got a new card (paused, then resumed) is its newest card.
-         (a.work_id IS NULL OR NOT EXISTS (SELECT 1 FROM live_activities newer WHERE newer.principal_id=a.principal_id
-           AND newer.work_id=a.work_id AND (newer.created_at,newer.id)>(a.created_at,a.id))) AND (
+     WHERE (CASE WHEN $2::uuid[] IS NOT NULL THEN true ELSE (
          a.state='active' OR a.state='expired' AND a.declared_at>$3::timestamptz-make_interval(secs=>$5::double precision)
          OR COALESCE(a.terminal_transition_at,a.ended_at)>$3::timestamptz-make_interval(secs=>$5::double precision)
-         OR q.state='pending')) END)
+         OR q.state='pending') END)
      ORDER BY a.declared_at DESC,a.id DESC LIMIT ${VISIBLE_LIMIT}`,
     // Expired rows are open works for derive(); they stay visible until left unfinished leaves Now (2 × T_history).
     [principalId,ids,now,reader.deviceId ?? null,OWNER_STATE_TIMING.historySeconds * 2,visibilityDeviceId(reader) ?? null,
@@ -240,10 +270,11 @@ export async function loadOwnerStateInputs(
       status: privateCard || row.status === null ? null : row.status.slice(0,160),
       sourceName: (row.source_name ?? row.work_provider)?.slice(0,200) ?? null,
       // A session's own labels (hooks) win over the card's copy, so Now and Sessions name the same computer and project.
-      computer: privateCard ? null : session?.computer ?? row.work_computer,
+      computer: privateCard ? null : sessionLabelOver(session?.computer,row.work_computer),
       ...(row.computer_row ? { computerIcon: iconFromColumns(row.computer_icon,row.computer_kind).icon } : {}),
       workOpen: row.work_lifecycle ? row.work_lifecycle === "open" || row.work_lifecycle === "paused" : row.state === "active",
-      project: privateCard ? null : session?.project ?? row.project,
+      project: privateCard ? null : sessionLabelOver(session?.project,row.project),
+      projectSlot: privateCard || row.project_slot === null ? null : Number(row.project_slot),
       producer: row.producer_type,
       sessionKey: row.session_key,
       notificationId: row.event_id ? `ntf_${row.event_id}` : null,

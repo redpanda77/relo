@@ -102,3 +102,135 @@ test("a trusted Mac's signed answer on the asked copy verifies like a phone's", 
   assert.equal(answerProblem(interaction, { trusted: pinnedAs(mac, "pending") }, apiUrl, { interactionId: copy.id }),
     "answered on a phone this computer does not trust");
 });
+
+test("Relo for Mac alone never counts as the trusted phone that commits a computer to encryption", async () => {
+  const { trustedPhones } = await import("../src/crypto/trust.mjs");
+  const api = "https://relo.example";
+  const store = { trusted: {
+    [`${api}|dev_mac`]: { deviceId: "dev_mac", level: "auto", ownerOverview: true, publicKey: "k1" },
+  } };
+  assert.deepEqual(trustedPhones(store, api), []);
+  store.trusted[`${api}|dev_phone`] = { deviceId: "dev_phone", level: "auto", publicKey: "k2" };
+  assert.deepEqual(trustedPhones(store, api).map((entry) => entry.deviceId), ["dev_phone"]);
+});
+
+// A Mac-only account on a remote server: "Always" with no phone must not deadlock the owner.
+async function macOnlyNotice({ required, committed = false, withPhone = false }) {
+  const { sealNoticeRequest } = await import("../src/crypto/seal-notice.mjs");
+  const h = harness();
+  try {
+    const devices = withPhone ? [owner.device, mac.device] : [mac.device];
+    const client = { publishClientKey: async () => ({}), listDeviceKeys: async () => ({ devices }),
+      listDevices: async () => ({ devices: [] }), endToEndPolicy: async () => ({ required }) };
+    const folder = mkdtempSync(join(tmpdir(), "relo-overview-notice-"));
+    const dependencies = { configPath: () => join(folder, "config.json"),
+      env: { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") }, now: () => Date.now(), stdinIsTTY: false };
+    if (committed) {
+      // The Mac is pinned on first contact; only then does the computer commit (for example after a phone was removed).
+      const { saveKeyStore, loadKeyStore } = await import("../src/crypto/keystore.mjs");
+      await ensureTrust({ client, config: { apiUrl, token: "t" }, dependencies });
+      const store = await loadKeyStore(dependencies.env.RELO_KEY_STORE_PATH);
+      store.committed = { [apiUrl]: true };
+      await saveKeyStore(dependencies.env.RELO_KEY_STORE_PATH, store);
+    }
+    const notes = [];
+    try {
+      return await sealNoticeRequest({ body: { title: "Done", summary: "ok", context: undefined }, key: "k1", client, config: { apiUrl, token: "t" }, dependencies, notes });
+    } finally { rmSync(folder, { recursive: true, force: true }); }
+  } finally { h.cleanup(); }
+}
+
+test("Mac only and the server requires encryption: the notice is sealed for the Mac, never sent readable", async () => {
+  const body = await macOnlyNotice({ required: true });
+  assert.ok(body.sealed, "sealed");
+  assert.equal(body.title, undefined, "no readable title");
+  assert.deepEqual(body.sealed.alerts.map((alert) => alert.recipients[0].device), [mac.device.deviceId]);
+  assert.deepEqual(body.sealed.content.recipients.map((recipient) => recipient.device), [mac.device.deviceId]);
+});
+
+test("Mac only and the server is Automatic: the notice stays readable", async () => {
+  const body = await macOnlyNotice({ required: false });
+  assert.equal(body.sealed, undefined);
+  assert.equal(body.title, "Done");
+});
+
+test("Mac only on a computer already committed to encryption: sealed for the Mac, not refused", async () => {
+  const body = await macOnlyNotice({ required: false, committed: true });
+  assert.deepEqual(body.sealed.alerts.map((alert) => alert.recipients[0].device), [mac.device.deviceId]);
+});
+
+test("with a phone nothing changes: the phone is alerted and the Mac reads", async () => {
+  const body = await macOnlyNotice({ required: true, withPhone: true });
+  assert.deepEqual(body.sealed.alerts.map((alert) => alert.recipients[0].device), [owner.device.deviceId]);
+  assert.deepEqual(body.sealed.content.recipients.map((recipient) => recipient.device).sort(), [owner.device.deviceId, mac.device.deviceId].sort());
+});
+
+// A pinned phone that was merely skipped is never replaced by the Mac: the phone would silently get nothing.
+function staleEndpoint(deviceId) {
+  const identity = generateKeyPair();
+  const prekey = generateKeyPair();
+  const createdAt = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  return { identity, device: { deviceId, kind: "phone", name: "iPhone", model: "iPhone18,1",
+    identityKey: { keyId: keyId(identity.publicKey), publicKey: b64u(identity.publicKey), changedAt: createdAt },
+    prekey: { prekeyId: "pk_1", publicKey: b64u(prekey.publicKey), createdAt, stale: true,
+      signature: b64u(signBytes(identity.privateKey, prekeySigningInput({ deviceId, prekeyId: "pk_1", publicKey: prekey.publicKey, createdAt }))) } } };
+}
+
+// ensureTrust pins Relo for Mac with ownerOverview, which is what keeps it from counting as a phone.
+const macPin = () => Object.fromEntries(Object.entries(pinnedAs(mac)).map(([key, entry]) => [key, { ...entry, ownerOverview: true }]));
+
+async function recipientsFor({ pins, devices, required = true, committed = false }) {
+  const { sealRecipients } = await import("../src/crypto/seal-notice.mjs");
+  const trust = { store: { trusted: pins }, devices, committed };
+  const client = { endToEndPolicy: async () => ({ required }) };
+  return sealRecipients({ trust, client, config: { apiUrl } });
+}
+
+test("Mac only (no phone pinned) and the server requires encryption: the Mac stands in", async () => {
+  const found = await recipientsFor({ pins: macPin(), devices: [mac.device] });
+  assert.deepEqual(found.eligible.map((entry) => entry.deviceId), [mac.device.deviceId]);
+  assert.deepEqual(found.skipped, []);
+});
+
+test("a pinned phone with a stale key is skipped with its reason and the Mac does not stand in", async () => {
+  const stale = staleEndpoint("dev_00000000-0000-4000-8000-0000000000b1");
+  const found = await recipientsFor({ pins: { ...pinnedAs(stale), ...macPin() }, devices: [stale.device, mac.device], committed: true });
+  assert.deepEqual(found.eligible, []);
+  assert.equal(found.skipped.length, 1);
+  assert.match(found.skipped[0].reason, /no fresh key/u);
+  const { noRecipientReason, sealNoticeRequest } = await import("../src/crypto/seal-notice.mjs");
+  assert.match(noRecipientReason(found.skipped), /no fresh key/u);
+  // Through a sealer: committed to encryption, the command is refused, naming the phone's reason.
+  const h = harness();
+  try {
+    const client = { publishClientKey: async () => ({}), listDeviceKeys: async () => ({ devices: [stale.device, mac.device] }),
+      listDevices: async () => ({ devices: [] }), endToEndPolicy: async () => ({ required: true }) };
+    const folder = mkdtempSync(join(tmpdir(), "relo-stale-notice-"));
+    const dependencies = { configPath: () => join(folder, "config.json"),
+      env: { RELO_KEY_STORE_PATH: join(folder, "e2ee.json"), RELO_STATE_DIR: join(folder, "state") }, now: () => Date.now(), stdinIsTTY: false };
+    try {
+      const { saveKeyStore, loadKeyStore } = await import("../src/crypto/keystore.mjs");
+      await ensureTrust({ client, config: { apiUrl, token: "t" }, dependencies });
+      const store = await loadKeyStore(dependencies.env.RELO_KEY_STORE_PATH);
+      store.committed = { [apiUrl]: true };
+      await saveKeyStore(dependencies.env.RELO_KEY_STORE_PATH, store);
+      await assert.rejects(sealNoticeRequest({ body: { title: "Done", summary: "ok" }, key: "k1", client, config: { apiUrl, token: "t" }, dependencies, notes: [] }),
+        (error) => error.code === "E2EE_UNAVAILABLE" && /no fresh key/u.test(error.message));
+    } finally { rmSync(folder, { recursive: true, force: true }); }
+  } finally { h.cleanup(); }
+});
+
+test("a pinned phone held for approval is skipped and the Mac does not stand in", async () => {
+  const waiting = endpoint("dev_00000000-0000-4000-8000-0000000000b2", { model: "iPhone18,1" });
+  const found = await recipientsFor({ pins: { ...pinnedAs(waiting, "pending"), ...macPin() }, devices: [waiting.device, mac.device] });
+  assert.deepEqual(found.eligible, []);
+  assert.match(found.skipped[0].reason, /waiting for approval/u);
+});
+
+test("a phone changed in strict mode (key differs from the pin) is skipped and the Mac does not stand in", async () => {
+  const original = endpoint("dev_00000000-0000-4000-8000-0000000000b3", { model: "iPhone18,1" });
+  const changed = endpoint(original.device.deviceId, { model: "iPhone18,1" });
+  const found = await recipientsFor({ pins: { ...pinnedAs(original), ...macPin() }, devices: [changed.device, mac.device] });
+  assert.deepEqual(found.eligible, []);
+  assert.match(found.skipped[0].reason, /security code changed/u);
+});

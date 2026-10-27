@@ -51,7 +51,7 @@
   --radius-lg: 10px;
   --radius-xl: 14px;
   --radius-2xl: 20px;
-  --radius-card: 20px;
+  --radius-card: 18px;
 }
 
 :root,
@@ -73,7 +73,13 @@
   /* One color per meaning: done green, running cyan, needs you orange, attention yellow, failed red, messages violet. */
   --neon-orange: #ff8a3d;
   --neon-yellow: #facc15;
-  --neon-red: #f43f5e;
+  --neon-red: #f87171;
+  /* The Now palette (DASHBOARD-GAPS A1), scoped so the orb and other pages keep --neon-violet:
+     sessions violet (also the focus colour), your-turn/waiting/paused amber (yellow stays for
+     offline only), quiet and idle slate. Red is --neon-red (one red). */
+  --now-violet: #a99eff;
+  --now-amber: #fbbf24;
+  --now-slate: #94a3b8;
   /* Lines: borders of surfaces and controls, dividers between rows, and the stronger hover line. */
   --hairline: rgb(255 255 255 / 0.08);
   --hairline-strong: rgb(255 255 255 / 0.16);
@@ -81,40 +87,42 @@
   /* Two materials, no more. The sheet holds lists, cards, folds and notices: one flat frosted fill,
      one hairline, light on the top edge and one shadow that sets it on the field. The raised
      material is for what floats over the page (menus, sheets, dialogs, the sidebar): denser so
-     text stays legible over anything. Tone is information, never decoration: a surface never
-     carries a gradient. */
-  --sheet-fill: rgb(255 255 255 / 0.04);
-  --sheet-border: rgb(255 255 255 / 0.08);
+     text stays legible over anything. The sheet is a top-to-bottom white gradient (.085 to .03),
+     a hairline and a lit top edge, as on the iPhone; a tinted sheet takes the tone in the same
+     gradient. Never a backdrop blur on a sheet (GPU). */
+  --sheet-fill: linear-gradient(180deg, rgb(255 255 255 / 0.085), rgb(255 255 255 / 0.03));
+  --sheet-border: rgb(255 255 255 / 0.12);
+  --sheet-edge: rgb(255 255 255 / 0.12);
   --raised-fill: rgb(17 17 25 / 0.94);
   --raised-border: rgb(255 255 255 / 0.1);
   --raised-shadow: 0 24px 56px -16px rgb(0 0 0 / 0.75);
   /* Controls: one quiet fill that brightens on hover and when chosen (pills, segments, the
      sidebar's page), one hairline, and the primary action's solid light fill. */
-  --control-fill: rgb(255 255 255 / 0.06);
-  --control-fill-hover: rgb(255 255 255 / 0.09);
-  --control-fill-active: rgb(255 255 255 / 0.12);
-  --control-border: rgb(255 255 255 / 0.09);
-  --primary-fill: #f3f3f7;
-  --primary-fill-hover: #ffffff;
-  --primary-ink: #0b0b12;
+  --control-fill: rgb(255 255 255 / 0.12);
+  --control-fill-hover: rgb(255 255 255 / 0.16);
+  --control-fill-active: rgb(255 255 255 / 0.2);
+  --control-border: rgb(255 255 255 / 0.14);
+  --primary-fill: var(--btn-tone, var(--now-violet));
+  --primary-fill-hover: color-mix(in srgb, var(--btn-tone, var(--now-violet)) 88%, white);
+  --primary-ink: #120a02;
   --ramp: linear-gradient(90deg, #5ce1ff 0%, #8b7cff 55%, #d65cf0 100%);
   --foreground: #f3f3f7;
   --card: rgb(255 255 255 / 0.035);
   --card-foreground: #f3f3f7;
   --popover: #111119;
   --popover-foreground: #f3f3f7;
-  --primary: #ff6b57;
-  --primary-foreground: #1b0905;
+  --primary: #a99eff;
+  --primary-foreground: #120a02;
   --secondary: rgb(255 255 255 / 0.06);
   --secondary-foreground: #f3f3f7;
   --muted: rgb(255 255 255 / 0.05);
-  --muted-foreground: #a4a4b6;
+  --muted-foreground: #94a3b8;
   --accent: rgb(255 255 255 / 0.06);
   --accent-foreground: #f3f3f7;
   --destructive: #f87171;
   --border: rgb(255 255 255 / 0.08);
   --input: rgb(255 255 255 / 0.1);
-  --ring: #a796ff;
+  --ring: #a99eff;
   --radius: 14px;
   /* The landing's coral capsule (reloActionFill): the deeper coral keeps white text above 4.5:1.
      Dashboard actions use --primary-fill. */
@@ -122,12 +130,12 @@
   --action-fill-hover: #d4513b;
   --sidebar: rgb(13 13 19 / 0.96);
   --sidebar-foreground: #f3f3f7;
-  --sidebar-primary: #ff6b57;
-  --sidebar-primary-foreground: #1b0905;
+  --sidebar-primary: #a99eff;
+  --sidebar-primary-foreground: #120a02;
   --sidebar-accent: rgb(255 255 255 / 0.06);
   --sidebar-accent-foreground: #f3f3f7;
   --sidebar-border: rgb(255 255 255 / 0.08);
-  --sidebar-ring: #a796ff;
+  --sidebar-ring: #a99eff;
   --sidebar-width: 15.5rem;
   --sidebar-width-icon: 3.5rem;
   /* The sheet's lit top edge and its one shadow: offset and soft, so it rests on the field
@@ -140,21 +148,21 @@
   --status-success: var(--neon-mint);
   --status-active: var(--neon-cyan);
   --status-running: var(--neon-cyan);
-  --status-warning: var(--neon-yellow);
+  --status-warning: var(--now-amber);
   --status-needs-you: var(--neon-orange);
   --status-danger: var(--neon-red);
   --status-info: var(--neon-violet);
-  --status-neutral: #a4a4b6;
+  --status-neutral: var(--now-slate);
   /* Page rhythm: one gutter and one top inset for every route, so titles never jump between pages. */
   --page-gutter: 20px;
   --page-top: 24px;
-  --section-gap: 40px;
+  --section-gap: 26px;
 }
 @media (min-width: 640px) {
   :root { --page-gutter: 32px; --page-top: 32px; }
 }
 @media (min-width: 1024px) {
-  :root { --page-gutter: 40px; --page-top: 40px; }
+  :root { --page-gutter: 40px; --page-top: 40px; --section-gap: 40px; }
 }
 
 @layer base {
@@ -207,11 +215,26 @@ body::before {
   z-index: -1;
   inset: 0;
   background:
-    radial-gradient(72rem 48rem at 92% -14%, rgb(214 92 240 / 0.22), transparent 68%),
-    radial-gradient(62rem 44rem at -10% 6%, rgb(124 107 255 / 0.2), transparent 68%),
-    radial-gradient(58rem 40rem at 64% 120%, rgb(255 107 87 / 0.12), transparent 68%);
+    radial-gradient(72rem 48rem at 92% -14%, var(--wash-a), transparent 68%),
+    radial-gradient(62rem 44rem at -10% 6%, var(--wash-b), transparent 68%),
+    radial-gradient(58rem 40rem at 64% 120%, var(--wash-c), transparent 68%);
   content: "";
   pointer-events: none;
+}
+
+/* The backdrop takes its three colours from the state (the app shell sets --wash-a/b/c on <html>
+   from the Now summary: needs you orange, your turn amber, running cyan, clear blue). Registered, so
+   a change glides over 1.2 s; the defaults are the calm violet field. */
+@property --wash-a { syntax: "<color>"; inherits: true; initial-value: rgb(214 92 240 / 0.22); }
+@property --wash-b { syntax: "<color>"; inherits: true; initial-value: rgb(124 107 255 / 0.2); }
+@property --wash-c { syntax: "<color>"; inherits: true; initial-value: rgb(255 107 87 / 0.12); }
+:root {
+  --wash-a: rgb(214 92 240 / 0.22);
+  --wash-b: rgb(124 107 255 / 0.2);
+  --wash-c: rgb(255 107 87 / 0.12);
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root { transition: --wash-a 1.2s ease, --wash-b 1.2s ease, --wash-c 1.2s ease; }
 }
 
 /* Pages sit directly on the body's gradient field. */
@@ -236,6 +259,26 @@ body::before {
   .page-title { font-size: 2.375rem; }
 }
 .page-stack > * + * { margin-top: var(--section-gap); }
+/* The page header's mono eyebrow ("RELO · NOW"); the h1 below it stays for accessibility. */
+.page-eyebrow {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.42);
+}
+/* Entrance stagger: each child of a page stack rises 40 ms after the one before, up to eight. */
+.page-stack > * { --i: 0; }
+.page-stack > :nth-child(2) { --i: 1; }
+.page-stack > :nth-child(3) { --i: 2; }
+.page-stack > :nth-child(4) { --i: 3; }
+.page-stack > :nth-child(5) { --i: 4; }
+.page-stack > :nth-child(6) { --i: 5; }
+.page-stack > :nth-child(7) { --i: 6; }
+.page-stack > :nth-child(n + 8) { --i: 7; }
 
 /* Split: the deck still on the left, the live work scrolling on the right (the app's landscape).
    Judged by the page's own width, so the sidebar's state decides it as much as the window does. */
@@ -273,7 +316,7 @@ body::before {
   font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--muted-foreground);
   transition: color var(--dur-fast) var(--ease-out);
@@ -283,7 +326,7 @@ body::before {
 
 /* ---------- The Now deck ---------- */
 
-/* A grid, so the HUD's readouts share the core's cell: its four corners are the stage's corners. */
+/* A grid: the title row, the stage (the core, its gauge ring and satellites), the fleet line, then the rest. */
 .now-deck {
   position: relative;
   display: grid;
@@ -295,8 +338,6 @@ body::before {
 .now-deck > * { grid-column: 1; }
 .now-deck-head { grid-row: 1; }
 .now-deck-stage { grid-row: 2; }
-.now-deck-instruments { grid-row: 2; }
-.now-deck-more { grid-row: 3; }
 .now-deck-head {
   position: relative;
   z-index: 1;
@@ -309,11 +350,6 @@ body::before {
 .now-deck-stage {
   height: clamp(320px, 88vw, 420px);
   margin-inline: calc(var(--page-gutter) * -1);
-}
-.now-deck-instruments {
-  position: relative;
-  z-index: 1;
-  pointer-events: none;
 }
 @container split-page (min-width: 940px) {
   .now-deck-stage {
@@ -446,8 +482,8 @@ body::before {
 }
 .orb-stage-centre > * { position: relative; }
 
-/* The sheet: the one material for lists, cards and folds. A flat fill (no wash), one hairline, the
-   lit top edge and one resting shadow. No live backdrop blur: what lies under a sheet in the page is
+/* The sheet: the one material for lists, cards and folds. A top-to-bottom gradient fill, one
+   hairline, the lit top edge and one resting shadow. No live backdrop blur: what lies under a sheet in the page is
    the soft gradient field, which a blur leaves unchanged, and a backdrop blur is recomputed on every
    frame anything on the page animates (most of Now's GPU time on a 120 Hz display). Surfaces that
    float over moving content (bars, menus, dialogs) keep theirs. */
@@ -455,7 +491,23 @@ body::before {
   position: relative;
   background: var(--sheet-fill);
   border: 1px solid var(--sheet-border);
-  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 8px -2px rgb(0 0 0 / 0.22);
+}
+@media (min-resolution: 2dppx) {
+  .glass { border-width: 0.5px; }
+}
+/* The lit top edge: a 1px gradient (white .12 fading by 25% of the height), masked to the border box. */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(180deg, var(--sheet-edge), transparent 25%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
 }
 
 /* ---------- Sidebar: a floating glass rail that folds to its icons ---------- */
@@ -669,7 +721,7 @@ body::before {
   font-size: 10.5px;
   font-weight: 600;
   line-height: 1.2;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--muted-foreground);
 }
@@ -689,7 +741,9 @@ body::before {
 .tone-orange { --tone: var(--neon-orange); }
 .tone-yellow { --tone: var(--neon-yellow); }
 .tone-red { --tone: var(--neon-red); }
-.tone-neutral { --tone: #8d93a8; }
+.tone-amber { --tone: var(--now-amber); }
+.tone-slate { --tone: var(--now-slate); }
+.tone-neutral { --tone: var(--now-slate); }
 
 /* The card set's tokens (components/card/, styles/card.css). One padding, gap and radius for every
    card; type roles: eyebrow (mono 11), title (15), status (13), meta (12). Actions are 36px, 44px on
@@ -727,7 +781,7 @@ body::before {
   height: 7px;
   flex-shrink: 0;
   border-radius: 999px;
-  background: var(--tone, #a4a4b6);
+  background: var(--tone, var(--now-slate));
   content: "";
 }
 .status-dot[data-live="true"]::before {
@@ -745,7 +799,7 @@ body::before {
   padding: 14px 16px;
   border: 1px solid color-mix(in srgb, var(--tone) 22%, var(--hairline));
   border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--tone) 6%, var(--sheet-fill));
+  background: color-mix(in srgb, var(--tone) 6%, rgb(255 255 255 / 0.04));
   box-shadow: var(--glass-highlight);
 }
 .notice[data-variant="quiet"] {
@@ -774,7 +828,7 @@ body::before {
 }
 
 /* The work meter (StepTrack, iOS LiveStepsBar): 4px capsules 3px apart with 3px above and below.
-   Done steps in the card's tone, the current one white at 28%, pending ones white at 10%. */
+   Done steps in the card's tone, the current one the tone at 32%, pending ones white at 10%. */
 .step-bar {
   position: relative;
   display: flex;
@@ -790,10 +844,10 @@ body::before {
   border-radius: 999px;
   background: rgb(255 255 255 / 0.1);
 }
-.step-bar > span[data-step="current"] { background: rgb(255 255 255 / 0.28); }
+.step-bar > span[data-step="current"] { background: color-mix(in srgb, var(--tone, var(--neon-cyan)) 32%, transparent); }
 /* The current top-level step fills to the server's fraction of its substeps (or its own progress). */
 .step-bar > span[data-step="current"][style*="--seg-fill"] {
-  background: linear-gradient(90deg, var(--tone, var(--neon-cyan)) var(--seg-fill), rgb(255 255 255 / 0.18) var(--seg-fill));
+  background: linear-gradient(90deg, var(--tone, var(--neon-cyan)) var(--seg-fill), color-mix(in srgb, var(--tone, var(--neon-cyan)) 32%, transparent) var(--seg-fill));
 }
 .step-bar > span[data-step="done"] { background: var(--tone, var(--neon-cyan)); }
 
@@ -946,11 +1000,11 @@ body::before {
    "chosen" as a segment and the sidebar's page). */
 .pill {
   display: inline-flex;
-  min-height: 32px;
+  min-height: 36px;
   align-items: center;
   gap: 6px;
-  padding: 0 13px;
-  border: 1px solid var(--control-border);
+  padding: 0 14px;
+  border: 0.75px solid var(--control-border);
   border-radius: 999px;
   background: rgb(255 255 255 / 0.03);
   color: var(--muted-foreground);
@@ -963,10 +1017,11 @@ body::before {
     border-color var(--dur-fast) var(--ease-out);
 }
 .pill:hover { color: var(--foreground); background: var(--control-fill); }
+/* Chosen: the interface tint at 17% inside a 0.75px tint border (the iPhone's selected filter capsule). */
 .pill[aria-pressed="true"],
 .pill[data-active="true"] {
-  border-color: var(--hairline-strong);
-  background: var(--control-fill-active);
+  border-color: color-mix(in srgb, var(--now-violet) 42%, transparent);
+  background: color-mix(in srgb, var(--now-violet) 17%, transparent);
   color: var(--foreground);
 }
 select.pill {
@@ -981,7 +1036,7 @@ select.pill {
   background-color: rgb(255 255 255 / 0.03);
 }
 select.pill:hover { background-color: var(--control-fill); }
-select.pill[data-active="true"] { background-color: var(--control-fill-active); }
+select.pill[data-active="true"] { background-color: color-mix(in srgb, var(--now-violet) 17%, transparent); }
 select.pill option { background: var(--surface); color: var(--foreground); }
 @media (pointer: coarse) { .pill { min-height: 44px; } }
 
@@ -991,21 +1046,22 @@ select.pill option { background: var(--surface); color: var(--foreground); }
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
   color: color-mix(in srgb, var(--tone, var(--neon-violet)) 82%, white);
   background: color-mix(in srgb, var(--tone, var(--neon-violet)) 15%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone, var(--neon-violet)) 22%, transparent);
+  box-shadow: inset 0 0 0 0.75px color-mix(in srgb, var(--tone, var(--neon-violet)) 26%, transparent);
 }
-.icon-tile svg { width: 16px; height: 16px; }
-.icon-tile[data-size="md"] { width: 36px; height: 36px; }
-.icon-tile[data-size="md"] svg { width: 18px; height: 18px; }
+.icon-tile svg { width: 14px; height: 14px; }
+/* Machines are the exception: 30px, radius 9 (machine cards carry their own tile, .sess-machine-tile). */
+.icon-tile[data-size="md"] { width: 30px; height: 30px; border-radius: 9px; }
+.icon-tile[data-size="md"] svg { width: 16px; height: 16px; }
 /* Neutral tiles (a phone, a CLI key) are the plain control fill so coloured tiles keep their meaning. */
 .icon-tile.tone-neutral {
   color: var(--foreground);
   background: var(--control-fill);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  box-shadow: inset 0 0 0 0.75px var(--hairline);
 }
 
 /* Loading placeholders that shimmer once the wait is noticeable. The sheen is a pseudo-element
@@ -1034,12 +1090,28 @@ select.pill option { background: var(--surface); color: var(--foreground); }
   animation: rise-in var(--dur-base) var(--ease-out) both;
 }
 @keyframes rise-in {
-  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  from { opacity: 0; transform: translateY(8px); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .page-stack > * { animation: rise-in var(--dur-base) var(--ease-out) both; animation-delay: calc(var(--i) * 40ms); }
 }
 .rise-in-1 { animation-delay: 40ms; }
 .rise-in-2 { animation-delay: 80ms; }
 .rise-in-3 { animation-delay: 120ms; }
 .rise-in-4 { animation-delay: 160ms; }
+
+/* A card's answers: two columns of 42px capsules, the primary first (filled in the card's tone via
+   Button `tone`; the rest are the secondary glass). */
+.card-answer {
+  display: inline-flex;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 21px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.card-answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 
 /* Horizontally scrolling pill rows keep the swipe but hide the bar, as on the iPhone. */
 .no-scrollbar { scrollbar-width: none; }
@@ -1053,3 +1125,5 @@ select.pill option { background: var(--surface); color: var(--foreground); }
 @import "./styles/history.css";
 @import "./styles/plan-tree.css";
 @import "./styles/loading.css";
+@import "./styles/system.css";
+@import "./styles/machine.css";

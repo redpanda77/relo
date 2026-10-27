@@ -14,7 +14,7 @@ struct ReloRootView: View {
     }
     var body: some View {
         TabView(selection: $navigation.tab) {
-            stack(.now) { NowView(model: model, tab: $navigation.tab).reloAttentionBanner(model: model) }
+            stack(.now) { NowView(model: model, tab: $navigation.tab) }
                 .tabItem { Label("Now", systemImage: "waveform.circle") }.tag(ReloTab.now)
             stack(.history) { HistoryView(model: model).reloAttentionBanner(model: model) }
                 .tabItem { Label("History", systemImage: "clock") }.tag(ReloTab.history)
@@ -108,10 +108,13 @@ private struct ReloAttentionBanner: View {
     var body: some View {
         if let problem {
             let color = problem == .unreachable ? Color.reloWarning : Color.reloAttention
-            ReloCard(tint: color) {
+            ReloCard(tint: color, edge: true) {
                 HStack(alignment: .top, spacing: ReloLayout.itemSpacing) {
                     Image(systemName: problem == .unreachable ? "wifi.exclamationmark" : "bell.slash.fill")
-                        .font(.title3).foregroundStyle(color).frame(width: 28)
+                        .font(.body.weight(.semibold)).foregroundStyle(color)
+                        .frame(width: 34, height: 34)
+                        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(color.opacity(0.16)))
+                        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(color.opacity(0.35), lineWidth: 0.5))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
                         CardTitle(problem == .unreachable ? "Can't reach your Relo server" : "Notifications are off")

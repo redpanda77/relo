@@ -152,6 +152,8 @@ changed twice while the command ran, run the same command again.
 
 ## Encryption unavailable
 
+Relo for Mac running on its own never needs a phone or encryption: nothing leaves the Mac, so nothing is sealed. This section is for a server with phones.
+
 **Symptom.** "End-to-end encryption is on for this server but the phone's keys are unavailable.
 Nothing was sent." (code `E2EE_UNAVAILABLE`), or a refusal with `end_to_end_required`.
 

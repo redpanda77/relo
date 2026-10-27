@@ -1,4 +1,5 @@
 import { cardOwner } from "./card-owner.js";
+import { loadIslandCounts } from "../api/now-routes.js";
 import { sealedAlertFor,storedSealedCard,type SealedNotice } from "../sealed-content.js";
 import { createHash,randomUUID } from "node:crypto";
 import { isQuestionBehavior } from "../choice-questions.js";
@@ -8,6 +9,7 @@ import { retireUnsentActivityFrames } from "../activity-delivery-frame.js";
 import { syncActivityPresentationLease } from "../activity-presentation-leases.js";
 import type { Database } from "../db.js";
 import { publicId } from "../ids.js";
+import { overviewReaderIds } from "../owner-overview.js";
 import {
 persistedPresentationColumns,presentationCommandProjection,
 presentationFromRow,
@@ -185,7 +187,7 @@ export async function createActivityCommands(
     sequence: Number(input.activity.sequence),operation: input.operation,occurredAt: input.occurredAt,
     mutationTime: input.activity.updated_at ?? input.activity.created_at });
   const targetIds = input.requestedDeviceIds ?? input.activity.target_device_ids;
-  const devices = targetIds === null || targetIds === undefined
+  const phones = targetIds === null || targetIds === undefined
     ? await eligibleDevices(query,input.principalId,null)
     : await immutableActivityTargets(query,input.principalId,targetIds);
   const canonical = presentationFromRow(input.activity);
@@ -196,6 +198,13 @@ export async function createActivityCommands(
   const sourceName = typeof provider === "string" && provider.trim() ? provider.trim() : input.sourceName;
   const decisionKind = input.operation !== "end" && isQuestionBehavior(canonical.behavior.type)
     ? canonical.behavior.type : null;
+  // Owner overview devices (the Mac) read the card from Now. With no phone to hold a question's copy,
+  // the Mac holds it (stored, never pushed): the question is then listed and answered from the Mac.
+  const readerIds = await overviewReaderIds(query,input.principalId,null);
+  const copyHolders = !phones.length && decisionKind && readerIds.length
+    ? await immutableActivityTargets(query,input.principalId,readerIds) : [];
+  const devices = [...phones,...copyHolders];
+  const holderIds = new Set(copyHolders.map((device) => device.id));
   const decisionOptions = canonical.behavior.type === "choice" ? canonical.behavior.options : undefined;
   // Native decisions keep their parent's absolute deadline. Device projections
   // remain separate, but only this native owner can admit their subject keys.
@@ -206,7 +215,15 @@ export async function createActivityCommands(
     (new Date(input.activity.expires_at).getTime()-Date.parse(decisionOccurredAt))/1_000)));
   let durableCommands = 0;
   let apnsJobs = 0;
-  const owner = await cardOwner(query,input.activity,input.operation);
+  // The account's island counts ride on every card (the Mac notch's satellites); the derived pass refreshes them.
+  // The project's colour slot rides along, so the Lock Screen draws the project in the colour every app uses.
+  const projectSlot = (await query.query(
+    `SELECT p.palette_ordinal % 12 AS slot FROM live_activities a
+     JOIN resource_projects p ON p.id=a.project_resource_id AND p.principal_id=a.principal_id WHERE a.id=$1`,
+    [input.activity.id])).rows[0]?.slot;
+  const owner = { ...await cardOwner(query,input.activity,input.operation),
+    ...await loadIslandCounts(query as any,input.principalId),
+    ...(projectSlot === undefined || projectSlot === null ? {} : { projectSlot: Number(projectSlot) }) };
   // One question at a time: a card update that asks again retires the question it replaces.
   if (decisionKind && input.operation === "update") {
     await cancelPendingActivityInteractions(query,input.principalId,input.activity.id);
@@ -223,6 +240,7 @@ export async function createActivityCommands(
     const stepsComponent = canonical.components.find((component) => component.type === "steps");
     const stepId = stepsComponent?.type === "steps" ? stepsComponent.plan?.currentId ?? undefined : undefined;
     const remoteActivityEligible = input.apnsMode !== "disabled"
+      && !holderIds.has(device.id)
       && device.apns_environment === input.apnsMode
       && !device.revoked_at
       && device.live_activity_authorization === "authorized";
@@ -357,7 +375,7 @@ export async function createActivityCommands(
     await retireUnsentActivityFrames(query,input.activity.id,device.id,
       Number(input.activity.generation),Number(input.activity.sequence));
   }
-  return { eligibleDevices: devices.length, durableCommands, apnsJobs };
+  return { eligibleDevices: phones.length, durableCommands, apnsJobs, readers: readerIds.length };
 }
 
 export async function cleanupUndeliverableTerminalTokens(query: Queryable, activityId: string): Promise<void> {

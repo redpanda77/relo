@@ -201,9 +201,11 @@ suite("Session works: lifecycle, plan, isolation",() => {
     const labels = Array.from({ length: 10 },(_,index) => ({ label: `Phase ${index + 1}` }));
     const first = await start({ plan: { op: "set",steps: labels } });
     expect(first.status).toBe(201);
-    const items = (await loadInboxSnapshot(db,{ principalId })).items.filter((item) => item.activity?.plan);
+    const snapshot = await loadInboxSnapshot(db,{ principalId });
+    // Each work's plan comes once, in the snapshot's works map.
+    const items = snapshot.items.filter((item) => item.activity?.workId);
     expect(items.length).toBeGreaterThan(0);
-    const plan = items[0]!.activity!.plan!;
+    const plan = snapshot.works![items[0]!.activity!.workId!]!.plan!;
     expect(plan.map((step) => step.label)).toEqual(labels.map((step) => step.label));
     expect(plan[0]).toMatchObject({ id: "s1",state: "current" });
     expect(items[0]!.activity!.steps).toMatchObject({ done: 0,total: 10 });

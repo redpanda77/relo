@@ -13,7 +13,7 @@ const COLOR: Record<SyncMode, string> = {
 }
 
 /**
- * Where the data stands: a lit dot and "Live · synced 14:02", turning stale on its own clock. While
+ * Where the data stands, in mono caps: a lit dot and "LIVE 2:14 PM" / "OFFLINE · 2:14 PM" / "SYNCING", turning stale on its own clock; it sits at the trailing end of the header row. While
  * a refetch is in flight the dot turns the running colour and pulses; each successful sync sends
  * one ring out from it. The words crossfade when the state changes, the colour eases (`--tone`), and
  * offline the dot holds still. The words never flash "Syncing" for a sub-second refetch.
@@ -24,14 +24,14 @@ export function SyncStatus({ syncedAt, syncing = false, failed = false, classNam
   const mode = syncModeOf({ syncing, online: online && !failed, syncedAt, now })
   const settled = syncModeOf({ online: online && !failed, syncedAt, now })
   const time = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(syncedAt)
-  const text = settled === "live" ? `Live · synced ${time}` : settled === "stale" ? `Stale · ${time}` : `Offline · ${time}`
+  const text = mode === "syncing" ? "SYNCING" : settled === "live" ? `LIVE ${time}` : settled === "stale" ? `STALE · ${time}` : `OFFLINE · ${time}`
   // One ring per successful sync after the first paint (adjusted while rendering, no effect).
   const [pings, setPings] = React.useState({ syncedAt, count: 0 })
   if (pings.syncedAt !== syncedAt) setPings({ syncedAt, count: pings.count + 1 })
   return (
     <span
-      className={cn("sync-status micro inline-flex items-center gap-2 tracking-[0.1em]", className)}
-      style={{ ["--tone" as string]: COLOR[settled], color: "var(--tone)" }}
+      className={cn("sync-status inline-flex items-center gap-1.5 font-mono text-[9px] leading-3 font-semibold tracking-[1px] uppercase", className)}
+      style={{ ["--tone" as string]: COLOR[mode === "syncing" ? "syncing" : settled], color: "var(--tone)" }}
       data-sync={mode}
     >
       <span

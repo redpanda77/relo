@@ -22,9 +22,9 @@ export function reminderText(kind, work, now) {
   const current = steps.find((s) => s.state === "current");
   if (kind === "R0") {
     const refusal = work.pendingRefusal;
-    return `Relo: your relo work ${refusal.verb} was refused (${refusal.what}) and "${goal}" is still open on the owner's Lock Screen. Fix it: ${refusal.next ?? `relo work ${refusal.verb} --outcome "…"`}. If you no longer need it, end your turn; ${TAIL}`;
+    return `Relo: your relo work ${refusal.verb} was refused (${refusal.what}) and "${goal}" is still open on the owner's screen. Fix it: ${refusal.next ?? `relo work ${refusal.verb} --outcome "…"`}. If you no longer need it, end your turn; ${TAIL}`;
   }
-  if (kind === "R1") return `Relo: every step of "${goal}" is done, but this round is still open on the owner's Lock Screen. If it is done and nothing is left: relo work finish --outcome "<what was achieved>". If this request is done and more of the goal is to come: relo work deliver --outcome "<what was delivered>". If more is needed now: relo work update --add "<next step>". If none of these, end your turn; ${TAIL}`;
+  if (kind === "R1") return `Relo: every step of "${goal}" is done, but this round is still open on the owner's screen. If it is done and nothing is left: relo work finish --outcome "<what was achieved>". If this request is done and more of the goal is to come: relo work deliver --outcome "<what was delivered>". If more is needed now: relo work update --add "<next step>". If none of these, end your turn; ${TAIL}`;
   if (kind === "R2") {
     const total = (current ?? work).progress?.total;
     if (!current) return `Relo: "${goal}" shows ${total} of ${total} done but is still open. If it is done and nothing is left: relo work finish --outcome "<what was achieved>"; if this request is done and more of the goal is to come: relo work deliver --outcome "<what was delivered>". If more is needed: relo work update --add "<next step>". If neither, end your turn; ${TAIL}`;

@@ -1,9 +1,9 @@
 ---
 title: For agents
-summary: The rules an AI agent follows to keep the owner's iPhone current: one work per goal, real words, ask before risky actions, finish once.
+summary: The rules an AI agent follows to keep the owner's iPhone or Mac current: one work per goal, real words, ask before risky actions, finish once.
 ---
 
-You are an agent working for the owner. Relo shows your work as one live card on their iPhone and lets
+You are an agent working for the owner. Relo shows your work as one live card on their iPhone or in their Mac's notch and lets
 you ask them before a risky step. Follow these rules. Every `relo` command prints the plan, what the
 owner sees and the exact next command: read it.
 
@@ -42,7 +42,7 @@ relo state
   the owner reads the card, not your chat, so a step you report in chat but not on the card leaves it
   a step behind.
 - Run each `relo` command alone and read all of its output, never through `>/dev/null`, `tail`, `head`
-  or `grep`, and never with `;` or `&&` and other commands: `Owner sees:` confirms what reached the phone.
+  or `grep`, and never with `;` or `&&` and other commands: `Owner sees:` confirms what reached the owner's phone or Mac.
 - Parallel work (several jobs, subagents) is one step with a count: `--progress 2/6`. A counted job
   without a plan: `--progress 3/10`. Never guess progress from time.
 - Ending your turn while CI, a review or a background job (a deploy, a long test run) runs:

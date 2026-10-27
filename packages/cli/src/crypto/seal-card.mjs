@@ -4,11 +4,11 @@
 // phone; the widget opens it on the phone. An update may change one field, but the phone needs the
 // whole card each time, so the CLI keeps each card's text in a private local cache (0600, removed
 // when the card ends) and seals the merged text. Counts and progress numbers stay readable.
-import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { writeFileAtomic } from "../shared/atomic-write.mjs";
 import { identityKeys } from "./keystore.mjs";
-import { opaqueIdentity, sealablePhones, sealingUnavailable, sealNotice, skippedNote, trustFor } from "./seal-notice.mjs";
+import { noRecipientReason, opaqueIdentity, sealRecipients, sealingUnavailable, sealNotice, skippedNote, trustFor } from "./seal-notice.mjs";
 import { loadKnownNames } from "./opaque-names.mjs";
 import { sealedCardDirectory } from "./paths.mjs";
 import { ReloError } from "../shared/errors.mjs";
@@ -33,14 +33,7 @@ export async function loadCardText(directory, cardId) {
 export async function saveCardText(directory, cardId, text) {
   if (!CARD_ID.test(cardId ?? "")) return;
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const temporary = join(directory, `.${cardId}.${randomBytes(6).toString("hex")}.tmp`);
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(JSON.stringify(text));
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, join(directory, `${cardId}.json`));
+  await writeFileAtomic(join(directory, `${cardId}.json`), JSON.stringify(text));
 }
 
 export async function forgetCardText(directory, cardId) {
@@ -166,10 +159,10 @@ export function placeholderCardBody(body) {
 export async function sealCardRequest({ body, cardId, key, client, config, dependencies, notes, deviceIds }) {
   const trust = await trustFor({ client, config, dependencies, notes });
   if (!trust) return { body: serverCardBody(body), text: null };
-  const { store, devices } = trust;
-  const { eligible, readers, skipped } = sealablePhones(store, config.apiUrl, devices, deviceIds);
+  const { store } = trust;
+  const { eligible, readers, skipped } = await sealRecipients({ trust, client, config, deviceIds });
   if (eligible.length === 0) {
-    if (trust.committed) throw sealingUnavailable("no trusted phone has a current key");
+    if (trust.committed) throw sealingUnavailable(noRecipientReason(skipped));
     return { body: serverCardBody(body), text: null };
   }
   // Like notify and ask: a phone that cannot open the card is named, with why, never dropped silently.

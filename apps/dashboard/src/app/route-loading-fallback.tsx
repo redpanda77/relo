@@ -3,8 +3,10 @@ import * as React from "react"
 import { loadingPage, type SkeletonKind } from "@/app/loading-page"
 
 import { markPageEnter } from "@/app/page-enter"
+import { Readout } from "@/components/atoms/readout"
 import { Notice } from "@/components/molecules/notice"
 import { Button } from "@/components/ui/button"
+import { GAUGES } from "@/lib/now-header"
 
 /** A load quicker than this shows nothing at all. */
 export const ROUTE_LOADING_DELAY_MS = 400
@@ -235,25 +237,26 @@ export function RouteLoadingFallback({ kind: kindProp }: { kind?: SkeletonKind }
               </header>
               <div className="orb-stage now-deck-stage" data-orb-stage="loading" data-loading-core>
                 <span aria-hidden="true" className="orb-stage-painted" />
-              </div>
-              <div className="now-deck-instruments">
-                <div aria-hidden="true" className="now-deck-readouts">
-                  {["Sessions", "Waiting", "Running", "Needs you"].map((label) => (
-                    <div key={label} className="flex min-w-0 flex-col gap-1.5" data-readout={label} style={{ ["--n" as string]: 0 }}>
-                      <span className="readout-label micro truncate">{label}</span>
-                      <span className="skeleton loading-readout" />
+                <div className="orb-stage-centre">
+                  <div aria-hidden="true" className="now-hud">
+                    <div className="now-hud-frame">
+                      <div className="now-deck-readouts">
+                        {GAUGES.map((gauge) => (
+                          <Readout key={gauge.key} label={gauge.label} value="–" color={gauge.color} lit={false} />
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  </div>
                 </div>
               </div>
             </section>
           </div>
           <div className="split-page-body page-stack" aria-hidden="true">
-            {/* As React's Now opens: the "Since you looked" line, its rows 12px under it. */}
+            {/* As React's Now opens: the "Since you looked" caption, its rows 10px under it. */}
             <div className="now-block">
-              <section className="space-y-3">
-                <p className="text-sm loading-since">
-                  <span className="skeleton loading-line" style={{ width: "55%" }} />
+              <section className="now-section now-since space-y-2.5">
+                <p className="micro loading-heading">
+                  <span className="skeleton loading-line" style={{ width: "7rem" }} />
                 </p>
                 <SkeletonWorkRows count={3} />
               </section>

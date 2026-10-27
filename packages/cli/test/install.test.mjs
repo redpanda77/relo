@@ -19,7 +19,7 @@ function npm(temp, args, options = {}) {
     ...options.env,
   };
   const { env: _ignored, ...rest } = options;
-  return execFileSync("npm", args, { encoding: "utf8", env, ...rest });
+  return execFileSync("npm", args, { encoding: "utf8", env, shell: process.platform === "win32", ...rest });
 }
 
 async function versionedFixture(temp, version) {
@@ -48,7 +48,7 @@ async function versionedFixture(temp, version) {
   return { packed, tarball: join(temp, packed.filename) };
 }
 
-test("uses distinct artifacts for install, update, exact rollback, and removal without touching state", async () => {
+test("uses distinct artifacts for install, update, exact rollback, and removal without touching state", { skip: process.platform === "win32" && "POSIX npm layout: a global install on Windows is prefix\relo.cmd (npm.cmd needs a shell), not prefix/bin/relo" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "relo-install-"));
   const prefix = join(temp, "prefix");
   const home = join(temp, "home");

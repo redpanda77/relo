@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "signin",
+  "description": "The sign-in window shows the server's own web page. It is remote content and is granted nothing: it can call no app command and no plugin. The relo:// callback is caught by the host's navigation handler (auth_window.rs), not by the page.",
+  "windows": ["signin"],
+  "permissions": []
+}

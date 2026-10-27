@@ -11,7 +11,7 @@ const SRC = fileURLToPath(new URL("../src/", import.meta.url));
 
 test("every RELO_ and XDG_ variable the CLI reads is listed, and every listed one is read", () => {
   const read = new Set();
-  for (const name of readdirSync(SRC, { recursive: true }).filter((file) => file.endsWith(".mjs") && file !== "shared/environment.mjs")) {
+  for (const name of readdirSync(SRC, { recursive: true }).map((file) => file.replaceAll("\\", "/")).filter((file) => file.endsWith(".mjs") && file !== "shared/environment.mjs")) {
     const code = readFileSync(join(SRC, name), "utf8").split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*\*)/u.test(line)).join("\n");
     for (const [variable] of code.matchAll(/\b(?:RELO|XDG)_[A-Z_]+\b/gu)) read.add(variable);
   }
@@ -22,7 +22,7 @@ test("every RELO_ and XDG_ variable the CLI reads is listed, and every listed on
 
 test("one state root: only work/state-file.mjs builds a path in the state folder", () => {
   const offenders = [];
-  for (const name of readdirSync(SRC, { recursive: true }).filter((file) => file.endsWith(".mjs") && !["work/state-file.mjs", "shared/environment.mjs"].includes(file))) {
+  for (const name of readdirSync(SRC, { recursive: true }).map((file) => file.replaceAll("\\", "/")).filter((file) => file.endsWith(".mjs") && !["work/state-file.mjs", "shared/environment.mjs"].includes(file))) {
     const code = readFileSync(join(SRC, name), "utf8").split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*\*)/u.test(line)).join("\n");
     if (/XDG_STATE_HOME|["']\.local["']\s*,\s*["']state["']|\.local\/state/u.test(code)) offenders.push(name);
   }

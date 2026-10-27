@@ -87,4 +87,51 @@ struct HistoryRowProjectionTests {
         #expect(HistoryRowProjection.row(question, now: now.addingTimeInterval(120)).outcome == .unanswered)
         #expect(HistoryRowProjection.daySummary([questionRow, messageRow]) == "1 need you · 1 message")
     }
+
+    @Test func aRoundShowsOnceAsItsCardNotAlsoAsItsOutcomeMessage() throws {
+        let done: [String: Any] = ["state": "ended", "outcome": "completed", "status": "Released", "updates": 2,
+                                   "startedAt": "2026-10-06T21:00:00Z", "endedAt": "2026-10-06T21:04:00Z"]
+        let outcome: [String: Any] = ["id": "ntf_outcome", "kind": "notification", "sourceName": "Claude Code",
+            "title": "Ship works", "privacy": "standard", "createdAt": "2026-10-06T21:05:00Z", "updatedAt": "2026-10-06T21:05:00Z",
+            "contentSummary": ["summary": "", "format": "text", "byteLength": 0], "outcomeOf": "act_one"]
+        var orphan = outcome
+        orphan["id"] = "ntf_orphan"; orphan["outcomeOf"] = "act_gone"
+        let items = try decode([cardEvent("ntf_end", card: "act_one", sequence: 4, topic: "Release", activity: done), outcome, orphan])
+        #expect(items.first { $0.id == "ntf_outcome" }?.outcomeOf == "act_one")
+        #expect(InboxHistoryProjection.readable(items).map(\.id).sorted() == ["ntf_end", "ntf_orphan"],
+                "the message stays when its card is not loaded")
+    }
+
+    @Test func aLaterRoundIsTitledByItsRequestAndTheFirstByTheGoal() {
+        var work = ReloWork(id: "wrk_1")
+        work.phases = [.init(id: "r1", title: "Ship works", outcome: "Built", state: .done),
+                       .init(id: "r2", title: "Push and release", outcome: "Released", state: .done),
+                       .init(id: "r3", title: "Polish", state: .current)]
+        #expect(HistoryRowProjection.round(of: work) == .init(n: 2, title: "Push and release"))
+        work.phases = [.init(id: "r1", title: "Ship works", state: .current)]
+        #expect(HistoryRowProjection.round(of: work) == .init(n: 1, title: "Ship works"))
+        work.phases = [.init(id: "build", title: "Build", state: .done)]
+        #expect(HistoryRowProjection.round(of: work) == nil, "only rounds (r<n>) count")
+    }
+
+    @Test func aQuietHourOrMoreIsMarkedOnTheRail() {
+        let newer = now
+        #expect(HistoryTimeline.quietGap(newer: newer, older: newer.addingTimeInterval(-59 * 60)) == nil)
+        #expect(HistoryTimeline.quietGap(newer: newer, older: newer.addingTimeInterval(-(3 * 3600 + 45 * 60))) == "3h 45m quiet")
+    }
+
+    @Test func aDayCountsItsSettledRowsByMeaningInDisplayOrder() throws {
+        let stopped: [String: Any] = ["state": "ended", "outcome": "failed", "status": "Tests failed", "updates": 1,
+                                      "startedAt": "2026-10-06T21:00:00Z", "endedAt": "2026-10-06T21:02:00Z"]
+        let done: [String: Any] = ["state": "ended", "outcome": "completed", "status": "Shipped", "updates": 1,
+                                   "startedAt": "2026-10-06T21:00:00Z", "endedAt": "2026-10-06T21:03:00Z"]
+        let items = try decode([cardEvent("ntf_a", card: "act_a", sequence: 1, topic: "A", activity: stopped),
+                                cardEvent("ntf_b", card: "act_b", sequence: 2, topic: "B", activity: done),
+                                cardEvent("ntf_c", card: "act_c", sequence: 3, topic: "C", activity: done)])
+        let rows = HistoryRowProjection.rows(items, events: items, now: now)
+        #expect(HistoryTimeline.counts(rows) == [.init(signal: .done, count: 2), .init(signal: .failed, count: 1)])
+        #expect(HistoryTimeline.countLabel(.failed, count: 1) == "Stopped")
+        let day = HistoryTimeline.activity(rows, on: rows[0].at, now: rows[0].at.addingTimeInterval(3 * 86_400))
+        #expect(day.rows.count == 3, "an earlier day runs to its end")
+    }
 }

@@ -17,7 +17,7 @@ test("compact with an open work injects the echo", () => {
   assert.deepEqual(claudeCode.render({ role: "restore", context: out.context }), { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: out.context } },
     "the Claude Code adapter renders the neutral outcome as today's JSON");
   assert.equal(out.context, [
-    `Relo: this session has open work (as of 10:42; Relo keeps it on the owner's Lock Screen).`,
+    `Relo: this session has open work (as of 10:42; Relo keeps it on the owner's screen).`,
     `Work wrk_8f2 "Ship the 0.17 release" (open)`,
     `  [x] s1 Bump versions`,
     `  [>] s2 Run local gates   (3/5)`,

@@ -15,7 +15,7 @@ export function sessionName(dependencies) {
   try {
     const cached = latest.get(dependencies) ?? readSessionFileSync(dependencies, caller.sessionKey)?.titleCache ?? {};
     const { title, cache } = resolveSessionTitle(adapterFor(caller.harness), { session_id: caller.sessionId, cwd: dependencies.cwd },
-      { env: dependencies.env, home: dependencies.home, now: (dependencies.now ?? Date.now)(), titlePath: cached.titlePath, titleMissAt: cached.titleMissAt });
+      { env: dependencies.env, home: dependencies.home, now: (dependencies.now ?? Date.now)(), titlePath: cached.titlePath, titleMissAt: cached.titleMissAt, nameCache: cached.nameCache });
     latest.set(dependencies, cache ?? {});
     return title;
   } catch {

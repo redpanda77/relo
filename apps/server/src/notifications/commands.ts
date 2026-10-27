@@ -5,6 +5,7 @@ import { z } from "zod";
 import { relevanceItemSchema } from "@relo/notification-contracts";
 import { credentialConversationId } from "../communication.js";
 import { publicId } from "../ids.js";
+import { overviewReaderIds } from "../owner-overview.js";
 import { persistNotificationContent } from "../notification-content.js";
 import { assertOrdinaryDeliveryIntentWithinBudget } from "../delivery-serialization.js";
 import { independentSubjectKey,lockSubjectAdmission } from "../relevance/commands.js";
@@ -36,7 +37,8 @@ export async function withdrawNotification(db: Database,actor: NotificationActor
   finally{tx.release();}
 }
 
-const deliverySchema=z.object({eligibleDevices:z.number().int().nonnegative(),durableCommands:z.number().int().nonnegative(),apnsJobs:z.number().int().nonnegative()}).strict();
+const deliverySchema=z.object({eligibleDevices:z.number().int().nonnegative(),durableCommands:z.number().int().nonnegative(),apnsJobs:z.number().int().nonnegative(),
+  readers:z.number().int().nonnegative().optional()}).strict();
 const interactionStateSchema=z.enum(["pending","approved","denied","yes","no","replied","expired","canceled"]);
 
 function parseReceipt(row: CreationEventRow,eligibleDevices: number): NotificationReceipt {
@@ -63,7 +65,11 @@ export async function createNotificationInTransaction(tx: SubjectTransaction,act
   if(command.interaction?.kind==="choice") command={...command,deviceIds:await choiceDeviceTargets(tx,actor.principalId,command.deviceIds)};
   await lockSubjectAdmission(tx,subjectActor,command.relevance?.subjectKey??independentSubjectKey(command.idempotencyKey));
   const eligible=await eligibleNotificationDevices(tx,actor,command.deviceIds);
-  if(command.deviceIds&&eligible.length!==command.deviceIds.length) return {kind:"invalid_device_selection"};
+  // A named owner overview device (the Mac) is a valid recipient but never a push target: it reads the
+  // notice from Now, and delivery jobs below only ever go to phones (owner-overview.ts).
+  const readers=await overviewReaderIds(tx,actor.principalId,null);
+  const named=command.deviceIds?new Set([...eligible.map((device)=>device.id),...readers.filter((id)=>command.deviceIds!.includes(id))]):null;
+  if(command.deviceIds&&named!.size!==command.deviceIds.length) return {kind:"invalid_device_selection"};
   const event=await insertNotificationEvent(tx,actor,command);
   if(!event) {
     const receipt=await notificationReceiptByKey(tx,actor,command.idempotencyKey);
@@ -87,7 +93,7 @@ export async function createNotificationInTransaction(tx: SubjectTransaction,act
     conversationId,avatarUrl:command.avatarUrl??null,imageUrl:command.imageUrl,deepLink:command.deepLink,notificationId:publicId("ntf",event.id),
     interactionKind:command.interaction?.kind??null,payload:{...command.payload,...(request?{interactionId:publicId("int",request.id),interactionType:command.interaction!.kind}:{})}});
   const apnsJobs=await insertNotificationDelivery(tx,actor,event.id,command.deviceIds,dependencies.apnsMode,command.quiet??false);
-  const delivery={eligibleDevices:eligible.length,durableCommands:1,apnsJobs};
+  const delivery={eligibleDevices:eligible.length,durableCommands:1,apnsJobs,readers:readers.length};
   await saveNotificationDelivery(tx,event.id,delivery);
   return {kind:"created",eventId:event.id,createdAt:event.created_at,delivery,relevance:admission.relevance,
     interaction:request?{id:request.id,state:request.state,expiresAt:request.expires_at}:null};

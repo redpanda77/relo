@@ -7,11 +7,13 @@
 // handles back. Handles are lowercase base32 so the server's case folding and label limits keep
 // them intact. Each computer has its own grouping key: the same project used from two computers
 // gets two handles, and the phone shows the same name for both.
-import { createHash, createHmac, randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { createHash, createHmac } from "node:crypto";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { writeFileAtomic } from "../shared/atomic-write.mjs";
 import { statePath } from "../work/state-file.mjs";
 import { identityKeys, keyStorePath, loadKeyStore, subkey } from "./keystore.mjs";
+import { isLoopbackApiUrl } from "../shared/config.mjs";
 
 export const HANDLE_PATTERN = /^[ptwca]-[a-z2-7]{16}$/u;
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
@@ -74,35 +76,45 @@ function namesPath(place) {
   return statePath(place, "names.json");
 }
 
+// One read per file per process while it is unchanged (size and mtime): a sealed command reads the map for each
+// identity it makes and then remembers into it.
+const loaded = new Map();
+
 /** Handle → name for handles this computer made, so a context read back from the server resolves. */
 export async function loadKnownNames(place) {
+  const path = namesPath(place);
   try {
-    return JSON.parse(await readFile(namesPath(place), "utf8"));
+    const info = await stat(path);
+    const stamp = `${info.size}:${info.mtimeMs}`;
+    const hit = loaded.get(path);
+    if (hit?.stamp === stamp) return hit.known;
+    const known = JSON.parse(await readFile(path, "utf8"));
+    loaded.set(path, { stamp, known });
+    return known;
   } catch {
+    loaded.delete(path);
     return {};
   }
 }
 
 export async function rememberNames(place, names) {
   if (!names || Object.keys(names).length === 0) return;
-  const known = { ...(await loadKnownNames(place)), ...names };
+  const current = await loadKnownNames(place);
+  // Nothing new: the file stays as it is (no rewrite, no new mtime for the next process to re-read).
+  if (Object.entries(names).every(([handle, name]) => current[handle] === name)) return;
+  const known = { ...current, ...names };
   const entries = Object.entries(known);
   const kept = Object.fromEntries(entries.slice(Math.max(0, entries.length - MAX_REMEMBERED_NAMES)));
   const path = namesPath(place);
   await mkdir(join(path, ".."), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${randomBytes(6).toString("hex")}.tmp`;
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(JSON.stringify(kept));
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, path);
+  await writeFileAtomic(path, JSON.stringify(kept));
+  loaded.delete(path);
 }
 
 /** The hook's labels as handles plus the handle → name map the phone needs to show them. */
-export async function hookLabelsWithNames(labels, apiUrl, dependencies) {
-  if (!apiUrl) return { labels, names: {} };
+export async function hookLabelsWithNames(labels, apiUrl, dependencies, { local = false } = {}) {
+  // Relo for Mac's own server on this computer: nothing is sealed there (trustFor), so a handle would never be named.
+  if (!apiUrl || (local && isLoopbackApiUrl(apiUrl))) return { labels, names: {} };
   const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
   const sealing = store.identity && Object.keys(store.trusted).some((entry) => entry.startsWith(`${apiUrl}|`));
   if (!sealing) return { labels, names: {} };

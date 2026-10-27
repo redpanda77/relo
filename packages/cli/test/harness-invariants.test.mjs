@@ -65,7 +65,8 @@ test("every adapter has the same shape and maps only onto canonical events", () 
     assert.equal(typeof adapter.render, "function");
     for (const event of Object.values(adapter.events)) assert.ok(CANONICAL_EVENTS.includes(event), `${adapter.id}: ${event}`);
     const { install } = adapter;
-    assert.equal(install.format, "json-hooks-map");
+    // json-named-hooks keeps Relo's hooks under one name, so its adapter brings the container that maps them.
+    assert.ok(install.format === "json-hooks-map" || (install.format === "json-named-hooks" && typeof install.container?.read === "function"));
     assert.ok(install.levels.includes("off") && install.levels.includes(install.recommended));
     for (const level of install.levels) {
       for (const groups of Object.values(install.entries(level))) {
@@ -106,7 +107,13 @@ test("no prompt, tool name or IO, message or transcript path ever reaches the ou
     await box.flush();
   }
   assert.ok(box.requests.length >= 5, "the session's phases went out");
-  const stateFiles = await Promise.all((await allFiles(box.state)).map((file) => readFile(file, "utf8")));
+  // The one local-only exception: the observed state file keeps the transcript path, for the liveness sweep's look for the
+  // owner's interrupt (core/sweep.mjs). It is never in the outbox or on the wire (the loop below), nor anywhere else.
+  const localTranscript = `"transcriptPath":${JSON.stringify(NOISE.transcript_path)}`;
+  const stateFiles = await Promise.all((await allFiles(box.state)).map(async (file) => {
+    const text = await readFile(file, "utf8");
+    return file.replaceAll("\\", "/").includes("/observed/") ? text.replace(localTranscript, "") : text;
+  }));
   assert.ok(stateFiles.length >= 1, "the hook kept its observed state file");
   const traffic = JSON.stringify({ requests: box.requests, entries: box.entries, minted: box.minted, other: box.other });
   for (const secret of SECRETS) {
@@ -165,4 +172,13 @@ test("a hook returns at once with the network down: p95 under 50 ms", { skip: de
   assert.equal(flushed.exitCode, 0);
   assert.equal(flushed.line.data.sent, 0);
   assert.equal(flushed.line.data.pending, 1, "the snapshot waits for the network");
+});
+
+test("a session's working folder is kept when it is absolute on any platform, so a Windows session gets its project", async () => {
+  const { normalize } = await import("../src/harness/core/events.mjs");
+  const event = (cwd) => normalize({ adapter: ADAPTERS.codex, input: { session_id: SESSION_ID, hook_event_name: "UserPromptSubmit", cwd } }).cwd;
+  assert.equal(event("/Users/sam/acme"), "/Users/sam/acme");
+  assert.equal(event("C:\\Users\\sam\\acme"), "C:\\Users\\sam\\acme");
+  assert.equal(event("\\\\server\\share\\acme"), "\\\\server\\share\\acme");
+  for (const relative of ["acme", "C:acme", "", "a\0b"]) assert.equal(event(relative), undefined, JSON.stringify(relative));
 });

@@ -6,15 +6,17 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { execute } from "../src/cli.mjs";
 import { findMcp } from "../src/install/mcp.mjs";
+import { installHarnesses } from "./fake-cards.mjs";
 
 const NODE = "/opt/node/bin/node";
 const ENTRY = "/opt/relo/bin/relo.mjs";
 
-function sandbox(env = {}) {
+function sandbox(env = {}, { installed = ["claude-code", "claude-desktop", "cursor", "gemini", "opencode", "codex"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "relo-mcp-setup-"));
   const home = join(root, "home");
   const repo = join(root, "repo");
   mkdirSync(home, { recursive: true });
+  installHarnesses(home, installed);
   mkdirSync(join(repo, ".git"), { recursive: true });
   const deps = { home, cwd: repo, env, platform: "darwin", nodePath: NODE, entrypoint: ENTRY };
   const relo = (argv, extra = {}) => execute(argv, { ...deps, ...extra });
@@ -73,8 +75,8 @@ test("--mcp says why a harness gets no entry: none known, project-level, or not 
   try {
     assert.match((await box.setup("--agent", "opencode")).reason, /no MCP config is known/u);
     assert.match((await box.setup("--agent", "cursor", "--project")).reason, /user-level and works in every project/u);
-    const linux = await box.relo(["setup", "--mcp", "--agent", "claude-desktop"], { platform: "linux" });
-    assert.match(linux.data.skipped.find((row) => row.kind === "mcp").reason, /no MCP config file on this platform/u);
+    // Claude's desktop app is only on a Mac or Windows: on Linux setup refuses it before writing anything.
+    await assert.rejects(box.relo(["setup", "--mcp", "--agent", "claude-desktop"], { platform: "linux" }), /Claude isn't installed on this computer/u);
     assert.equal(existsSync(join(box.repo, ".cursor")), false);
   } finally { box.cleanup(); }
 });

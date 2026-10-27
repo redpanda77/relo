@@ -9,10 +9,12 @@
 // the server cannot choose), and be made after the question was asked. Anything else (unsigned, an
 // unknown or pending phone, another question's approval, a replay) is refused with exit 8: do not
 // act. Verification never trusts a new key on the way.
-import { createHash, randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { writeFileAtomic } from "../shared/atomic-write.mjs";
 import { TerminalInteractionError } from "../shared/errors.mjs";
+import { isLoopbackApiUrl } from "../shared/config.mjs";
 import { answerSigningInput, fromB64u, keyId, questionAnswerSigningInput, verifyBytes } from "./e2ee.mjs";
 import { keyStorePath, loadKeyStore, trustKey } from "./keystore.mjs";
 import { isBrowserId, isPhoneId, linkHolds, strictFor } from "./trust.mjs";
@@ -40,14 +42,7 @@ export async function rememberQuestion(place, record) {
   if (!QUESTION_ID.test(record?.interactionId ?? "")) return;
   const directory = questionsDirectory(place);
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  const temporary = join(directory, `.${record.interactionId}.${randomBytes(6).toString("hex")}.tmp`);
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(JSON.stringify(record));
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, join(directory, `${record.interactionId}.json`));
+  await writeFileAtomic(join(directory, `${record.interactionId}.json`), JSON.stringify(record));
 }
 
 /** What this CLI asked as `interactionId`, or null (asked elsewhere, or already verified and forgotten). */
@@ -168,6 +163,8 @@ export async function verifyAnswer(payload, client, dependencies, expected = {})
   if (!SIGNED_ACTION[interaction?.state]) return payload;
   const apiUrl = client?.apiUrl;
   if (!apiUrl || !dependencies?.configPath) return payload;
+  // A local account (Relo for Mac's own server on this computer): nothing is signed or encrypted; the answer is accepted as is.
+  if (client.local === true && isLoopbackApiUrl(apiUrl)) return payload;
   const store = await loadKeyStore(keyStorePath(dependencies.configPath(), dependencies.env));
   // Any phone recorded for this server (pending ones too) means answers must be signed.
   if (!store.identity || !Object.keys(store.trusted).some((entry) => entry.startsWith(`${apiUrl}|`))) return payload;

@@ -11,7 +11,7 @@ export const EXIT_CODES = Object.freeze([
   { code: 4, name: "TERMINAL", meaning: "still open: this command stopped waiting (resume with relo interaction wait ID)", short: "still open (resume)", doc: "Still open: this command stopped waiting. Run `relo interaction wait ID`" },
   { code: 5, name: "NEGATIVE", meaning: "denied or no", short: "denied/no", doc: "The owner denied or said no" },
   { code: 6, name: "NETWORK", meaning: "network", short: "network", doc: "Network unreachable: retry the same command" },
-  { code: 7, name: "NO_DELIVERY", meaning: "no phone accepted the push", short: "no phone got it", doc: "No phone could receive it" },
+  { code: 7, name: "NO_DELIVERY", meaning: "no phone accepted the push", short: "no phone or Mac got it", doc: "Nothing could show it: no phone and no Mac" },
   { code: 8, name: "CLOSED", meaning: "closed without an answer (expired or canceled): do not act", short: "closed, no answer (do not act)", doc: "Closed without an answer (expired, canceled): do not act" },
 ]);
 
@@ -22,6 +22,13 @@ export const exitCodeMeanings = () => Object.fromEntries(EXIT_CODES.map(({ code,
 
 /** "0 ok/approved/yes · 5 denied/no", for the codes given, in that order. */
 export const exitCodeLine = (codes, separator = " · ") => codes.map((code) => `${code} ${EXIT_CODES[code].short}`).join(separator);
+
+/** What to tell an owner whose remote server needs encryption and has no iPhone to encrypt for (one wording everywhere). */
+/** A local account is linked by the app that runs Relo on this machine: Relo for Mac on a Mac, Relo for Windows on a PC. */
+const ON_WINDOWS = process.platform === "win32";
+export const LOCAL_RELINK = ON_WINDOWS ? "Open Relo; it links this PC again." : "Open Relo for Mac; it links this Mac again.";
+export const LOCAL_NOT_LINKED = ON_WINDOWS ? "Relo isn't linked yet: open Relo." : "Relo for Mac isn't linked yet: open Relo for Mac.";
+export const NO_PHONE_ENCRYPTION_HINT = "This server requires encryption and has no iPhone to encrypt for: add your iPhone, or set encryption to Automatic in the Dashboard.";
 
 export class ReloError extends Error {
   constructor(message, { code = "INTERNAL_ERROR", exitCode = EXIT.API, details } = {}) {

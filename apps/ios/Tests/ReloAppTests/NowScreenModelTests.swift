@@ -48,7 +48,7 @@ final class NowScreenModelTests: XCTestCase {
 
     func testBlocksFollowSpecOrder() {
         XCTAssertEqual(make(busy()).map(\.id),
-                       ["needs", "waiting", "running", "since", "fold-quiet", "fold-paused", "sessions"])
+                       ["needs", "waiting", "running", "since", "fold-parked", "sessions"])
     }
 
     func testEmptyBlocksAreOmitted() {
@@ -56,19 +56,17 @@ final class NowScreenModelTests: XCTestCase {
         XCTAssertEqual(blocks.map(\.id), ["running"])
     }
 
-    func testFoldsCountAndRowsAndStayClosedByDefault() {
-        for block in make(busy()) {
-            guard case let .fold(fold, count, rows, open) = block else { continue }
-            XCTAssertEqual(count, rows.count)
-            XCTAssertFalse(open, "\(fold) is closed by default")
-            switch fold {
-            case .quiet: XCTAssertEqual(count, 3)
-            case .paused: XCTAssertEqual(count, 1)
-            case .idle: XCTFail("idle folds live in Sessions")
-            }
-        }
-        let opened = make(busy(), open: ["quiet"])
-        XCTAssertTrue(opened.contains { if case .fold(.quiet, _, _, true) = $0 { true } else { false } })
+    func testQuietAndPausedShareOneFoldClosedByDefault() {
+        let folds = make(busy()).filter { if case .parked = $0 { true } else { false } }
+        XCTAssertEqual(folds.count, 1, "Quiet and Paused are one block, one line")
+        guard case let .parked(quiet, paused, open) = folds[0] else { return XCTFail("parked block") }
+        XCTAssertEqual(quiet.count, 3)
+        XCTAssertEqual(paused.count, 1)
+        XCTAssertFalse(open, "the fold is closed by default")
+        let opened = make(busy(), open: ["parked"])
+        XCTAssertTrue(opened.contains { if case .parked(_, _, true) = $0 { true } else { false } })
+        let onlyPaused = make(NowScreenInput(serverTime: serverTime, sinceYouLooked: nil, paused: [item("p1", .paused)]))
+        XCTAssertEqual(onlyPaused.map(\.id), ["fold-parked"])
     }
 
     /// The owner's turn is shown open, as full work cards: status, plan and where it runs, never a bare row.
@@ -122,12 +120,12 @@ final class NowScreenModelTests: XCTestCase {
         XCTAssertFalse(quiet.contains { $0.id == "since" }, "nothing new and nothing recent: no since section")
     }
 
-    func testRecentShowsThreeThenMore() {
+    func testRecentShowsFourThenMore() {
         var input = busy()
         input.recent = (1...7).map { item("r\($0)", .done) }
         guard case let .sinceYouLooked(_, _, recent, more) = make(input).first(where: { $0.id == "since" }) else { return XCTFail("since first") }
-        XCTAssertEqual(recent.count, 3)
-        XCTAssertEqual(more, 4)
+        XCTAssertEqual(recent.count, 4)
+        XCTAssertEqual(more, 3)
         guard case let .sinceYouLooked(_, _, all, none) = make(input, open: ["recent"]).first(where: { $0.id == "since" }) else { return XCTFail() }
         XCTAssertEqual(all.count, 7)
         XCTAssertEqual(none, 0)
@@ -195,7 +193,8 @@ final class NowScreenModelTests: XCTestCase {
         input.running.append(item("w1", .moving))
         let ids = make(input).flatMap { block -> [String] in
             switch block {
-            case let .needsYou(rows), let .waitingOnYou(rows), let .running(_, rows), let .fold(_, _, rows, _): rows.map(\.id)
+            case let .needsYou(rows), let .waitingOnYou(rows), let .running(_, rows): rows.map(\.id)
+            case let .parked(quiet, paused, _): (quiet + paused).map(\.id)
             case let .sinceYouLooked(_, _, rows, _): rows.map(\.id)
             case .sessions: []
             }
@@ -234,8 +233,35 @@ final class NowScreenModelTests: XCTestCase {
                                   session("d", computer: "S", phase: .idle),
                                   session("e", computer: "S", phase: .ended),
                                   session("f", computer: "S", phase: nil)]).groups[0].rows
-        XCTAssertEqual(Array(rows.map(\.chip).prefix(5)), ["Working", "Needs your input", "Your turn", "Idle", "Ended"])
+        XCTAssertEqual(Array(rows.map(\.chip).prefix(5)), ["Working", "Needs you", "Your turn", "Idle", "Ended"])
         XCTAssertTrue(rows[5].chip.hasPrefix("Last seen"), rows[5].chip)
+    }
+
+    func testMachineSummaryDotAndHarnessChips() {
+        func s(_ id: String, _ computer: String, _ phase: NowSessionInput.Phase, source: String, waitingFor: String? = nil,
+               folded: Bool = false, pct: Int? = nil, cost: Double? = nil) -> NowSessionInput {
+            var value = session(id, computer: computer, phase: phase, folded: folded, waitingFor: waitingFor)
+            value.source = source; value.contextPct = pct; value.costUsd = cost
+            return value
+        }
+        let block = sessionsBlock([s("a", "MacBook Pro", .waiting, source: "claude-code", waitingFor: "input", pct: 88, cost: 4.1),
+                                   s("b", "MacBook Pro", .waiting, source: "claude-code", waitingFor: "turn"),
+                                   s("c", "MacBook Pro", .working, source: "codex", pct: 31),
+                                   s("d", "Build Server", .working, source: "claude-code"),
+                                   s("e", "Studio", .idle, source: "claude-code", folded: true),
+                                   s("f", "Studio", .idle, source: "codex", folded: true)])
+        XCTAssertEqual(block.groups[0].summary, "3 sessions · 2 need you")
+        XCTAssertEqual(block.groups[0].dot, .needsYou)
+        XCTAssertEqual(block.groups[0].harnesses.map(\.count), [2, 1])
+        XCTAssertEqual(block.groups[1].summary, "1 session · running")
+        XCTAssertEqual(block.groups[1].dot, .running)
+        XCTAssertTrue(block.groups[2].summary.hasPrefix("Idle since"), block.groups[2].summary)
+        XCTAssertNil(block.groups[2].dot)
+        XCTAssertEqual(block.active, 4, "the Sessions count is every session that is not idle")
+        let row = block.groups[0].rows[0]
+        XCTAssertEqual(row.source, "claude-code"); XCTAssertEqual(row.phase, .waiting)
+        XCTAssertEqual(row.contextPct, 88); XCTAssertEqual(row.costUsd, 4.1); XCTAssertTrue(row.heavyContext)
+        XCTAssertFalse(block.groups[0].rows[2].heavyContext)
     }
 
     func testSessionLinksToItsWork() {

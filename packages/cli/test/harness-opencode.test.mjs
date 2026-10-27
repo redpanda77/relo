@@ -4,31 +4,34 @@ import "./hermetic-env.mjs";
 // root session; the agent's shell is identified by OPENCODE_SESSION_ID, the same id the plugin sees.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { tildePosix } from "./posix-path.mjs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { detectCaller } from "../src/caller.mjs";
 import { sessionKey } from "../src/shared/session-key.mjs";
 import { run } from "../src/cli.mjs";
-import { cardDependencies, fakeHome } from "./fake-cards.mjs";
+import { EVERY_HARNESS, cardDependencies, fakeHome } from "./fake-cards.mjs";
 import { SECRET_PROMPT, hookBox } from "./hook-fixture.mjs";
 
 const PLUGIN = fileURLToPath(new URL("../src/harness/adapters/opencode/plugin.js", import.meta.url));
+// Three tests give the fake relo a shell-script fixture (spawned through /bin/sh), so they need a POSIX shell.
+const NO_SH = process.platform === "win32" && "POSIX shell: the fake relo runs these fixtures through /bin/sh";
 const ROOT = "ses_root1";
 const CHILD = "ses_child1";
 
 async function cli(argv, dependencies) {
   const stdout = [];
   const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, dependencies);
-  return { exitCode, line: stdout[0] ? JSON.parse(stdout[0]) : undefined };
+  return { exitCode, line: stdout[0] ? tildePosix(JSON.parse(stdout[0])) : undefined };
 }
 
 const hooksRow = (line) => [...line.changed, ...(line.skipped ?? []), ...(line.errors ?? [])].find((row) => row.kind === "hooks" && row.harness === "opencode") ?? { action: "unchanged" };
 
 test("setup --level guide writes relo-hooks.json and the plugin; again is unchanged; track removes both; no project hooks", async () => {
-  const home = await fakeHome({ agents: [] });
+  const home = await fakeHome({ agents: [], installed: EVERY_HARNESS() });
   const cwd = await mkdtemp(join(tmpdir(), "relo-opencode-cwd-"));
   await mkdir(join(cwd, ".git"));
   const deps = { ...cardDependencies({}), home, cwd, env: {}, nodePath: "/opt/node/bin/node", entrypoint: "/opt/relo/bin/relo.mjs" };
@@ -82,23 +85,34 @@ test("OpenCode events reduce to phases; a child session's events are its root's 
 });
 
 /** The plugin as OpenCode loads it, from a config folder holding relo-hooks.json, with a fake relo on PATH. */
-async function loadPlugin({ parents = {}, level = "presence", script = "" } = {}) {
+async function loadPlugin({ parents = {}, level = "presence", script = "", failLookups = 0 } = {}) {
   const config = await mkdtemp(join(tmpdir(), "relo-opencode-config-"));
   const bin = join(config, "bin");
   const log = join(config, "calls.jsonl");
   await mkdir(join(config, "plugins"), { recursive: true });
   await mkdir(bin);
-  await copyFile(PLUGIN, join(config, "plugins", "relo.js"));
+  const fake = join(bin, "relo.mjs");
+  // The plugin runs node and this fake entry as an argument array (no shell, no PATH lookup).
+  await writeFile(join(config, "plugins", "relo.js"), (await readFile(PLUGIN, "utf8"))
+    .replace("const LAUNCH = null;", `const LAUNCH = ${JSON.stringify({ node: process.execPath, script: fake })};`));
   const { default: adapter } = await import("../src/harness/adapters/opencode/index.mjs");
   await writeFile(join(config, "relo-hooks.json"), JSON.stringify({ hooks: adapter.install.entries(level) }));
   // The fake relo logs its arguments and stdin; `script` adds what it prints (a role's output).
   // One write per call: the approvals command runs beside the queued events, and their lines must not interleave.
-  await writeFile(join(bin, "relo"), `#!/bin/sh\nline="$* $(cat)"\nprintf '%s\\n' "$line" >> "${log}"\n${script}`);
-  await chmod(join(bin, "relo"), 0o755);
-  process.env.PATH = `${bin}:${process.env.PATH}`;
+  await writeFile(fake, `import { appendFileSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, args.join(" ") + " " + readFileSync(0, "utf8") + "\\n");
+if (${JSON.stringify(script)}) spawnSync("/bin/sh", ["-c", ${JSON.stringify(script)}, "relo", ...args], { stdio: ["ignore", "inherit", "inherit"] });
+`);
   const lookups = [];
-  const client = { session: { get: async ({ path }) => { lookups.push(path.id); return { data: { id: path.id, parentID: parents[path.id] } }; } } };
-  const { default: plugin } = await import(join(config, "plugins", "relo.js"));
+  let failing = failLookups;
+  const client = { session: { get: async ({ path }) => {
+    lookups.push(path.id);
+    if (failing > 0) { failing -= 1; throw new Error("OpenCode is busy"); }
+    return { data: { id: path.id, parentID: parents[path.id] } };
+  } } };
+  const { default: plugin } = await import(pathToFileURL(join(config, "plugins", "relo.js")).href);
   // OpenCode 1 calls `server`; OpenCode 2 calls `setup` with a context whose event stream `emit` feeds here.
   const hooks = await plugin.server({ client, directory: "/work/app", worktree: "/work/app" });
   const stream = [];
@@ -121,12 +135,15 @@ async function loadPlugin({ parents = {}, level = "presence", script = "" } = {}
     } }) },
   };
   const v2 = async () => { await plugin.setup(context); return emit; };
-  /** The fake relo's calls, once `count` arrived (the plugin runs them one at a time, in the background). */
-  const calls = async (count) => {
+  /** The fake relo's calls, once `count` arrived (the plugin runs them one at a time, in the background).
+   *  With `skip`, only calls whose argv it does not match count toward `count`: bookkeeping calls arrive in
+   *  a varying number, and counting them let a loaded run stop waiting before the last call it checks. */
+  const calls = async (count, skip) => {
     let text = "";
     for (let tries = 0; tries < 400; tries += 1) {
       text = existsSync(log) ? await readFile(log, "utf8") : "";
-      if (text.endsWith("\n") && text.split("\n").filter(Boolean).length >= count) break;
+      const lines = text.split("\n").filter(Boolean).filter((line) => !skip || !skip.test(line.slice(0, line.indexOf("{"))));
+      if (text.endsWith("\n") && lines.length >= count) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     return text.trim().split("\n").filter(Boolean).map((line) => {
@@ -164,6 +181,17 @@ test("the plugin runs the listed commands in order with ids only, and rolls a ch
   const traffic = JSON.stringify(seen);
   for (const secret of [SECRET_PROMPT, "id_rsa", "PRIVATE KEY", "bash", "rm -rf"]) assert.equal(traffic.includes(secret), false, secret);
   assert.deepEqual(lookups, [], "sessions it saw created need no lookup");
+});
+
+test("a failed parent lookup is asked again, so a subagent still rolls up into its root", async () => {
+  const { hooks, calls } = await loadPlugin({ parents: { [CHILD]: ROOT }, failLookups: 1 });
+  // The first lookup fails: this event goes out under the child's own id (nothing better is known yet).
+  await hooks["tool.execute.before"]({ tool: "read", sessionID: CHILD, callID: "call_3" }, { args: {} });
+  // The next one asks again and finds the root: the subagent is not left a session of its own.
+  await hooks["tool.execute.after"]({ tool: "read", sessionID: CHILD, callID: "call_3", args: {} }, { title: "", output: "", metadata: {} });
+  const seen = await calls(2);
+  assert.equal(seen[1].input.session_id, ROOT);
+  assert.equal(seen[1].input.agent_id, CHILD);
 });
 
 test("a session the plugin never saw created is looked up once to find its root", async () => {
@@ -219,7 +247,7 @@ appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + " " + r
   const path = process.env.PATH;
   process.env.PATH = "/nonexistent";
   try {
-    const { default: plugin } = await import(runner.path);
+    const { default: plugin } = await import(pathToFileURL(runner.path).href);
     const hooks = await plugin.server({ client: { session: { get: async () => ({ data: {} }) } }, directory: "/work/app" });
     await hooks["chat.message"]({ sessionID: ROOT });
     let text = "";
@@ -234,7 +262,7 @@ appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + " " + r
   }
 });
 
-test("continuity: a prompt's open work becomes the session's system text, never a subagent's", async () => {
+test("continuity: a prompt's open work becomes the session's system text, never a subagent's", { skip: NO_SH }, async () => {
   const { v2, registered, calls } = await loadPlugin({
     script: `case "$2" in turn) echo '{"context":"Relo: open work \\"Ship\\"; round 1 in progress."}';; esac\n`,
   });
@@ -251,7 +279,7 @@ test("continuity: a prompt's open work becomes the session's system text, never 
   assert.deepEqual(child.system, []);
 });
 
-test("approvals: OpenCode's permission prompt is asked on the phone; the phone's answer replies, the terminal's withdraws it", async () => {
+test("approvals: OpenCode's permission prompt is asked on the phone; the phone's answer replies, the terminal's withdraws it", { skip: NO_SH }, async () => {
   const { default: adapter } = await import("../src/harness/adapters/opencode/index.mjs");
   assert.deepEqual(adapter.install.entries("approvals")["permission.request"],
     [{ hooks: [{ type: "command", command: "relo hook permission --agent opencode", timeout: 330 }] }]);
@@ -280,3 +308,31 @@ test("approvals: OpenCode's permission prompt is asked on the phone; the phone's
   assert.deepEqual(slow.replies, []);
 });
 
+
+test("an interrupt (Esc): session.error then session.idle, in either order, ends the turn once; a busy status is working again", async () => {
+  const { hooks, calls } = await loadPlugin({ parents: {} });
+  await hooks.event({ event: { type: "session.created", properties: { info: { id: ROOT } } } });
+  await hooks.event({ event: { type: "session.status", properties: { sessionID: ROOT, status: { type: "busy" } } } });
+  await hooks.event({ event: { type: "session.error", properties: { sessionID: ROOT, error: { name: "MessageAbortedError", data: { message: SECRET_PROMPT } } } } });
+  await hooks.event({ event: { type: "session.status", properties: { sessionID: ROOT, status: { type: "idle" } } } });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: ROOT } } });
+  await hooks.event({ event: { type: "session.status", properties: { sessionID: ROOT, status: { type: "retry", attempt: 1 } } } });
+  await hooks.event({ event: { type: "session.error", properties: { error: { name: "UnknownError" } } } });
+  const seen = (await calls(7)).filter((call) => !/hook (restore|turn|remind) /u.test(call.argv));
+  assert.deepEqual(seen.map((call) => call.argv.replace(" --agent opencode", "").replace("hook ", "")), ["start", "prompt", "stop", "stop", "stop"]);
+  assert.deepEqual(seen[2].input, { hook_event_name: "session.error", session_id: ROOT, cwd: "/work/app" }, "the error's name and text are never passed on");
+  assert.equal(JSON.stringify(seen).includes(SECRET_PROMPT), false);
+});
+
+test("OpenCode 2: session.error and session.status reach the bridge; the stream is subscribed for them; a duplicate event is handled once", { skip: NO_SH }, async () => {
+  const { v2, calls } = await loadPlugin({ parents: {} });
+  const emit = await v2();
+  emit({ id: "evt_1", type: "session.execution.started", data: { sessionID: ROOT } });
+  emit({ id: "evt_2", type: "session.error", data: { sessionID: ROOT, error: { name: "MessageAbortedError" } } });
+  emit({ id: "evt_2", type: "session.error", data: { sessionID: ROOT, error: { name: "MessageAbortedError" } } });
+  emit({ id: "evt_3", type: "session.status", data: { sessionID: ROOT, status: { type: "idle" } } });
+  emit({ id: "evt_4", type: "session.status", data: { sessionID: ROOT, status: { type: "busy" } } });
+  const bookkeeping = /hook (restore|turn|remind) /u;
+  const seen = (await calls(4, bookkeeping)).filter((call) => !bookkeeping.test(call.argv));
+  assert.deepEqual(seen.map((call) => call.argv.replace(" --agent opencode", "").replace("hook ", "")), ["prompt", "stop", "stop", "prompt"]);
+});

@@ -10,6 +10,7 @@ import { cardKey, creationContext, partialIdentity } from "./card-context.mjs";
 import { drainDeclared } from "../work/declared-lane.mjs";
 import { dryRunResult, result } from "../shared/outcome.mjs";
 import { deliveryGuard } from "./delivery.mjs";
+import { isLoopbackApiUrl } from "../shared/config.mjs";
 import { stdinDeviceIds, stdinObject } from "../shared/stdin.mjs";
 
 function notificationBody(value) {
@@ -127,7 +128,7 @@ function choiceOptions(options, stdin) {
  * notification that carries no answer buttons.
  */
 async function askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
-  command, idempotencyKey, context, title, buttons = false, reason }) {
+  command, idempotencyKey, context, title, buttons = false, reason, local = false }) {
   const identity = context ?? creationContext(options, stdin, undefined, dependencies.creationDefaults(), ASK_EXAMPLE);
   const askedAt = new Date(dependencies.now());
   const questionTitle = requireText(title ?? identity.taskTitle ?? identity.threadName, "Title", 80);
@@ -146,7 +147,8 @@ async function askInApp({ prompt, detail, choices, type, expiresInSeconds, wait,
   dependencies.messages.sessionKey(dependencies)));
   // With buttons the owner answers right on the notification; without, the phone has no card and opens Relo.
   const message = reason ?? (buttons ? undefined
-    : "This phone cannot show Live Activities, so the owner answers in Relo from a notification.");
+    : local ? "The owner answers in Relo for Mac."
+      : "This phone cannot show Live Activities, so the owner answers in Relo from a notification.");
   const data = { ...created, card: null, fallback: buttons ? "notification" : "answer_in_app" };
   const id = created?.interaction?.id;
   // Remembered even without waiting, so `relo interaction wait` later checks the question-bound signature.
@@ -283,7 +285,7 @@ async function askOnCard({ prompt, detail, choices, type, labels, expiresInSecon
     if (error?.code !== "ACTIVITY_TARGET_UNAVAILABLE") throw error;
     return askInApp({ prompt, detail, choices, type, expiresInSeconds, wait, timeoutSeconds, options, stdin, client, dependencies,
       // A work card names no source/topic itself: inside a session the session's defaults name it.
-      command, idempotencyKey, title: card.title, context: known ?? cardIdentity(card) ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) });
+      command, idempotencyKey, title: card.title, local: config?.local === true && isLoopbackApiUrl(config.apiUrl), context: known ?? cardIdentity(card) ?? creationContext(options, stdin, undefined, defaults, ASK_EXAMPLE) });
   }
   const created = validateActivityWaitResponse(createdRaw, { parentActivityId: card.id, type, prompt: sealed ? undefined : prompt });
   if (sealed) await rememberQuestion(dependencies, { interactionId: created.interaction.id,

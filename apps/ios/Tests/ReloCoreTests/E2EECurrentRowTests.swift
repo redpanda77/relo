@@ -130,4 +130,34 @@ final class E2EECurrentRowTests: XCTestCase {
         // The snapshot keeps the envelope through its history summary so the app can open it.
         XCTAssertEqual(item.historySummary().sealed, item.sealed)
     }
+
+    /// Round 17's card event draws the work's current plan, round 18 included: its names come from the work's newest text.
+    func testAnEarlierRoundsEventNamesTheLaterRoundsFromTheWorksNewestText() throws {
+        let (sealed, mac, prekey) = try fixture()
+        let own = try envelope("card", ["title": "Writing system", "status": "Plan reviewed", "phases": [
+            ["id": "r17", "title": "Review the plan", "outcome": "Proposed a fix", "steps": [["id": "s76", "label": "Read the plan"]]],
+        ]], mac: mac, prekey: prekey)
+        let newest = try envelope("card", ["title": "Writing system", "status": "Checking the judge", "phases": [
+            ["id": "r17", "title": "Review the plan", "outcome": "Proposed a fix", "steps": [["id": "s76", "label": "Read the plan"]]],
+            ["id": "r18", "title": "Run one iteration", "steps": [["id": "s79", "label": "Record the order"]]],
+        ]], mac: mac, prekey: prekey)
+        let item = InboxItem(
+            id: "ntf_00000000-0000-4000-8000-000000000011", kind: .liveActivity, sourceName: "Claude Code", title: "Encrypted card",
+            detail: "Updating…", createdAt: Date(),
+            activity: InboxCardDigest(state: "ended", status: "Updating…", updates: 4, startedAt: Date(),
+                                      plan: [.init(id: "s76", state: "done", label: nil, round: 17), .init(id: "s79", state: "current", label: nil, round: 18)],
+                                      rounds: [.init(n: 17, closed: true), .init(n: 18)]),
+            sealed: InboxSealedNotice(alert: own, content: own, plan: newest)
+        )
+        let opened = item.openingSealed(sealed.opener)
+        XCTAssertEqual(opened.activity?.plan?.map(\.label), ["Read the plan", "Record the order"])
+        XCTAssertEqual(opened.activity?.rounds?.map(\.title), ["Review the plan", "Run one iteration"])
+        // Its own title and status stay its own round's.
+        XCTAssertEqual(opened.detail, "Plan reviewed")
+        // Without the newest text, the later round has no names: the bug the owner saw.
+        let alone = InboxItem(id: "ntf_00000000-0000-4000-8000-000000000012", kind: .liveActivity, sourceName: "Claude Code",
+                              title: "Encrypted card", detail: "Updating…", createdAt: Date(), activity: item.activity,
+                              sealed: InboxSealedNotice(alert: own, content: own)).openingSealed(sealed.opener)
+        XCTAssertEqual(alone.activity?.plan?.map(\.label), ["Read the plan", nil])
+    }
 }

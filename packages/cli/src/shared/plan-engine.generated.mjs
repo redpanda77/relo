@@ -9,6 +9,8 @@
 export const WORK_PLAN_MAX_STEPS = 30;
 export const WORK_PLAN_MAX_NODES = 120;
 export const WORK_PLAN_MAX_DEPTH = 3;
+/** A card event carries the steps of only the newest rounds (a long work would otherwise repeat them all in every event). */
+export const PLAN_ROUNDS_WITH_STEPS = 3;
 export const EMPTY_WORK_PLAN = { v: 1, next: 1, steps: [] };
 export const stepRound = (step) => step.round ?? 1;
 /** The structural rules of a whole plan (the zod schema reports these as issues). Empty when the plan is sound. */

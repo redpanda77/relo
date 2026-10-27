@@ -7,6 +7,7 @@ import { VERSION } from "./version.mjs";
 import { GUIDE, HELP, IDENTITY_HELP, commandHelp, groupHelp } from "./help.mjs";
 import { detectAgent, ownerCaller, surfaceFor } from "./caller.mjs";
 import { fstatSync, statSync } from "node:fs";
+import { devNull } from "node:os";
 import { ADMIN_USAGE } from "./owner/spec.mjs";
 import { COMMANDS, findAdminCommand, findCommand, handlerFor, optionsOf } from "./registry.mjs";
 import { refuseOwnerOnly } from "./agent/guards.mjs";
@@ -81,10 +82,11 @@ async function executeCommand(parsed, dependencies) {
     throw new UsageError(message, { hint: unknownCommandHint(group, action) ?? "Commands: relo help all" });
   }
 
-  if (options.profile !== undefined && !(group === "auth" && action === "login")) {
+  if (options.profile !== undefined && !(group === "auth" && ["login", "join", "logout"].includes(action))) {
     throw new UsageError("--profile is not valid for this command", { hint: "Set RELO_PROFILE=NAME, or relo auth switch NAME" });
   }
-  if (group === "auth" && action === "login" && options.profile !== undefined) dependencies.profile = options.profile;
+  // join keeps the active profile as the one it may leave: it names its own profile when it saves.
+  if (group === "auth" && ["login", "logout"].includes(action) && options.profile !== undefined) dependencies.profile = options.profile;
   // The entry's options are the command's: anything else is refused here, once, unless the type's own
   // module refuses it in its own form (an agent's work commands).
   const allowed = handler.options ?? entry.options;
@@ -160,7 +162,7 @@ const MCP_TICK_MS = 60_000;
 function stdoutIsDevNull() {
   try {
     const out = fstatSync(1);
-    const sink = statSync("/dev/null");
+    const sink = statSync(devNull); // the NUL device on Windows, where Git Bash maps >/dev/null to it
     return out.isCharacterDevice() && out.rdev === sink.rdev && out.ino === sink.ino;
   } catch {
     return false;
@@ -234,7 +236,21 @@ export async function run(argv, io = {}, overrides = {}) {
     });
     return printOutcome(output, mode, { stdout, stderr });
   } catch (cause) {
-    return printFailure(cause, mode, { stdout, stderr }, argv.find((word) => !word.startsWith("--")));
+    return printFailure(cause, mode, { stdout, stderr }, argv.find((word) => !word.startsWith("--")), { local: cause?.name === "UsageError" ? false : await onLocalAccount(overrides) });
   }
 }
 
+
+/** Is this computer signed in to a local account (Relo for Mac's own server)? Best effort: any trouble reading says no. */
+async function onLocalAccount(overrides) {
+  try {
+    const { configPath, isLoopbackApiUrl, loadConfig } = await import("./shared/config.mjs");
+    const env = overrides.env ?? process.env;
+    if (env.RELO_TOKEN) return false;
+    const path = overrides.configPath?.() ?? configPath({ env });
+    const config = await (overrides.loadConfig ?? loadConfig)(path);
+    return config?.local === true && isLoopbackApiUrl(config.apiUrl);
+  } catch {
+    return false;
+  }
+}

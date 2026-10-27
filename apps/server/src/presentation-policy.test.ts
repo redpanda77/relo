@@ -215,6 +215,16 @@ describe("Live Activity presentation policy", () => {
     });
   });
 
+  test("steps draw the plan's own states; no step is current when none is marked", () => {
+    const items = (steps: Record<string,unknown>) => (resolveActivityPresentation({
+      title: "Release",status: "Building",steps: steps as never,privacyMode: "standard",
+    },{ principalId: "principal-1",effective: { policy: SYSTEM_PRESENTATION_POLICY,source: "system" } }).stored.presentation
+      .components.find((component) => component.type === "steps") as { items: Array<{ state: string }> }).items.map((item) => item.state);
+    expect(items({ labels: ["A","B","C"],current: 3 })).toEqual(["complete","complete","current"]);
+    expect(items({ labels: ["A","B","C"],current: 1,states: ["pending","pending","pending"] })).toEqual(["pending","pending","pending"]);
+    expect(items({ labels: ["A","B","C"],current: 3,states: ["pending","done","current"] })).toEqual(["pending","complete","current"]);
+  });
+
   test("keeps the current layout when only cosmetic appearance changes",() => {
     const original = resolveActivityPresentation({
       title: "Release",status: "Building",progress: 0.5,progressLabel: "2 of 4",
@@ -284,6 +294,16 @@ describe("Live Activity presentation policy", () => {
         minimal: ["measured_progress"],
       },
     });
+  });
+
+  test("a sealed work's steps carry the plan's ids, so the phone opens their labels by id",() => {
+    const resolved = resolveActivityPresentation({
+      title: "Encrypted card",status: "Updating…",
+      steps: { labels: ["Step 1","Step 2"],ids: ["s1","s2"],current: 2,states: ["done","current"] },
+      privacyMode: "standard",
+    },{ principalId: "principal-1",effective: { policy: SYSTEM_PRESENTATION_POLICY,source: "system" } });
+    const steps = resolved.stored.presentation.components.find((component) => component.type === "steps");
+    expect(steps).toMatchObject({ items: [{ id: "s1",label: "Step 1" },{ id: "s2",label: "Step 2" }] });
   });
 
   test("adds semantic steps to an active activity",() => {

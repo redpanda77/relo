@@ -92,25 +92,29 @@ public final class CurrentStateController {
 
     /// Asks again right now (network came back, app became active). No-op unless we are offline.
     public func retryNow() {
-        guard active, inventoryEnabled, state.connection == .offline else { return }
+        guard active, inventoryEnabled, needsRecovery else { return }
         recoveryTask?.cancel(); recoveryTask = nil
         reopenStreamIfEnded()
         receive(.reconcile)
     }
 
+    /// Offline and incompatible both retry on the backoff: a malformed reply is often a proxy or deploy blip,
+    /// and a dead stream with a permanent diagnostic would need an app restart to heal.
+    private var needsRecovery: Bool { state.connection == .offline || state.connection == .incompatible }
+
     private func reopenStreamIfEnded() { if inventoryEnabled, streamTask == nil { openStream(epoch: epoch) } }
 
     /// One backoff loop while a foreground session is offline; ends on the first success.
     private func startRecoveryIfNeeded() {
-        guard active, inventoryEnabled, state.connection == .offline, recoveryTask == nil else { return }
+        guard active, inventoryEnabled, needsRecovery, recoveryTask == nil else { return }
         recoveryID &+= 1
         let id = recoveryID, captured = epoch
         recoveryTask = Task { [weak self, sleep] in
             var attempt = 0
-            while !Task.isCancelled, self?.state.connection == .offline {
+            while !Task.isCancelled, self?.needsRecovery == true {
                 guard let delay = self.map({ $0.backoff.delay(attempt: attempt, randomUnit: $0.randomUnit()) }) else { return }
                 do { try await sleep(delay) } catch { break }
-                guard let self, self.owns(captured), self.recoveryID == id, self.state.connection == .offline else { break }
+                guard let self, self.owns(captured), self.recoveryID == id, self.needsRecovery else { break }
                 attempt += 1
                 self.reopenStreamIfEnded()
                 self.receive(.reconcile)

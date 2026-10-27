@@ -5,6 +5,7 @@ export default Object.freeze({
   label: "Amp",
   aliases: [],
   config: { home: ".config/amp" },
+  installation: { binaries: ["amp"], markers: ["~/.local/share/amp"], folder: { ignore: ["AGENTS.md"] } },
   instructions: { global: "AGENTS.md" },
   skills: "~/.config/agents/skills",
 });

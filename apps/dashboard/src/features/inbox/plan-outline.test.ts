@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { openPlanText } from "@/lib/e2ee/open-plan-text"
+import { openPlanText } from "@relo/owner-crypto"
 import type { PlanFixture } from "@/features/inbox/plan-fixtures"
 import {
   doneFixture, flatPlan, longPlan, manyRoundsPlan, nestedPlan, deepPlan, roundsPlan, sealedPlan, skippedPlan, stoppedPlan, windowedPlan,

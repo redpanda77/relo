@@ -41,8 +41,10 @@ struct CardProgress: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        CardProgressBar<LiveSweep>(shape: spec.shape, color: spec.color, height: ReloLayout.barHeight,
-                                   sweep: { LiveSweep(active: spec.shimmer) })
+        // The current segment's track is the state colour at 32%; the light runs there only.
+        CardProgressBar<LiveSweep>(shape: spec.shape, color: spec.color, currentTrack: spec.color.opacity(0.32),
+                                   height: ReloLayout.barHeight,
+                                   sweep: { LiveSweep(active: spec.shimmer, segment: spec.steps != nil) })
         // A step finishing fills its segment and the next one lights, on a spring with no bounce.
         .animation(reduceMotion ? nil : .smooth(duration: 0.6), value: spec.shape)
         .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: spec.color)
@@ -57,39 +59,35 @@ struct CardProgress: View {
 /// carries the row background and its own horizontal inset.
 enum ReloCardPlacement { case card, row, listCell }
 
-/// The one progress layout, the Lock Screen's: the bar across the card and the step line under it
-/// ("Step 3 of 5 · Run the tests", one line). Progress is content: it sits under the status it measures,
-/// never on the card's edge or in the footer.
-struct CardProgressRow: View {
-    var caption: String?
-    var spec: CardProgressSpec
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: ReloLayout.cardGap) {
-            CardProgress(spec: spec).padding(.top, 2)
-            if let caption {
-                Text(caption).font(ReloLayout.cardMeta).foregroundStyle(Color.reloSecondaryText).lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-}
-
 /// The one card container: the glass surface, the standard inset and the line gap. Every card in the app is
 /// this around header, title, status, progress and footer, all in plain layout flow.
 struct ReloCard<Content: View>: View {
     var tint: Color? = nil
+    /// A glowing leading edge in the tint: the card asks for the owner (a question, a system problem).
+    var edge = false
+    /// A breathing wash of the tint near the top (a question card).
+    var wash = false
+    /// The work card's rhythm: no uniform gap; each part carries its own space above it (`cardGap(above:)`),
+    /// and the card pads 14 above and 12 below.
+    var rhythm = false
     var surface: ReloCardPlacement = .card
     @ViewBuilder var content: Content
 
     var body: some View {
         let sideInset: CGFloat = surface == .listCell ? 0 : ReloLayout.cardInset
         let vertical: CGFloat = surface == .card ? ReloLayout.cardInset : ReloLayout.rowInset
-        let inner = VStack(alignment: .leading, spacing: ReloLayout.cardGap) { content }
-            .padding(.horizontal, sideInset).padding(.vertical, vertical)
+        let top: CGFloat = rhythm && surface == .card ? 14 : vertical
+        let bottom: CGFloat = rhythm && surface == .card ? 12 : vertical
+        let inner = VStack(alignment: .leading, spacing: rhythm ? 0 : ReloLayout.cardGap) { content }
+            .padding(.horizontal, sideInset).padding(.top, top).padding(.bottom, bottom)
             .frame(maxWidth: .infinity, alignment: .leading)
-        if surface == .card { inner.reloCard(tint: tint) } else { inner }
+        if surface == .card { inner.reloCard(tint: tint, edge: edge, wash: wash) } else { inner }
     }
+}
+
+extension View {
+    /// The space a part of a work card keeps above itself (the design's per-part margins).
+    func cardGap(above points: CGFloat) -> some View { padding(.top, points) }
 }
 
 /// The sweep of light used on live meters. It is a mask, not an overlay: it is drawn only
@@ -97,10 +95,25 @@ struct ReloCard<Content: View>: View {
 /// the track or the label. It moves by sliding the gradient's start and end points.
 struct LiveSweep: View {
     let active: Bool
+    /// Inside one plan segment: a 22 pt bar of light (white at .8) crossing it, instead of a band over a fill.
+    var segment = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if active && !reduceMotion {
+        if active && !reduceMotion && segment {
+            ReloMotionClock(framesPerSecond: 30, still: 0) { time in
+                GeometryReader { proxy in
+                    // The design's `shim`: linear from before the left edge to the right edge in 70% of 2.8 s.
+                    let t = min(time.truncatingRemainder(dividingBy: 2.8) / (2.8 * 0.7), 1)
+                    LinearGradient(colors: [.clear, .white.opacity(0.8), .clear], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 22)
+                        .offset(x: -22 + t * (proxy.size.width + 22))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .transition(.opacity.animation(.easeInOut(duration: 0.5)))
+        } else if active && !reduceMotion {
             // The shared clock: paused off screen, in Low Power Mode and when the device is hot.
             ReloMotionClock(framesPerSecond: 30, still: 0) { time in
                 let cycle = 2.8

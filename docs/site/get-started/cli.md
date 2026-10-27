@@ -104,6 +104,19 @@ harness may ask you to allow the command. If it has not picked the code up after
 offers **Run it yourself instead**: the same code, as a command. Without a code, the same page walks an
 agent through a browser sign-in: [Set up with your agent](/docs/get-started/with-an-agent).
 
+### Windows
+
+On Windows the wizard's **Windows** choice shows a PowerShell line instead:
+
+```powershell
+& ([scriptblock]::Create((irm https://relo.example.com/install.ps1))) rci_…
+```
+
+It installs for your user alone (no administrator): Node.js 22 if needed, the CLI your server hands out
+(checked against its digest) under `%LOCALAPPDATA%\Relo`, a `relo.cmd` launcher, and your user `PATH`. With
+the app option on, the line ends in `-WindowsApp` and also installs **Relo for Windows**, opened already
+signed in. A server with no Windows app to hand out says so and skips it.
+
 ### Relo for Mac
 
 On a Mac, with the Mac option on, the line ends in `--mac-app`: it also installs **Relo for Mac** in

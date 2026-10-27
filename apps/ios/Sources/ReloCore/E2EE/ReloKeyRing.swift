@@ -82,6 +82,29 @@ public struct ReloPublishedDeviceKeys: Codable, Equatable, Sendable {
     public var prekey: Prekey
 }
 
+/// Counts changes to the keys and trusted computers this process made (key ring saved or deleted,
+/// a computer trusted, approved, declined or forgotten, sign-out). Anything derived from them, like
+/// the opened-content cache in `ReloSealedContent`, is dropped when the count moves, so a revoked
+/// computer or a rotated key never keeps showing what it opened before.
+public enum ReloE2EEGeneration {
+    private final class Counter: @unchecked Sendable {
+        let lock = NSLock()
+        var value = 0
+    }
+
+    private static let counter = Counter()
+
+    public static var current: Int { counter.lock.withLock { counter.value } }
+
+    /// Posted after every `bump()`, so a copy of the keys kept elsewhere (the widget mirror) can follow.
+    public static let didChange = Notification.Name("relo.e2ee.generation.changed")
+
+    public static func bump() {
+        counter.lock.withLock { counter.value += 1 }
+        NotificationCenter.default.post(name: didChange, object: nil)
+    }
+}
+
 public struct ReloKeyRing: Sendable {
     public let store: any ReloKeyRingStore
     public let factory: any ReloKeyFactory
@@ -121,7 +144,10 @@ public struct ReloKeyRing: Sendable {
             guard let retiredAt = prekey.retiredAt else { return false }
             return retiredAt.addingTimeInterval(deleteAfter) <= now
         }
-        if state != original { try store.save(state) }
+        if state != original {
+            try store.save(state)
+            ReloE2EEGeneration.bump()
+        }
         return state
     }
 

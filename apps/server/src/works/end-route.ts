@@ -1,6 +1,7 @@
 import { workEndRequestSchema } from "@relo/notification-contracts";
 import type { ApnsMode } from "../activity-commands/schemas.js";
 import type { Database } from "../db.js";
+import { internalId } from "../ids.js";
 import { credentialCardActor,serviceCardActor,type CardActor } from "./card-actor.js";
 import { projectWorkCard } from "./card-projection.js";
 import { endOwnerWork } from "./session-commands.js";
@@ -24,13 +25,24 @@ async function holderCardActor(db: Database,work: WorkRow): Promise<CardActor | 
 }
 
 /**
+ * The work an id names: `wrk_…`, or the `act_…` card id Now lists it by (the phone and the Dashboard end the card
+ * they hold). A card of another account, or one without a work, is no work at all.
+ */
+async function endTarget(db: Database,principalId: string,rawId: string): Promise<string | undefined> {
+  const card = internalId("act",rawId);
+  if (!card) return workInternalId(rawId);
+  return (await db.query<{ work_id: string | null }>(
+    `SELECT work_id FROM live_activities WHERE id=$1 AND principal_id=$2`,[card,principalId])).rows[0]?.work_id ?? undefined;
+}
+
+/**
  * `POST /api/works/:workId/end` for the phone, and the Dashboard's twin: the owner ends a work that is not moving.
  * The caller has proved it is the owner of `principalId`; a foreign or unknown id is the same `not_found`. No
  * notification: the owner did it, so the card ends quietly (a delivered work has no live card left to end).
  */
 export async function endWorkForOwner(db: Database,apnsMode: ApnsMode,principalId: string,rawWorkId: string,rawBody: unknown)
   : Promise<OwnerEndResult> {
-  const id = workInternalId(rawWorkId);
+  const id = await endTarget(db,principalId,rawWorkId);
   if (!id) return { status: 404,body: { error: "not_found",message: "Work not found." } };
   const parsed = workEndRequestSchema.safeParse(rawBody ?? {});
   if (!parsed.success) return { status: 400,body: { error: "invalid_request",message: "The body of End is {}." } };

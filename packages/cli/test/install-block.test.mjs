@@ -33,7 +33,9 @@ test("the block per depth: marker names the modules, heading, modules in order, 
   assert.equal(renderBlock(DEPTHS.guide)[0], "<!-- relo:start reporting planning continuity -->");
   assert.equal(renderBlock(DEPTHS.notify)[0], "<!-- relo:start notify -->");
   const optimize = renderBlock(DEPTHS.optimize);
-  assert.equal(optimize[1], "## Relo (live status on the owner's iPhone)");
+  assert.equal(optimize[1], "## Relo (live status where the owner sees it: their iPhone or the Mac's notch)");
+  assert.match(optimize[2], /^Relo is installed and signed in: use it now\./u, "every block says Relo is ready to use");
+  assert.match(block("notify"), /only when a relo command fails/u);
   assert.equal(optimize.at(-1), "<!-- relo:end -->");
   const text = optimize.join("\n");
   const at = ["For work longer", "Size the plan", "A heavy session", "Give every subagent"].map((needle) => text.indexOf(needle));

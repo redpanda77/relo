@@ -1,6 +1,7 @@
 import type { Context,Hono } from "hono";
 import type { DocsSiteBootstrap } from "@relo/notification-contracts/dashboard/docs";
 import { DOCS_SITE } from "./docs/site.generated.js";
+import { inviteCommand } from "../computer-invites.js";
 import type { DocsPage,DocsSite } from "./docs/types.js";
 import { secureHtml } from "./http.js";
 
@@ -69,26 +70,37 @@ export function docsStaticMarkup(bootstrap: DocsSiteBootstrap): string {
 const INSTALL_CODE = /^rci_[A-Za-z0-9_-]{32}(\.[A-Za-z0-9_-]{22})?$/;
 
 /** What an agent reads when the owner's Connect a computer wizard hands it a code: join with it, never sign in. */
-export const installWithCode = (origin: string,code: string,macApp = false) => `# Set up Relo on this computer
+export const installWithCode = (origin: string,code: string,desktopApp = false) => {
+  const commands = inviteCommand(origin,code,desktopApp);
+  return `# Set up Relo on this computer
 
 You are a coding agent. The owner made a one-time code in Relo's Connect a computer, so there is nothing to sign in to
 and nothing to ask: the code carries the choices the owner made.
 
-1. Run this command. It installs the Relo CLI from ${origin}, signs this computer in with the code and sets up the agents here
-   the way the owner chose${macApp ? ", and on a Mac it installs Relo for Mac and opens it signed in" : ""}. Do not run \`relo auth login\`; the code replaces it.
+1. Run the command for this computer's system. It installs the Relo CLI from ${origin}, signs this computer in with the code and sets up the agents here
+   the way the owner chose${desktopApp ? ", and on a Mac or Windows it installs Relo's desktop app and opens it signed in" : ""}. Do not run \`relo auth login\`; the code replaces it.
+
+macOS and Linux (a shell):
 
 \`\`\`sh
-curl -fsSL ${origin}/install.sh | sh -s -- ${code}${macApp ? " --mac-app" : ""}
+${commands.posix}
+\`\`\`
+
+Windows (PowerShell):
+
+\`\`\`powershell
+${commands.windows}
 \`\`\`
 
 2. The command sends the owner a first notification itself when it finishes. Do not send another.
 
-If \`relo\` is not found later, it is at \`~/.local/bin/relo\`.
+If \`relo\` is not found later, it is at \`~/.local/bin/relo\` (macOS, Linux) or \`%LOCALAPPDATA%\\Relo\\bin\\relo.cmd\` (Windows).
 
 3. If the command says the code was rejected (a code works once, for 30 minutes), stop and tell the owner to make a new one in Connect a computer. Do not retry with the same code.
 
 Tell the owner in a sentence what happened. Never put a token or password in a file or on a command line.
 `;
+};
 
 const markdown = (context: Context,text: string) => context.body(text,200,{
   "content-type": "text/markdown; charset=utf-8","cache-control": "public, max-age=300","x-content-type-options": "nosniff",
@@ -154,7 +166,7 @@ export function registerDocsSite(app: Hono,dependencies: {
     const code = context.req.query("code") ?? "";
     if (INSTALL_CODE.test(code)) {
       const at = dependencies.origin ?? new URL(context.req.url).origin;
-      return context.body(installWithCode(at,code,context.req.query("mac") === "1"),200,{
+      return context.body(installWithCode(at,code,context.req.query("app") === "1" || context.req.query("mac") === "1"),200,{
         "content-type": "text/markdown; charset=utf-8","cache-control": "no-store","x-content-type-options": "nosniff" });
     }
     const install = docsPageFor(site,"/docs/get-started/with-an-agent");

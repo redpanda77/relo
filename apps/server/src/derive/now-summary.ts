@@ -6,6 +6,20 @@ import {
   type NowSummary,
   type SessionRow,
 } from "@relo/notification-contracts";
+import { isWorkingRow } from "./presence.js";
+
+/** What a phone's Dynamic Island counts across the account (pure): `live` as the Mac notch's satellites. */
+export type IslandCounts = { live: number; needsYouCount: number };
+
+/**
+ * The island's counts from a Now summary: `live` is each work that needs the owner, waits on them or runs,
+ * plus each working session no card shows yet (the Mac notch's satellites); `needsYouCount` the needs-you count.
+ */
+export function islandCounts(summary: NowSummary): IslandCounts {
+  const works = new Set([...summary.needsYou,...summary.waitingOnYou,...summary.running].map((item) => item.id));
+  const bare = summary.sessions.sessions.filter((row) => isWorkingRow(row) && row.workId === null).length;
+  return { live: works.size + bare,needsYouCount: summary.lockScreen.needsYouCount };
+}
 
 /**
  * The Now screen from derived items (pure): sections, the "since you looked" line, folds, the Lock

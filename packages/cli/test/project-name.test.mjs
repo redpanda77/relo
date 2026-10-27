@@ -3,6 +3,7 @@
 // Never a made-up or product name: a card from a plain folder is that folder's.
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { noRunningCards } from "./fake-cards.mjs";
 import { detectIdentityDefaults, fallbackProject, projectLabel } from "../src/shared/identity.mjs";
@@ -10,11 +11,12 @@ import { folderName, namedPlace } from "../src/shared/repo.mjs";
 import { run } from "../src/cli.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
 
-const HOME = "/home/sam";
-const REPO = "/home/sam/code/acme-app";
-const PLAIN = "/home/sam/code";
+// Resolved, so the fake disk uses the platform's own spelling ("C:\\home\\sam" on Windows).
+const HOME = resolve("/home/sam");
+const REPO = resolve("/home/sam/code/acme-app");
+const PLAIN = resolve("/home/sam/code");
 // Only the repository has a .git folder; nothing else on this fake disk does.
-const exists = (path) => path === `${REPO}/.git`;
+const exists = (path) => path === join(REPO, ".git");
 
 async function cli(argv, dependencies) {
   const stdout = [];
@@ -46,6 +48,9 @@ test("in a plain folder the project is the folder's own name, never a product na
   assert.equal(projectLabel({}, PLAIN, exists), undefined);
   assert.equal(fallbackProject(undefined, { cwd: PLAIN, home: HOME }), "code");
   assert.equal(folderName(HOME, HOME), "Home");
+  // A harness's own config folder is no project: Antigravity starts `relo mcp` in ~/.gemini/config.
+  assert.equal(fallbackProject(undefined, { cwd: `${HOME}/.gemini/config`, home: HOME, env: {} }), undefined);
+  assert.equal(fallbackProject(undefined, { cwd: `${HOME}/.codex/sessions`, home: HOME, env: {} }), undefined);
   // Through the CLI: nothing detected, so the folder names it.
   assert.equal((await sentContext([], { cwd: "/home/sam/Documents/GitHub" })).project, "GitHub");
   // A signed-in integration (a named profile) still names an app's work before the folder does.
@@ -88,4 +93,14 @@ test("relo project NAME saves the name in Relo's config for this folder, and --c
   assert.equal(cleared.line.cleared, true);
   assert.deepEqual(state.config.projects, {});
   assert.equal((await cli(["project", "a", "b"], deps(PLAIN))).exitCode, EXIT.USAGE);
+});
+
+test("a linked worktree is named after its main repository, never the worktree folder", async () => {
+  const { rootName } = await import("../src/shared/repo.mjs");
+  const read = (gitdir) => () => `gitdir: ${gitdir}\n`;
+  assert.equal(rootName("C:/work/acme-app/.claude/worktrees/agent-1", { read: read("C:/work/acme-app/.git/worktrees/agent-1") }), "acme-app");
+  assert.equal(rootName("/home/u/trees/feature", { read: read("/home/u/proj/.git/worktrees/feature") }), "proj");
+  // A submodule keeps its own folder name, and an ordinary repository (.git is a folder) its folder.
+  assert.equal(rootName("/home/u/proj/sub", { read: read("../.git/modules/sub") }), "sub");
+  assert.equal(rootName("/home/u/proj", { read: () => undefined }), "proj");
 });

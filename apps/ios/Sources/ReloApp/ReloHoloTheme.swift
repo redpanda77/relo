@@ -21,6 +21,8 @@ enum ReloHoloTheme {
     static let orange = Color(red: 1, green: 0x8A / 255, blue: 0x3D / 255)
     static let yellow = Color(red: 0xFA / 255, green: 0xCC / 255, blue: 0x15 / 255)
     static let red = Color(red: 0xF4 / 255, green: 0x3F / 255, blue: 0x5E / 255)
+    /// Quiet, paused and offline: present but not moving.
+    static let slate = Color(red: 0x94 / 255, green: 0xA3 / 255, blue: 0xB8 / 255)
 
     /// The one color for each meaning. Use these, not raw hues, so color always says something.
     static func color(_ signal: NowSignal) -> Color {
@@ -36,7 +38,9 @@ enum ReloHoloTheme {
 
     /// Sessions working now (the HUD's SESSIONS module and the Sessions section): its own hue,
     /// apart from the cards' cyan, so sessions and live cards never read as one count.
-    static let sessions = violet
+    static let sessions = sessionsViolet
+    /// The Sessions hue, lighter than `violet` so it reads on the dark canvas.
+    static let sessionsViolet = Color(red: 0xA9 / 255, green: 0x9E / 255, blue: 1)
 
     /// A second shade per meaning for gradients that stay inside the meaning.
     static func deep(_ signal: NowSignal) -> Color {

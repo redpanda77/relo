@@ -24,7 +24,6 @@ struct CardProgressBar<Sweep: View>: View {
         switch shape {
         case let .segments(segments) where segments.count <= Self.segmentLimit:
             segmentRow(segments)
-                .overlay { sweep.mask(segmentRow(segments, mask: true)) }
                 .frame(height: height)
         case let .segments(segments):
             let whole = segments.reduce(0.0) { $0 + $1.fill }
@@ -34,23 +33,19 @@ struct CardProgressBar<Sweep: View>: View {
         }
     }
 
-    private func segmentRow(_ segments: [PlanBar.Segment], mask: Bool = false) -> some View {
+    private func segmentRow(_ segments: [PlanBar.Segment]) -> some View {
         // Many steps keep their divisions with a thinner gap.
         HStack(spacing: segments.count > 16 ? ReloLayout.barGap / 2 : ReloLayout.barGap) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                Group {
-                    if mask {
-                        Capsule().fill(segment.fill >= 1 ? Color.black : Color.clear)
-                    } else {
-                        Capsule().fill(segment.state == .current ? currentTrack : track)
-                            .overlay(alignment: .leading) {
-                                GeometryReader { proxy in
-                                    Capsule().fill(color).frame(width: proxy.size.width * min(max(segment.fill, 0), 1))
-                                }
-                            }
-                            .clipShape(Capsule())
+                // The sweep runs inside the current segment only (the widget passes none).
+                Capsule().fill(segment.state == .current ? currentTrack : track)
+                    .overlay(alignment: .leading) {
+                        GeometryReader { proxy in
+                            Capsule().fill(color).frame(width: proxy.size.width * min(max(segment.fill, 0), 1))
+                        }
                     }
-                }
+                    .overlay { if segment.state == .current { sweep } }
+                    .clipShape(Capsule())
                 .frame(height: height).frame(maxWidth: .infinity)
             }
         }

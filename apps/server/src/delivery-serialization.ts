@@ -253,6 +253,94 @@ function parsedJsonObject(value: unknown): Record<string, unknown> | undefined {
 }
 
 function activityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "invalid_activity" } {
+  const projection = unfittedActivityProjection(job);
+  return projection.kind === "activity" ? fitActivityProjection(projection,job.activityCommand) : projection;
+}
+
+const ACTIVITY_PUSH_BUDGET_BYTES = 4_096;
+const trimmedCards = new Set<string>();
+
+/** The bytes APNs sees for this push (the aps dictionary the provider builds in sendActivity). */
+export function activityPayloadSize(projection: ActivityProjection): number {
+  const aps: Record<string, unknown> = {
+    timestamp: projection.providerTimestamp,
+    event: projection.operation,
+    "content-state": projection.contentState,
+    "relevance-score": projection.relevanceScore,
+    ...(projection.operation === "start" ? {
+      "input-push-token": 1,"attributes-type": projection.attributesType,attributes: projection.attributes,
+    } : {}),
+    ...(projection.staleDate === undefined ? {} : { "stale-date": projection.staleDate }),
+    ...(projection.dismissalDate === undefined ? {} : { "dismissal-date": projection.dismissalDate }),
+    ...(projection.alert ? { alert: projection.alert } : {}),
+  };
+  return Buffer.byteLength(JSON.stringify({ aps }));
+}
+
+/**
+ * APNs rejects a Live Activity push over 4096 bytes at send time, which would leave the card stale. When the
+ * state is too big the lowest-value parts go first: steps far from the current one (the plan line keeps its
+ * count through `before`/`after`), then `work`, then the plan wire, and the sealed text last. Logged once per card.
+ */
+function fitActivityProjection(projection: ActivityProjection,command: Record<string,unknown> | undefined): ActivityProjection {
+  if (activityPayloadSize(projection) <= ACTIVITY_PUSH_BUDGET_BYTES) return projection;
+  const state: Record<string,unknown> = { ...projection.contentState };
+  const fitted = (): ActivityProjection => ({ ...projection,contentState: state });
+  const dropped: string[] = [];
+  const steps: Array<[string,() => boolean]> = [
+    ["far_steps",() => trimFarSteps(state,"componentsJson")],
+    ["work",() => state.work === undefined ? false : (delete state.work,true)],
+    ["plan_wire",() => trimFarSteps(state,"componentsJson",true)],
+    ["sealed",() => state.sealed === undefined ? false : (delete state.sealed,true)],
+  ];
+  for (const [name,apply] of steps) {
+    if (!apply()) continue;
+    dropped.push(name);
+    if (activityPayloadSize(fitted()) <= ACTIVITY_PUSH_BUDGET_BYTES) break;
+  }
+  const key = `${String(command?.activityId)}:${String(command?.sequence)}`;
+  if (!trimmedCards.has(key)) {
+    if (trimmedCards.size > 500) trimmedCards.clear();
+    trimmedCards.add(key);
+    console.warn(JSON.stringify({ event: "activity_push_trimmed",activityId: command?.activityId,
+      sequence: command?.sequence,dropped,bytes: activityPayloadSize(fitted()) }));
+  }
+  return fitted();
+}
+
+/** Keeps three steps around the current one, or (planWire) removes the plan wire from every steps component. */
+function trimFarSteps(state: Record<string,unknown>,field: string,planWire = false): boolean {
+  const json = state[field];
+  if (typeof json !== "string") return false;
+  let components: unknown;
+  try { components = JSON.parse(json); } catch { return false; }
+  if (!Array.isArray(components)) return false;
+  let changed = false;
+  for (const component of components) {
+    if (!component || typeof component !== "object" || (component as { type?: unknown }).type !== "steps") continue;
+    const steps = component as { items?: Array<{ state?: string }>; before?: number; after?: number; plan?: unknown };
+    if (planWire) {
+      if (steps.plan !== undefined) { delete steps.plan; changed = true; }
+      continue;
+    }
+    const items = steps.items;
+    if (!Array.isArray(items) || items.length <= 3) continue;
+    const current = items.findIndex((item) => item.state === "current");
+    const anchor = current >= 0 ? current : Math.max(0,items.findIndex((item) => item.state !== "complete"));
+    const start = Math.min(Math.max(0,anchor - 1),items.length - 3);
+    const end = start + 3;
+    const before = Math.min(99,(steps.before ?? 0) + start);
+    const after = Math.min(99,(steps.after ?? 0) + (items.length - end));
+    if (before > 0) steps.before = before; else delete steps.before;
+    if (after > 0) steps.after = after; else delete steps.after;
+    steps.items = items.slice(start,end);
+    changed = true;
+  }
+  if (changed) state[field] = JSON.stringify(canonicalJson(components));
+  return changed;
+}
+
+function unfittedActivityProjection(job: ApnsRuntimeJob): ActivityProjection | { kind: "invalid_activity" } {
   const command = job.activityCommand;
   if (!command) return { kind: "invalid_activity" };
   const operation: ActivityProjection["operation"] = job.transport === "live_activity_start"
@@ -438,10 +526,37 @@ export function commandOwner(command: Record<string, unknown>): CommandOwner | n
   };
 }
 
-/** Content-state `owner`: what the widget renders from; private cards still carry it (no content). */
-function ownerContent(command: Record<string, unknown>): { state: OwnerState; needsYou: NeedsYouReason | null } | null {
+/**
+ * Content-state `owner`: what the widget renders from; private cards still carry it (no content).
+ * `declaredAt` (Unix seconds) is the derived evidence time, so the header's "updated ..." counts
+ * from when the work last declared, never from the epoch; `finishedAt` only for a finished card.
+ * `needsYouCount` and `live` are the account's island counts (`islandCounts`); `projectSlot` the project's colour.
+ */
+function ownerContent(command: Record<string, unknown>): {
+  state: OwnerState; needsYou: NeedsYouReason | null; declaredAt?: number; finishedAt?: number;
+  needsYouCount?: number; live?: number; projectSlot?: number;
+} | null {
   const owner = commandOwner(command);
-  return owner ? { state: owner.state, needsYou: owner.needsYou } : null;
+  if (!owner) return null;
+  const raw = plainObject(command.owner);
+  const declaredAt = isoEpochSeconds(raw?.evidenceAt) ?? isoEpochSeconds(command.evidenceAt) ?? isoEpochSeconds(command.updatedAt);
+  const finishedAt = isoEpochSeconds(raw?.finishedAt) ?? isoEpochSeconds(command.finishedAt) ?? isoEpochSeconds(command.endedAt);
+  return {
+    state: owner.state,
+    needsYou: owner.needsYou,
+    ...(declaredAt === undefined ? {} : { declaredAt }),
+    ...(finishedAt === undefined ? {} : { finishedAt }),
+    // The account's island counts (the Mac notch's satellites), as the command computed them.
+    ...counted("needsYouCount",raw?.needsYouCount),
+    ...counted("live",raw?.live),
+    ...counted("projectSlot",raw?.projectSlot),
+  };
+}
+
+/** `{ [key]: n }` for a whole, non-negative count (at most 99), else nothing. */
+function counted<K extends string>(key: K,value: unknown): { [P in K]?: number } {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? { [key]: Math.min(value,99) } as { [P in K]?: number } : {};
 }
 
 /** ActivityKit staleDate = evidence + T_fresh (derive() owns it); the producer's stale-after is ignored. */

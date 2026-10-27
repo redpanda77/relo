@@ -369,6 +369,11 @@ export const sessionRowSchema = z.object({
   contextTokens: z.number().int().min(0).max(10_000_000).optional().describe("Tokens in the session's context window; absent until a hook reports it. A display fact."),
   /** Sealed session names (phones only). */
   sealedNames: z.unknown().nullable().optional(),
+  /**
+   * The session's readable name, present only on accounts that are not encrypted (the observed snapshot's `title`), or
+   * the goal of its card when it has no name at all. Readers prefer a sealed title they can open.
+   */
+  title: z.string().max(200).optional(),
   /** The next instant this row changes by time alone. */
   nextChangeAt: timestamp.nullable(),
 }).strict();
@@ -394,6 +399,15 @@ export const sinceYouLookedSchema = z.object({
 }).strict();
 export type SinceYouLooked = z.infer<typeof sinceYouLookedSchema>;
 
+/**
+ * Twelve project colours, one per palette slot (a project resource's palette ordinal % 12): the one table
+ * the iPhone, the Mac, the notch and the Dashboard draw a project in. The server stores only the slot.
+ */
+export const PROJECT_PALETTE = [
+  "#5CE1FF","#8B7CFF","#D65CF0","#FF8A7A","#34D399","#FBBF24",
+  "#7DD3FC","#A78BFA","#F472B6","#FDBA74","#6EE7B7","#FDE047",
+] as const;
+
 export const nowItemSchema = z.object({
   /** The work's card. */
   id: z.string().regex(/^act_[0-9a-f-]{36}$/),
@@ -404,6 +418,8 @@ export const nowItemSchema = z.object({
   /** The icon of the computer this work runs on (ADR 0011); absent when none is known. */
   computerIcon: computerIconSchema.optional(),
   project: z.string().max(160).nullable(),
+  /** The project's colour slot (`PROJECT_PALETTE`), the same on every surface; absent when no project resource is known. */
+  projectSlot: z.number().int().min(0).max(PROJECT_PALETTE.length - 1).optional(),
   steps: z.object({
     done: z.number().int().nonnegative(), total: z.number().int().positive(),
     current: z.string().max(80).nullable(),
@@ -429,6 +445,8 @@ export const nowItemSchema = z.object({
    * session's name after the session ends and leaves the Sessions view. Devices only; absent without names.
    */
   sessionNames: z.unknown().optional(),
+  /** The session's readable name when it has one (unencrypted accounts); readers prefer a sealed title they can open. */
+  sessionTitle: z.string().max(200).optional(),
   /** The card's newest notification event (`ntf_…`), to open its detail; null when none is visible. */
   notificationId: z.string().regex(/^ntf_[0-9a-f-]{36}$/).nullable(),
   startedAt: timestamp,

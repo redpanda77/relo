@@ -4,10 +4,11 @@ import * as React from "react"
 import { OrbStage } from "@/components/organisms/orb-stage"
 
 import { BrandLockup } from "@/components/brand"
+import { SaveError } from "@/components/molecules/system-card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { authenticateOwner, verifySecondStep } from "@/features/auth/auth-service"
+import { appleSignInError, appleSignInUrl, authenticateOwner, mobileSignInHint, verifySecondStep } from "@/features/auth/auth-service"
 import { GITHUB_URL, GitHubMark } from "@/features/auth/github"
 import { CONNECT_AFTER_SIGNUP_PATH } from "@/features/onboarding/connect-service"
 import type { DashboardAuth } from "@/features/auth/types"
@@ -30,13 +31,10 @@ function friendlyAuthError(cause: unknown, mode: "sign-in" | "sign-up"): string 
     : "Couldn't sign in. Check your connection and try again."
 }
 
-// The living deck is decoration here; the form never waits for its code.
-
-
 const promises = [
-  { icon: Activity, text: "Live progress on your iPhone's Lock Screen and Dynamic Island." },
-  { icon: MessageSquareReply, text: "Approve, decline or answer your agents from the phone." },
-  { icon: LockKeyhole, text: "End-to-end encrypted, on a server you run." },
+  { icon: Activity, text: "Live progress on your iPhone's Lock Screen or your Mac's notch." },
+  { icon: MessageSquareReply, text: "Approve, decline or answer your agents from your phone or Mac." },
+  { icon: LockKeyhole, text: "End-to-end encrypted to your devices, on a server you run." },
 ] as const
 
 /** Desktop shows the deck alone and large; phones get a smaller deck so the whole form fits one screen. */
@@ -57,19 +55,25 @@ function useMedia(query: string): boolean {
 export function AuthPage({
   bootstrap,
   onAuthenticated = (path) => window.location.assign(path),
+  onReturnToApp = (url) => window.location.assign(url),
 }: {
   bootstrap: DashboardAuth
   onAuthenticated?: (path: string) => void
+  /** Sends the browser back to the Relo app (relo://auth/callback?pending=…) while the account waits for approval. */
+  onReturnToApp?: (url: string) => void
 }) {
   const wideDeck = useMedia("(min-width: 1024px)")
   const phone = useMedia("(max-width: 639px)")
   const short = useMedia("(max-height: 700px)")
   const [pending, setPending] = React.useState(false)
-  const [error, setError] = React.useState("")
+  // Sign in with Apple returns here with ?apple=<reason> when it could not sign the person in.
+  const [error, setError] = React.useState(() => typeof window === "undefined" ? "" : appleSignInError(window.location.search))
   // "Create account" on the landing page arrives as ?mode=sign-up (only where registration is open).
   const [mode, setMode] = React.useState(() =>
     bootstrap.mode === "sign-in" && bootstrap.registration !== "closed" && new URLSearchParams(window.location.search).get("mode") === "sign-up" ? "sign-up" : bootstrap.mode)
   const [awaitingApproval, setAwaitingApproval] = React.useState(false)
+  // Waiting inside an app's sign-in: the app was handed a ticket and signs itself in once the admin approves.
+  const [appWaiting, setAppWaiting] = React.useState(false)
   const [secondStep, setSecondStep] = React.useState<null | "totp" | "backup">(null)
   // A refusal shakes the form and selects the field to retype, once the inputs are enabled again.
   const [refusals, setRefusals] = React.useState(0)
@@ -103,10 +107,14 @@ export function AuthPage({
             : undefined,
         email: String(values.get("email") ?? ""),
         password: String(values.get("password") ?? ""),
-      })
-      if (outcome === "pending") {
+      }, mobileSignInHint(bootstrap.route.nextPath))
+      if (typeof outcome === "object") {
         setAwaitingApproval(true)
         setPending(false)
+        if (outcome.redirect) {
+          setAppWaiting(true)
+          onReturnToApp(outcome.redirect)
+        }
         return
       }
       if (outcome === "two-factor") {
@@ -150,7 +158,7 @@ export function AuthPage({
   }
   const deckHeight = wideDeck ? 600 : phone ? (short ? 150 : 200) : 330
   const stageLabel = awaitingApproval ? "Waiting" : pending ? (signingIn ? "Signing in" : "Creating") : signingIn ? "Sign in" : "Welcome"
-  const inputClass = "min-h-12 rounded-xl border-white/10 bg-white/[0.04] px-4 text-[15px]"
+  const inputClass = "px-4 text-[15px]"
   return (
     <main
       id="main-content"
@@ -211,7 +219,9 @@ export function AuthPage({
           </h2>
           <p className="mt-1.5 text-sm text-muted-foreground">
             {awaitingApproval
-              ? "Your account is created. You can sign in once the server admin approves it."
+              ? appWaiting
+                ? "Your account is waiting for approval. You can close this window: Relo keeps working on this computer and signs you in when you're approved."
+                : "Your account is created. You can sign in once the server admin approves it."
               : secondStep === "totp"
                 ? "Enter the 6-digit code from your authenticator app."
                 : secondStep === "backup"
@@ -219,7 +229,7 @@ export function AuthPage({
                   : description}
           </p>
           <div className="mt-5 sm:mt-6">
-            {awaitingApproval ? (
+            {awaitingApproval && appWaiting ? null : awaitingApproval ? (
               <Button
                 type="button"
                 variant="outline"
@@ -251,7 +261,7 @@ export function AuthPage({
                 <input type="checkbox" name="trustDevice" className="size-4" disabled={pending} />
                 Don't ask again on this browser for 30 days
               </label>
-              <p role="alert" className="text-sm text-destructive empty:hidden">{error}</p>
+              <SaveError message={error} eyebrow="NOT VERIFIED" />
               <button type="submit" disabled={pending} className="capsule-cta w-full disabled:opacity-60">
                 {pending ? "Checking…" : "Continue"}
               </button>
@@ -274,6 +284,14 @@ export function AuthPage({
               className="space-y-3.5 sm:space-y-4"
               onSubmit={(event) => void submit(event)}
             >
+              {bootstrap.appleSignIn && (signingIn || canRegister || !claimed) ? (
+                <>
+                  <AppleSignInButton href={appleSignInUrl(bootstrap.route.nextPath)} disabled={pending} />
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground" aria-hidden="true">
+                    <span className="h-px flex-1 bg-white/10" />or with email<span className="h-px flex-1 bg-white/10" />
+                  </div>
+                </>
+              ) : null}
               {!signingIn ? (
                 <div className="space-y-2">
                   <Label htmlFor="name">Name</Label>
@@ -315,13 +333,7 @@ export function AuthPage({
                   className={inputClass}
                 />
               </div>
-              <p
-                id="error"
-                role="alert"
-                className="text-sm text-destructive empty:hidden"
-              >
-                {error}
-              </p>
+              <SaveError id="error" message={error} eyebrow={signingIn ? "NOT SIGNED IN" : "NOT CREATED"} />
               <button type="submit" disabled={pending} className="capsule-cta w-full disabled:opacity-60">
                 {pending
                   ? signingIn
@@ -348,5 +360,22 @@ export function AuthPage({
         </section>
       </div>
     </main>
+  )
+}
+
+/** Apple's button: white on the dark page, the Apple mark and "Continue with Apple" (it signs in and signs up). */
+function AppleSignInButton({ href, disabled }: { href: string; disabled: boolean }) {
+  return (
+    <a
+      href={href}
+      aria-disabled={disabled || undefined}
+      onClick={(event) => { if (disabled) event.preventDefault() }}
+      className="flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-white px-4 text-[15px] font-medium text-black transition-opacity hover:opacity-90 aria-disabled:opacity-60"
+    >
+      <svg viewBox="0 0 814 1000" aria-hidden="true" className="size-4 fill-current">
+        <path d="M788 341c-6 4-108 62-108 190 0 148 130 200 134 202-1 3-21 72-69 142-43 62-88 124-156 124s-86-40-164-40c-77 0-104 41-167 41s-106-58-156-128C44 790 0 671 0 557 0 375 118 278 235 278c62 0 114 41 153 41 37 0 95-43 166-43 27 0 124 2 188 65zM554 166c29-35 50-83 50-131 0-7-1-14-2-19-48 2-104 32-138 71-27 30-52 78-52 127 0 7 1 15 2 17 3 1 8 1 13 1 43 0 97-29 127-66z" />
+      </svg>
+      Continue with Apple
+    </a>
   )
 }

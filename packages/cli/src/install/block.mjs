@@ -18,7 +18,8 @@ const BARE_MODULES = Object.freeze(["reporting", "planning"]);
 
 // The block's text lives once, in blocks/<module>.md (shipped with the package), the heading shared. No
 // version numbers or timestamps: a tracked file must not change when Relo does.
-const readPart = (name) => readFileSync(new URL(`./blocks/${name}.md`, import.meta.url), "utf8").trimEnd();
+// LF always: a Windows checkout (autocrlf) has the parts in CRLF, which would put \r into the owner's files.
+const readPart = (name) => readFileSync(new URL(`./blocks/${name}.md`, import.meta.url), "utf8").replace(/\r\n/gu, "\n").trimEnd();
 /** The modules in the order a block holds them: notify or reporting first (they exclude each other). */
 export const MODULES = Object.freeze(["notify", "reporting", "planning", "continuity", "efficiency"]);
 const HEADING = readPart("heading");

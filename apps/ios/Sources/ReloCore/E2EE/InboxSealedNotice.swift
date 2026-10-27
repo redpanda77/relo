@@ -5,10 +5,41 @@ import Foundation
 public struct InboxSealedNotice: Codable, Equatable, Sendable {
     public let alert: ReloEnvelope?
     public let content: ReloEnvelope
+    /// A card event of an earlier round: its work's newest card text, which names the later rounds of the
+    /// work's current plan (the card's own text predates them). Absent when this card's text is the newest.
+    public let plan: ReloEnvelope?
 
-    public init(alert: ReloEnvelope?, content: ReloEnvelope) {
+    /// A snapshot sends a card envelope shared by several events once (`InboxRepairResponse.envelopes`) and names it
+    /// here by its md5 instead of carrying `content`. Nil once resolved or when the envelope was sent inline.
+    public let contentRef: String?
+
+    public init(alert: ReloEnvelope?, content: ReloEnvelope, plan: ReloEnvelope? = nil, contentRef: String? = nil) {
         self.alert = alert
         self.content = content
+        self.plan = plan
+        self.contentRef = contentRef
+    }
+
+    /// What `content` holds while its `contentRef` is unresolved: an envelope no phone can open, so the item
+    /// reads as sealed and unreadable, exactly like one this phone cannot open.
+    static let unresolvedContent = ReloEnvelope(v: "", kind: "unresolved", context: "", sender: "", recipients: [],
+                                                nonce: "", ct: "", sig: "")
+
+    private enum CodingKeys: String, CodingKey { case alert, content, plan, contentRef }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        alert = try values.decodeIfPresent(ReloEnvelope.self, forKey: .alert)
+        contentRef = (try? values.decodeIfPresent(String.self, forKey: .contentRef)) ?? nil
+        if let inline = try? values.decode(ReloEnvelope.self, forKey: .content) {
+            content = inline
+        } else if contentRef != nil {
+            content = Self.unresolvedContent
+        } else {
+            content = try values.decode(ReloEnvelope.self, forKey: .content)
+        }
+        // An odd plan envelope never hides the card: it opens from its own text.
+        plan = (try? values.decodeIfPresent(ReloEnvelope.self, forKey: .plan)) ?? nil
     }
 }
 
@@ -58,7 +89,7 @@ public extension InboxItem {
             activitySummary: activitySummary?.opening(title: notice.title, status: nil, detail: nil),
             // A sealed question shows its real prompt once opened (E4.1).
             interaction: interaction.map { $0.replacingPrompt(notice.summary ?? notice.body ?? $0.prompt) }, context: context,
-            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed, work: work?.withoutText
+            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed, work: work?.withoutText, outcomeOf: outcomeOf
         )
     }
 
@@ -195,6 +226,16 @@ extension InboxItem {
         }
     }
 
+    /// The rounds with the titles and outcomes the server withheld, from the sealed text's phases (`r<n>`).
+    static func openingRounds(_ rounds: [InboxCardDigest.PlanRound], text: ReloSealedCardText) -> [InboxCardDigest.PlanRound] {
+        let phases = Dictionary((text.phases ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return rounds.map { round in
+            let phase = phases["r\(round.n)"]
+            return .init(n: round.n, closed: round.closed, title: round.title ?? ReloWork.text(phase?.title),
+                         outcome: round.outcome ?? ReloWork.text(phase?.outcome), openedAt: round.openedAt, closedAt: round.closedAt)
+        }
+    }
+
     /// A card event in History or Now: real title, status and current step from the card's envelope.
     func openingSealedCard(_ sealed: InboxSealedNotice, open: ReloSealedOpener) -> InboxItem {
         guard let data = open(sealed.content, id) ?? sealed.alert.flatMap({ open($0, id) }),
@@ -202,6 +243,11 @@ extension InboxItem {
             // Unopened: the plan keeps only what the server may know in the clear.
             return replacingWork(work?.withoutText)
         }
+        // The plan is the work's current one: an earlier round's card names its steps from the work's newest text,
+        // while its title and status stay its own.
+        let newest = sealed.plan.flatMap { open($0, id) }.flatMap { try? JSONDecoder().decode(ReloSealedCardText.self, from: $0) }
+        var planText = text
+        if let phases = newest?.phases { planText.phases = phases }
         let placeholders: Set<String> = ["Encrypted card", "Encrypted question"]
         let realTitle = text.title.flatMap { placeholders.contains($0) ? nil : $0 }
         let shownTitle = placeholders.contains(title) ? (realTitle ?? title) : title
@@ -220,8 +266,10 @@ extension InboxItem {
             return InboxCardDigest(state: digest.state, outcome: digest.outcome, status: opened(digest.status),
                                    progress: digest.progress, steps: steps, updates: digest.updates,
                                    startedAt: digest.startedAt, endedAt: digest.endedAt,
-                                   work: digest.work.map { $0.withoutText.opening(text) },
-                                   plan: digest.plan.map { Self.openingPlan($0, text: text) }, rounds: digest.rounds)
+                                   work: digest.work.map { $0.withoutText.opening(planText) },
+                                   plan: digest.plan.map { Self.openingPlan($0, text: planText) },
+                                   rounds: digest.rounds.map { Self.openingRounds($0, text: planText) },
+                                   workId: digest.workId)
         }
         return InboxItem(
             id: id, kind: kind, sourceName: sourceName, sourceImageUrl: sourceImageUrl, title: shownTitle,
@@ -232,7 +280,7 @@ extension InboxItem {
             interaction: interaction, context: context, resources: resources,
             activityEvent: activityEvent, activity: card, sealed: sealed,
             // The plan's titles and labels come only from this phone's envelope, matched by id.
-            work: ReloWork.opened(work, text: text)
+            work: ReloWork.opened(work, text: planText), outcomeOf: outcomeOf
         )
     }
 }
@@ -280,7 +328,7 @@ extension InboxItem {
             apnsAcceptedAt: apnsAcceptedAt, receivedAt: receivedAt, openedAt: openedAt, createdAt: createdAt,
             destinationUrl: nil, privacy: .private, liveActivity: liveActivity, activitySummary: activitySummary,
             interaction: interaction.map { $0.replacingPrompt(ReloSealedCards.promptPlaceholder) }, context: context,
-            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed, work: work?.withoutText
+            resources: resources, activityEvent: activityEvent, activity: activity, sealed: sealed, work: work?.withoutText, outcomeOf: outcomeOf
         )
     }
 }

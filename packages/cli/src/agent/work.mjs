@@ -18,6 +18,7 @@ import { loadSelfKey, restoredPlan, restoreFromSelfCopy, selfCopyText } from "..
 import { newIdempotencyKey, splitWorks, WORK_ROUTES, worksClient } from "../work/works-client.mjs";
 import { guardWorkFlags, harnessName } from "./guards.mjs";
 import { handleIdentity, mintHandleToken, parseHandle, printHandle } from "./handle.mjs";
+import { isLoopbackApiUrl } from "../shared/config.mjs";
 import { sessionName, titleCacheOf } from "./session-name.mjs";
 import { readSession, writeSession } from "./session-file.mjs";
 
@@ -78,15 +79,20 @@ function planTree(plan) {
   return roots;
 }
 
+const VIEW_ROUNDS = 5;
+
 /** The work as `--json` shows it: ids and lifecycle, plus what an agent needs to resume: goal, status, current step, rounds, plan tree. */
 export function workView(work) {
-  const rounds = (work.plan?.rounds ?? []).map((r) => ({ n: r.n, state: r.state, ...(r.title ? { title: r.title } : {}), ...(r.outcome ? { outcome: r.outcome } : {}) }));
+  // The newest few rounds only: a long work has dozens, and this view is read into an agent's context on every command.
+  const all = work.plan?.rounds ?? [];
+  const rounds = all.slice(-VIEW_ROUNDS).map((r) => ({ n: r.n, state: r.state, ...(r.title ? { title: r.title } : {}), ...(r.outcome ? { outcome: r.outcome } : {}) }));
   return {
     id: work.id, lifecycle: work.lifecycle, version: work.version, step: stepOf(work), progress: work.progress ?? null,
     goal: work.goal ?? null,
     ...(typeof work.status === "string" ? { status: work.status } : {}),
     current: work.plan?.steps?.find((s) => s.state === "current")?.id ?? null,
     rounds,
+    ...(all.length > rounds.length ? { earlierRounds: all.length - rounds.length } : {}),
     plan: planTree(work.plan),
   };
 }
@@ -220,12 +226,15 @@ export async function runAgentWork(command, verb) {
   const { options, rest = [], dependencies, client } = command;
   const argv = dependencies.argv ?? ["work", verb];
   const sealNotes = [];
+  const onMac = command.config?.local === true && isLoopbackApiUrl(command.config.apiUrl);
   let sealerPromise;
   const sealer = () => (sealerPromise ??= workSealer({ client, config: command.config, dependencies, notes: sealNotes }));
   /** A sealed work is always sealed, a readable one never; a work not on the server yet seals when it can. */
   const sealMode = (work) => (work?.queued ? "auto" : work?.sealed ? "always" : "never");
   /** A spoken line rides the sealed card only; a readable work has none, and says so instead of dropping it. */
-  const unsentSpoken = (spoken, work) => (spoken && sealMode(work) === "never" ? ["--say was not sent: this work is readable, and the spoken line travels only inside the end-to-end encrypted card"] : []);
+  const unsentSpoken = (spoken, work) => (spoken && sealMode(work) === "never"
+    ? [onMac ? "--say was not sent: Relo for Mac says the goal and the outcome; a custom spoken line is not supported on this Mac yet"
+      : "--say was not sent: this work is readable, and the spoken line travels only inside the end-to-end encrypted card"] : []);
   /** The whole line Relo for Mac says for this deliver or finish (ADR 0015); a readable work has no sealed gist, so the frame alone. */
   // ADR 0015 revision 1: how much Relo for Mac may say of this work (RELO_VOICE, this project's setting, relo voice, verbose).
   const voice = voiceSetting(dependencies);
@@ -257,7 +266,7 @@ export async function runAgentWork(command, verb) {
   const now = new Date();
   // A refused finish or deliver rides on every echo until an accepted one clears it.
   const pendingRefusal = ctx.file?.pendingRefusal;
-  const echoOf = (args) => renderEcho({ pendingRefusal, ...args });
+  const echoOf = (args) => renderEcho({ pendingRefusal, notch: onMac, ...args });
 
   /** `start --round` on a work whose last round is delivered: round n+1 with the plan's steps (the title stays local on a sealed work). */
   async function openNextRound({ open, existing, entries, progress }) {
@@ -417,7 +426,7 @@ export async function runAgentWork(command, verb) {
     const response = view(payload, { id: undefined });
     let work = response.work;
     if (work) work = withLocalLabels(work, { id: work.id, goal, spokenName, status, plan });
-    if (open && response.disposition === "switched") notes.push(`parked ${shortId(open.id)} "${open.goal}"; its card left the Lock Screen.`);
+    if (open && response.disposition === "switched") notes.push(`parked ${shortId(open.id)} "${open.goal}"; its card left ${onMac ? "the notch" : "the Lock Screen"}.`);
     const handle = handleOf(ctx, work);
     const echo = echoOf({ work, parked: response.parked, disposition: response.disposition ?? "started", notes, handle, now, pendingRefusal: undefined });
     // A new work leaves any refused finish of the parked one behind.
@@ -513,7 +522,7 @@ export async function runAgentWork(command, verb) {
     const remaining = target === state.open ? null : state.open;
     const parked = response.parked ?? state.parked.filter((p) => p.id !== target.id);
     const says = resultKind === "dropped" ? undefined : macSays(resultKind, target, spoken);
-    const echo = renderEcho({ work: { ...work, result: work.result ?? resultKind, outcome: work.outcome ?? outcome }, parked, notes: [...drainNotes(drained), ...unsentSpoken(said, target), ...(says ? sayNudge(said) : [])], queued: !payload, now, saysLine: says });
+    const echo = renderEcho({ work: { ...work, result: work.result ?? resultKind, outcome: work.outcome ?? outcome }, parked, notes: [...drainNotes(drained), ...unsentSpoken(said, target), ...(says ? sayNudge(said) : [])], queued: !payload, now, saysLine: says, notch: onMac });
     await save(ctx, dependencies, { open: remaining, parked, echo, pendingRefusal: null, finishedGoal: remaining ? undefined : target.goal ?? undefined });
     return result(echo, { disposition: "finished", work, parked, queued: !payload });
   });
@@ -544,7 +553,7 @@ export async function runAgentWork(command, verb) {
     const response = payload ? view(payload, delivered) : { work: delivered, parked: state.parked };
     const work = response.work ? { ...response.work, status: null } : delivered;
     const parked = response.parked ?? state.parked;
-    const echo = renderEcho({ work, parked, disposition: "delivered", notes: [...drainNotes(drained), ...dropNotes, ...unsentSpoken(said, open), ...sayNudge(said)], handle: handleOf(ctx, work), queued: !payload, now, saysLine: macSays("yourTurn", open, spoken) });
+    const echo = renderEcho({ work, parked, disposition: "delivered", notes: [...drainNotes(drained), ...dropNotes, ...unsentSpoken(said, open), ...sayNudge(said)], handle: handleOf(ctx, work), queued: !payload, now, saysLine: macSays("yourTurn", open, spoken), notch: onMac });
     await save(ctx, dependencies, { open: work, parked, echo, pendingRefusal: null });
     return result(echo, { disposition: "delivered", work, parked, queued: !payload });
   });
@@ -694,7 +703,9 @@ export async function runAgentWork(command, verb) {
   if (name) ctx.sessionName = name;
   const work = response.work ? withLocalLabels(response.work, local) : local;
   const parked = response.parked ?? state.parked;
-  const nameNote = spokenName !== undefined && sealMode(open) === "never" ? ["--spoken-name was not sent: this work is readable, and the spoken name travels only inside the end-to-end encrypted card"] : [];
+  const nameNote = spokenName !== undefined && sealMode(open) === "never"
+    ? [onMac ? "--spoken-name was not sent: a custom spoken name is not supported on this Mac yet"
+      : "--spoken-name was not sent: this work is readable, and the spoken name travels only inside the end-to-end encrypted card"] : [];
   const echo = echoOf({ work, parked, disposition: response.disposition ?? "updated", notes: [...drainNotes(drained), ...notes, ...nameNote], handle: handleOf(ctx, work), queued, now });
   await save(ctx, dependencies, { open: work, parked, echo });
   return result(echo, { disposition: "updated", work, parked, queued });
@@ -715,7 +726,7 @@ export async function runAgentState(command) {
     const at = new Date(ctx.file.writtenAt);
     lines.push(`Local copy from ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}, possibly stale: relo state --sync`);
   }
-  lines.push(renderEcho({ pendingRefusal: ctx.file?.pendingRefusal, work: state.open, parked: state.parked, notes: drainNotes(drained), lane: await laneSummary(dependencies), handle: ctx.token && state.open ? printHandle(state.open.id, ctx.token) : undefined }));
+  lines.push(renderEcho({ pendingRefusal: ctx.file?.pendingRefusal, work: state.open, parked: state.parked, notes: drainNotes(drained), lane: await laneSummary(dependencies), notch: isLoopbackApiUrl(command.config?.apiUrl) && command.config?.local === true, handle: ctx.token && state.open ? printHandle(state.open.id, ctx.token) : undefined }));
   const waiting = ctx.persist ? await readPendingHandoff(dependencies, dependencies.cwd) : undefined;
   if (waiting && waiting.fromSession !== sessionHash(ctx.caller.sessionKey)) {
     lines.push(`Handoff waiting for this project: "${quoted(waiting.goal ?? "a work")}", next: "${quoted(waiting.next)}". Continue it: relo work start --from ${waiting.handle}`);

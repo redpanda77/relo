@@ -3,7 +3,7 @@ import { assertNoExtra } from "../shared/validate.mjs";
 import { result } from "../shared/outcome.mjs";
 import { runUpdate } from "./releases.mjs";
 
-const USAGE = "Usage: relo update [--check] [--rollback] [--version X] [--dry-run] [--mode auto|ask|off]";
+const USAGE = "Usage: relo update [--check] [--rollback] [--version X] [--dry-run] [--mode auto|ask|off|managed]";
 
 /** The variables `relo ask` needs to reach the server as this computer, and nothing that names an agent session. */
 const ASK_ENV = ["HOME", "PATH", "TMPDIR", "RELO_CONFIG_PATH", "RELO_KEY_STORE_PATH", "RELO_STATE_DIR",
@@ -23,7 +23,7 @@ export function askToUpdate({ dependencies, target, computer, spawnImpl }) {
       "--project", "Relo", "--topic", "Updates", "--expires-in", "8h", "--timeout", "8h",
       "--idempotency-key", `relo-update:${computer}:${target}`.replace(/[^A-Za-z0-9._:-]/gu, "-").slice(0, 120),
       "--detail", "Your Relo server offers a newer CLI. Yes installs it on this computer now (checked against the server's digest; relo update --rollback goes back). No skips this version."],
-    { stdio: "ignore", env: { ...env, RELO_SOURCE: "Relo", RELO_UPDATES: "off" } });
+    { stdio: "ignore", env: { ...env, RELO_SOURCE: "Relo", RELO_UPDATES: "off" }, windowsHide: true });
     child.on("error", () => resolve("unanswered"));
     child.on("exit", (code) => resolve(code === 0 ? "approved" : code === 5 ? "declined" : "unanswered"));
   });
@@ -38,14 +38,23 @@ export async function runUpdateCommand(command) {
   if (options.mode !== undefined) {
     const { UPDATE_MODES, setUpdateMode, updateMode } = await import("./auto-update.mjs");
     if (!UPDATE_MODES.includes(options.mode)) throw new UsageError(USAGE);
-    setUpdateMode(dependencies.home, options.mode);
-    const effective = updateMode({ home: dependencies.home, env: dependencies.env });
+    setUpdateMode(dependencies.home, options.mode, dependencies.entrypoint);
+    const effective = updateMode({ home: dependencies.home, env: dependencies.env, entrypoint: dependencies.entrypoint });
     return result("update", { ok: true, mode: options.mode, ...(effective !== options.mode ? { effective } : {}) },
       { message: effective !== options.mode ? `Stored ${options.mode}; ${dependencies.env.RELO_UPDATES ? "RELO_UPDATES" : "RELO_NO_UPDATE_CHECK"} keeps it ${effective} for now.` : undefined });
   }
+  // Managed: the Relo app keeps this CLI current, so this CLI checks and installs nothing itself.
+  const { updateMode: modeOf, bundledEntrypoint } = await import("./auto-update.mjs");
+  if (modeOf({ home: dependencies.home, env: dependencies.env, entrypoint: dependencies.entrypoint }) === "managed") {
+    return result("update", { ok: true, managed: true, current: dependencies.version }, { message: "The Relo app keeps this CLI up to date; nothing to do here." });
+  }
+  // The CLI inside the app is never npm-installed over itself, whatever the mode: only a new Relo for Mac replaces it.
+  if (bundledEntrypoint(dependencies.entrypoint)) {
+    return result("update", { ok: true, managed: true, bundled: true, current: dependencies.version }, { message: "This relo is part of Relo for Mac; update the app to update it." });
+  }
   if (options.auto) {
     const { autoUpdateState, recordAutoUpdate, updateMode } = await import("./auto-update.mjs");
-    if (updateMode({ home: dependencies.home, env: dependencies.env }) === "ask") {
+    if (updateMode({ home: dependencies.home, env: dependencies.env, entrypoint: dependencies.entrypoint }) === "ask") {
       const target = autoUpdateState(dependencies.home).target;
       if (!target) return result("update", { ok: true, skipped: "nothing to ask about" });
       const { spawn } = await import("node:child_process");

@@ -1,5 +1,8 @@
 // An in-memory Relo that behaves like the server for cards and the questions folded into them.
 import { randomUUID } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { HARNESSES, harnessFor } from "../src/harness/catalog.mjs";
 
 const DELIVERY = { eligibleDevices: 1, durableCommands: 1, apnsJobs: 1 };
 
@@ -74,6 +77,8 @@ export function cardDependencies(client, { env = {}, identity = { providerName: 
     identityDefaults: () => identity,
     readStdinJson: async () => ({}),
     env,
+    // POSIX by default: the hook commands setup writes are `relo hook ...` there; a test of Windows passes platform "win32".
+    platform: "linux",
     sleep: async () => {},
     prepareNotificationCommand: async ({ body }) => body,
     captureActivityCommand: async ({ body }) => ({ target: null, ifSequence: body.ifSequence }),
@@ -81,11 +86,25 @@ export function cardDependencies(client, { env = {}, identity = { providerName: 
 }
 
 /** A throwaway home folder, optionally with the Relo block and a skill copy at a version. Tests never touch the real one. */
-export async function fakeHome({ block = false, skillVersion, agents = [".claude", ".codex"] } = {}) {
+/** Every harness that can be installed: for tests that name their agents and are not about detection. */
+export const EVERY_HARNESS = () => HARNESSES.filter((harness) => harness.installation).map((harness) => harness.id);
+
+/** Makes harnesses "installed" under a fake home the way a real one is: a program of theirs on the owner's path (~/.local/bin), an app folder for an app. */
+export function installHarnesses(home, ids) {
+  mkdirSync(join(home, ".npm-global", "bin"), { recursive: true });
+  for (const id of ids) {
+    const { binaries = [], apps = [] } = harnessFor(id).installation;
+    if (binaries.length) writeFileSync(join(home, ".npm-global", "bin", binaries[0]), "#!/bin/sh\n", { mode: 0o755 });
+    else mkdirSync(join(home, "Applications", apps[0]), { recursive: true });
+  }
+}
+
+export async function fakeHome({ block = false, skillVersion, agents = [".claude", ".codex"], installed = [] } = {}) {
   const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const home = await mkdtemp(join(tmpdir(), "relo-home-"));
+  if (installed.length) installHarnesses(home, installed);
   for (const agent of agents) await mkdir(join(home, agent), { recursive: true });
   // block: true writes the block relo setup writes now; "stale" an older one.
   if (block) {

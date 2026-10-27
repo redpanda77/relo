@@ -2,9 +2,9 @@
 // minted with the owner's CLI credential when hooks that send are installed (or lazily by the outbox
 // flusher), stored beside the CLI config as `harness-credential` (0600): { apiUrl, id, token }. It can
 // only post observed snapshots; the CLI credential never calls the observed route.
-import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { writeFileAtomic } from "../../shared/atomic-write.mjs";
 import { cleanLabel as label } from "../../shared/label.mjs";
 import { resolveComputerName } from "../../shared/computer.mjs";
 
@@ -29,9 +29,7 @@ export async function readHarnessCredential(dependencies) {
 async function writeHarnessCredential(dependencies, value) {
   const path = harnessCredentialPath(dependencies);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(temp, JSON.stringify(value), { mode: 0o600 });
-  await rename(temp, path);
+  await writeFileAtomic(path, JSON.stringify(value));
 }
 
 export async function removeHarnessCredential(dependencies) {

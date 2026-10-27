@@ -30,14 +30,31 @@ export function Countdown({ deadline, className }: { deadline: string | null | u
   )
 }
 
-/** "running 12:40", ticking on the page's one clock (a leaf: only these words re-render). Display only. */
-export function RunningFor({ since, className }: { since: string; className?: string }) {
+/** The time left alone ("4:05", "Expired"; the chip says what it is), ticking: a leaf for a chip's words. Nothing without a deadline. */
+export function CountdownText({ deadline }: { deadline: string | null | undefined }) {
+  const now = useTicker(Boolean(deadline))
+  const left = timeLeft(deadline ?? null, now)
+  if (left === "") return null
+  return <time className="tabular-nums" dateTime={deadline ?? undefined}>{left?.replace(/ left$/u, "") ?? "Expired"}</time>
+}
+
+/** "QUIET 14 MIN": minutes since the instant, ticking. */
+export function QuietFor({ since }: { since: string }) {
+  const now = useTicker(true)
+  const started = new Date(since).valueOf()
+  if (!Number.isFinite(started)) return <>Quiet</>
+  const minutes = Math.max(1, Math.floor(((now || started) - started) / 60_000))
+  return <>{`Quiet ${minutes} min`}</>
+}
+
+/** "12:40", ticking on the page's one clock (a leaf: only these words re-render); `prefix` adds a word ("running "). Display only. */
+export function RunningFor({ since, className, prefix = "" }: { since: string; className?: string; prefix?: string }) {
   const now = useTicker(true)
   const started = new Date(since).valueOf()
   if (!Number.isFinite(started)) return null
   return (
     <time className={className ? `tabular-nums ${className}` : "tabular-nums"} dateTime={since}>
-      {`running ${clockOf(((now || started) - started) / 1000)}`}
+      {`${prefix}${clockOf(((now || started) - started) / 1000)}`}
     </time>
   )
 }

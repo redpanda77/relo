@@ -8,7 +8,7 @@ Relo for Mac turns the notch into a live view of your agents, scripts and apps. 
 stays a plain black notch. When work moves, the black grows a wing on each side of the camera. Hover
 over the notch or click it to open the full list.
 
-It shows the same story as your iPhone: your server decides each card's state, and the notch only
+It shows the same story as your iPhone: Relo decides each card's state (on this Mac, or on your server), and the notch only
 draws it. See [Cards](/docs/concepts/cards) for when a card is fresh, folded or gone.
 
 ## The closed notch

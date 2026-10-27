@@ -243,7 +243,7 @@ export function AccountPage({
           <p className="truncate text-sm text-muted-foreground">{initial.account.email}</p>
         </div>
         {host ? (
-          <Badge tone="mint" variant="hairline" mono title="This server">
+          <Badge tone="mint" variant="hairline" mono sentence title="This server">
             {host}
           </Badge>
         ) : null}
@@ -361,7 +361,7 @@ export function AccountPage({
                   </Row>
                 )}
               </List>
-              <OperationStatus state={userState} pendingLabel="" />
+              <OperationStatus card state={userState} pendingLabel="" />
             </div>
           </Section>
         ) : null}
@@ -435,8 +435,8 @@ export function AccountPage({
                     />
                     <span>Sign out other sessions</span>
                   </Label>
+                  <OperationStatus card state={passwordState} pendingLabel="" />
                   <CardFooter
-                    meta={<OperationStatus state={passwordState} pendingLabel="" />}
                     actions={
                       <ActionButton
                         type="submit"
@@ -494,8 +494,8 @@ export function AccountPage({
                   pattern="DELETE"
                   required
                 />
+                <OperationStatus card state={deletionState} pendingLabel="" />
                 <CardFooter
-                  meta={<OperationStatus state={deletionState} pendingLabel="" />}
                   actions={
                     <ActionButton
                       type="submit"

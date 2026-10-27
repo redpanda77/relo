@@ -236,7 +236,7 @@ private struct ChoiceButtonStyle: ViewModifier {
     func body(content: Content) -> some View {
         switch style {
         case .page: content.buttonStyle(.relo(prominent ? .primary : .secondary))
-        case .card: content.buttonStyle(.cardAction(prominent ? .primary : .secondary, fill: true))
+        case .card: content.buttonStyle(.cardAction(prominent ? .answerPrimary : .answerSecondary, fill: true))
         }
     }
 }
@@ -244,8 +244,8 @@ private struct ChoiceButtonStyle: ViewModifier {
 extension ReloDecisionActions.Choice {
     /// A yes/no or approval question's two answers, the sender's labels, the affirmative one prominent.
     static func binary(_ actions: BinaryNotificationActionPresentation) -> [Self] {
-        [.init(id: actions.secondaryAction.rawValue, label: actions.secondaryLabel, action: actions.secondaryAction),
-         .init(id: actions.primaryAction.rawValue, label: actions.primaryLabel, action: actions.primaryAction, prominent: true)]
+        [.init(id: actions.primaryAction.rawValue, label: actions.primaryLabel, action: actions.primaryAction, prominent: true),
+         .init(id: actions.secondaryAction.rawValue, label: actions.secondaryLabel, action: actions.secondaryAction)]
     }
 
     /// A choice question's options, each of equal weight.

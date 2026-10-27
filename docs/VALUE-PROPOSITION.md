@@ -24,14 +24,16 @@ Relo bridges all of it into one place, wherever it runs: a laptop, a home server
 inside an app. Every source, whether agent, script or app, can:
 
 1. **Report status.** The work in progress and how far along it is, live on the iPhone's Lock
-   Screen and Dynamic Island.
+   Screen and Dynamic Island, or in the Mac's notch.
 2. **Break through when it matters.** Time-sensitive alerts for what needs the owner now. Everything
    else stays quiet until the outcome.
-3. **Carry the details.** A plan with steps, a payload with the specifics, opened on demand.
-4. **Ask for input.** Approve, decline, answer a question or pick an option, from the phone. The
+3. **Carry the details.** A plan with steps and the specifics, opened on demand.
+4. **Ask for input.** Approve, decline, answer a question or pick an option, from the phone or the Mac's notch. The
    source waits for the answer and carries on; no answer means no.
 
-All of it is on a server the owner runs, end-to-end encrypted to the owner's devices.
+There are two ways in. **Relo for Mac** runs Relo on one Mac: nothing leaves it, and there is no
+server, account, iPhone or encryption to set up. Or **a server the owner runs**, with computers and
+an optional iPhone, end-to-end encrypted to the owner's devices once an iPhone is trusted.
 
 ## Why it matters to the owner
 
@@ -41,8 +43,9 @@ All of it is on a server the owner runs, end-to-end encrypted to the owner's dev
 - **Efficiency.** Work keeps moving: what is stuck, stale or waiting on the owner shows up before it
   costs hours, and every outcome, finished or failed, is known.
 - **Total privacy for confidential work.** Agents work on client code, unreleased plans and personal
-  matters, so anything leaving the owner's machines must stay private. Content is end-to-end
-  encrypted on the producer's computer and opens only on the owner's devices; the server (even the
+  matters, so anything leaving the owner's machines must stay private. With Relo for Mac on its own,
+  nothing leaves the Mac. With a server, content is end-to-end encrypted on the producer's computer
+  once an iPhone is trusted and opens only on the owner's devices; the server (even the
   owner's own) cannot read it. The server wipes it after the window the owner sets (10 hours by default), and the phone's keys rotate
   every 10 hours, so even an old copy can never be opened again.
 
@@ -64,4 +67,4 @@ self-hosting, source availability) is evidence that earns trust, not the headlin
 - Name all three sources (agents, scripts, apps), not only agents.
 - Name the four things the owner gets: status, time-sensitive alerts, details, input.
 - One-line forms: "Decentralized agents and automations, together in one place." / "Every agent,
-  script and app you run, wherever it runs, in one place on your iPhone."
+  script and app you run, wherever it runs, in one place on your iPhone or your Mac."

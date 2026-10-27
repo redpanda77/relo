@@ -7,7 +7,8 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { release as osRelease } from "node:os";
 import { ADAPTERS } from "../harness/adapters/index.mjs";
-import { HARNESSES, presentHarnesses } from "../harness/catalog.mjs";
+import { HARNESSES } from "../harness/catalog.mjs";
+import { isInstalled } from "../harness/installed.mjs";
 import { inferLevel } from "../harness/core/install.mjs";
 import { depthOf, shortPath } from "../install/block.mjs";
 import { inspectBlocks, inspectMcpInstall } from "../install/inspect.mjs";
@@ -33,7 +34,7 @@ const DOCTOR_FILE = "doctor-last.json";
 const tried = (probe) => { try { return probe() ?? undefined; } catch { return undefined; } };
 
 function probeCommand(command, args) {
-  return execFileSync(command, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] });
+  return execFileSync(command, args, { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
 }
 
 /**
@@ -74,7 +75,6 @@ function hooksOf(harness, hookFiles) {
 
 /** Per harness with anything to install: is it here, and what of Relo's is installed and current. */
 export function harnessesOf(dependencies, probe) {
-  const present = new Set(presentHarnesses(probe).map((harness) => harness.id));
   const blocks = tried(() => inspectBlocks(probe))?.files ?? [];
   const hookFiles = tried(() => findHooks(probe).filter((file) => file.place === "global")) ?? [];
   const skills = tried(() => findSkillCopies({ ...probe, cliVersion: dependencies.version })) ?? [];
@@ -87,7 +87,7 @@ export function harnessesOf(dependencies, probe) {
     const mcpFiles = mcp.filter((file) => file.agent === harness.id);
     return {
       id: harness.id,
-      detected: present.has(harness.id),
+      detected: isInstalled(harness, probe),
       instructions: block === undefined ? "none" : block.state === "current" ? "set" : block.state,
       // The depth the global block's marker names (notify|track|guide|optimize|custom), none without a block.
       level: block === undefined ? "none" : depthOf(block.modules),

@@ -3,14 +3,24 @@ import { rememberQuestion } from "../crypto/answer-verify.mjs";
 import { forgetCardText, saveCardText, sealCardRequest } from "../crypto/seal-card.mjs";
 import { sealedCardDirectory } from "../crypto/paths.mjs";
 import { sealQuestion } from "../crypto/seal-notice.mjs";
-import { ApiError, EXIT, ReloError, TerminalInteractionError } from "../shared/errors.mjs";
+import { ApiError, EXIT, ReloError, TerminalInteractionError, LOCAL_NOT_LINKED } from "../shared/errors.mjs";
 import { result } from "../shared/outcome.mjs";
 import { DEFAULT_ACTIVITY_STALE_SECONDS, validateActivityWaitResponse } from "../messages/cards.mjs";
 import { listAllDevices } from "../shared/devices.mjs";
+import { receivingMacs } from "../crypto/mac-device.mjs";
+import { isLocalAccount } from "./local-doctor.mjs";
 import { messageWaitSeconds, waitForInteraction } from "../messages/notify.mjs";
 
 const USAGE = "Usage: relo test [--again] [--timeout 100s]";
 const PROMPT = "Can you see this card on your iPhone?";
+const MAC_PROMPT = "Can you see this card on your Mac?";
+// Relo for Mac on a Mac, Relo for Windows on a PC: the words name the machine only where it is a Mac.
+const ON_MAC = process.platform === "darwin";
+const NOTCH = ON_MAC ? "your Mac's notch" : "the Relo notch";
+const NOTCH_PROMPT = `Can you see this card in ${NOTCH}?`;
+const NOTCH_CHECKS = ON_MAC
+  ? "On the Mac: Relo for Mac is open and linked (relo devices list shows it), and the notch is on in its settings. Then run relo test --again."
+  : "On this PC: Relo is open and linked (relo devices list shows it). Then run relo test --again.";
 const QUESTION_SECONDS = 300;
 const CARD_KEY = "relo-test";
 
@@ -45,10 +55,25 @@ export async function runTestCommand(command) {
   if (!again && config.phoneTest) {
     return result("test", { verified: true, already: true, ...config.phoneTest });
   }
-  const live = devices.filter(isLiveDevice);
+  // A local account has no iPhone: Relo for Mac shows the card in its notch, and nothing is sealed.
+  const local = isLocalAccount(config);
+  const checks = local ? NOTCH_CHECKS : PHONE_CHECKS;
+  const where = local ? "Mac" : "iPhone";
+  let live = local ? [] : devices.filter(isLiveDevice);
+  let prompt = local ? NOTCH_PROMPT : PROMPT;
+  // Relo for Mac is the only reader (a local account, or no iPhone): the card shows in the notch and no push goes out.
+  let macOnly = local;
   if (live.length === 0) {
-    throw failure(devices.length === 0 ? "No iPhone is signed in to Relo yet." : "No iPhone has Live Activities on.",
-      "NO_PHONE", EXIT.NO_DELIVERY, { hint: PHONE_CHECKS });
+    // No iPhone: Relo for Mac (signed in, with a current key unless the account is local) receives the test card and question instead.
+    const macs = await receivingMacs(client, { local, now: dependencies.now?.(), devices });
+    live = macs.map((device) => ({ deviceId: device.deviceId }));
+    if (live.length > 0) macOnly = true;
+    if (live.length > 0 && !local) prompt = MAC_PROMPT;
+  }
+  if (live.length === 0) {
+    throw failure(local ? LOCAL_NOT_LINKED
+      : devices.length === 0 ? "No iPhone is signed in to Relo yet." : "No iPhone has Live Activities on.",
+      "NO_PHONE", EXIT.NO_DELIVERY, { hint: checks });
   }
 
   // On an account that requires end-to-end encryption the test card and question are sealed
@@ -75,22 +100,30 @@ export async function runTestCommand(command) {
       const key = validateIdempotencyKey(undefined, dependencies.generateIdempotencyKey);
       const card = await sealCardRequest({ body: {
         key: CARD_KEY, acquireMode: "ensure",
-        title: "Relo test", status: "Tap Yes if you can see this", symbol: "success",
-        context: { providerName: "Relo", project: "Relo setup", threadName: "Phone test", providerThreadId: "relo-test" },
+        title: "Relo test", status: local ? "Answer Yes if you can see this" : "Tap Yes if you can see this", symbol: "success",
+        context: { providerName: "Relo", project: "Relo setup", threadName: local ? "Notch test" : "Phone test", providerThreadId: "relo-test" },
         expiresInSeconds: 900, staleAfterSeconds: DEFAULT_ACTIVITY_STALE_SECONDS,
       }, cardId: null, key: CARD_KEY, client, config, dependencies, notes });
-      const started = await client.startActivity(card.body, `${key}:card`);
+      let started;
+      try {
+        started = await client.startActivity(card.body, `${key}:card`);
+      } catch (error) {
+        if (error?.code !== "ACTIVITY_TARGET_UNAVAILABLE") throw error;
+        throw failure(`The test card did not reach any ${where}.`, "NO_PHONE", EXIT.NO_DELIVERY, { hint: checks });
+      }
       cardId = started?.activity?.id;
       if (card.text && cardId) await saveCardText(sealedCardDirectory(dependencies), cardId, card.text);
-      if (!started?.delivery?.durableCommands) {
+      // A phone must have a delivery to show it; Relo for Mac alone reads the card from the server, so the card
+      // existing is the success there (a local account has no push target and no durable command).
+      if (macOnly ? !cardId : !started?.delivery?.durableCommands) {
         await finish(cardId, "Ended", "warning");
-        throw failure("The test card did not reach any iPhone.", "NO_PHONE", EXIT.NO_DELIVERY, { hint: PHONE_CHECKS });
+        throw failure(`The test card did not reach any ${where}.`, "NO_PHONE", EXIT.NO_DELIVERY, { hint: checks });
       }
       const askedAt = new Date(dependencies.now());
-      const sealed = (await sealQuestion({ title: "Relo test", prompt: PROMPT, key: `${key}:ask`, client, config, dependencies, notes }))?.sealed;
+      const sealed = (await sealQuestion({ title: "Relo test", prompt, key: `${key}:ask`, client, config, dependencies, notes }))?.sealed;
       const created = validateActivityWaitResponse(await client.createActivityWait(cardId, {
-        type: "yes_no", ...(sealed ? { sealed } : { prompt: PROMPT }), expiresInSeconds: QUESTION_SECONDS,
-      }, `${key}:ask`), { parentActivityId: cardId, type: "yes_no", prompt: sealed ? undefined : PROMPT });
+        type: "yes_no", ...(sealed ? { sealed } : { prompt }), expiresInSeconds: QUESTION_SECONDS,
+      }, `${key}:ask`), { parentActivityId: cardId, type: "yes_no", prompt: sealed ? undefined : prompt });
       interactionId = created.interaction.id;
       if (sealed) await rememberQuestion(dependencies, { interactionId,
         questionContext: sealed.content.context, askedAt: askedAt.toISOString() });
@@ -105,14 +138,19 @@ export async function runTestCommand(command) {
       } else if (error instanceof TerminalInteractionError) {
         const state = error.details?.state;
         if (state === "timeout") {
-          throw failure("No answer yet; the test question is still open on the iPhone.", "PHONE_TEST_PENDING", EXIT.TERMINAL, {
-            state: "timeout", hint: `Ask the owner to look at their iPhone, then run again: relo test. ${PHONE_CHECKS}`,
+          // The app asks with a short --timeout: still waiting is the normal answer there, not an error.
+          if (macOnly) {
+            return result("test", { verified: false, pending: true, state: "pending", waiting: "your answer in the notch",
+              next: `Answer the card in ${NOTCH}, then run relo test again to finish.` });
+          }
+          throw failure(`No answer yet; the test question is still open on the ${where}.`, "PHONE_TEST_PENDING", EXIT.TERMINAL, {
+            state: "timeout", hint: `Ask the owner to look at ${local ? (ON_MAC ? "the Mac's notch" : "the Relo notch") : "their iPhone"}, then run again: relo test. ${checks}`,
           });
         }
         await remember(dependencies, config, { pendingTest: undefined });
         if (state === "no" || state === "denied") {
           await finish(cardId, "Test ended", "warning");
-          throw failure("The owner could not see the test card.", "PHONE_TEST_NO", EXIT.NEGATIVE, { state: "no", hint: PHONE_CHECKS });
+          throw failure("The owner could not see the test card.", "PHONE_TEST_NO", EXIT.NEGATIVE, { state: "no", hint: checks });
         }
         if (pending === undefined) {
           await finish(cardId, "Test ended", "warning");

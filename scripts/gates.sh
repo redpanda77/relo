@@ -36,6 +36,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# Stale build output goes first; gates need room for their builds and the throwaway Postgres.
+bash "$ROOT/scripts/clean-builds.sh" --quiet --min-free 10 || exit 1
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/relo-gates.XXXXXX")" && pwd -P)"
 PG_BIN="${PG_BIN_DIR:-/opt/homebrew/opt/postgresql@18/bin}"
 PG_DATA="$SCRATCH/pg"   # gates run in subshells, so the path is fixed here for cleanup
@@ -210,6 +212,9 @@ printf '\n== running the remaining gates in parallel (output follows in order)\n
 ) &
 HEARTBEAT=$!
 if wants contracts; then start_gate "contracts tests" pnpm --filter @relo/notification-contracts test; else skip "contracts tests" contracts; fi
+# vitest and tsc directly: the package's pre-scripts would rebuild contracts under the gates running beside it.
+if wants contracts; then start_gate "owner-client typecheck" pnpm --filter @relo/owner-client exec tsc -p tsconfig.json --noEmit; else skip "owner-client typecheck" contracts; fi
+if wants contracts; then start_gate "owner-client tests" pnpm --filter @relo/owner-client exec vitest run; else skip "owner-client tests" contracts; fi
 # tsc directly: the package's typecheck script would rebuild contracts and the dashboard (pre-scripts) under
 # the gates running beside it.
 if wants server; then start_gate "server typecheck" pnpm --filter ./apps/server exec tsc -p tsconfig.json --noEmit; else skip "server typecheck" server; fi
@@ -217,6 +222,11 @@ if wants cli; then start_gate "CLI tests" bash -c 'cd packages/cli && RELO_GATES
 if wants skill; then
   start_gate "skill validation" bash -c 'cd skills/relo-notifications && node scripts/validate-skill.mjs && node --test tests/*.test.mjs'
 else skip "skill validation" skill; fi
+if wants dashboard; then
+  # Source-exported (no build): its tests and types run beside the Dashboard's, which import it.
+  start_gate "owner-crypto tests" pnpm --filter @relo/owner-crypto test
+  start_gate "owner-crypto typecheck" pnpm --filter @relo/owner-crypto typecheck
+else skip "owner-crypto tests" dashboard; fi
 start_gate "owner surfaces display-only (F.1)" node scripts/check-owner-surfaces-display-only.mjs
 if wants repo; then
   start_gate "repository scripts" node --test scripts/step.test.mjs scripts/load-audit.test.mjs scripts/sim.test.mjs scripts/entrypoints.test.mjs scripts/check-changed.test.mjs scripts/public-export.test.mjs scripts/check-test-ran.test.mjs \

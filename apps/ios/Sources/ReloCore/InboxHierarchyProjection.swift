@@ -197,3 +197,28 @@ public enum InboxHierarchyProjection {
         return normalized.isEmpty ? nil : normalized
     }
 }
+
+
+/// Twelve project colours, one per palette slot: the contracts' `PROJECT_PALETTE`, so a project reads the same on the
+/// iPhone, the Mac, the notch and the Dashboard. The server stores only the slot.
+public enum ProjectPalette {
+    public static let hex: [UInt32] = [
+        0x5CE1FF, 0x8B7CFF, 0xD65CF0, 0xFF8A7A, 0x34D399, 0xFBBF24,
+        0x7DD3FC, 0xA78BFA, 0xF472B6, 0xFDBA74, 0x6EE7B7, 0xFDE047,
+    ]
+
+    /// The server's slot, else the Dashboard's hash of the project's name (`hashSlot`), so a project the server names
+    /// no resource for still keeps one colour everywhere; nil without either.
+    public static func slot(_ slot: Int?, name: String?) -> Int? {
+        if let slot { return ((slot % hex.count) + hex.count) % hex.count }
+        guard let name, !name.isEmpty else { return nil }
+        var hash: UInt32 = 0
+        for character in name { hash = hash &* 31 &+ UInt32(String(character).utf16.first ?? 0) }
+        return Int(hash % UInt32(hex.count))
+    }
+
+    public static func rgb(_ slot: Int) -> (red: Double, green: Double, blue: Double) {
+        let value = hex[((slot % hex.count) + hex.count) % hex.count]
+        return (Double((value >> 16) & 255) / 255, Double((value >> 8) & 255) / 255, Double(value & 255) / 255)
+    }
+}

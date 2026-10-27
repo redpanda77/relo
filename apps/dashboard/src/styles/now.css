@@ -25,7 +25,7 @@
 .now-deck-stage { height: clamp(340px, 60vw, 400px); }
 @media (max-width: 639px) {
   .now-deck { gap: 4px; }
-  .now-deck-stage { height: 330px; }
+  .now-deck-stage { height: 360px; }
 }
 
 /* index.css splits from 940px; Now splits from 1100px, so between them it stays stacked. */
@@ -71,7 +71,7 @@
   /* The corner modules start on the line the work column's first card starts. */
   .now-deck-head { margin-bottom: -8px; }
   .now-deck-stage {
-    height: 440px;
+    height: 380px;
     min-height: 0;
     margin-right: 0;
   }
@@ -80,22 +80,8 @@
 /* The header is part of the sky: the stage runs up behind the title and the sync status, so the
    core, the title and the corner modules sit in one field instead of a header over a box. */
 .now-deck-stage { margin-top: -48px; }
-
-/* The rest of the deck column: one sentence, today's strip, agent time and the spectrum. */
-.now-deck-more {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding-top: 8px;
-}
-.now-deck-sentence {
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--muted-foreground);
-  text-wrap: pretty;
-}
+/* The title stays for assistive technology and orientation, quieter than the core under it. */
+.now-deck-head .page-title { font-size: 1.5rem; }
 
 /* ---------- Wide: Sessions in a 320px rail on the right ---------- */
 
@@ -131,17 +117,30 @@
   grid-template-areas: "number" "label";
 }
 .now-deck-centre-number { grid-area: number; position: relative; isolation: isolate; }
-.now-deck-centre-label { grid-area: label; }
-@media (max-width: 639px) {
-  .now-deck-centre .hud-number { font-size: 3.5rem; }
-  .now-deck-centre-label { margin-top: 4px; }
-}
+.now-deck-centre-label { grid-area: label; margin-top: calc(9 * var(--u)); }
 
-/* No filter on the number, at rest or in motion: its glow is a painted radial layer behind it that
-   breathes on the page's heartbeat (opacity and scale only), twice as fast when it needs you. */
-.now-deck-centre .hud-number,
+/* The count: 46 units, 500 rounded, white at the top to the state's ramp below. No filter on the
+   text: its glow is a painted radial layer behind it that breathes on the state's period (opacity
+   and scale only). */
+.now-deck-centre .hud-number {
+  font-size: calc(46 * var(--u));
+  font-weight: 500;
+  letter-spacing: -0.5px;
+  filter: none;
+  animation: none;
+}
 .now-deck-centre .hud-breathe,
 .now-deck-centre .hud-breathe-fast { filter: none; animation: none; }
+.hud-wordmark {
+  display: inline-block;
+  color: #fff;
+  font-family: var(--font-rounded);
+  font-size: calc(30 * var(--u));
+  font-weight: 500;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  text-shadow: 0 0 18px var(--centre-glow, transparent);
+}
 .now-deck-centre-number::before {
   content: "";
   position: absolute;
@@ -155,227 +154,197 @@
 }
 .now-deck-centre[data-live] .now-deck-centre-number::before {
   opacity: 0.55;
-  animation: now-centre-glow var(--period-breath) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
-}
-.now-deck-centre[data-live][data-urgent] .now-deck-centre-number::before {
-  animation-duration: calc(var(--period-breath) / 2);
+  animation: now-centre-glow var(--centre-period, 3.6s) ease-in-out infinite;
 }
 @keyframes now-centre-glow {
   0%, 100% { opacity: 0.35; transform: scale(0.92); }
   50% { opacity: 0.75; transform: scale(1.06); }
 }
+/* The label plate (board S1): 9.5 mono 700, tracking .26em, dark glass, hairlines either side. */
+.now-deck-centre .hud-center { font-size: calc(9.5 * var(--u)); line-height: calc(14 * var(--u)); padding: 3px 9px 3px 11px; }
 
-/* Readouts light and dim on the slow fade, never snap. */
-.readout-label,
-.readout-value { transition: color var(--dur-slow) var(--ease-out); }
-
-/* ---------- The HUD: four corner modules around the core, as on the iPhone ----------
-   Each readout is an instrument part: an L-shaped bracket that closes the corner, a mono label
-   with its index tag (01..04), the number in light rounded numerals, and a ten-cell gauge of how
-   many items it counts. Live ones glow in their meaning's colour (--tone). The markup is the same
-   four [data-readout] nodes the server's first frame paints, so only this CSS draws the HUD. */
-.now-deck-instruments { container: now-instruments / inline-size; }
-.now-deck-readouts {
+/* ---------- The gauge ring, satellites and tags (lib/now-header.ts holds the geometry) ----------
+   The board's 390-unit frame, scaled by the stage: --u is one board unit. The web core is about 31% of
+   the stage's height in radius (the board's is 74 units), so the gauge ring (108 units) clears it by
+   14px, and the widest tag stays inside the stage's width. */
+.orb-stage-centre { --u: min(calc((31cqh + 14px) / 108), calc(100cqw / 345)); }
+.now-hud {
+  position: absolute !important;
+  inset: 0;
   display: grid;
-  height: 100%;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, auto);
-  justify-content: space-between;
-  align-content: space-between;
-  counter-reset: hud;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  pointer-events: none;
 }
-.now-deck-readouts > [data-readout] {
-  --arm: 12px;
-  position: relative;
-  counter-increment: hud;
-  gap: 4px;
-  padding: 8px 0 0 10px;
-  align-self: start;
-  justify-self: start;
-}
-.now-deck-readouts > [data-readout]:nth-child(even) {
-  align-items: flex-end;
-  justify-self: end;
-  padding: 8px 10px 0 0;
-  text-align: right;
-}
-.now-deck-readouts > [data-readout]:nth-child(n + 3) {
-  align-self: end;
-  padding-top: 0;
-  padding-bottom: 8px;
-}
-/* The bracket closes the stage's outer corner. */
-.now-deck-readouts > [data-readout]::before {
-  content: "";
+.now-hud-frame { position: relative; width: calc(390 * var(--u)); height: calc(390 * var(--u)); }
+.now-hud-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.now-deck-readouts { position: absolute; inset: 0; }
+
+/* A pill docked on its arc at radius + 6: 26 high, number 15/600 rounded, label mono 700 8.5. */
+.now-tag {
   position: absolute;
-  width: var(--arm);
-  height: var(--arm);
-  border: 0 solid rgb(255 255 255 / 0.28);
-  transition: border-color var(--dur-slow) var(--ease-out), filter var(--dur-slow) var(--ease-out);
+  left: calc(var(--x) * var(--u));
+  top: calc(var(--y) * var(--u));
+  display: flex;
+  box-sizing: border-box;
+  height: calc(26 * var(--u));
+  align-items: center;
+  gap: calc(7 * var(--u));
+  padding: 0 calc(11 * var(--u));
+  border: 0.75px dashed rgb(255 255 255 / 0.2);
+  border-radius: calc(13 * var(--u));
+  background: rgb(7 8 14 / 0.9);
+  white-space: nowrap;
+  transition: background-color 0.6s ease, border-color 0.6s ease, box-shadow 0.6s ease;
 }
-.now-deck-readouts > [data-readout][data-lit]::before {
-  border-color: color-mix(in srgb, var(--tone) 75%, transparent);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--tone) 55%, transparent));
+.now-tag > .readout-value {
+  color: rgb(238 241 247 / 0.42);
+  font-family: var(--font-rounded);
+  font-size: calc(15 * var(--u));
+  font-weight: 600;
+  line-height: 1;
+  transition: color 0.6s ease;
 }
-.now-deck-readouts > [data-readout]:nth-child(1)::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
-.now-deck-readouts > [data-readout]:nth-child(2)::before { top: 0; right: 0; border-width: 1px 1px 0 0; }
-.now-deck-readouts > [data-readout]:nth-child(3)::before { bottom: 0; left: 0; border-width: 0 0 1px 1px; }
-.now-deck-readouts > [data-readout]:nth-child(4)::before { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
-/* The label, with its index tag on the side that faces the core's outside. */
-.now-deck-readouts .readout-label {
+.now-tag > .readout-label {
+  color: #6b7488;
+  font-family: var(--font-mono);
+  font-size: calc(8.5 * var(--u));
+  font-weight: 700;
+  letter-spacing: calc(1.4 * var(--u));
+  line-height: 1;
+  text-transform: uppercase;
+  transition: color 0.6s ease;
+}
+.now-tag[data-lit] {
+  border: 0.75px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  background: color-mix(in srgb, var(--tone) 17%, #07080e);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--tone) 20%, transparent);
+}
+.now-tag[data-lit] > .readout-value { color: var(--tone); }
+.now-tag[data-lit] > .readout-label { color: color-mix(in srgb, var(--tone) 55%, white); }
+.now-tag[data-dim] > .readout-value { color: rgb(255 255 255 / 0.6); }
+/* Docked on the left (Needs you, Sessions): the tag grows away from the core. */
+.now-deck-readouts > .now-tag:nth-child(1),
+.now-deck-readouts > .now-tag:nth-child(4) { flex-direction: row-reverse; translate: -100% 0; }
+.now-deck-readouts > .now-tag:nth-child(1) { --x: 130.4; --y: 101.4; }
+.now-deck-readouts > .now-tag:nth-child(2) { --x: 259.6; --y: 101.6; }
+.now-deck-readouts > .now-tag:nth-child(3) { --x: 259.6; --y: 262.6; }
+.now-deck-readouts > .now-tag:nth-child(4) { --x: 130.4; --y: 262.6; }
+
+/* Orbit, ticks, pulses and the running sweep: transform, opacity and dash offset only. */
+.now-sat { transform-origin: 195px 195px; animation: nh-spin linear infinite; }
+.now-ticks { transform-origin: 195px 195px; animation: nh-spin 90s linear infinite; }
+.now-park { transform-box: fill-box; transform-origin: center; animation: nh-park 2.4s ease-in-out infinite; }
+.now-pulse {
+  fill: none;
+  stroke: var(--acc);
+  stroke-width: 1.5;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: nh-pulse 1.8s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+}
+.now-sweep { animation: nh-sweep 2.8s linear infinite; }
+@keyframes nh-spin { to { transform: rotate(360deg); } }
+@keyframes nh-park { 0%, 100% { transform: scale(1); opacity: 0.5; } 50% { transform: scale(1.9); opacity: 0; } }
+@keyframes nh-pulse { 0% { transform: scale(1); opacity: 0.55; } 100% { transform: scale(1.85); opacity: 0; } }
+@keyframes nh-sweep {
+  0% { stroke-dashoffset: 0; opacity: 0; }
+  8% { opacity: 0.9; }
+  70% { stroke-dashoffset: var(--sl); opacity: 0.9; }
+  78%, 100% { stroke-dashoffset: var(--sl); opacity: 0; }
+}
+
+/* ---------- The fleet line under the stage ---------- */
+.now-deck-fleet {
+  position: relative;
+  z-index: 1;
+  grid-row: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  margin-top: -6px;
+}
+.now-fleet-machine { display: inline-flex; align-items: center; gap: 6px; transition: opacity 0.6s ease; }
+.now-fleet-dot { width: 5px; height: 5px; flex-shrink: 0; border-radius: 50%; }
+.now-fleet-name { font-size: 10.5px; font-weight: 600; line-height: 1.2; }
+.now-fleet-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #c9cfdb;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  line-height: 1;
 }
-.now-deck-readouts .readout-label::before,
-.now-deck-readouts .readout-label::after {
-  display: inline-block;
-  padding: 1px 3px;
-  border: 0.5px solid rgb(255 255 255 / 0.3);
-  border-radius: 2px;
-  color: var(--muted-foreground);
-  font-size: 8px;
-  font-weight: 500;
-  letter-spacing: 0;
-  line-height: 1.2;
-  vertical-align: 1px;
+
+/* ---------- The state wash: an ellipse, three drifting blobs and a vignette (CSS only) ---------- */
+.now-wash {
+  position: absolute;
+  z-index: 0;
+  top: -48px;
+  right: calc(var(--page-gutter) * -1);
+  left: calc(var(--page-gutter) * -1);
+  height: 560px;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(#000 62%, transparent);
+  mask-image: linear-gradient(#000 62%, transparent);
 }
-.now-deck-readouts > [data-readout]:nth-child(odd) .readout-label::before { content: counter(hud, decimal-leading-zero); margin-right: 6px; }
-.now-deck-readouts > [data-readout]:nth-child(even) .readout-label::after { content: counter(hud, decimal-leading-zero); margin-left: 6px; }
-.now-deck-readouts .readout-value { font-size: 2rem; font-weight: 300; }
-/* The gauge: ten cells, one per item, lit in the module's colour. */
-.now-deck-readouts > [data-readout] > .readout-value::after {
-  content: "";
-  display: block;
-  width: 64px;
-  height: 4px;
-  margin-top: 7px;
-  background: linear-gradient(90deg, var(--tone, var(--muted-foreground)) calc(var(--n, 0) * 10%), rgb(255 255 255 / 0.14) 0);
-  -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 6.4px);
-  mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 6.4px);
+.split-page-aside .now-wash {
+  right: -24px;
+  left: -24px;
+  -webkit-mask-image: linear-gradient(#000 62%, transparent), linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(#000 62%, transparent), linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-composite: intersect;
 }
-.now-deck-readouts > [data-readout]:nth-child(even) > .readout-value::after { margin-left: auto; }
-.now-deck-readouts > [data-readout]:not([data-lit]) > .readout-value::after {
-  background: rgb(255 255 255 / 0.14);
+.now-wash > i { position: absolute; display: block; }
+.now-wash-glow {
+  inset: 0;
+  background: radial-gradient(ellipse 62% 46% at 50% 40%, var(--wa) 0, var(--wb) 35%, var(--wc) 70%, transparent 100%);
+  animation: nh-wash var(--wp, 7s) ease-in-out infinite alternate;
+}
+.now-wash-blob {
+  border-radius: 50%;
+  filter: blur(64px);
+  opacity: var(--blob-o, 0.1);
+  will-change: transform;
+  animation: nh-drift 11s ease-in-out infinite alternate;
+}
+.now-wash-blob[data-blob="1"] { left: -90px; top: 40px; width: 330px; height: 330px; background: var(--blob-1); }
+.now-wash-blob[data-blob="2"] { right: -50px; top: 10px; width: 250px; height: 250px; background: var(--blob-2); animation-delay: -4s; }
+.now-wash-blob[data-blob="3"] { left: 110px; top: 250px; width: 210px; height: 210px; background: var(--blob-3); animation-delay: -7s; opacity: calc(var(--blob-o, 0.1) * 0.6); }
+.now-wash-vignette {
+  inset: 0;
+  background: radial-gradient(ellipse 80% 70% at 50% 40%, transparent 55%, rgb(0 0 0 / 0.4) 100%);
+}
+@keyframes nh-wash { from { opacity: 0.7; } to { opacity: 1; } }
+@keyframes nh-drift { from { transform: translate(0, 0); } to { transform: translate(26px, 14px); } }
+.now-deck > :not(.now-wash):not(.sr-only) { position: relative; z-index: 1; }
+
+/* Offline: the core greys, and every motion on the deck holds still. */
+.now-deck[data-header="offline"] .orb-stage canvas,
+.now-deck[data-header="offline"] .orb-stage-painted { filter: saturate(0.12) brightness(0.6); }
+.now-deck[data-header="offline"] :is(.now-wash, .now-hud, .now-deck-fleet) * { animation-play-state: paused !important; }
+.now-deck[data-header="offline"] .now-deck-centre-number::before { animation-play-state: paused !important; }
+.orb-stage canvas, .orb-stage-painted { transition: filter 1.2s ease, opacity var(--dur-ambient) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) {
+  .now-wash *, .now-hud *, .now-deck-centre-number::before { animation: none !important; }
+  .now-wash-glow { opacity: 0.85; }
 }
 
 /* ---------- Lists use the width they get ---------- */
 
-/* Live cards stack 12px apart; Running goes two across on very wide pages. */
+/* Live cards stack 10px apart; Running goes two across on very wide pages. */
 .now-card-grid {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: minmax(0, 1fr);
 }
 @container split-page (min-width: 1500px) {
   .now-running .now-card-grid { grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); }
-}
-
-/* "Show 3 more" under Since you looked, and View history under Today's log: quiet text buttons in
-   the link colour (cyan means running, so it never marks a link). */
-.now-more {
-  display: inline-flex;
-  min-height: 36px;
-  align-items: center;
-  padding-inline: 4px;
-  margin-top: 4px !important;
-  color: var(--primary);
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: 8px;
-  transition: color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
-}
-.now-more:hover { opacity: 0.8; }
-
-/* ---------- Folds on Now: one tight glass line that opens into its rows ---------- */
-
-.now-fold {
-  border-radius: var(--card-radius);
-  overflow: hidden;
-}
-.split-page-body .now-fold:not(.now-fold-inline) {
-  position: relative;
-  background: var(--sheet-fill);
-  border: 1px solid var(--sheet-border);
-  box-shadow: var(--glass-highlight), var(--glass-shadow);
-}
-.now-fold > .fold-summary {
-  display: flex;
-  width: 100%;
-  min-height: 44px;
-  padding: 10px 16px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.now-fold > .fold-summary:hover { background: rgb(255 255 255 / 0.03); }
-.now-fold > .fold-body { padding-top: 0; }
-/* Rows inside a fold sit in the fold's glass: no second frame, a hairline above the first. */
-.now-fold .card-list {
-  border: 0;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-.now-fold > .fold-body > .card-list > li:first-child::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: var(--card-pad);
-  right: 0;
-  height: 1px;
-  background: var(--divider);
-}
-.now-fold-inline { border-radius: 0; }
-.card-list + .now-fold-inline { box-shadow: inset 0 1px 0 var(--divider); }
-
-/* ---------- Sessions: one glass card per computer, its name as the caption ---------- */
-
-.now-sessions {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr);
-}
-@container split-page (min-width: 1100px) and (max-width: 1399.98px) {
-  .now-sessions { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
-}
-.now-session-group { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
-.now-session-computer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-left: 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-.now-session-computer svg { width: 12px; height: 12px; flex-shrink: 0; }
-/* A session row is the card set's row: its origin leads, how it stands trails. */
-.card-session-standing {
-  font-size: var(--card-meta-size);
-  line-height: var(--card-meta-lh);
-  color: var(--muted-foreground);
-  white-space: nowrap;
-  transition: --tone var(--dur-slow) var(--ease-out);
-}
-.card-session-state { font-weight: 500; color: var(--tone); }
-.card-session-icon {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  margin-right: 4px;
-  vertical-align: -2px;
-}
-[data-session-phase="working"] .card-session-icon {
-  animation: breathe var(--period-breath) var(--ease-breath) var(--breath-epoch, 0ms) infinite;
 }
 
 /* ---------- State changes in place: meaning colours crossfade ---------- */
@@ -406,7 +375,23 @@
   transition: transform var(--dur-slow) var(--ease-out);
 }
 .step-bar > span[data-step="done"]::after { transform: scaleX(1); }
-/* The sweep: a band of light over the done segments' width, masked to their shapes. */
+/* The shimmer: 22px of white .8, 2.8 s linear, inside the current segment only (moving work). */
+.step-bar[data-live] > span[data-step="current"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -22px;
+  width: 22px;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.8), transparent);
+  animation: now-step-shim 2.8s linear infinite;
+  pointer-events: none;
+}
+@keyframes now-step-shim {
+  0% { left: -22px; }
+  70%, 100% { left: 100%; }
+}
+/* The single bar's sweep (more than 40 steps, or plain progress): a band over the filled part. */
 .step-bar > .step-sweep {
   position: absolute;
   inset: 0;
@@ -485,25 +470,15 @@
   to { opacity: 0; transform: scale(2.4); }
 }
 
-/* ---------- Spectrum and Today strip: transform and flex, never width or height ---------- */
-
-.spectrum-segment { min-width: 4px; overflow: hidden; transition: flex-grow 600ms var(--ease-out); }
-.spectrum-label { opacity: 0; transition: opacity var(--dur-base) var(--ease-out); }
-.spectrum-label[data-fits] { opacity: 0.85; }
-.strip-bar {
-  transform-origin: bottom center;
-  transition: transform 800ms var(--ease-out);
-}
-
 /* ---------- Reduced motion: state changes are instant, nothing travels or loops ---------- */
 
 @media (prefers-reduced-motion: reduce) {
   .now-deck-centre-number::before,
   .now-deck-centre[data-live] .now-deck-centre-number::before,
   .step-sweep::before,
+  .step-bar[data-live] > span[data-step="current"]::before,
   .now-card-slot[data-announce]::after,
   .card-hit[data-arrived]::after,
-  [data-session-phase="working"] .card-session-icon,
   .fold-nudge,
   .sync-ping { animation: none !important; }
   .step-sweep,
@@ -512,8 +487,6 @@
   .sync-ping { display: none; }
   .step-meter-fill,
   .step-bar > span[data-step]::after,
-  .spectrum-segment,
-  .strip-bar,
   .readout-label,
   .readout-value,
   .ink-dot,
@@ -536,7 +509,6 @@
    A small bracketed plate in the index tags' language: dark glass so the word reads over any
    plasma, near-white text lit by the meaning's colour, hairlines either side. No dot: the plate
    and its colour say the state. */
-.now-deck-centre-label { margin-top: 10px; }
 .hud-center {
   position: relative;
   display: inline-flex;
@@ -566,3 +538,311 @@
 }
 .hud-center::before { right: 100%; margin-right: 4px; }
 .hud-center::after { left: 100%; margin-left: 4px; transform: scaleX(-1); }
+
+/* Phone gutter: the iPhone's 16px (C1-WorkCards), not the app-wide 20px. */
+@media (max-width: 639px) {
+  .split-page { --page-gutter: 16px; }
+}
+
+/* ==========================================================================
+   Sessions by machine, settled rows and the Quiet / Paused line (C3-Sessions, C2-Settled; the iPhone's
+   sessionsSection, sinceSection and parkedSection). One glass card per machine, 14px apart; compact
+   rows in one glass group. Motion only under no-preference.
+   ========================================================================== */
+
+.now-sessions {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@container split-page (min-width: 1100px) and (max-width: 1399.98px) {
+  .now-sessions { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
+}
+.sess-card { min-width: 0; overflow: hidden; border-radius: 18px; }
+/* An idle machine is the whole card at .6: its header, and "N idle" opening the fold. */
+.sess-card[data-idle-only] { opacity: 0.6; }
+.sess-head-button { display: block; width: 100%; text-align: left; border-radius: inherit; }
+.sess-head-button:hover { background: rgb(255 255 255 / 0.03); }
+.sess-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+.sess-head[data-line]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 0.5px;
+  background: rgb(255 255 255 / 0.08);
+}
+.sess-machine-tile {
+  position: relative;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0.5px solid rgb(255 255 255 / 0.14);
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.07);
+  color: #d3d8e2;
+}
+.sess-machine-tile svg { width: 16px; height: 16px; stroke-width: 1.5; }
+.sess-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dot);
+  box-shadow: 0 0 6px var(--dot);
+  --dot: var(--now-slate);
+}
+.sess-dot[data-tone="needs"] { --dot: var(--neon-orange); }
+.sess-dot[data-tone="turn"] { --dot: var(--now-amber); }
+.sess-dot[data-tone="working"] { --dot: var(--neon-cyan); }
+.sess-dot[data-tone="slate"] { --dot: var(--now-slate); }
+.sess-dot[data-tone="idle"] { background: rgb(255 255 255 / 0.3); box-shadow: none; }
+.sess-head-text { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 1px; }
+.sess-machine-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; line-height: 1.3; color: #f2f4f8; }
+.sess-machine-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: rgb(255 255 255 / 0.42); }
+.sess-harness-chip {
+  display: inline-flex;
+  height: 22px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.06);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #c9cfdb;
+}
+.sess-harness-initial { font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+.sess-trailing { display: inline-flex; flex-shrink: 0; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: rgb(255 255 255 / 0.42); }
+.sess-trailing-chevron { display: inline-block; transition: rotate var(--dur-fast) var(--ease-out); }
+.sess-trailing-chevron[data-open] { rotate: 90deg; }
+
+.sess-rows { position: relative; }
+.sess-item { position: relative; }
+.sess-item + .sess-item::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 44px;
+  z-index: 1;
+  display: block;
+  height: 0.5px;
+  background: rgb(255 255 255 / 0.07);
+  pointer-events: none;
+}
+.sess-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  overflow: hidden;
+  text-align: left;
+}
+button.sess-row:hover { background: rgb(255 255 255 / 0.035); }
+.sess-tile {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.06);
+  color: #d3d8e2;
+}
+.sess-text { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; }
+.sess-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; line-height: 1.25; color: #e9ecf2; }
+.sess-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: rgb(255 255 255 / 0.42);
+  white-space: nowrap;
+}
+.sess-bar { display: inline-block; width: 46px; height: 3px; flex-shrink: 0; overflow: hidden; border-radius: 2px; background: rgb(255 255 255 / 0.1); }
+.sess-bar b { display: block; height: 100%; border-radius: 2px; background: var(--now-slate); }
+.sess-context[data-heavy] .sess-bar b { background: var(--now-amber); }
+.sess-pct { font-style: normal; }
+.sess-context[data-heavy] .sess-pct { color: var(--now-amber); }
+.sess-chip {
+  --t: var(--now-slate);
+  display: inline-flex;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 0.75px solid color-mix(in srgb, var(--t) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--t) 15%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--t);
+  white-space: nowrap;
+}
+.sess-chip[data-tone="needs"] { --t: var(--neon-orange); }
+.sess-chip[data-tone="turn"] { --t: var(--now-amber); }
+.sess-chip[data-tone="working"] { --t: var(--now-violet); }
+.sess-wave { display: inline-flex; height: 9px; align-items: flex-end; gap: 1.5px; }
+.sess-wave s { display: block; width: 2px; height: 6px; border-radius: 1px; background: currentColor; }
+.sess-idle-toggle {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.42);
+}
+.sess-idle-toggle::before { content: ""; position: absolute; inset: 0 0 auto 44px; height: 0.5px; background: rgb(255 255 255 / 0.07); }
+.sess-idle-toggle:hover { background: rgb(255 255 255 / 0.035); }
+@media (prefers-reduced-motion: no-preference) {
+  .sess-row[data-working]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -30%;
+    width: 30%;
+    background: linear-gradient(90deg, transparent, rgb(169 158 255 / 0.14), transparent);
+    pointer-events: none;
+    animation: sess-sweep 3.2s ease-in-out infinite;
+  }
+  .sess-wave s { animation: sess-wave 0.9s ease-in-out infinite; }
+  .sess-wave s:nth-child(2) { animation-delay: 0.15s; }
+  .sess-wave s:nth-child(3) { animation-delay: 0.3s; }
+}
+@keyframes sess-sweep { 0% { left: -30%; } 70%, 100% { left: 120%; } }
+@keyframes sess-wave { 0%, 100% { height: 3px; } 50% { height: 9px; } }
+
+/* ---------- Settled rows and the Quiet / Paused line ---------- */
+
+.settled-group { min-width: 0; overflow: hidden; border-radius: 18px; }
+.settled-list { position: relative; }
+.settled-list > li { position: relative; }
+.settled-list > li + li::before,
+.settled-list-parked > li:first-child::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 52px;
+  z-index: 1;
+  height: 0.5px;
+  background: rgb(255 255 255 / 0.08);
+  pointer-events: none;
+}
+/* The open panel is the row's sibling: no hairline between it and the row below. */
+.settled-list > li[data-panel-open] + li::before { display: none; }
+.settled-row {
+  display: flex;
+  width: 100%;
+  min-height: 50px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  text-align: left;
+}
+/* A row with the owner's End: the row takes the width, End sits after it. */
+.settled-line { display: flex; align-items: center; }
+.settled-line > .settled-row { flex: 1 1 auto; width: auto; min-width: 0; }
+.settled-end { display: flex; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; padding-right: 10px; }
+.settled-end [data-slot="button"] { height: 28px; min-height: 28px; padding-inline: 8px; font-size: 11px; color: rgb(255 255 255 / 0.55); }
+.settled-end [role="alert"] { flex: 1 1 100%; max-width: 12rem; text-align: right; }
+.settled-row:hover { background: rgb(255 255 255 / 0.035); }
+.settled-icon {
+  --k: var(--now-slate);
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--k) 15%, transparent);
+  color: var(--k);
+}
+.settled-icon[data-kind="done"] { --k: var(--neon-mint); }
+.settled-icon[data-kind="failed"] { --k: var(--neon-red); }
+.settled-icon[data-kind="dropped"],
+.settled-icon[data-kind="left"] { --k: var(--now-amber); }
+.settled-glyph { width: 12px; height: 12px; }
+.settled-text { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; gap: 2px; }
+.settled-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; line-height: 1.3; color: #e9ecf2; }
+.settled-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: rgb(255 255 255 / 0.42); }
+.settled-time { flex-shrink: 0; font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; font-variant-numeric: tabular-nums; color: rgb(255 255 255 / 0.42); }
+.settled-panel {
+  margin: 2px 10px 10px;
+  padding: 10px 12px;
+  border: 0.5px solid color-mix(in srgb, var(--neon-red) 32%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--neon-red) 9%, transparent);
+}
+.settled-panel p { font-size: 12.5px; font-weight: 500; line-height: 1.45; color: rgb(255 255 255 / 0.75); }
+.settled-panel-chips { display: flex; gap: 8px; margin-top: 10px; }
+.settled-chip {
+  height: 34px;
+  padding: 0 18px;
+  border: 0.5px solid rgb(255 255 255 / 0.14);
+  border-radius: 17px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f2f4f8;
+}
+.settled-chip[data-filled] { background: rgb(255 255 255 / 0.12); }
+.settled-chip:hover { background: rgb(255 255 255 / 0.16); }
+.settled-more,
+.parked-line {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.6);
+  text-align: left;
+}
+.settled-more::before { content: ""; position: absolute; inset: 0 0 auto 14px; height: 0.5px; background: rgb(255 255 255 / 0.08); }
+.settled-more:hover,
+.parked-line:hover { background: rgb(255 255 255 / 0.035); }
+.settled-more-end,
+.parked-end { margin-left: auto; color: rgb(255 255 255 / 0.42); }
+.parked-glyph { width: 11px; height: 11px; flex-shrink: 0; color: var(--now-slate); }
+.parked-label b { font-weight: 600; color: var(--now-slate); }
+@media (prefers-reduced-motion: no-preference) {
+  /* A failed row's icon shakes once (±3px, 0.5s) after 0.6s. */
+  .settled-icon[data-kind="failed"] { animation: settled-shake 0.5s ease-in-out 0.6s 1 both; }
+}
+@keyframes settled-shake {
+  0%, 100% { translate: 0; }
+  20% { translate: -3px; }
+  40% { translate: 3px; }
+  60% { translate: -3px; }
+  80% { translate: 3px; }
+}

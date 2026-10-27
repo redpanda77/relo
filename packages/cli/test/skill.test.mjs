@@ -7,25 +7,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { tildePosix } from "./posix-path.mjs";
+import { symlinkSkip } from "./symlink-support.mjs";
 import { EXIT } from "../src/shared/errors.mjs";
 import { KEPT_ARCHIVES } from "../src/install/skill.mjs";
 import { run } from "../src/cli.mjs";
 import { VERSION } from "../src/version.mjs";
 import { bundleSkill } from "../scripts/bundle-skill.mjs";
 import { bundledSkillDirectory } from "../src/install/skill.mjs";
-import { cardDependencies, fakeHome } from "./fake-cards.mjs";
+import { dataRoot } from "../src/work/state-file.mjs";
+import { EVERY_HARNESS, cardDependencies, fakeHome } from "./fake-cards.mjs";
 
-const PACKAGE = new URL("..", import.meta.url).pathname;
+const PACKAGE = fileURLToPath(new URL("..", import.meta.url));
 const SKILL = "relo-notifications";
 
 async function cli(argv, dependencies) {
   const stdout = [];
   const exitCode = await run(argv, { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: false }, dependencies);
-  return { exitCode, line: stdout[0] ? JSON.parse(stdout[0]) : undefined };
+  return { exitCode, line: stdout[0] ? tildePosix(JSON.parse(stdout[0])) : undefined };
 }
 
 async function box(options = {}) {
-  const home = await fakeHome({ agents: [], ...options });
+  const home = await fakeHome({ agents: [], installed: EVERY_HARNESS(), ...options });
   const cwd = await mkdtemp(join(tmpdir(), "relo-cwd-"));
   let clock = Date.UTC(2026, 9, 13, 10, 15, 0);
   const deps = { ...cardDependencies({}), home, cwd, env: {}, now: () => (clock += 1000) };
@@ -103,7 +106,7 @@ test("relo setup installs the skill into one harness's folder; unchanged, update
   await writeFile(join(dir, "SKILL.md"), "edited\n");
   const updated = skillRow((await b.run(["setup", "--agent", "claude-code"])).line);
   assert.equal(updated.action, "updated");
-  assert.match(updated.archived, new RegExp(`^~/\\.local/share/relo/skill-archives/20261013T\\d{6}Z-${VERSION.replaceAll(".", "\\.")}$`, "u"));
+  assert.match(updated.archived, new RegExp(`^~/(?:\\.local/share/relo|AppData/Local/Relo/data)/skill-archives/20261013T\\d{6}Z-${VERSION.replaceAll(".", "\\.")}$`, "u"));
   assert.equal(await readFile(join(b.home, updated.archived.slice(2), SKILL, "SKILL.md"), "utf8"), "edited\n");
   assert.notEqual(await readFile(join(dir, "SKILL.md"), "utf8"), "edited\n");
 
@@ -116,7 +119,7 @@ test("relo setup installs the skill into one harness's folder; unchanged, update
 
 test("skill archives keep only the newest few, never one per update forever", async () => {
   const b = await box();
-  const archives = join(b.home, ".local", "share", "relo", "skill-archives");
+  const archives = join(dataRoot(b.home), "skill-archives");
   for (let n = 0; n < 8; n += 1) await mkdir(join(archives, `2026010${n}T000000Z-0.0.${n}`, SKILL), { recursive: true });
   await b.run(["setup", "--agent", "claude-code"]);
   await writeFile(join(b.home, ".claude", "skills", SKILL, "SKILL.md"), "edited\n");
@@ -157,7 +160,7 @@ test("in a checkout the skill comes from its source, and a copy is current only 
   assert.equal(skillRow((await b.run(["setup", "--refresh"])).line).action, "updated");
 });
 
-test("links are never followed: a linked skill folder is an error row and nothing is written through it", async () => {
+test("links are never followed: a linked skill folder is an error row and nothing is written through it", { skip: symlinkSkip }, async () => {
   const b = await box();
   await mkdir(join(b.home, ".agents", "skills"), { recursive: true });
   await mkdir(join(b.cwd, "real"));

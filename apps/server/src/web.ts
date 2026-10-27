@@ -3,7 +3,7 @@ import { isServerAdmin } from "./server-accounts.js";
 import { registerServerAdminRoutes } from "./web/server-admin-routes.js";
 import { LIVE_ACTIVITY_PRESET_IDS } from "@relo/notification-contracts";
 import type { Hono } from "hono";
-import type { AccountAuth } from "./account-auth.js";
+import type { AccountAuth,AppleSignInConfig } from "./account-auth.js";
 import {
 
 
@@ -37,6 +37,7 @@ export type WebAuthDependencies = {
   apnsMode: ApnsMode;
   landingFilmUrl?: string | undefined;
   onboardingFilmUrl?: string | undefined;
+  appleSignIn?: AppleSignInConfig | undefined;
 };
 
 export type { OwnerAccount } from "./web/owner-account.js";
@@ -169,6 +170,7 @@ export function registerWebAuthRoutes(app: Hono, db: Database, dependencies: Web
     db,
     appUrl,
     landingFilmUrl,
+    appleWeb: Boolean(dependencies.appleSignIn?.servicesId),
     getAccount: (headers: Headers) => getOwnerAccount(db,accountAuth,headers),
     renderDocument: renderDashboardAppDocument,
   });

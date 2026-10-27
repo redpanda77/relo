@@ -41,7 +41,7 @@
   "excludedPrefixes": [
     "docs/internal/",
     "apps/dashboard/.impeccable/",
-    "apps/notch/"
+    "apps/notch/mediaremote-adapter/MediaRemoteAdapter.framework/"
   ],
   "requiredFiles": [
     "CODE_OF_CONDUCT.md",

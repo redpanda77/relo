@@ -137,35 +137,108 @@ public struct ReloSealedCardText: Codable, Equatable, Sendable {
     }
 }
 
-/// The last real label this process saw for each step of a work, so an update whose text lacks a
-/// label keeps showing it instead of falling back to "Step n". Scoped by work, kept in memory only.
+/// The last real label seen for each step of a work, so an update whose text lacks a label keeps showing it
+/// instead of falling back to "Step n". Scoped by work (else by card). Kept in memory and, once a file is
+/// configured, in the App Group container, so the short-lived widget process and a relaunched app start with
+/// what the last one learned (a small JSON file: `maximumScopes` works of `maximumLabelsPerScope` labels).
 public enum ReloStepLabelMemory {
     private final class Box: @unchecked Sendable {
         let lock = NSLock()
         var labels: [String: [String: String]] = [:]
         var order: [String] = []
+        var file: URL?
+        var stamp: Date?
+    }
+
+    private struct Stored: Codable {
+        struct Scope: Codable { var id: String; var labels: [String: String] }
+        var scopes: [Scope]
     }
 
     private static let box = Box()
-    private static let maximumScopes = 32
+    public static let maximumScopes = 50
+    public static let maximumLabelsPerScope = 120
+
+    /// Shares the memory through `file` (nil: memory only). Loads what is there; the same file again changes nothing.
+    public static func configure(file: URL?) {
+        box.lock.withLock {
+            guard box.file != file else { return }
+            box.file = file
+            box.labels = [:]
+            box.order = []
+            box.stamp = nil
+            refresh()
+        }
+    }
 
     public static func remember(_ labels: [String: String], scope: String) {
         guard !labels.isEmpty, !scope.isEmpty else { return }
         box.lock.withLock {
-            box.labels[scope, default: [:]].merge(labels) { _, new in new }
+            refresh()
+            var known = box.labels[scope] ?? [:]
+            let before = known
+            known.merge(labels) { _, new in new }
+            var dropped = false
+            if known.count > maximumLabelsPerScope {
+                for key in known.keys.sorted() where known.count > maximumLabelsPerScope && labels[key] == nil {
+                    known[key] = nil
+                    dropped = true
+                }
+            }
+            box.labels[scope] = known
             box.order.removeAll { $0 == scope }
             box.order.append(scope)
-            while box.order.count > maximumScopes { box.labels[box.order.removeFirst()] = nil }
+            while box.order.count > maximumScopes {
+                box.labels[box.order.removeFirst()] = nil
+                dropped = true
+            }
+            // Only a change is written; seeing the same labels again costs no disk.
+            if known != before || dropped { save() }
         }
     }
 
     public static func labels(scope: String) -> [String: String] {
         guard !scope.isEmpty else { return [:] }
-        return box.lock.withLock { box.labels[scope] ?? [:] }
+        return box.lock.withLock {
+            refresh()
+            return box.labels[scope] ?? [:]
+        }
     }
 
+    /// Forgets everything in this process and lets go of the file (the file itself stays).
     public static func reset() {
-        box.lock.withLock { box.labels = [:]; box.order = [] }
+        box.lock.withLock { box.labels = [:]; box.order = []; box.file = nil; box.stamp = nil }
+    }
+
+    // The file may have been written by the other process (app or widget): reread it when it changed.
+    private static func refresh() {
+        guard let file = box.file else { return }
+        let stamp = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        guard let stamp, stamp != box.stamp else { return }
+        box.stamp = stamp
+        guard let data = try? Data(contentsOf: file), let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
+        box.labels = Dictionary(stored.scopes.map { ($0.id, $0.labels) }, uniquingKeysWith: { _, new in new })
+        box.order = stored.scopes.map(\.id)
+    }
+
+    private static func save() {
+        guard let file = box.file else { return }
+        let stored = Stored(scopes: box.order.compactMap { id in box.labels[id].map { Stored.Scope(id: id, labels: $0) } })
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        let directory = file.deletingLastPathComponent()
+        #if os(iOS)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                 attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
+        guard (try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil else { return }
+        #else
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard (try? data.write(to: file, options: .atomic)) != nil else { return }
+        #endif
+        var excluded = file
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? excluded.setResourceValues(values)
+        box.stamp = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
     }
 }
 
@@ -199,6 +272,17 @@ public enum ReloSealedCards {
     public static func noteFailure(_ outcome: String?) {
         box.lock.withLock { box.lastFailure = outcome }
     }
+
+    /// Every line `failureLine` can return (a re-opened card drops the one it was given).
+    public static let failureLines: Set<String> = [
+        "Not encrypted for this iPhone. Check Relo → Settings → Devices.",
+        "Encrypted for another device or an older key of this iPhone.",
+        "From a computer waiting for your approval in Relo → Settings → Devices.",
+        "From a computer you declined.",
+        "From a computer this iPhone doesn't know yet. Open Relo to refresh.",
+        "Open Relo once to read encrypted cards here.",
+        "Couldn't open this card. Open Relo to read it.",
+    ]
 
     /// One plain line for a card that stays encrypted, instead of a silent placeholder.
     public static func failureLine(sealed: Bool) -> String {
@@ -286,6 +370,46 @@ public enum ReloSealedCards {
         guard ["card", "question"].contains(envelope.kind), let data = opener?(envelope) else { return nil }
         return try? JSONDecoder().decode(ReloSealedCardText.self, from: data)
     }
+
+    /// The presentation with this phone's sealed text applied (step labels by id, remembered per work, else per card)
+    /// and handles named. A card that stays encrypted says why in one plain line instead of showing raw handles.
+    public static func opening(_ presentation: LiveActivityPresentation, sealed: ReloEnvelope?, work: ReloWork? = nil,
+                               cardID: String? = nil) -> LiveActivityPresentation {
+        let text = sealed.flatMap(open)
+        var opened = text.map { presentation.applying($0, memoryScope: work?.id ?? cardID) } ?? presentation
+        if text == nil, presentation.title == titlePlaceholder {
+            opened = opened.replacingSubtitle(failureLine(sealed: sealed != nil))
+        }
+        // A sealed question shows only the prompt this phone opened, never text the server wrote.
+        if sealed?.kind == "question" {
+            opened = opened.replacingSubtitle(text?.summary ?? promptPlaceholder)
+        }
+        // Opaque project and topic handles show their real names (E2.5).
+        return opened.resolvingNames(knownNames())
+    }
+
+    /// True while a shown card still carries the server's stand-ins: a placeholder title, status or step label.
+    public static func hasPlaceholders(_ presentation: LiveActivityPresentation) -> Bool {
+        if titlePlaceholders.contains(presentation.title) || presentation.status.contains(statusPlaceholder) { return true }
+        return presentation.components.contains { component in
+            guard case let .steps(_, _, items, _) = component else { return false }
+            return items.contains { isPlaceholderStep($0.label) }
+        }
+    }
+
+    /// The presentation of a card whose first open failed (keys not ready, a trust not yet synced), opened again now:
+    /// nil when it has nothing to repair or the text still does not open or changes nothing.
+    public static func reopened(_ presentation: LiveActivityPresentation, sealed: ReloEnvelope?, work: ReloWork? = nil,
+                                cardID: String? = nil) -> LiveActivityPresentation? {
+        guard let sealed, hasPlaceholders(presentation), open(sealed) != nil else { return nil }
+        var base = presentation
+        // The line a failed open wrote is not text of the card: drop it so the real subtitle can arrive.
+        if let subtitle = presentation.subtitle, failureLines.contains(subtitle) || subtitle == promptPlaceholder {
+            base = presentation.replacingSubtitle(nil)
+        }
+        let result = opening(base, sealed: sealed, work: work, cardID: cardID)
+        return result == presentation ? nil : result
+    }
 }
 
 public extension LiveActivityPresentation {
@@ -332,7 +456,7 @@ public extension LiveActivityPresentation {
 }
 
 public extension LiveActivityPresentation {
-    func replacingSubtitle(_ value: String) -> LiveActivityPresentation {
+    func replacingSubtitle(_ value: String?) -> LiveActivityPresentation {
         LiveActivityPresentation(header: header, title: title, subtitle: value, status: status, components: components,
                                  surfaces: surfaces, identity: identity, state: state, behavior: behavior,
                                  appearance: appearance, privacy: privacy)

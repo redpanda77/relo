@@ -176,8 +176,7 @@ export function keyId(publicKey) {
   return `k_${b64u(createHash("sha256").update(assertPublicKey(publicKey)).digest().subarray(0, 16))}`;
 }
 
-function signingKeyObject(privateKey) {
-  const publicKey = publicKeyFor(privateKey);
+function signingKeyObject(privateKey, publicKey = publicKeyFor(privateKey)) {
   return createPrivateKey({
     format: "jwk",
     key: { kty: "EC", crv: "P-256", d: b64u(privateKey), x: b64u(publicKey.subarray(1, 33)), y: b64u(publicKey.subarray(33)) },
@@ -190,8 +189,8 @@ function verifyingKeyObject(publicKey) {
 }
 
 /** ECDSA P-256 / SHA-256, raw r||s (64 bytes), as CryptoKit's rawRepresentation. */
-export function signBytes(privateKey, message) {
-  return nodeSign("sha256", Buffer.from(message), { key: signingKeyObject(privateKey), dsaEncoding: "ieee-p1363" });
+export function signBytes(privateKey, message, publicKey) {
+  return nodeSign("sha256", Buffer.from(message), { key: signingKeyObject(privateKey, publicKey), dsaEncoding: "ieee-p1363" });
 }
 
 export function verifyBytes(publicKey, message, signature) {
@@ -288,9 +287,11 @@ export function envelopeSigningInput(envelope) {
 export function sealEnvelope({ kind, context, sender, recipients, content, contentKey, nonce, ephemeralKeys }) {
   if (!ENVELOPE_KINDS.includes(kind)) throw e2eeError("invalid_kind");
   if (!Array.isArray(recipients) || recipients.length < 1 || recipients.length > 16) throw e2eeError("invalid_recipients");
+  // The sender's known public key (identityKeys carries it) saves a point multiplication per envelope.
+  const senderPublic = sender.publicKey ?? publicKeyFor(sender.privateKey);
   const envelope = {
     v: E2EE_VERSION, kind, context: assertBinding(context, "context"),
-    sender: keyId(publicKeyFor(sender.privateKey)), recipients: [], nonce: "", ct: "", sig: "",
+    sender: keyId(senderPublic), recipients: [], nonce: "", ct: "", sig: "",
   };
   const cek = contentKey ? Buffer.from(contentKey) : randomBytes(32);
   const bodyNonce = nonce ? Buffer.from(nonce) : randomBytes(12);
@@ -308,7 +309,7 @@ export function sealEnvelope({ kind, context, sender, recipients, content, conte
     });
     envelope.recipients.push({ ...entry, enc: b64u(sealed.enc), key: b64u(sealed.ciphertext) });
   });
-  envelope.sig = b64u(signBytes(sender.privateKey, envelopeSigningInput(envelope)));
+  envelope.sig = b64u(signBytes(sender.privateKey, envelopeSigningInput(envelope), senderPublic));
   return envelope;
 }
 

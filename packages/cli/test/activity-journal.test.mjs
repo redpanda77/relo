@@ -20,7 +20,7 @@ test("restart and concurrent capture retain one original time, target and exact 
   const shard = join(root,(await readdir(root))[0]), file = join(shard,(await readdir(shard))[0]);
   const bytes = await readFile(file,"utf8");
   for (const sentinel of [base.config.token,base.config.apiUrl,base.body.status]) assert.ok(!bytes.includes(sentinel));
-  assert.equal((await stat(file)).mode & 0o777,0o600);
+  if (process.platform !== "win32") assert.equal((await stat(file)).mode & 0o777,0o600); // Windows has no POSIX modes
 }));
 test("changed intent conflicts while malformed bytes survive without a fresh capture",() => fixture(async root => {
   await captureActivityCommand(base,{ root });

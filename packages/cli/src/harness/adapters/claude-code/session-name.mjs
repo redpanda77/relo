@@ -9,7 +9,7 @@
 //    (repeated every turn), older {"type":"summary","summary":"…"} and {"type":"ai-title",…} records.
 // The Claude desktop app's own metadata (Application Support/Claude/claude-code-sessions/…/local_*.json,
 // {cliSessionId, title, titleSource}) is not read: finding the file means scanning every session.
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { hasAbsolutePath, looksLikeToken } from "../../../work/content-filter.mjs";
@@ -92,22 +92,52 @@ function transcriptName(path) {
  * 256 KB transcript tail), synchronous, never throws.
  */
 export function claudeSessionName({ sessionId, env = process.env, home = homedir(), cwd = process.cwd() } = {}) {
+  return resolveName({ sessionId, env, home, cwd }).title;
+}
+
+const projectsOf = (env, home) => join(typeof env.CLAUDE_CONFIG_DIR === "string" && env.CLAUDE_CONFIG_DIR.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(home, ".claude"), "projects");
+
+/** { title, directory }; `directory` (already found) skips the project scan. Never throws. */
+function resolveName({ sessionId, env, home, cwd, directory: known }) {
   try {
-    if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) return undefined;
-    const root = typeof env.CLAUDE_CONFIG_DIR === "string" && env.CLAUDE_CONFIG_DIR.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(home, ".claude");
-    const directory = sessionDirectory(join(root, "projects"), sessionId, cwd);
-    if (!directory) return undefined;
+    if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) return {};
+    const directory = known ?? sessionDirectory(projectsOf(env, home), sessionId, cwd);
+    if (!directory) return {};
     const titleFile = readBounded(join(directory, sessionId, "custom-title.json"), TITLE_FILE_MAX);
     if (titleFile && !titleFile.partial) {
       try {
         const title = cleanSessionName(JSON.parse(titleFile.text)?.customTitle);
-        if (title) return title;
+        if (title) return { title, directory };
       } catch { /* fall through to the transcript */ }
     }
-    return transcriptName(join(directory, `${sessionId}.jsonl`));
+    return { title: transcriptName(join(directory, `${sessionId}.jsonl`)), directory };
   } catch {
-    return undefined;
+    return {};
   }
+}
+
+/** How long a resolved name is trusted without re-reading, even when the files look unchanged. */
+export const NAME_CACHE_MS = 5 * 60 * 1000;
+
+const fileStamp = (path) => { try { const info = statSync(path); return `${info.size}:${Math.round(info.mtimeMs)}`; } catch { return "-"; } };
+
+/**
+ * claudeSessionName with what to remember: the project directory and the name, valid while the transcript and the
+ * title file keep their size and mtime (two stats instead of a project scan and a 256 KB tail read) and for at most
+ * NAME_CACHE_MS. `nameCache` is what the caller kept; the returned `cache` replaces it (local state only).
+ */
+export function claudeCachedName({ sessionId, env = process.env, home = homedir(), cwd = process.cwd(), nameCache, now = Date.now() } = {}) {
+  if (typeof sessionId !== "string" || !SESSION_ID.test(sessionId)) return { title: undefined };
+  const directory = typeof nameCache?.directory === "string" && isAbsolute(nameCache.directory) ? nameCache.directory : undefined;
+  const stamp = directory ? `${fileStamp(join(directory, `${sessionId}.jsonl`))}|${fileStamp(join(directory, sessionId, "custom-title.json"))}` : undefined;
+  const age = now - nameCache?.at;
+  if (directory && nameCache.stamp === stamp && age >= 0 && age < NAME_CACHE_MS && existsSync(directory)) {
+    return { title: typeof nameCache.title === "string" ? nameCache.title : undefined, cache: nameCache };
+  }
+  const found = resolveName({ sessionId, env, home, cwd, directory: directory && existsSync(directory) ? directory : undefined });
+  if (!found.directory) return { title: found.title };
+  const fresh = `${fileStamp(join(found.directory, `${sessionId}.jsonl`))}|${fileStamp(join(found.directory, sessionId, "custom-title.json"))}`;
+  return { title: found.title, cache: { directory: found.directory, stamp: fresh, at: now, ...(found.title ? { title: found.title } : {}) } };
 }
 
 // ---- Claude Desktop sidebar titles (kept here: hooks load as few modules as possible) ----
@@ -211,7 +241,7 @@ export const TITLE_MISS_MS = 10 * 60 * 1000;
  * Desktop file found earlier and `titleMissAt` (ms) when a scan last found none; the returned `cache` replaces both
  * (local state only, never sent). Synchronous, bounded, never throws.
  */
-export function claudeResolveTitle({ sessionId, env = process.env, home = homedir(), cwd = process.cwd(), titlePath, titleMissAt, now = Date.now() } = {}) {
+export function claudeResolveTitle({ sessionId, env = process.env, home = homedir(), cwd = process.cwd(), titlePath, titleMissAt, nameCache, now = Date.now() } = {}) {
   const cache = {};
   try {
     if (env?.CLAUDE_CODE_ENTRYPOINT === DESKTOP_ENTRYPOINT) {
@@ -221,7 +251,8 @@ export function claudeResolveTitle({ sessionId, env = process.env, home = homedi
       cache.titleMissAt = desktop.scanned || !missed ? now : titleMissAt;
     }
   } catch { /* today's sources stand */ }
-  return { title: claudeSessionName({ sessionId, env, home, cwd }), cache };
+  const named = claudeCachedName({ sessionId, env, home, cwd, nameCache, now });
+  return { title: named.title, cache: { ...cache, ...(named.cache ? { nameCache: named.cache } : {}) } };
 }
 
 // ---- Context size (kept in this module: hooks load as few modules as possible, see startup-budget.test.mjs) ----
@@ -257,6 +288,59 @@ export function contextTokensOfTail({ text, partial = false }) {
     if (tokens > 0) return Math.min(CONTEXT_TOKENS_MAX, tokens);
   }
   return undefined;
+}
+
+// ---- Interrupt marker (a user interrupt runs no Stop hook; Claude Code records it in the transcript) ----
+// Claude Code writes a user entry whose text starts with "[Request interrupted by user" ("... for tool use]" when a
+// tool was running) when the owner presses Esc. Only a boolean leaves this function: no text is kept or sent.
+
+export const INTERRUPT_TAIL_BYTES = 64 * 1024;
+/** A marker this much older than the session's last activity still counts (async hooks land a moment late). */
+export const INTERRUPT_SKEW_MS = 2_000;
+const INTERRUPT_MARKER = "[Request interrupted by user";
+
+const isInterruptEntry = (record) => {
+  const content = record?.message?.content;
+  if (typeof content === "string") return content.trim().startsWith(INTERRUPT_MARKER) && content.trim().endsWith("]");
+  // Only the marker alone: the owner's next prompt can ride in the same entry, and that is a new turn.
+  if (!Array.isArray(content)) return false;
+  const texts = content.filter((block) => block?.type === "text");
+  return texts.length > 0 && texts.every((block) => typeof block.text === "string" && block.text.trim().startsWith(INTERRUPT_MARKER) && block.text.trim().endsWith("]"));
+};
+
+/**
+ * Whether the newest main-chain user entry in a transcript tail is an interrupt marker written at or after `since` (ms):
+ * the turn was stopped by its owner after the session's last activity. A newer prompt (any other user entry) means a
+ * later turn, so it is not an interrupt. A first line cut by the tail and unparseable lines are skipped.
+ */
+export function interruptedInTail({ text, partial = false }, since) {
+  const lines = String(text).split("\n");
+  if (partial) lines.shift();
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (!line.includes('"user"')) continue;
+    let record;
+    try { record = JSON.parse(line); } catch { continue; }
+    if (record?.type !== "user" || record.isSidechain === true) continue;
+    // A tool result is a user entry too, and the marker entry follows it: keep looking only past results.
+    const content = record.message?.content;
+    if (Array.isArray(content) && content.length > 0 && content.every((block) => block?.type === "tool_result")) continue;
+    if (!isInterruptEntry(record)) return false;
+    const at = Date.parse(record.timestamp);
+    return Number.isFinite(at) && at >= since - INTERRUPT_SKEW_MS;
+  }
+  return false;
+}
+
+/** Whether the transcript at `path` (an absolute .jsonl path from a hook payload) ends in an interrupt marker after `since` (ms). Bounded (64 KB tail), synchronous, never throws. */
+export function claudeInterruptedSince(path, since) {
+  try {
+    if (typeof path !== "string" || !isAbsolute(path) || !path.endsWith(".jsonl") || !Number.isFinite(since)) return false;
+    const tail = readBounded(path, INTERRUPT_TAIL_BYTES, { tail: true });
+    return tail ? interruptedInTail(tail, since) : false;
+  } catch {
+    return false;
+  }
 }
 
 /** The context tokens of the transcript at `path` (an absolute .jsonl path from the hook payload), or undefined. */

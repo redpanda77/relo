@@ -11,6 +11,7 @@ export default Object.freeze({
   detect: (env) => env.OPENCODE === "1",
   sessionVariable: "OPENCODE_SESSION_ID",
   config: { home: ".config/opencode" },
+  installation: { binaries: ["opencode"], markers: ["~/.local/share/opencode"], folder: { ignore: ["AGENTS.md", "skills", "plugins", "relo-hooks.json"] } },
   instructions: { global: "AGENTS.md" },
   skills: "skills",
   inherits: Object.freeze({
@@ -22,5 +23,5 @@ export default Object.freeze({
   mcpClient: /^opencode/iu,
   // The process its plugin runs `relo hook` from (`opencode`, `opencode serve`, or npm's `opencode.exe`): the liveness
   // check ends a session whose OpenCode process is gone (quit or killed: the plugin sends nothing then).
-  processPattern: /(?:^|\/)opencode(?:\.exe)?(?:\s|$)/u,
+  processPattern: /(?:^|[\\/"'])opencode(?:\.exe)?["']?(?:\s|$)/u,
 });

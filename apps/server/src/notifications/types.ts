@@ -17,7 +17,8 @@ export type WithdrawNotificationResult =
   | { kind: "withdrawn"; eventId: string; withdrawnAt: Date; replayed: true }
   | { kind: "withdrawn"; eventId: string; withdrawnAt: Date; replayed: false; canceledDeliveries: number };
 
-export type DeliverySummary = { eligibleDevices: number; durableCommands: number; apnsJobs: number };
+/** `readers`: active owner overview devices (the Mac) that show it from Now; they are never push targets (owner-overview.ts). */
+export type DeliverySummary = { eligibleDevices: number; durableCommands: number; apnsJobs: number; readers?: number | undefined };
 export type CreateNotificationCommand = {
   idempotencyKey: string; requestHash: string;
   sourceName: string; title: string; content: PreparedNotificationContent;

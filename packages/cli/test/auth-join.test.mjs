@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { run } from "../src/cli.mjs";
+import { openWindowsApp } from "../src/owner/auth.mjs";
 import { ApiError, EXIT, NetworkError } from "../src/shared/errors.mjs";
 import { createHmac } from "node:crypto";
 import { readdir } from "node:fs/promises";
@@ -245,14 +246,14 @@ test("auth join without a bind half publishes the key with no binding, and a mal
 
 test("auth join --mac-app asks for the Mac app's sign-in code and opens the app with it and the verifier only it gets", async () => {
   const signInCode = `relo_signin_${"s".repeat(43)}`;
-  const b = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "track", approvals: false, macApp: true },
+  const b = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "track", approvals: false, desktopApp: true },
     credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_tttt", scopes: body.scopes },
-    ...(body.macAppChallenge ? { macAppSignInCode: signInCode } : {}) }) });
+    ...(body.desktopAppChallenge ? { macAppSignInCode: signInCode } : {}) }) });
   const opened = [];
   const deps = { ...b.deps, platform: "darwin", openMacApp: async (path, args) => { opened.push({ path, args }); } };
   const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app", "/Users/x/Applications/Relo Notch.app"], deps);
   assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
-  const challenge = b.state.redeemed[0].macAppChallenge;
+  const challenge = b.state.redeemed[0].desktopAppChallenge;
   assert.match(challenge, /^[A-Za-z0-9_-]{43}$/u);
   assert.equal(opened.length, 1);
   assert.equal(opened[0].path, "/Users/x/Applications/Relo Notch.app");
@@ -266,13 +267,93 @@ test("auth join --mac-app asks for the Mac app's sign-in code and opens the app 
   assert.equal(JSON.stringify(out).includes(verifier) || JSON.stringify(out).includes(signInCode), false, "neither is printed");
 });
 
+test("auth join --windows-app asks for the desktop app's sign-in code and launches the exe with it and the verifier only it gets", async () => {
+  const signInCode = `relo_signin_${"w".repeat(43)}`;
+  const b = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "track", approvals: false, desktopApp: true },
+    credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_tttt", scopes: body.scopes },
+    ...(body.desktopAppChallenge ? { desktopAppSignInCode: signInCode } : {}) }) });
+  const opened = [];
+  const deps = { ...b.deps, platform: "win32", openWindowsApp: async (path, args) => { opened.push({ path, args }); },
+    openMacApp: async () => { throw new Error("not on Windows"); } };
+  const exe = "C:\\Users\\x\\AppData\\Local\\Programs\\Relo\\Relo.exe";
+  const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--windows-app", exe], deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  const challenge = b.state.redeemed[0].desktopAppChallenge;
+  assert.match(challenge, /^[A-Za-z0-9_-]{43}$/u);
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].path, exe);
+  const args = opened[0].args;
+  const verifier = args[args.indexOf("--relo-code-verifier") + 1];
+  assert.equal(args[args.indexOf("--relo-sign-in-code") + 1], signInCode);
+  assert.equal(args[args.indexOf("--relo-origin") + 1], "https://relo.example");
+  const { createHash } = await import("node:crypto");
+  assert.equal(createHash("sha256").update(verifier).digest("base64url"), challenge, "the verifier matches the challenge sent");
+  assert.equal(out.line.join.windowsApp, "signed-in");
+  assert.equal(out.line.join.macApp, undefined);
+  assert.equal(JSON.stringify(out).includes(verifier) || JSON.stringify(out).includes(signInCode), false, "neither is printed");
+  // The old server's name for the sign-in code still works, and a server without a code opens the app unsigned.
+  const old = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "track", approvals: false },
+    credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_tttt", scopes: body.scopes }, macAppSignInCode: signInCode }) });
+  const oldOpened = [];
+  const oldOut = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--windows-app", exe],
+    { ...old.deps, platform: "win32", openWindowsApp: async (path, a) => { oldOpened.push(a); } });
+  assert.equal(oldOut.line.join.windowsApp, "signed-in");
+  const none = await box();
+  const noneOpened = [];
+  const noneOut = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--windows-app", exe],
+    { ...none.deps, platform: "win32", openWindowsApp: async (path, a) => { noneOpened.push(a); } });
+  assert.equal(noneOut.line.join.windowsApp, "opened");
+  assert.deepEqual(noneOpened[0], ["--relo-origin", "https://relo.example"]);
+});
+
+test("auth join --windows-app off Windows sends no challenge and launches nothing", async () => {
+  const b = await box();
+  const opened = [];
+  const deps = { ...b.deps, platform: "linux", openWindowsApp: async (path, args) => { opened.push({ path, args }); } };
+  const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--windows-app", "/tmp/Relo.exe"], deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  assert.equal(b.state.redeemed[0].desktopAppChallenge, undefined);
+  assert.equal(opened.length, 0);
+});
+
+test("openWindowsApp launches the exe detached with its arguments, and only on Windows", () => {
+  const calls = [];
+  const spawnImpl = (file, args, options) => { calls.push({ file, args, options }); return { on() {}, unref() {} }; };
+  assert.throws(() => openWindowsApp("C:/x/Relo.exe", ["--a"], { platform: "darwin", spawnImpl }));
+  assert.equal(calls.length, 0);
+  openWindowsApp("C:/x/Relo.exe", ["--relo-origin", "https://relo.example"], { platform: "win32", spawnImpl });
+  assert.equal(calls[0].file, "C:/x/Relo.exe");
+  assert.deepEqual(calls[0].args, ["--relo-origin", "https://relo.example"]);
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(calls[0].options.shell, false);
+});
+
+test("auth join --mac-app-challenge sends Relo for Mac's own challenge and returns the sign-in code without opening anything", async () => {
+  const signInCode = `relo_signin_${"c".repeat(43)}`;
+  const challenge = "C".repeat(43);
+  const b = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "track", approvals: false, desktopApp: true },
+    credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_tttt", scopes: body.scopes },
+    ...(body.desktopAppChallenge ? { macAppSignInCode: signInCode } : {}) }) });
+  const opened = [];
+  const deps = { ...b.deps, platform: "darwin", openMacApp: async (path, args) => { opened.push({ path, args }); } };
+  const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app-challenge", challenge], deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  assert.equal(b.state.redeemed[0].desktopAppChallenge, challenge);
+  assert.equal(opened.length, 0);
+  assert.equal(out.line.join.macAppSignInCode, signInCode);
+  const both = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app-challenge", challenge, "--mac-app", "/x.app"], deps);
+  assert.equal(both.exitCode, EXIT.USAGE);
+  const short = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app-challenge", "short"], deps);
+  assert.equal(short.exitCode, EXIT.USAGE);
+});
+
 test("auth join --mac-app off a Mac sends no challenge and opens nothing", async () => {
   const b = await box();
   const opened = [];
   const deps = { ...b.deps, platform: "linux", openMacApp: async (path, args) => { opened.push({ path, args }); } };
   const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app", "/tmp/Relo Notch.app"], deps);
   assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
-  assert.equal(b.state.redeemed[0].macAppChallenge, undefined);
+  assert.equal(b.state.redeemed[0].desktopAppChallenge, undefined);
   assert.equal(opened.length, 0);
 });
 
@@ -280,5 +361,38 @@ test("auth invite --with-mac-app asks for Relo for Mac on the new computer", asy
   const b = await box();
   const out = await cli(["auth", "invite", "--with-mac-app"], b.deps);
   assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
-  assert.deepEqual(b.state.invites, [{ macApp: true }]);
+  assert.deepEqual(b.state.invites, [{ desktopApp: true }]);
+});
+
+test("auth join says the notch shows the cards and the iPhone is optional when the Mac app came with it", async () => {
+  const run1 = async (extra, platform) => {
+    const b = await box();
+    const folder = await mkdtemp(join(tmpdir(), "relo-join-keys-"));
+    Object.assign(b.deps, { env: { RELO_KEY_STORE_PATH: join(folder, "e2ee.json") }, stdinIsTTY: true, stdoutIsTTY: true, platform,
+      openMacApp: async () => {} });
+    healthy(b);
+    const stdout = [];
+    const exitCode = await run(["auth", "join", CODE, "--api-url", "https://relo.example", ...extra], { stdout: (line) => stdout.push(line), stderr: () => {}, stdoutIsTTY: true }, b.deps);
+    assert.equal(exitCode, EXIT.OK, stdout.join("\n"));
+    return stdout.join("\n");
+  };
+  const withMac = await run1(["--mac-app", "/Users/x/Applications/Relo Notch.app"], "darwin");
+  assert.match(withMac, /notch on this Mac shows your cards and questions\. The iPhone app is optional\./u);
+  assert.doesNotMatch(withMac, /Install the Relo iPhone app/u);
+  assert.match(await run1([], "darwin"), /Install the Relo iPhone app to get notifications\./u);
+});
+
+test("auth join --no-setup signs in and returns the Mac sign-in code but sets up no agent", async () => {
+  const signInCode = `relo_signin_${"d".repeat(43)}`;
+  const b = await box({ redeem: async (body) => ({ accessToken: TOKEN, setup: { level: "guide", approvals: true },
+    credential: { id: "key_0123456789ab", clientName: body.clientName, prefix: "relo_tttt", scopes: body.scopes },
+    ...(body.desktopAppChallenge ? { macAppSignInCode: signInCode } : {}) }) });
+  const out = await cli(["auth", "join", CODE, "--api-url", "https://relo.example", "--mac-app-challenge", "C".repeat(43), "--no-setup"], b.deps);
+  assert.equal(out.exitCode, EXIT.OK, JSON.stringify(out));
+  assert.equal(b.state.written[0].token, TOKEN, "signed in");
+  assert.equal(out.line.join.macAppSignInCode, signInCode);
+  assert.equal(out.line.join.agents.skipped, true);
+  assert.match(out.line.note ?? out.line.message ?? "", /not set up/u);
+  assert.equal(existsSync(join(b.home, ".claude", "skills", "relo-notifications", "SKILL.md")), false, "no skill was installed");
+  assert.equal(existsSync(join(b.home, ".claude", "CLAUDE.md")), false, "no block was written");
 });

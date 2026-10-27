@@ -13,27 +13,27 @@ const history=(filters: Record<string, unknown>, filterOptions: Record<string, u
 
 test("history filters speak the owner's words and carry search, source and computer",()=>{
   const parsed=notificationHistorySchema.parse(history(
-    {kind:"decision",state:"missed",project:"Relo",source:"Codex",computer:"Studio Mac",q:"deploy"},
+    {kind:"decision",ending:"attention",project:"Relo",source:"Codex",computer:"Studio Mac",q:"deploy"},
     {projects:["Relo"],sources:["Codex","Nightly"],computers:["Studio Mac"]},
   ));
-  assert.deepEqual(parsed.route.filters,{kind:"decision",state:"missed",project:"Relo",source:"Codex",computer:"Studio Mac",q:"deploy"});
+  assert.deepEqual(parsed.route.filters,{kind:"decision",ending:"attention",project:"Relo",source:"Codex",computer:"Studio Mac",q:"deploy"});
   assert.deepEqual(parsed.filterOptions.sources,["Codex","Nightly"]);
 });
 
 test("history filters default the newer fields to none",()=>{
-  const parsed=notificationHistorySchema.parse(history({kind:null,state:null,project:null}));
-  assert.deepEqual(parsed.route.filters,{kind:null,state:null,project:null,source:null,computer:null,q:null});
+  const parsed=notificationHistorySchema.parse(history({kind:null,ending:null,project:null}));
+  assert.deepEqual(parsed.route.filters,{kind:null,ending:null,project:null,source:null,computer:null,q:null});
   assert.deepEqual(parsed.filterOptions,{projects:[],sources:[],computers:[]});
 });
 
-for (const [field,value] of [["kind","question"],["kind","approval"],["state","active"],["state","responded"]] as const) {
+for (const [field,value] of [["kind","question"],["kind","live_activity"],["kind","response"],["ending","running"],["ending","needsYou"],["ending","missed"]] as const) {
   test(`history rejects the retired ${field} ${value}`,()=>{
-    assert.throws(()=>notificationHistorySchema.parse(history({kind:null,state:null,project:null,[field]:value})));
+    assert.throws(()=>notificationHistorySchema.parse(history({kind:null,ending:null,project:null,[field]:value})));
   });
 }
 
 test("history keeps the agent sessions that name its handles, ids only",()=>{
-  const parsed=notificationHistorySchema.parse({...history({kind:null,state:null,project:null}),namesFrom:["ags_0b9c1d2e-0000-4000-8000-000000000001"]});
+  const parsed=notificationHistorySchema.parse({...history({kind:null,ending:null,project:null}),namesFrom:["ags_0b9c1d2e-0000-4000-8000-000000000001"]});
   assert.deepEqual(parsed.namesFrom,["ags_0b9c1d2e-0000-4000-8000-000000000001"]);
-  assert.throws(()=>notificationHistorySchema.parse({...history({kind:null,state:null,project:null}),namesFrom:["relo"]}));
+  assert.throws(()=>notificationHistorySchema.parse({...history({kind:null,ending:null,project:null}),namesFrom:["relo"]}));
 });

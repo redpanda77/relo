@@ -7,6 +7,7 @@ import {
   DeliverySerializationValidationError,
   assertOrdinaryDeliveryIntentWithinBudget,
   ordinaryDeliveryPayloadSize,
+  activityPayloadSize,
 } from "./delivery-serialization.js";
 
 function job(overrides: Partial<ApnsRuntimeJob> = {}): ApnsRuntimeJob {
@@ -233,6 +234,25 @@ describe("current delivery serialization", () => {
       { privacy: "private" }))).toMatchObject({ contentState: { owner: { state: "needs_you",needsYou: "permission" } } });
   });
 
+  test("content-state owner carries declaredAt in Unix seconds from the evidence time", () => {
+    const owner = { state: "stale",needsYou: null,staleDate: "2026-08-13T00:20:00.000Z",evidenceAt: "2026-08-13T00:05:00.000Z" };
+    expect(deliveryProjection(card(owner))).toMatchObject({
+      contentState: { owner: { state: "stale",declaredAt: Date.parse("2026-08-13T00:05:00.000Z") / 1_000 } } });
+    const fallback = deliveryProjection(card({ state: "stale",needsYou: null,staleDate: null },{ updatedAt: "2026-08-13T00:01:00.000Z" }));
+    expect(fallback).toMatchObject({ contentState: { owner: { declaredAt: Date.parse("2026-08-13T00:01:00.000Z") / 1_000 } } });
+    expect((fallback as any).contentState.owner).not.toHaveProperty("finishedAt");
+  });
+
+  test("content-state owner carries the account's island counts, whole and capped, only when the command has them", () => {
+    const owner = { state: "moving",needsYou: null,staleDate: "2026-08-13T00:20:00.000Z" };
+    expect(deliveryProjection(card({ ...owner,live: 3,needsYouCount: 1 })))
+      .toMatchObject({ contentState: { owner: { live: 3,needsYouCount: 1 } } });
+    expect((deliveryProjection(card({ ...owner,live: 250 })) as any).contentState.owner.live).toBe(99);
+    const none = (deliveryProjection(card({ ...owner,live: -1,needsYouCount: 1.5 })) as any).contentState.owner;
+    expect(none).not.toHaveProperty("live");
+    expect(none).not.toHaveProperty("needsYouCount");
+  });
+
   test("end dismissal comes from the table: done 15 min, failed 60 min, dropped at once", () => {
     const end = (state: string) => deliveryProjection(job({
       transport: "live_activity_update",
@@ -318,5 +338,54 @@ describe("current delivery serialization", () => {
     ]);
     expect(app).not.toContain('from "./apns.js"');
     for (const source of services) expect(source).not.toContain('from "../apns.js"');
+  });
+
+  describe("Live Activity push size budget", () => {
+    const presentationCard = (steps: number, extra: Record<string, unknown> = {}) => job({
+      transport: "live_activity_update",
+      activityCommand: {
+        activityId: "act_22222222-2222-4222-8222-222222222222",operation: "update",generation: 1,sequence: 3,
+        providerTimestamp: 1_786_579_200,privacy: "standard",headline: "Build",status: "Compiling",
+        header: "Relo",title: "Encrypted card",subtitle: null,
+        componentsJson: JSON.stringify([{ id: "plan",type: "steps",colorRole: "project",
+          items: Array.from({ length: steps },(_, index) => ({ id: `step_${index}`,label: `Step ${index + 1} ${"x".repeat(60)}`,
+            state: index < 10 ? "complete" : index === 10 ? "current" : "pending" })),
+          plan: { done: 10,total: steps,current: 11,currentId: "step_10" } }]),
+        surfacesJson: "{}",identityJson: "{}",stateJson: "{}",behaviorType: "informational",
+        primaryAction: null,primaryLabel: null,secondaryAction: null,secondaryLabel: null,
+        appearanceJson: "{}",
+        ...extra,
+      },
+    } as never);
+
+    const sizeOf = (input: ReturnType<typeof presentationCard>) => activityPayloadSize(deliveryProjection(input) as never);
+
+    test("an oversized card is trimmed to far steps first and fits the 4096 byte budget", () => {
+      const input = presentationCard(30);
+      const projection = deliveryProjection(input) as { contentState: { componentsJson: string } };
+      expect(sizeOf(input)).toBeLessThanOrEqual(4_096);
+      const [steps] = JSON.parse(projection.contentState.componentsJson);
+      expect(steps.items.map((item: { id: string }) => item.id)).toEqual(["step_9","step_10","step_11"]);
+      expect(steps.before).toBe(9);
+      expect(steps.after).toBe(18);
+      expect(steps.plan).toMatchObject({ total: 30,currentId: "step_10" });
+    });
+
+    test("a card within the budget is sent untouched", () => {
+      const input = presentationCard(3);
+      const projection = deliveryProjection(input) as { contentState: { componentsJson: string } };
+      expect(JSON.parse(projection.contentState.componentsJson)[0].items).toHaveLength(3);
+      expect(sizeOf(input)).toBeLessThan(4_096);
+    });
+
+    test("sealed text stays when it fits and goes last when nothing else is left", () => {
+      const sealed = (size: number) => ({ v: "1",kind: "card",ct: "c".repeat(size) });
+      const fits = deliveryProjection(presentationCard(30,{ sealed: sealed(800) })) as { contentState: Record<string,unknown> };
+      expect(fits.contentState.sealed).toBeDefined();
+      expect(sizeOf(presentationCard(30,{ sealed: sealed(800) }))).toBeLessThanOrEqual(4_096);
+      const huge = deliveryProjection(presentationCard(30,{ sealed: sealed(6_000) })) as { contentState: Record<string,unknown> };
+      expect(huge.contentState.sealed).toBeUndefined();
+      expect(sizeOf(presentationCard(30,{ sealed: sealed(6_000) }))).toBeLessThanOrEqual(4_096);
+    });
   });
 });

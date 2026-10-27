@@ -12,13 +12,14 @@ import {
   
   registerActivityRoutes,
   type ApnsMode } from "./activities.js";
-import type { AccountAuth } from "./account-auth.js";
+import type { AccountAuth,AppleSignInConfig } from "./account-auth.js";
 import { authenticate } from "./auth.js";
 import { registerIdempotentMachineRevokeRoute, registerMachineAuthRoutes, registerPublicDeviceAuthorizationRoutes } from "./device-authorization.js";
 import type { Database } from "./db.js";
 import { internalId } from "./ids.js";
 import { registerMobileAccountRoutes } from "./mobile-auth.js";
 import { registerMobileSignInRoutes } from "./mobile-sign-in.js";
+import { registerAppleSignInRoutes } from "./apple-sign-in.js";
 import { registerServiceApiRoutes } from "./webhooks/admin.js";
 import { registerWebhookRoutes } from "./webhooks/index.js";
 import { registerRequestPolicy } from "./request-policy.js";
@@ -62,6 +63,8 @@ export type AppDependencies = {
   bootstrapOwnerHandle: string;
   credentialDerivationSecret: string;
   appUrl: string;
+  /** RELO_APPLE_SERVICES_ID and RELO_APPLE_BUNDLE_ID: Sign in with Apple on the web and in the iPhone app. */
+  appleSignIn?: AppleSignInConfig | undefined;
   apnsMode: ApnsMode;
   /** RELO_LANDING_FILM_URL: the landing's launch film folder; unset, the landing has no film. */
   landingFilmUrl?: string | undefined;
@@ -118,6 +121,12 @@ export function createApp(
   registerWebhookRoutes(app, db, apnsMode, notificationContentCipher ?? undefined, callbackEncryption);
 
   if (integratedDependencies) {
+    // Before the web routes: their /api/auth/* catch-all would answer Apple's routes first.
+    registerAppleSignInRoutes(app, db, {
+      accountAuth: integratedDependencies.accountAuth, appUrl: integratedDependencies.appUrl,
+      apple: integratedDependencies.appleSignIn, bootstrapOwnerHandle: integratedDependencies.bootstrapOwnerHandle,
+      apnsMode, contentCipher: notificationContentCipher,
+    });
     registerWebAuthRoutes(app, db, integratedDependencies);
     registerDashboardEventRoutes(app, { hub: integratedDependencies.currentChanges, appOrigin: new URL(integratedDependencies.appUrl).origin,
       getAccount: headers => getOwnerAccount(db, integratedDependencies.accountAuth, headers) });
@@ -132,7 +141,9 @@ export function createApp(
 
   const ready = async (context: any) => {
     await db.query("SELECT 1");
-    return context.json({ status: "ok" });
+    // Local mode (plan 16): Relo for Mac compares the version its server runs with its own bundle after an update.
+    return context.json(process.env.RELO_LOCAL_MODE === "1"
+      ? { status: "ok",release: process.env.RELO_RELEASE_IDENTITY ?? null,instance: process.env.RELO_LOCAL_INSTANCE ?? null } : { status: "ok" });
   };
   app.get("/health/ready", ready);
   app.get("/health/browser-candidate-attestation", async (context) => {

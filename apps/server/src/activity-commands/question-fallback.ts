@@ -61,6 +61,8 @@ export async function notifyUnseenQuestionCards(db: Database, input: {
     `SELECT a.id,a.principal_id FROM live_activities a
      WHERE a.state='active' AND a.resume_presentation IS NOT NULL AND a.question_fallback_at IS NULL
        AND a.updated_at < clock_timestamp()-($1::integer*interval '1 second')
+       -- A card with no phone (the Mac reads it from Now) has no phone to tell.
+       AND COALESCE(cardinality(a.target_device_ids),1)>0
        AND NOT EXISTS (SELECT 1 FROM live_activity_update_tokens t
          WHERE t.live_activity_id=a.id AND t.generation=a.generation)
      ORDER BY a.updated_at LIMIT 20`,

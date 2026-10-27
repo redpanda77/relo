@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename } from "node:path";
+import { basename, isAbsolute, relative } from "node:path";
 import { definedFields } from "./validate.mjs";
-import { detectHarness } from "../harness/catalog.mjs";
+import { HARNESSES, detectHarness } from "../harness/catalog.mjs";
 import { configDirectory } from "../harness/paths.mjs";
 import { cleanLabel } from "./label.mjs";
 import { folderName, namedPlace } from "./repo.mjs";
@@ -77,11 +77,24 @@ export function projectLabel(env = process.env, cwd = process.cwd(), exists = ex
 /**
  * The project when nothing names the place: the signed-in integration's name (integrationProject), else the
  * working folder's own name. Never a made-up or product name: a card from ~/Documents/GitHub reads "GitHub".
+ * A harness's own config folder is no project (Antigravity starts MCP servers in ~/.gemini/config).
  */
 export function fallbackProject(config, dependencies) {
   const integration = integrationProject(config, dependencies);
   if (integration) return cleanLabel(integration, 120);
-  try { return cleanLabel(folderName(dependencies.cwd ?? process.cwd(), dependencies.home), 120); } catch { return undefined; }
+  const cwd = dependencies.cwd ?? process.cwd();
+  if (inHarnessConfig(cwd, dependencies.env ?? process.env, dependencies.home ?? homedir())) return undefined;
+  try { return cleanLabel(folderName(cwd, dependencies.home), 120); } catch { return undefined; }
+}
+
+/** Whether `cwd` is a harness's config folder or inside one. */
+function inHarnessConfig(cwd, env, home) {
+  return HARNESSES.some((harness) => {
+    const directory = configDirectory(harness, { env, home })?.directory;
+    if (directory === undefined) return false;
+    const path = relative(directory, cwd);
+    return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+  });
 }
 
 /**

@@ -278,13 +278,14 @@ const operations: Record<string,Record<string,Operation>> = {
     post: { summary: "Join with a one-time code",auth: "none",body: redeemInviteSchema,
       description: "Add a computer: redeems a code a trusted device made (it works once, for 30 minutes) for the computer's own "
         + "login, with no browser; returns the access token, its credential and how the owner wants the computer set up "
-        + "(`setup: { level, approvals, agents, macApp }`). A code made with `macApp`, redeemed with `macAppChallenge`, also returns "
-        + "`macAppSignInCode`: the Mac app exchanges it at /api/mobile/sign-in/token with its verifier. `relo auth join` and the install script call it.",errors: ["invalid_code","rate_limited"] },
+        + "(`setup: { level, approvals, agents, desktopApp }`). A code made with `desktopApp`, redeemed with `desktopAppChallenge`, also returns "
+        + "`desktopAppSignInCode`: the desktop app (Relo for Mac, Relo for Windows) exchanges it at /api/mobile/sign-in/token with its verifier. "
+        + "`relo auth join` and the install scripts call it.",errors: ["invalid_code","rate_limited"] },
   },
   "/api/clients/computer-invites": {
     post: { summary: "Make a one-time code to add a computer",body: createInviteSchema,
       description: "A signed-in computer's own login (not a CI token) makes a code for another computer, and the command that "
-        + "installs and signs it in. Returns `{ inviteId, code, command, expiresAt, level, approvals, agents, macApp }`; `inviteId` (cin_…) "
+        + "installs and signs it in. Returns `{ inviteId, code, command, commands: { posix, windows }, expiresAt, level, approvals, agents, desktopApp }`; `inviteId` (cin_…) "
         + "names the code for the Connect a computer wizard. `relo auth invite`. Scope: services:write.",errors: ["principal_credential_required"] },
   },
   "/api/device-authorizations/token": {

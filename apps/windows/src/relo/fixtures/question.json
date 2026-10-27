@@ -1,0 +1,308 @@
+{
+  "serverTime": "2026-10-14T10:00:00.000Z",
+  "sinceYouLooked": {
+    "since": "2026-10-14T06:40:00.000Z",
+    "finished": 1,
+    "failed": 0,
+    "waitingOnYou": 1,
+    "stoppedWithoutFinishing": 0,
+    "needsYou": 2
+  },
+  "needsYou": [
+    {
+      "id": "act_00000000-0000-4000-8000-000000000011",
+      "title": "Deploy the release to production",
+      "status": "Approve the deploy of v0.18.116?",
+      "sourceName": "Claude Code",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": "ntf_00000000-0000-4000-8000-000000000011",
+      "startedAt": "2026-10-14T09:55:00.000Z",
+      "declaredAt": "2026-10-14T09:55:00.000Z",
+      "question": {
+        "id": "int_00000000-0000-4000-8000-000000000011",
+        "standing": "pending",
+        "askedAt": "2026-10-14T09:58:00.000Z",
+        "openedAt": null
+      },
+      "owner": {
+        "state": "needs_you",
+        "needsYou": "question",
+        "evidenceAt": "2026-10-14T09:58:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:18:00.000Z",
+        "lockScreen": "top",
+        "lockScreenUntil": null,
+        "now": "needs_you",
+        "interruptionLevel": "time-sensitive",
+        "relevance": 1,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      },
+      "computerIcon": "laptop"
+    },
+    {
+      "id": "act_00000000-0000-4000-8000-000000000012",
+      "title": "Pick the migration order",
+      "status": "Which table first?",
+      "sourceName": "Codex",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": "ntf_00000000-0000-4000-8000-000000000012",
+      "startedAt": "2026-10-14T09:55:00.000Z",
+      "declaredAt": "2026-10-14T09:55:00.000Z",
+      "question": {
+        "id": "int_00000000-0000-4000-8000-000000000012",
+        "standing": "pending",
+        "askedAt": "2026-10-14T09:59:00.000Z",
+        "openedAt": null
+      },
+      "owner": {
+        "state": "needs_you",
+        "needsYou": "question",
+        "evidenceAt": "2026-10-14T09:58:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:18:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "needs_you",
+        "interruptionLevel": "time-sensitive",
+        "relevance": 0.95,
+        "apnsPriority": 10,
+        "nextChangeAt": null
+      },
+      "computerIcon": "server"
+    }
+  ],
+  "recent": [
+    {
+      "id": "act_00000000-0000-4000-8000-000000000003",
+      "title": "Bump versions",
+      "status": "Versions bumped",
+      "sourceName": "Claude Code",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": null,
+      "startedAt": "2026-10-14T09:30:00.000Z",
+      "declaredAt": "2026-10-14T09:30:00.000Z",
+      "question": null,
+      "owner": {
+        "state": "done",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "since_you_looked",
+        "interruptionLevel": "passive",
+        "relevance": 0.3,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T17:30:00.000Z"
+      }
+    }
+  ],
+  "waitingOnYou": [
+    {
+      "id": "act_00000000-0000-4000-8000-000000000004",
+      "title": "Review the plan",
+      "status": "Running local gates",
+      "sourceName": "Claude Code",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": "ags_00000000-0000-4000-8000-000000000001",
+      "notificationId": null,
+      "startedAt": "2026-10-14T09:55:00.000Z",
+      "declaredAt": "2026-10-14T09:55:00.000Z",
+      "question": null,
+      "owner": {
+        "state": "waiting_on_you",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:55:00.000Z",
+        "evidenceSource": "observed",
+        "staleDate": "2026-10-14T10:15:00.000Z",
+        "lockScreen": "your_turn",
+        "lockScreenUntil": "2026-10-14T10:15:00.000Z",
+        "now": "waiting_on_you",
+        "interruptionLevel": null,
+        "relevance": 0.8,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:15:00.000Z"
+      }
+    }
+  ],
+  "running": [
+    {
+      "id": "act_00000000-0000-4000-8000-000000000013",
+      "title": "Build the Windows notch",
+      "status": "Porting the card anatomy",
+      "sourceName": "Claude Code",
+      "project": "relo",
+      "steps": {
+        "done": 2,
+        "total": 4,
+        "current": "Views"
+      },
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": null,
+      "startedAt": "2026-10-14T09:55:00.000Z",
+      "declaredAt": "2026-10-14T09:55:00.000Z",
+      "question": null,
+      "owner": {
+        "state": "moving",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:58:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T10:18:00.000Z",
+        "lockScreen": "shown",
+        "lockScreenUntil": null,
+        "now": "running",
+        "interruptionLevel": null,
+        "relevance": 0.7,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:15:00.000Z"
+      },
+      "computerIcon": "desktop",
+      "progress": {
+        "done": 2,
+        "total": 4,
+        "currentId": "s3",
+        "sub": {
+          "done": 1,
+          "total": 2
+        },
+        "round": 2,
+        "rounds": 2,
+        "delivered": false,
+        "current": 3,
+        "fill": 0.5
+      },
+      "plan": [
+        {
+          "id": "s1",
+          "state": "done",
+          "label": "Propose the frame",
+          "round": 1
+        },
+        {
+          "id": "s2",
+          "state": "done",
+          "label": "Presentation logic",
+          "round": 2
+        },
+        {
+          "id": "s3",
+          "state": "current",
+          "label": "Views",
+          "round": 2
+        },
+        {
+          "id": "s4",
+          "state": "done",
+          "label": "Card anatomy",
+          "parent": "s3",
+          "round": 2
+        },
+        {
+          "id": "s5",
+          "state": "current",
+          "label": "Answer controls",
+          "parent": "s3",
+          "round": 2
+        },
+        {
+          "id": "s6",
+          "state": "open",
+          "label": "Ship it",
+          "round": 2
+        }
+      ],
+      "rounds": [
+        {
+          "n": 1,
+          "state": "closed",
+          "title": "Propose",
+          "outcome": "Frame agreed"
+        },
+        {
+          "n": 2,
+          "state": "open",
+          "title": "Build"
+        }
+      ]
+    }
+  ],
+  "quiet": [],
+  "paused": [],
+  "folds": {
+    "waitingOnYou": 1,
+    "quiet": 0,
+    "paused": 0
+  },
+  "lockScreen": {
+    "cards": [
+      "act_00000000-0000-4000-8000-000000000011",
+      "act_00000000-0000-4000-8000-000000000012",
+      "act_00000000-0000-4000-8000-000000000004"
+    ],
+    "needsYouCount": 2,
+    "focus": "act_00000000-0000-4000-8000-000000000011"
+  },
+  "sessions": {
+    "sessions": [
+      {
+        "id": "ags_00000000-0000-4000-8000-000000000001",
+        "source": "claude-code",
+        "project": "relo",
+        "computer": "Studio Mac",
+        "computerIcon": "laptop",
+        "phase": "waiting",
+        "observed": true,
+        "waitingFor": "turn",
+        "lastSeenAt": "2026-10-14T09:55:00.000Z",
+        "fold": null,
+        "workId": "act_00000000-0000-4000-8000-000000000004",
+        "nextChangeAt": null
+      },
+      {
+        "id": "ags_00000000-0000-4000-8000-000000000002",
+        "source": "claude-code",
+        "project": "relo",
+        "computer": "Work Mac",
+        "computerIcon": "desktop",
+        "phase": "idle",
+        "observed": true,
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:35:00.000Z",
+        "fold": "idle",
+        "workId": null,
+        "nextChangeAt": null
+      },
+      {
+        "id": "act_00000000-0000-4000-8000-000000000013",
+        "source": "claude-code",
+        "project": "relo",
+        "computer": null,
+        "phase": null,
+        "observed": false,
+        "waitingFor": null,
+        "lastSeenAt": "2026-10-14T09:55:00.000Z",
+        "fold": null,
+        "workId": "act_00000000-0000-4000-8000-000000000013",
+        "nextChangeAt": null
+      }
+    ],
+    "folds": {
+      "idle": 1
+    }
+  },
+  "refreshAt": null
+}

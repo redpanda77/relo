@@ -72,6 +72,15 @@ describe("AnswerControls", () => {
     expect(screen.getByText(/^[45]:\d\d left$/u)).toBeInTheDocument()
   })
 
+  it("the card layout is a two-column grid with the affirmative first, in orange", () => {
+    render(<AnswerControls question={approval()} link={fakeLink()} service={fakeService()} layout="card" />)
+    const buttons = screen.getAllByRole("button")
+    expect(buttons.map((button) => button.textContent)).toEqual(["Ship it", "Hold"])
+    expect(buttons[0]).toHaveAttribute("data-variant", "default")
+    expect(buttons[0]).toHaveClass("card-answer")
+    expect(buttons[0]?.closest(".card-answers")).not.toBeNull()
+  })
+
   it("an approval says plainly what it allows, then signs and sends once confirmed", async () => {
     const link = fakeLink()
     const service = fakeService()

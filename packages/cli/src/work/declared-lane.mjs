@@ -7,13 +7,16 @@
 // An entry body is { v: 1, harness, seal, readable, sealedForm?, opaque?, withContext?, named?, card?, copy?, outcomeNotice? } (sealed when it is sent,
 // for the phones trusted then) or { v: 1, harness, final } (already sealed; replayed byte for byte).
 import { EXIT, NetworkError } from "../shared/errors.mjs";
-import { declaredQueue, flush, outboxDirectory, pending, serverOrigin } from "../outbox/index.mjs";
+import { declaredQueue, flush, laneIdle, outboxDirectory, pending, serverOrigin } from "../outbox/index.mjs";
 import { sealingUnavailable } from "../crypto/seal-notice.mjs";
+import { dropDeviceKeys } from "../crypto/device-keys-cache.mjs";
 import { workSealer } from "../crypto/seal-work.mjs";
 import { worksClient } from "./works-client.mjs";
 import { T_RETIRE_MS } from "./state-file.mjs";
 
 const DRAIN_BUDGET_MS = 3_000;
+// A work command flushes only its own lane: the observed lane is the hooks' (its snapshots are never ours to claim).
+const DECLARED_ONLY = ["declared"];
 
 const withoutBase = (body) => {
   if (!body || body.baseVersion === undefined) return body;
@@ -117,13 +120,19 @@ export function declaredLane({ client, config, dependencies, identity, sealer, b
   return {
     get queued() { return queued; },
     async drain() {
+      // The usual case, nothing queued: one readdir, no lock, no scans.
+      if (await laneIdle({ directory, lane: "declared" })) return { sent: 0, pending: 0 };
       let sent = 0;
+      let left;
       try {
-        sent = (await flush({ directory, send: declaredSender({ client, sealer, timeoutMs: budgetMs }), server, budgetMs })).sent;
+        const round = await flush({ directory, send: declaredSender({ client, sealer, timeoutMs: budgetMs }), server, budgetMs, lanes: DECLARED_ONLY });
+        sent = round.sent;
+        left = round.declared;
+        if (round.dead > 0) await dropDeviceKeys(dependencies);
       } catch { /* the lane stays as it was */ }
-      const left = await pending({ directory }).catch(() => ({ declared: 0 }));
-      queued = left.declared > 0;
-      return { sent, pending: left.declared };
+      left ??= (await pending({ directory }).catch(() => ({ declared: 0 }))).declared;
+      queued = left > 0;
+      return { sent, pending: left };
     },
     /** form: { route, key, seal, readable, sealedForm?, opaque?, withContext?, named?, card?, copy?, outcomeNotice? }. */
     async write(form) {
@@ -136,7 +145,11 @@ export function declaredLane({ client, config, dependencies, identity, sealer, b
         return null;
       }
       try { return await api.send(form.route, body, form.key); } catch (error) {
-        if (!offline(error) && !rateLimited(error)) throw error;
+        if (!offline(error) && !rateLimited(error)) {
+          // A refusal may mean the phones' keys moved since the listing was cached: the next seal asks the server.
+          if (error?.status >= 400 && error.status < 500) await dropDeviceKeys(dependencies);
+          throw error;
+        }
         queued = true;
         await put(form, body);
         return null;
@@ -154,8 +167,10 @@ export async function drainDeclared({ client, config, dependencies, budgetMs = D
   let sealerPromise;
   const sealer = () => (sealerPromise ??= workSealer({ client, config, dependencies, notes: [] }));
   try {
-    return await flush({ directory: declaredDirectory(dependencies), send: declaredSender({ client, sealer, timeoutMs: budgetMs }),
-      server: declaredServer({ config, client }), budgetMs });
+    const directory = declaredDirectory(dependencies);
+    if (await laneIdle({ directory, lane: "declared" })) return { sent: 0 };
+    return await flush({ directory, send: declaredSender({ client, sealer, timeoutMs: budgetMs }),
+      server: declaredServer({ config, client }), budgetMs, lanes: DECLARED_ONLY });
   } catch {
     return { sent: 0 };
   }

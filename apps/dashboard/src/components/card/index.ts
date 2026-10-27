@@ -21,6 +21,6 @@ export {
   type DataAttributes,
 } from "@/components/card/card"
 export { CardList, CardListItem } from "@/components/card/card-list"
-export { Countdown, RunningFor } from "@/components/card/countdown"
+export { Countdown, CountdownText, QuietFor, RunningFor } from "@/components/card/countdown"
 export { Origin, type OriginParts } from "@/components/card/origin"
 export { Strip } from "@/components/card/strip"

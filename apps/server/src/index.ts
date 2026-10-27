@@ -16,7 +16,8 @@ const authDb = createAuthDatabase(config.DATABASE_URL);
 const accountAuthSecret = await loadAccountAuthSecret(config);
 await verifyCurrentTransportTokenEnvelopes(db);
 await bootstrapOwner(db, config.BOOTSTRAP_OWNER_HANDLE, await readSecretFile(config.BOOTSTRAP_OWNER_TOKEN_FILE));
-const accountAuth = createAccountAuth(authDb, config.APP_URL, accountAuthSecret, config.RELO_CLIENT_IP_HEADER);
+const appleSignIn = { servicesId: config.RELO_APPLE_SERVICES_ID, bundleId: config.RELO_APPLE_BUNDLE_ID };
+const accountAuth = createAccountAuth(authDb, config.APP_URL, accountAuthSecret, config.RELO_CLIENT_IP_HEADER, appleSignIn);
 
 const changes = await ApiChangeListener.listen(db);
 
@@ -26,6 +27,7 @@ const server = serve({
     bootstrapOwnerHandle: config.BOOTSTRAP_OWNER_HANDLE,
     credentialDerivationSecret: accountAuthSecret,
     appUrl: config.APP_URL,
+    appleSignIn,
     apnsMode: config.APNS_MODE,
     landingFilmUrl: config.RELO_LANDING_FILM_URL,
     onboardingFilmUrl: config.RELO_ONBOARDING_FILM_URL,

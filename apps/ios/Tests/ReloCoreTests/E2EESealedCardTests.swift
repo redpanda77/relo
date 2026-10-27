@@ -64,6 +64,27 @@ final class E2EESealedCardTests: XCTestCase {
         XCTAssertEqual(partial.map(\.label), ["Only one", "Step 2"])
     }
 
+    /// The card exactly as the server sends a sealed work (plan ids, "Step n" placeholders) and the text as the CLI seals it.
+    func testTheServersWorkCardOpensEveryLabelByPlanID() throws {
+        let text = try JSONDecoder().decode(ReloSealedCardText.self, from: Data("""
+        {"title":"One dot per session","stepId":"s1","phases":[{"id":"r1","steps":[{"id":"s1","label":"Find the owner state"},
+        {"id":"s2","label":"Send the running count"}]}]}
+        """.utf8))
+        let card = LiveActivityPresentation(title: "Encrypted card", subtitle: nil, status: "Updating…", components: [
+            .steps(id: "named_steps", colorRole: .thread, items: [
+                .init(id: "s1", label: "Step 1", state: .current), .init(id: "s2", label: "Step 2", state: .pending),
+            ]),
+        ])
+        guard case let .steps(_, _, items, _) = card.applying(text).components[0] else { return XCTFail("steps") }
+        XCTAssertEqual(items.map(\.label), ["Find the owner state", "Send the running count"])
+        // Positional ids (what the server sent before) never match the plan's: the reason the phone read "Not readable".
+        let positional = LiveActivityPresentation(title: "Encrypted card", subtitle: nil, status: "Updating…", components: [
+            .steps(id: "named_steps", colorRole: .thread, items: [.init(id: "step_1", label: "Step 1", state: .current)]),
+        ])
+        guard case let .steps(_, _, unmatched, _) = positional.applying(text).components[0] else { return XCTFail("steps") }
+        XCTAssertEqual(unmatched.map(\.label), ["Step 1"])
+    }
+
     func testDecodedContentStateLabelsAWorksStepsByID() throws {
         let ring = ReloKeyRing(store: RingStore(), factory: ReloSoftwareKeyFactory())
         let state = try ring.maintain()

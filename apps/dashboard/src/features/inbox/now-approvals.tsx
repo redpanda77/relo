@@ -1,8 +1,7 @@
-import { Check, KeyRound, LoaderCircle, X } from "lucide-react"
+import { Check, LoaderCircle, X } from "lucide-react"
 import { AnimatePresence, m, type TargetAndTransition } from "motion/react"
 import * as React from "react"
 
-import { SignalGlyph } from "@/components/atoms/signal-glyph"
 import { PresenceList } from "@/components/molecules/presence-list"
 import { WorkCard } from "@/components/organisms/work-card"
 import { Button } from "@/components/ui/button"
@@ -92,26 +91,18 @@ export function ConnectionRequests({ approvals, actions }: { approvals: readonly
             <WorkCard
               tone={tone}
               title={`Connect ${request.clientName}`}
-              eyebrow={decision ? null : "CONNECTION REQUEST"}
               summary={[`Code ${request.userCode}`, scopes, until].filter(Boolean).join(" · ")}
               summaryLines={4}
-              glyph={<SignalGlyph icon={KeyRound} color="var(--tone)" />}
+              asked={!decision}
               tint
-              live={!decision}
-              state={decision === "approve" ? { label: "Approved", icon: Check } : decision === "deny" ? { label: "Denied", icon: X } : null}
+              live={false}
+              state={decision === "approve" ? { label: "Approved", icon: Check } : decision === "deny" ? { label: "Denied", icon: X } : { label: "Needs you", dot: true }}
               deadline={decision ? null : request.approvalExpiresAt}
-              actions={
-                <>
+              answers={
+                <div className="card-answers">
                   <Button
-                    variant="ghost"
-                    data-action="deny-approval"
-                    data-code={code}
-                    disabled={pending}
-                    onClick={() => decide(code, "deny")}
-                  >
-                    <DecisionIcon pending={pending && choice === "deny"} icon={X} /> Deny
-                  </Button>
-                  <Button
+                    tone="var(--neon-orange)"
+                    className="card-answer"
                     data-action="approve-approval"
                     data-code={code}
                     disabled={pending}
@@ -119,12 +110,22 @@ export function ConnectionRequests({ approvals, actions }: { approvals: readonly
                   >
                     <DecisionIcon pending={pending && choice === "approve"} icon={Check} /> Approve
                   </Button>
+                  <Button
+                    variant="outline"
+                    className="card-answer"
+                    data-action="deny-approval"
+                    data-code={code}
+                    disabled={pending}
+                    onClick={() => decide(code, "deny")}
+                  >
+                    <DecisionIcon pending={pending && choice === "deny"} icon={X} /> Deny
+                  </Button>
                   {error ? (
-                    <p role="alert" className="text-xs text-destructive">
+                    <p role="alert" className="col-span-2 text-xs text-destructive">
                       {error}
                     </p>
                   ) : null}
-                </>
+                </div>
               }
             />
           </div>

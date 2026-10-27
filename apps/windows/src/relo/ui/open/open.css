@@ -1,0 +1,91 @@
+/* ---------------------------------------------------------------------------------------------------------------
+   The open notch (ro-): header and tabs, cards, the plan deck. Values are Relo for Mac's (ReloCards, ReloNotchView).
+   Imported by relo-ui.css.
+   --------------------------------------------------------------------------------------------------------------- */
+
+.ro-header { display: grid; height: 32px; align-items: center; }
+.ro-tabs { display: flex; align-items: center; border-radius: 999px; overflow: hidden; justify-self: start; }
+.ro-tab { position: relative; display: grid; place-items: center; height: 26px; padding: 0 15px; cursor: pointer; border-radius: 999px; transition: color .25s ease; }
+.ro-tab-capsule { position: absolute; inset: 0; border-radius: 999px; }
+.ro-tab-icon { position: relative; display: grid; place-items: center; }
+.ro-header-right { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
+.ro-gear { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: #000; cursor: pointer; transition: background .3s ease; }
+.ro-gear:hover { background: rgb(128 128 128 / 0.2); }
+
+.ro-marquee { display: block; overflow: hidden; white-space: nowrap; }
+.ro-marquee-run { display: inline-flex; will-change: transform; }
+@keyframes ro-marquee { to { transform: translateX(var(--ro-dist)); } }
+
+.ro-scroll { overflow-y: auto; scrollbar-width: none; }
+.ro-scroll::-webkit-scrollbar { display: none; }
+
+.ro-press { cursor: pointer; transition: opacity .18s ease-out; }
+.ro-press:active { opacity: 0.6; }
+.ro-row { transition: background .18s ease-out; }
+.ro-row:hover { background: rgb(255 255 255 / 0.03); }
+
+/* The plan meter: capsules 4 pt tall, 3 apart; done in the card's tone, the current one at 32% (filled as far as its steps go), the rest white at 10%. */
+.ro-bar { display: flex; gap: 3px; height: 4px; }
+.ro-bar > span { flex: 1 1 0; border-radius: 999px; background: rgb(255 255 255 / 0.1); }
+.ro-bar > span[data-step="current"] { background: linear-gradient(90deg, var(--tone) var(--seg-fill, 0%), color-mix(in srgb, var(--tone) 32%, transparent) var(--seg-fill, 0%)); }
+.ro-bar > span[data-step="done"] { background: var(--tone); }
+
+/* The answer pills (ReloPillButtonStyle): 11 pt semibold, 10 x 3 pt, the primary one black on signal coral. */
+.ro-pill { font-size: 11px; font-weight: 600; line-height: 1.25; padding: 3px 10px; border-radius: 999px; white-space: nowrap; color: #fff; background: rgb(255 255 255 / 0.14); cursor: pointer; }
+.ro-pill[data-prominent] { color: #000; background: #ff7a66; }
+.ro-pill:disabled { opacity: 0.5; cursor: default; }
+
+.ro-spin { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid rgb(255 255 255 / 0.25); border-top-color: rgb(255 255 255 / 0.85); animation: ro-spin 0.8s linear infinite; }
+@keyframes ro-spin { to { transform: rotate(360deg); } }
+
+/* LiveSweep on a badge's label: a band of light travelling left to right over 2.8 s, eased, then at rest (first 70% of the cycle). */
+.ro-sweep {
+  background: linear-gradient(90deg, var(--tone) 0%, var(--tone) 38%, rgb(255 255 255 / 0.95) 50%, var(--tone) 62%, var(--tone) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ro-sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes ro-sweep { 0% { background-position: 100% 0; } 70%, 100% { background-position: 0% 0; } }
+
+/* A computer working: a faint violet sweep across its row, and the moving waveform. */
+.ro-machine-sweep { position: relative; overflow: hidden; }
+.ro-machine-sweep::after { content: ""; position: absolute; inset: 0; width: 30%; background: linear-gradient(90deg, transparent, rgb(139 124 255 / 0.3), transparent); animation: live-sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite; pointer-events: none; }
+.ro-wave { display: inline-flex; align-items: center; gap: 1.5px; height: 10px; }
+.ro-wave i { width: 1.5px; height: 100%; border-radius: 1px; background: #8b7cff; transform-origin: center; animation: ro-wave 1.1s ease-in-out infinite; }
+.ro-wave i:nth-child(2) { animation-delay: .15s; }
+.ro-wave i:nth-child(3) { animation-delay: .3s; }
+.ro-wave i:nth-child(4) { animation-delay: .45s; }
+@keyframes ro-wave { 0%, 100% { transform: scaleY(0.35); opacity: .5; } 50% { transform: scaleY(1); opacity: 1; } }
+
+/* The plan deck: the ripple on the current step's mark (ring to 2.4x, fading, every 1.8 s after a 0.25 s beat). */
+.ro-ripple { position: absolute; inset: 0; border-radius: 50%; border: 1.25px solid #8b7cff; opacity: 0; animation: ro-ripple 1.8s ease-out 0.25s infinite; pointer-events: none; }
+@keyframes ro-ripple { 0% { transform: scale(1); opacity: .7; } 100% { transform: scale(2.4); opacity: 0; } }
+/* Light through the current step's name: violet to ice, left to right, every 3.2 s. */
+.ro-shine {
+  background: linear-gradient(100deg, #fff 0%, #fff 34%, #c4bbff 44%, #e4f9ff 56%, #fff 66%, #fff 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  animation: ro-shine 3.2s linear infinite;
+}
+@keyframes ro-shine { 0% { background-position: 100% 0; } 100% { background-position: 0% 0; } }
+.ro-rail-fill { position: absolute; inset: 0; transform-origin: top; transition: transform .55s ease-in-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ro-sweep, .ro-shine, .ro-ripple, .ro-wave i, .ro-machine-sweep::after { animation: none; }
+  .ro-ripple { opacity: .4; transform: scale(1.45); }
+  .ro-sweep, .ro-shine { background: none; color: inherit !important; }
+}
+
+/* App Reduce Motion setting beside the OS media query above (Z01). */
+html[data-reduce-motion] .ro-sweep, html[data-reduce-motion] .ro-shine { animation: none; background: none; color: inherit !important; }
+html[data-reduce-motion] .ro-ripple { animation: none; opacity: .4; transform: scale(1.45); }
+
+/* Forced colors (Z05): the open notch's surfaces take system colours. */
+@media (forced-colors: active) {
+  .ro-sweep, .ro-shine { background: none; color: CanvasText !important; }
+  .ro-ripple { display: none; }
+}

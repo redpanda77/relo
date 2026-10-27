@@ -18,7 +18,7 @@ Node.js 22 or newer is required.
 An agent reports its work with `relo work`: one goal, a plan of milestones it grows as it learns, a status,
 and an outcome. Each request is a round: `deliver` ends it, `start --round "<next request>"` opens the next one on
 the same card, and `finish` ends the goal. The CLI identifies the session from the harness (Claude Code `CLAUDE_CODE_SESSION_ID`, Codex
-`CODEX_THREAD_ID`, OpenCode `OPENCODE_SESSION_ID`; `RELO_SESSION=<stable id>` only outside a detected harness, such as a script), so every
+`CODEX_THREAD_ID`, OpenCode `OPENCODE_SESSION_ID`, Antigravity `ANTIGRAVITY_CONVERSATION_ID`; `RELO_SESSION=<stable id>` only outside a detected harness, such as a script), so every
 command from one session addresses that session's work and nothing else: a session never sees another's.
 Harnesses without a session id (Gemini CLI, Cursor, Copilot, Amp) get a handle from `relo work start`; later
 commands pass it as `--work <handle>`.
@@ -130,7 +130,7 @@ An error prints once: `{"ok":false,"error":{"code","message","hint"}}` on stdout
 | `4` | Still open: this command stopped waiting. Run `relo interaction wait ID` |
 | `5` | The owner denied or said no |
 | `6` | Network unreachable: retry with the same idempotency key |
-| `7` | No phone could receive it |
+| `7` | Nothing could show it: no phone and no Mac |
 | `8` | Closed without an answer (expired, canceled): do not act |
 
 A yes/no answer is never permission, and exit `0` alone never authorizes an action: only an
@@ -167,8 +167,9 @@ first). The table is checked against the harness descriptors by `test/catalog.te
 | Harness | `--agent` | Instructions block | Skill | Hooks (`--level guide`) | MCP (`--mcp`) |
 | --- | --- | --- | --- | --- | --- |
 | Claude Code | `claude-code` | yes | yes | yes | yes |
-| Codex | `codex` | yes | yes | — | yes |
+| Codex | `codex` | yes | yes | yes | yes |
 | OpenCode | `opencode` | yes | yes | yes | — |
+| Antigravity | `antigravity` | — | — | yes | yes |
 | Gemini CLI | `gemini` | yes | yes | yes | yes |
 | Cursor | `cursor` | — | yes | — | yes |
 | GitHub Copilot | `copilot` | yes | yes | — | — |

@@ -2,10 +2,10 @@ import { Globe, Laptop, Smartphone, Trash2, type LucideIcon } from "lucide-react
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { COMPUTER_ICON_META } from "@/components/atoms/computer-icon-meta"
-import { IconTile } from "@/components/atoms/icon-tile"
-import { Badge } from "@/components/card"
-import { StatusDot } from "@/components/atoms/status-dot"
-import { List, Row } from "@/components/list"
+import { SECTION_CAPTION_CLASS } from "@/components/list"
+import { seenDot } from "@/lib/machine-seen"
+import { MachineCard, MachineList } from "@/components/molecules/machine-card"
+import { SystemButton, SystemCard } from "@/components/molecules/system-card"
 import { ActionButton } from "@/components/molecules/action-button"
 import { DestructiveAction } from "@/components/molecules/confirmation-action"
 import { Notice } from "@/components/molecules/notice"
@@ -103,7 +103,7 @@ function ApproveDialog({
   }
   return (
     <Dialog open={open} onOpenChange={(next) => { setOpen(next); setError("") }}>
-      <Button type="button" size="sm" onClick={() => setOpen(true)}>Approve</Button>
+      <SystemButton primary onClick={() => setOpen(true)}>Approve</SystemButton>
       <DialogContent>
         <form ref={form} className="grid gap-4" onSubmit={submit}>
           <DialogHeader>
@@ -190,45 +190,59 @@ function DeviceItem({
       onConfirm={() => remove("Removal")}
     />
   )
+  const approval = device.status === "pending"
+  if (approval) {
+    // A new phone, computer or browser waiting for the owner: the orange system card (board C4).
+    return (
+      <SystemCard
+        tone="orange"
+        edge
+        role="region"
+        aria-busy={pending !== null || undefined}
+        icon={<Icon />}
+        eyebrow={`New ${device.kind} \u00b7 Waiting for approval`}
+        title={device.name}
+        actions={
+          <>
+            {canApprove ? (
+              <ApproveDialog device={device} twoFactor={twoFactor} onApprove={onApprove} />
+            ) : (
+              <SystemButton primary href="#linked-browser">Link this browser from your iPhone first</SystemButton>
+            )}
+            <DestructiveAction
+              label="Decline"
+              title={`Decline ${device.name}?`}
+              description="It is signed out and can never read your encrypted cards. To use it again, sign in on it and approve it."
+              pending={pending === "Decline"}
+              disabled={pending !== null}
+              failed={Boolean(error)}
+              pendingLabel="Declining…"
+              size="sm"
+              onConfirm={() => remove("Decline")}
+            />
+          </>
+        }
+      >
+        {meta.length ? `${meta.join(" \u00b7 ")}. ` : ""}It will be able to read your encrypted cards once you approve it.
+        <OperationStatus error={error} className="mt-1" />
+      </SystemCard>
+    )
+  }
   return (
-    <Row
+    <MachineCard
       busy={pending !== null}
-      wrap
-      leading={<IconTile icon={Icon} />}
-      title={
-        <span className="inline-flex max-w-full flex-wrap items-center gap-2">
+      glyph={Icon}
+      dot={seenDot(device.lastSeenAt)}
+      name={
+        <>
           {device.name}
-          {thisBrowser ? <Badge tone="violet" variant="hairline">This browser</Badge> : null}
-        </span>
+          {thisBrowser ? <span className="machine-tag">This browser</span> : null}
+        </>
       }
-      status={<StatusDot tone={status.tone} label={status.text} className="text-muted-foreground" />}
-      meta={meta.length ? meta.join(" · ") : undefined}
-      actions={device.status === "pending" ? undefined : removeAction}
-    >
-      {device.status === "pending" ? (
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3.5 sm:pl-[58px]">
-          {canApprove ? (
-            <ApproveDialog device={device} twoFactor={twoFactor} onApprove={onApprove} />
-          ) : (
-            <Button asChild variant="outline" size="sm">
-              <a href="#linked-browser">Link this browser from your iPhone first</a>
-            </Button>
-          )}
-          <DestructiveAction
-            label="Decline"
-            title={`Decline ${device.name}?`}
-            description="It is signed out and can never read your encrypted cards. To use it again, sign in on it and approve it."
-            pending={pending === "Decline"}
-            disabled={pending !== null}
-            failed={Boolean(error)}
-            pendingLabel="Declining…"
-            size="sm"
-            onConfirm={() => remove("Decline")}
-          />
-        </div>
-      ) : null}
-      <OperationStatus error={error} className="px-4 pb-3" />
-    </Row>
+      summary={[status.text, ...meta.map((part) => String(part).replace(/^seen /, "Last seen "))].join(" \u00b7 ")}
+      actions={removeAction}
+      note={error ? <OperationStatus error={error} /> : undefined}
+    />
   )
 }
 
@@ -336,27 +350,28 @@ export function DevicesSection({
         Devices could not be loaded ({error}). Trying again in a minute.
       </Notice>
       {scope === "computers" && waiting.length > 0 ? (
-        <div className="grid gap-2">
-          <h4 className="micro px-1">Waiting for approval in this browser</h4>
-          <p className="px-1 text-sm text-muted-foreground">
-            These computers signed in after this browser was linked. Approve one to read its cards here; your other
-            devices follow your approval too.
-          </p>
-          <List label="Computers waiting for approval" items={waiting} getKey={(computer) => computer.clientId}>
+        <div className="grid gap-3">
+          <h4 className={SECTION_CAPTION_CLASS}>Waiting for approval in this browser</h4>
+          <MachineList label="Computers waiting for approval" items={waiting} getKey={(computer) => computer.clientId}>
             {(computer) => (
-              <Row
-                leading={<IconTile icon={Laptop} />}
+              <SystemCard
+                tone="orange"
+                edge
+                role="region"
+                icon={<Laptop />}
+                eyebrow="New computer \u00b7 Waiting for approval"
                 title={computer.name}
-                description="Can't show its cards in this browser yet"
-                trailing={
+                actions={
                   <ActionButton size="sm" pending={approving === computer.clientId} pendingLabel="Approving…"
                     onClick={() => void approveComputer(computer.clientId)}>
                     Approve
                   </ActionButton>
                 }
-              />
+              >
+                It signed in after this browser was linked, so its cards can&apos;t show here yet. Approve it to read them here; your other devices follow your approval too.
+              </SystemCard>
             )}
-          </List>
+          </MachineList>
         </div>
       ) : null}
       {view
@@ -364,9 +379,9 @@ export function DevicesSection({
             const rows = view.devices.filter((device) => device.kind === kind)
             if (!rows.length) return null
             return (
-              <div key={kind} className="grid gap-2">
-                <h4 className="micro px-1">{title}</h4>
-                <List label={title} items={rows} getKey={(device) => device.id}>
+              <div key={kind} className="grid gap-3">
+                {scope === "computers" ? null : <h4 className={SECTION_CAPTION_CLASS}>{title}</h4>}
+                <MachineList label={title} items={rows} getKey={(device) => device.id}>
                   {(device) => (
                     <DeviceItem
                       device={device}
@@ -377,7 +392,7 @@ export function DevicesSection({
                       onRemove={() => remove(device)}
                     />
                   )}
-                </List>
+                </MachineList>
               </div>
             )
           })

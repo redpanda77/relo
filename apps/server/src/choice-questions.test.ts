@@ -88,6 +88,10 @@ suite("choice questions", () => {
     const current = await json(await call("GET","/api/inbox/current",undefined,device.credential),200);
     expect(JSON.stringify(current)).toContain('"options"');
 
+    // The database refuses a choice without its options, whatever writes it.
+    await expect(db.query("UPDATE interaction_requests SET options=NULL WHERE notification_event_id=$1",[eventId.slice(4)]))
+      .rejects.toThrow(/choice_has_options/u);
+
     expect((await choose(device,eventId,"nope")).status).toBe(400);
     expect((await choose(device,eventId,"ship")).status).toBeLessThan(300);
 
@@ -98,6 +102,13 @@ suite("choice questions", () => {
     expect((item.item ?? item).interaction).toMatchObject({ kind: "choice",response: { optionId: "ship",label: "Ship" } });
     const ended = (await db.query("SELECT status FROM live_activities WHERE id=$1",[card.slice(4)])).rows[0];
     expect(ended.status).toContain("Ship");
+    // The phone's sync reads the snapshot and rejects a choice without its options: one such item failed the whole
+    // sync and the inbox read as offline. The snapshot carries the options and the chosen one, like the detail.
+    const snapshot = await json(await call("GET","/api/inbox/snapshot",undefined,device.credential),200);
+    const summary = snapshot.items.find((entry: any) => entry.id === eventId);
+    expect(summary.interaction).toMatchObject({ kind: "choice",options,response: { optionId: "ship",label: "Ship" } });
+    const others = snapshot.items.filter((entry: any) => entry.interaction && entry.interaction.kind !== "choice");
+    for (const other of others) expect(other.interaction).not.toHaveProperty("options");
   });
 
   test("a signed choice keeps the phone's signature with the option (E4.2)", async () => {

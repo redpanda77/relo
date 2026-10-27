@@ -6,6 +6,8 @@ export default Object.freeze({
   aliases: ["gemini-cli"],
   detect: (env) => env.GEMINI_CLI === "1",
   config: { home: ".gemini" },
+  // ~/.gemini is shared with Antigravity: the folder alone proves nothing, only files Gemini CLI itself keeps do.
+  installation: { binaries: ["gemini"], markers: ["oauth_creds.json", "installation_id", "google_accounts.json", "tmp"] },
   instructions: { global: "GEMINI.md" },
   skills: "skills",
   // Gemini CLI has no personal project settings file (its .gemini/settings.json is shared), so hooks are user-level only.

@@ -1,5 +1,6 @@
 import "./hermetic-env.mjs";
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import test from "node:test";
 import { noRunningCards } from "./fake-cards.mjs";
 import { detectIdentityDefaults } from "../src/shared/identity.mjs";
@@ -94,7 +95,7 @@ test("one error names every missing field with a runnable hint, and rejects plac
 });
 
 test("defaults come from RELO_* variables, the calling agent, and the git repository", async () => {
-  const repo = (path) => path === "/work/relo/.git";
+  const repo = (path) => resolve(path) === resolve("/work/relo/.git");
   assert.deepEqual(detectIdentityDefaults({ CLAUDECODE: "1" }, "/work/relo/apps/ios", repo),
     { providerName: "Claude Code", project: "relo" });
   assert.deepEqual(detectIdentityDefaults({ CODEX_SANDBOX: "seatbelt" }, "/tmp", () => false), { providerName: "Codex" });

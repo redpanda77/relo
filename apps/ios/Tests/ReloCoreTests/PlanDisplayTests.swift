@@ -35,9 +35,10 @@ import Testing
         #expect(back == component)
     }
 
-    @Test func aPlaceholderLabelReadsNotReadable() {
+    @Test func aPlaceholderLabelReadsWithoutALabel() {
         let items = [LiveActivityDisplayPresentation.Step(id: "s1", label: "Step 3", state: .current)]
-        #expect(LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(items)) == "Step 1 of 1 · Not readable")
+        #expect(LiveActivityPlanDisplay.steps(items).first?.label == nil)
+        #expect(LiveActivityPlanDisplay.line(LiveActivityPlanDisplay.steps(items)) == "Step 1 of 1")
     }
 
     @Test func growthChipOnlyWhenPlanGrew() {

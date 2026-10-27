@@ -182,14 +182,8 @@
   /* Without its "more" the list is the section's last line (Tailwind's space-y spaces the rest). */
   [data-skeleton-since] > :has(+ .loading-more:not([data-wide])) { margin-block-end: 0; }
 }
-/* The deck column's sentence (1100px+) and the Sessions rail (1400px+) exist only at those widths. */
-.loading-deck-more,
+/* The Sessions rail (1400px+) exists only at that width. */
 .split-page-body > .loading-sessions { display: none; }
-.loading-deck-more .now-deck-sentence { display: flex; flex-direction: column; }
-.loading-deck-more .now-deck-sentence > .loading-line { height: 10px; margin-block: 4px; }
-@container split-page (min-width: 1100px) {
-  .loading-deck-more { display: flex; }
-}
 @container split-page (min-width: 1400px) {
   .split-page-body > .loading-sessions { display: block; }
 }
@@ -217,16 +211,6 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius-card);
 }
-.loading-readout { display: block; width: 2.5ch; height: 28px; border-radius: 8px; }
-/* The centre's count when it is Today's: only the browser knows the owner's day (dashboard-skeleton.ts). */
-.loading-centre-slot {
-  display: inline-block;
-  width: 1.2ch;
-  height: 0.72em;
-  border-radius: 14px;
-  vertical-align: baseline;
-}
-
 /* The words: "Starting Relo" after 1 s under the core; after 8 s it gives way to an honest
    "Taking longer than usual · Reload". CSS only (the CSP allows no inline script). */
 .loading-words {

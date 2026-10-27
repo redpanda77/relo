@@ -117,26 +117,60 @@ struct AccessRequestSheet: View {
     }
 }
 
-/// Now's "Needs you" row for a phone, computer or browser waiting for approval.
+/// Now's SYSTEM card for a phone, computer or browser waiting for approval (C4): orange with the breathing edge,
+/// Review opens the request, Deny declines it.
 struct DeviceAccessNeedsYouRow: View {
-    let model: AppModel
+    @Bindable var model: AppModel
 
     var body: some View {
         let requests = model.devices.waitingRequests
         if let first = requests.first {
-            ReloCard(tint: .reloAttention) {
-                HStack(alignment: .firstTextBaseline, spacing: ReloLayout.inlineGap) {
-                    Image(systemName: first.symbol).foregroundStyle(Color.reloAttention).accessibilityHidden(true)
-                    CardTitle(requests.count == 1 ? "\(first.name) \(first.ask)" : "\(requests.count) devices want access")
-                }
-                CardFooter(meta: Text(requests.count == 1 ? first.signedInLine : "Review them in Devices")) {
-                    CardAction("Review", kind: .primary, action: review)
-                }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityIdentifier("needs-you-device-access")
+            let single = requests.count == 1
+            card(eyebrow: single ? Self.eyebrow(first) : "New devices",
+                 title: single ? "\(first.name) wants to join" : "\(requests.count) devices want to join",
+                 message: single ? Self.message(at: first.signedInAt, code: first.linkCode) : "Review them in Devices.",
+                 review: review,
+                 deny: single ? { Task { _ = await model.devices.decline(first, credential: model.credential,
+                                                                         approver: model.apiClient as? any DeviceApproving) } } : nil)
+        } else if captureFixture {
+            card(eyebrow: "New computer", title: "Studio wants to join",
+                 message: Self.message(at: Date.now.addingTimeInterval(-120), code: "418 207"), review: {}, deny: {})
         }
+    }
+
+    /// Capture only: the C4 sheet shows this card with no real request behind it.
+    private var captureFixture: Bool {
+        #if RELO_FLOW_CAPTURE
+        ReloCaptureFlags.systemCards
+        #else
+        false
+        #endif
+    }
+
+    private func card(eyebrow: String, title: String, message: String?, review: @escaping () -> Void,
+                      deny: (() -> Void)?) -> some View {
+        SystemCard(tint: ReloHoloTheme.orange, symbol: model.devices.waitingRequests.first?.symbol ?? "laptopcomputer",
+                   edge: true, eyebrow: eyebrow, title: title, message: message) {
+            CardAction("Review", kind: .systemPrimary(ReloHoloTheme.orange), action: review)
+                .accessibilityIdentifier("needs-you-device-access")
+            if let deny { CardAction("Deny", kind: .systemSecondary, action: deny) }
+        }
+    }
+
+    private static func eyebrow(_ request: EncryptionSecurityModel.AccessRequest) -> String {
+        switch request {
+        case .phone: "New phone"
+        case .computer: "New computer"
+        case .browser: "New browser"
+        }
+    }
+
+    /// "Asked at 6:40 PM. Check the code it shows: 418 207." Each clause drops when its data is missing.
+    private static func message(at date: Date?, code: String?) -> String? {
+        var parts: [String] = []
+        if let date { parts.append("Asked at \(date.formatted(date: .omitted, time: .shortened)).") }
+        if let code { parts.append("Check the code it shows: \(code).") }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     private func review() {

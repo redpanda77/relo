@@ -39,8 +39,8 @@ test("the card cache is private, per card, and forgotten when the card ends", as
   const directory = join(mkdtempSync(join(tmpdir(), "relo-cards-")), "sealed-cards");
   try {
     await saveCardText(directory, cardId, { title: "x", steps: ["Build", "Test"] });
-    assert.equal(statSync(join(directory, `${cardId}.json`)).mode & 0o777, 0o600);
-    assert.equal(statSync(directory).mode & 0o777, 0o700);
+    if (process.platform !== "win32") assert.equal(statSync(join(directory, `${cardId}.json`)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(statSync(directory).mode & 0o777, 0o700);
     assert.deepEqual(await loadCardText(directory, cardId), { title: "x", steps: ["Build", "Test"] });
     const dependencies = { env: { RELO_STATE_DIR: dirname(directory) } };
     assert.deepEqual(await cachedStepLabels(cardId, 2, dependencies), ["Build", "Test"]);
@@ -115,7 +115,7 @@ test("the card text lock serializes read, merge and save across commands, and ou
     utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
     assert.equal(await withCardTextLock(directory, cardId, async () => "ran"), "ran");
     // Without a writable cache folder there is nothing to protect: the command runs unlocked.
-    assert.equal(await withCardTextLock("/nonexistent/relo-lock-test", cardId, async () => "unlocked"), "unlocked");
+    assert.equal(await withCardTextLock(join(process.env.RELO_TEST_UNWRITABLE, "lock-test"), cardId, async () => "unlocked"), "unlocked");
   } finally {
     rmSync(join(directory, ".."), { recursive: true, force: true });
   }

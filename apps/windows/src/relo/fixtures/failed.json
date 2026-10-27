@@ -1,0 +1,123 @@
+{
+  "serverTime": "2026-10-14T10:00:00.000Z",
+  "sinceYouLooked": {
+    "since": "2026-10-14T06:40:00.000Z",
+    "finished": 1,
+    "failed": 1,
+    "waitingOnYou": 0,
+    "stoppedWithoutFinishing": 0,
+    "needsYou": 0
+  },
+  "needsYou": [],
+  "recent": [
+    {
+      "id": "act_00000000-0000-4000-8000-000000000002",
+      "title": "Fix login crash",
+      "status": "3 tests fail on CI: login.spec.ts",
+      "sourceName": "Claude Code",
+      "computerIcon": "server",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": null,
+      "startedAt": "2026-10-14T09:30:00.000Z",
+      "declaredAt": "2026-10-14T09:30:00.000Z",
+      "question": null,
+      "owner": {
+        "state": "failed",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "final",
+        "lockScreenUntil": "2026-10-14T10:30:00.000Z",
+        "now": "since_you_looked",
+        "interruptionLevel": "active",
+        "relevance": 0.9,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T10:30:00.000Z"
+      }
+    },
+    {
+      "id": "act_00000000-0000-4000-8000-000000000003",
+      "title": "Bump versions",
+      "status": "Versions bumped",
+      "sourceName": "Claude Code",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": null,
+      "startedAt": "2026-10-14T09:30:00.000Z",
+      "declaredAt": "2026-10-14T09:30:00.000Z",
+      "question": null,
+      "owner": {
+        "state": "done",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:30:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:50:00.000Z",
+        "lockScreen": "none",
+        "lockScreenUntil": null,
+        "now": "since_you_looked",
+        "interruptionLevel": "passive",
+        "relevance": 0.3,
+        "apnsPriority": 10,
+        "nextChangeAt": "2026-10-14T17:30:00.000Z"
+      }
+    }
+  ],
+  "waitingOnYou": [],
+  "running": [],
+  "quiet": [
+    {
+      "id": "act_00000000-0000-4000-8000-000000000006",
+      "title": "Migrate the index",
+      "status": "Indexing",
+      "sourceName": "Claude Code",
+      "project": "relo",
+      "steps": null,
+      "producer": "agent_session",
+      "sessionId": null,
+      "notificationId": null,
+      "startedAt": "2026-10-14T09:35:00.000Z",
+      "declaredAt": "2026-10-14T09:35:00.000Z",
+      "question": null,
+      "owner": {
+        "state": "stale",
+        "needsYou": null,
+        "evidenceAt": "2026-10-14T09:35:00.000Z",
+        "evidenceSource": "declared",
+        "staleDate": "2026-10-14T09:55:00.000Z",
+        "lockScreen": "dimmed",
+        "lockScreenUntil": null,
+        "now": "quiet",
+        "interruptionLevel": null,
+        "relevance": 0.3,
+        "apnsPriority": 5,
+        "nextChangeAt": "2026-10-14T10:35:00.000Z"
+      }
+    }
+  ],
+  "paused": [],
+  "folds": {
+    "waitingOnYou": 0,
+    "quiet": 1,
+    "paused": 0
+  },
+  "lockScreen": {
+    "cards": [
+      "act_00000000-0000-4000-8000-000000000002"
+    ],
+    "needsYouCount": 0,
+    "focus": "act_00000000-0000-4000-8000-000000000002"
+  },
+  "sessions": {
+    "sessions": [],
+    "folds": {
+      "idle": 0
+    }
+  },
+  "refreshAt": null
+}
